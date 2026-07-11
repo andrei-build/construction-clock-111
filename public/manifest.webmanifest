@@ -1,0 +1,17 @@
+{
+  "name": "Construction Clock",
+  "short_name": "CClock",
+  "description": "Операционная система строительной компании",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1420",
+  "theme_color": "#0f1420",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
