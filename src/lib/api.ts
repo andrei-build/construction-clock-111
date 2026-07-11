@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType } from './types'
+import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType, ProfileRate, PayPeriod } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -31,6 +31,15 @@ export async function getEventsSince(sinceISO: string, profileId: string): Promi
   const { data } = await supabase.from('time_events')
     .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, metadata')
     .eq('profile_id', profileId).gte('event_time', sinceISO).order('event_time')
+  return (data as TimeEvent[]) ?? []
+}
+
+export async function getTimeEventsRange(startISO: string, endISO: string): Promise<TimeEvent[]> {
+  const { data } = await supabase.from('time_events')
+    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, metadata')
+    .gte('event_time', startISO)
+    .lt('event_time', endISO)
+    .order('event_time')
   return (data as TimeEvent[]) ?? []
 }
 
@@ -86,6 +95,26 @@ export async function getRecentActivity(): Promise<EventRow[]> {
     .select('id, event_type, entity_type, actor_name, data, created_at')
     .order('created_at', { ascending: false }).limit(20)
   return (data as EventRow[]) ?? []
+}
+
+export async function getVisibleProfileRates(): Promise<ProfileRate[]> {
+  const { data, error } = await supabase.from('profile_rates')
+    .select('profile_id, hourly_rate')
+  if (error) return []
+  return (data as ProfileRate[]) ?? []
+}
+
+export async function getCurrentPayPeriod(): Promise<PayPeriod | null> {
+  const today = new Date().toISOString().slice(0, 10)
+  const { data, error } = await supabase.from('pay_periods')
+    .select('id, start_date, end_date, status')
+    .lte('start_date', today)
+    .gte('end_date', today)
+    .order('start_date', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null
+  return (data as PayPeriod | null) ?? null
 }
 
 export async function createWorker(name: string, pin: string, role: string): Promise<{ ok: boolean; error?: string }> {
