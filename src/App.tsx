@@ -6,6 +6,7 @@ import Dashboard from './screens/Dashboard'
 import CheckIn from './screens/CheckIn'
 import Projects from './screens/Projects'
 import Team from './screens/Team'
+import Sales from './screens/Sales'
 import MyTime from './screens/MyTime'
 import More from './screens/More'
 import Nav from './components/Nav'
@@ -16,6 +17,7 @@ export default function App() {
   if (!profile) return <Login />
 
   const manager = isManagerRole(profile.role)
+  const salesAccess = manager || profile.role === 'sales'
   return (
     <div className="app">
       <Routes>
@@ -23,6 +25,7 @@ export default function App() {
         <Route path="/checkin" element={<CheckIn />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/team" element={manager ? <Team /> : <Navigate to="/" />} />
+        <Route path="/sales" element={salesAccess ? <Sales /> : <Navigate to="/" />} />
         <Route path="/time" element={<MyTime />} />
         <Route path="/more" element={<More />} />
         <Route path="*" element={<Navigate to="/" />} />

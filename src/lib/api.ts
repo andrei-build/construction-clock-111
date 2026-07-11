@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType } from './types'
+import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType, Deal, DealStage } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -86,6 +86,22 @@ export async function getRecentActivity(): Promise<EventRow[]> {
     .select('id, event_type, entity_type, actor_name, data, created_at')
     .order('created_at', { ascending: false }).limit(20)
   return (data as EventRow[]) ?? []
+}
+
+export async function getDeals(): Promise<Deal[]> {
+  const { data, error } = await supabase.from('deals')
+    .select('id, org_id, title, stage, expected_amount, next_action')
+    .order('expected_amount', { ascending: false })
+  if (error) return []
+  return (data as Deal[]) ?? []
+}
+
+export async function updateDealStage(p: Profile, deal: Deal, stage: DealStage) {
+  const { error } = await supabase.from('deals')
+    .update({ stage })
+    .eq('id', deal.id)
+  if (error) throw error
+  await logEvent(p, 'sales.stage_changed', 'deal', deal.id, { from: deal.stage, to: stage, title: deal.title })
 }
 
 export async function createWorker(name: string, pin: string, role: string): Promise<{ ok: boolean; error?: string }> {

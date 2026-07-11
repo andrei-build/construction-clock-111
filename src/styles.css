@@ -93,3 +93,35 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .feed-item { padding: 10px 0; border-bottom: 1px solid #222b3d; font-size: 14px; }
 .feed-item .when { color: var(--muted); font-size: 12px; }
 .spinner { text-align: center; padding: 40px; color: var(--muted); }
+.item-title { font-weight: 800; }
+.more-link { margin-bottom: 12px; text-decoration: none; }
+.sales-screen { max-width: 1180px; }
+.sales-board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(240px, 78vw);
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+.sales-column {
+  min-width: 0;
+}
+.sales-column h2 { margin-top: 0; }
+.deal-card {
+  display: grid;
+  gap: 8px;
+}
+.deal-amount {
+  color: var(--green);
+  font-size: 18px;
+  font-weight: 800;
+}
+
+@media (min-width: 1020px) {
+  .sales-board {
+    grid-auto-flow: initial;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: visible;
+  }
+}
