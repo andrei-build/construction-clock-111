@@ -33,6 +33,7 @@ export default function Nav({ manager }: { manager: boolean }) {
       items: [
         { to: '/time', icon: '🕐', label: t('my_time') },
         { to: '/payroll', icon: '💵', label: t('payroll') },
+        { to: '/reports', icon: '📈', label: t('reports') },
         { to: '/sales', icon: '🤝', label: t('sales') },
       ],
     },

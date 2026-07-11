@@ -9,6 +9,7 @@ import Team from './screens/Team'
 import Dispatch from './screens/Dispatch'
 import Calendar from './screens/Calendar'
 import Sales from './screens/Sales'
+import Reports from './screens/Reports'
 import MyTime from './screens/MyTime'
 import Payroll from './screens/Payroll'
 import Messages from './screens/Messages'
@@ -33,6 +34,7 @@ export default function App() {
           <Route path="/dispatch" element={manager ? <Dispatch /> : <Navigate to="/" />} />
           <Route path="/calendar" element={manager ? <Calendar /> : <Navigate to="/" />} />
           <Route path="/sales" element={salesAccess ? <Sales /> : <Navigate to="/" />} />
+          <Route path="/reports" element={manager ? <Reports /> : <Navigate to="/" />} />
           <Route path="/time" element={<MyTime />} />
           <Route path="/payroll" element={manager ? <Payroll /> : <Navigate to="/" />} />
           <Route path="/messages" element={<Messages />} />

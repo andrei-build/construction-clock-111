@@ -88,6 +88,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .keypad button:active { background: var(--panel2); }
 
 .timer { font-variant-numeric: tabular-nums; font-size: 44px; font-weight: 800; text-align: center; margin: 10px 0; }
+.travel-action {
+  margin-top: 12px;
+}
+.travel-action .ok-msg {
+  margin: 0;
+  text-align: left;
+}
 .center { text-align: center; }
 .error-msg { color: var(--red); text-align: center; margin: 10px 0; font-weight: 600; }
 .ok-msg { color: var(--green); text-align: center; margin: 10px 0; font-weight: 600; }
@@ -222,6 +229,48 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   letter-spacing: .04em;
 }
 .payroll-table tr:last-child td { border-bottom: 0; }
+
+.reports-screen { max-width: 1180px; }
+.reports-head {
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.reports-head h1 { margin-bottom: 4px; }
+.reports-filter {
+  margin-bottom: 12px;
+}
+.reports-table-wrap {
+  overflow-x: auto;
+  padding: 0;
+}
+.reports-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.reports-table th,
+.reports-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  white-space: nowrap;
+}
+.reports-table th:first-child,
+.reports-table td:first-child {
+  text-align: left;
+}
+.reports-table th {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.reports-total-row td {
+  color: var(--text);
+  background: rgba(255,255,255,.03);
+  font-weight: 800;
+}
 
 .messages-screen { max-width: 980px; }
 .message-compose { margin-bottom: 14px; }
@@ -455,6 +504,19 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 
 .calendar-screen { max-width: 920px; }
 .calendar-week { margin: -6px 0 14px; }
+.calendar-nav {
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.calendar-nav .calendar-week {
+  flex: 1;
+  margin: 8px 0 0;
+  text-align: center;
+}
+.calendar-nav-btn {
+  min-width: 44px;
+  padding: 10px 14px;
+}
 .calendar-form { margin-bottom: 14px; }
 .calendar-list {
   display: grid;

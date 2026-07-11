@@ -12,6 +12,13 @@ import {
 } from '../lib/api'
 import type { Profile, Project, ProjectAssignment, Task } from '../lib/types'
 
+function dateValue(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export default function Dispatch() {
   const { profile } = useAuth()
   const { t } = useI18n()
@@ -29,6 +36,7 @@ export default function Dispatch() {
     d.setDate(d.getDate() + 1)
     return d
   }, [])
+  const tomorrowISO = useMemo(() => dateValue(tomorrow), [tomorrow])
 
   const load = async () => {
     setLoading(true)
@@ -80,7 +88,7 @@ export default function Dispatch() {
     setError(false)
     setSentProject(null)
     try {
-      await sendDispatchPlan(profile, project, workers, projectTasks(project.id), tomorrow.toLocaleDateString(), t('no_tasks'))
+      await sendDispatchPlan(profile, project, workers, projectTasks(project.id), tomorrowISO)
       setSentProject(project.id)
     } catch {
       setError(true)

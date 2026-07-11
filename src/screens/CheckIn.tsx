@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getProjects, getTodayEvents, addTimeEvent, captureGPS } from '../lib/api'
+import { getProjects, getTodayEvents, addTimeEvent, captureGPS, startProjectTravel } from '../lib/api'
 import { shiftState, workedMs, fmtHours, fmtClock } from '../lib/time'
 import type { Project, TimeEvent } from '../lib/types'
+
+interface TravelState {
+  projectId: string
+  startedAt: Date
+}
 
 export default function CheckIn() {
   const { profile } = useAuth()
@@ -12,6 +17,8 @@ export default function CheckIn() {
   const [events, setEvents] = useState<TimeEvent[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [travelBusy, setTravelBusy] = useState(false)
+  const [travel, setTravel] = useState<TravelState | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [, tick] = useState(0)
 
@@ -30,6 +37,7 @@ export default function CheckIn() {
 
   const state = useMemo(() => shiftState(events), [events])
   const ms = useMemo(() => workedMs(events), [events, Date.now()])
+  const selectedProject = useMemo(() => projects.find((p) => p.id === selected) ?? null, [projects, selected])
 
   const act = async (type: 'check_in' | 'check_out' | 'break_start' | 'break_end') => {
     if (!profile || busy) return
@@ -41,12 +49,29 @@ export default function CheckIn() {
       const projectId = type === 'check_in' ? selected : state.projectId
       await addTimeEvent(profile, type, projectId, geo)
       await load()
+      if (type === 'check_in') setTravel(null)
       setMsg('saved')
       setTimeout(() => setMsg(null), 2500)
     } catch {
       setMsg('error')
     }
     setBusy(false)
+  }
+
+  const startTravel = async (project: Project) => {
+    if (!profile || travelBusy || !project.address) return
+    const startedAt = new Date()
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(project.address)}`
+    setTravel({ projectId: project.id, startedAt })
+    window.open(url, '_blank')
+    setTravelBusy(true)
+    try {
+      await startProjectTravel(profile, project, startedAt.toISOString())
+    } catch {
+      setMsg('error')
+    } finally {
+      setTravelBusy(false)
+    }
   }
 
   const projName = (id: string | null) => projects.find((p) => p.id === id)?.name ?? ''
@@ -80,6 +105,17 @@ export default function CheckIn() {
                 </div>
                 {selected === p.id && <span className="badge amber">✓</span>}
               </div>
+              {selected === p.id && (
+                <div className="travel-action" onClick={(e) => e.stopPropagation()}>
+                  {travel?.projectId === p.id ? (
+                    <p className="ok-msg">{t('travel_started')} {fmtClock(travel.startedAt.toISOString())}</p>
+                  ) : (
+                    <button className="btn ghost small" disabled={travelBusy || !selectedProject?.address} onClick={() => startTravel(p)}>
+                      {t('travel_start')}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ))}
           <button className="btn green" style={{ marginTop: 12 }} disabled={!selected || busy} onClick={() => act('check_in')}>

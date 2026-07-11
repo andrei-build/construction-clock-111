@@ -8,6 +8,10 @@ type EventType = CalendarEvent['event_type']
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+function dateValue(date: Date) {
+  return date.toISOString().slice(0, 10)
+}
+
 function startOfWeek(d: Date) {
   const x = new Date(d)
   const day = (x.getDay() + 6) % 7
@@ -22,7 +26,8 @@ export default function Calendar() {
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [title, setTitle] = useState('')
   const [type, setType] = useState<EventType>('meeting')
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()))
+  const [date, setDate] = useState(() => dateValue(new Date()))
   const [time, setTime] = useState('09:00')
   const [permit, setPermit] = useState('')
   const [inspectionStatus, setInspectionStatus] = useState('')
@@ -31,9 +36,9 @@ export default function Calendar() {
   const [error, setError] = useState(false)
 
   const week = useMemo(() => {
-    const start = startOfWeek(new Date())
+    const start = weekStart
     return { start, end: new Date(start.getTime() + 7 * DAY_MS) }
-  }, [])
+  }, [weekStart])
 
   const load = async () => {
     setLoading(true)
@@ -47,7 +52,13 @@ export default function Calendar() {
     }
   }
 
-  useEffect(() => { load() }, [profile?.id])
+  useEffect(() => { load() }, [profile?.id, weekStart])
+
+  const moveWeek = (direction: -1 | 1) => {
+    const next = new Date(weekStart.getTime() + direction * 7 * DAY_MS)
+    setWeekStart(next)
+    setDate(dateValue(next))
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -84,7 +95,15 @@ export default function Calendar() {
   return (
     <div className="screen calendar-screen">
       <h1>📅 {t('calendar')}</h1>
-      <p className="muted calendar-week">{week.start.toLocaleDateString()} – {new Date(week.end.getTime() - DAY_MS).toLocaleDateString()}</p>
+      <div className="row calendar-nav">
+        <button className="btn ghost small calendar-nav-btn" aria-label={t('previous_week')} onClick={() => moveWeek(-1)}>
+          ←
+        </button>
+        <p className="muted calendar-week">{week.start.toLocaleDateString()} – {new Date(week.end.getTime() - DAY_MS).toLocaleDateString()}</p>
+        <button className="btn ghost small calendar-nav-btn" aria-label={t('next_week')} onClick={() => moveWeek(1)}>
+          →
+        </button>
+      </div>
 
       {error && <p className="error-msg">{t('load_error')}</p>}
 

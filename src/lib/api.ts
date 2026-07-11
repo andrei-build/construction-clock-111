@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, TimeEvent, Task, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage } from './types'
+import type { Profile, Project, ProjectProfit, TimeEvent, Task, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -76,6 +76,14 @@ export async function addTimeEvent(p: Profile, type: TimeEventType, projectId: s
   const { error } = await supabase.from('time_events').insert(row)
   if (error) throw error
   await logEvent(p, `time.${type}`, 'project', projectId, { gps: geo.status })
+}
+
+export async function startProjectTravel(p: Profile, project: Project, startedAt: string) {
+  await logEvent(p, 'travel.started', 'project', project.id, {
+    project_id: project.id,
+    address: project.address ?? '',
+    started_at: startedAt,
+  })
 }
 
 export async function getTeam(): Promise<Profile[]> {
@@ -163,16 +171,46 @@ export async function unassignWorkerFromProject(p: Profile, projectId: string, w
   await logEvent(p, 'dispatch.unassigned', 'project', projectId, { worker_id: workerId })
 }
 
-export async function sendDispatchPlan(p: Profile, project: Project, workers: Profile[], tasks: Task[], planDate: string, emptyTasksText: string) {
-  const taskText = tasks.length > 0 ? tasks.map((task) => `• ${task.title}`).join('\n') : emptyTasksText
-  const body = `${planDate}\n${project.name}\n${project.address ?? ''}\n\n${taskText}`.trim()
-  const rows = workers.map((worker) => ({
-    org_id: p.org_id,
-    sender_id: p.id,
-    recipient_id: worker.id,
-    priority: 'task',
-    body,
-  }))
+type DispatchLang = 'ru' | 'en' | 'es'
+
+const dispatchLocales: Record<DispatchLang, string> = {
+  ru: 'ru-RU',
+  en: 'en-US',
+  es: 'es-ES',
+}
+
+const dispatchCopy: Record<DispatchLang, { date: string; where: string; address: string; tasks: string; noTasks: string }> = {
+  ru: { date: 'Дата', where: 'Куда', address: 'Адрес', tasks: 'Задачи', noTasks: 'Задач нет' },
+  en: { date: 'Date', where: 'Where', address: 'Address', tasks: 'Tasks', noTasks: 'No tasks' },
+  es: { date: 'Fecha', where: 'Dónde', address: 'Dirección', tasks: 'Tareas', noTasks: 'Sin tareas' },
+}
+
+function dispatchLang(language: string | null | undefined): DispatchLang {
+  return language === 'ru' || language === 'es' ? language : 'en'
+}
+
+function dispatchPlanBody(project: Project, tasks: Task[], planDate: string, lang: DispatchLang) {
+  const copy = dispatchCopy[lang]
+  const date = new Date(`${planDate}T12:00:00`).toLocaleDateString(dispatchLocales[lang], {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
+  const taskText = tasks.length > 0 ? tasks.map((task) => `• ${task.title}`).join('\n') : copy.noTasks
+  return `${copy.date}: ${date}\n${copy.where}: ${project.name}\n${copy.address}: ${project.address ?? ''}\n\n${copy.tasks}:\n${taskText}`.trim()
+}
+
+export async function sendDispatchPlan(p: Profile, project: Project, workers: Profile[], tasks: Task[], planDate: string) {
+  const rows = workers.map((worker) => {
+    const lang = dispatchLang(worker.language)
+    return {
+      org_id: p.org_id,
+      sender_id: p.id,
+      recipient_id: worker.id,
+      priority: 'task',
+      body: dispatchPlanBody(project, tasks, planDate, lang),
+    }
+  })
   if (rows.length === 0) return
   const { error } = await supabase.from('messages').insert(rows)
   if (error) throw error
@@ -275,6 +313,18 @@ export async function updateDealStage(p: Profile, deal: Deal, stage: DealStage) 
     .eq('id', deal.id)
   if (error) throw error
   await logEvent(p, 'sales.stage_changed', 'deal', deal.id, { from: deal.stage, to: stage, title: deal.title })
+}
+
+const reportRpc: Record<ReportKind, string> = {
+  hours: 'report_hours',
+  payroll: 'report_payroll',
+  expenses: 'report_expenses',
+}
+
+export async function getReportRows(kind: ReportKind, from: string, to: string): Promise<ReportRow[]> {
+  const { data, error } = await supabase.rpc(reportRpc[kind], { p_from: from, p_to: to })
+  if (error) throw error
+  return ((data ?? []) as ReportRow[])
 }
 
 export async function createWorker(name: string, pin: string, role: string): Promise<{ ok: boolean; error?: string }> {
