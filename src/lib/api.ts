@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType } from './types'
+import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType, ProfileRate } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -71,9 +71,55 @@ export async function getTeam(): Promise<Profile[]> {
 
 export async function getOpenTasks(): Promise<Task[]> {
   const { data } = await supabase.from('tasks')
-    .select('id, org_id, project_id, task_type, title, status, priority, assigned_to')
+    .select('id, org_id, project_id, task_type, title, status, priority, assigned_to, requires_photo')
     .in('status', ['open', 'in_progress']).order('priority', { ascending: false })
   return (data as Task[]) ?? []
+}
+
+export async function getDonePhotoTasks(): Promise<Task[]> {
+  const { data, error } = await supabase.from('tasks')
+    .select('id, org_id, project_id, task_type, title, status, priority, assigned_to, requires_photo, done_at')
+    .eq('status', 'done')
+    .eq('requires_photo', true)
+    .order('done_at', { ascending: false, nullsFirst: false })
+    .limit(20)
+  if (error) return []
+  return (data as Task[]) ?? []
+}
+
+export async function getTaskPhotoIds(taskIds: string[]): Promise<Set<string>> {
+  if (taskIds.length === 0) return new Set()
+
+  const ids = new Set<string>()
+  const byEntity = await supabase.from('media')
+    .select('entity_id')
+    .eq('entity_type', 'task')
+    .in('entity_id', taskIds)
+
+  if (!byEntity.error) {
+    for (const row of (byEntity.data ?? []) as Array<{ entity_id?: string | null }>) {
+      if (row.entity_id) ids.add(row.entity_id)
+    }
+  }
+
+  const byTask = await supabase.from('media')
+    .select('task_id')
+    .in('task_id', taskIds)
+
+  if (!byTask.error) {
+    for (const row of (byTask.data ?? []) as Array<{ task_id?: string | null }>) {
+      if (row.task_id) ids.add(row.task_id)
+    }
+  }
+
+  return ids
+}
+
+export async function getVisibleProfileRates(): Promise<ProfileRate[]> {
+  const { data, error } = await supabase.from('profile_rates')
+    .select('profile_id, hourly_rate')
+  if (error) return []
+  return (data as ProfileRate[]) ?? []
 }
 
 export async function markTaskDone(p: Profile, task: Task) {

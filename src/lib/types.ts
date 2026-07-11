@@ -43,6 +43,8 @@ export interface Task {
   status: 'open' | 'in_progress' | 'done' | 'cancelled'
   priority: 'low' | 'medium' | 'high' | 'urgent'
   assigned_to: string | null
+  requires_photo?: boolean
+  done_at?: string | null
 }
 
 export interface EventRow {
@@ -52,6 +54,11 @@ export interface EventRow {
   actor_name: string | null
   data: Record<string, unknown>
   created_at: string
+}
+
+export interface ProfileRate {
+  profile_id: string
+  hourly_rate: number | null
 }
 
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)

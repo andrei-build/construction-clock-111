@@ -1,9 +1,27 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getTodayEvents, getTeam, getProjects, getOpenTasks, getRecentActivity } from '../lib/api'
+import {
+  getTodayEvents,
+  getTeam,
+  getProjects,
+  getOpenTasks,
+  getRecentActivity,
+  getDonePhotoTasks,
+  getTaskPhotoIds,
+  getVisibleProfileRates,
+} from '../lib/api'
 import { shiftState, workedMs, fmtHours } from '../lib/time'
-import type { Profile, Project, TimeEvent, Task, EventRow } from '../lib/types'
+import type { Profile, Project, TimeEvent, Task, EventRow, ProfileRate } from '../lib/types'
+
+type Risk = {
+  id: string
+  tone: 'amber' | 'red' | 'blue'
+  title: string
+  detail: string
+}
+
+const TEN_HOURS_MS = 10 * 60 * 60 * 1000
 
 export default function Dashboard() {
   const { profile } = useAuth()
@@ -12,14 +30,54 @@ export default function Dashboard() {
   const [team, setTeam] = useState<Profile[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [donePhotoTasks, setDonePhotoTasks] = useState<Task[]>([])
+  const [photoTaskIds, setPhotoTaskIds] = useState<Set<string>>(new Set())
+  const [rates, setRates] = useState<ProfileRate[]>([])
   const [activity, setActivity] = useState<EventRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
     if (!profile) return
-    Promise.all([getTodayEvents(), getTeam(), getProjects(), getOpenTasks(), getRecentActivity()])
-      .then(([e, tm, p, tk, a]) => { setEvents(e); setTeam(tm); setProjects(p); setTasks(tk); setActivity(a) })
-    const i = setInterval(() => getTodayEvents().then(setEvents), 30000)
-    return () => clearInterval(i)
+    let mounted = true
+
+    async function load() {
+      setLoading(true)
+      setError(false)
+      try {
+        const [e, tm, p, tk, a, doneTk, visibleRates] = await Promise.all([
+          getTodayEvents(),
+          getTeam(),
+          getProjects(),
+          getOpenTasks(),
+          getRecentActivity(),
+          getDonePhotoTasks(),
+          getVisibleProfileRates(),
+        ])
+        const photoIds = await getTaskPhotoIds(doneTk.map((task) => task.id))
+        if (!mounted) return
+        setEvents(e)
+        setTeam(tm)
+        setProjects(p)
+        setTasks(tk)
+        setActivity(a)
+        setDonePhotoTasks(doneTk)
+        setPhotoTaskIds(photoIds)
+        setRates(visibleRates)
+      } catch {
+        if (mounted) setError(true)
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    }
+
+    load()
+    const i = setInterval(() => {
+      setNow(Date.now())
+      getTodayEvents().then(setEvents).catch(() => setError(true))
+    }, 30000)
+    return () => { mounted = false; clearInterval(i) }
   }, [profile?.id])
 
   const byWorker = useMemo(() => {
@@ -31,66 +89,191 @@ export default function Dashboard() {
     return m
   }, [events])
 
-  const onSite = useMemo(() =>
-    team.filter((w) => {
+  const onSite = useMemo(() => {
+    return team.filter((w) => {
       const evs = byWorker.get(w.id) ?? []
       return evs.length > 0 && shiftState(evs).status !== 'off'
-    }), [team, byWorker])
+    })
+  }, [team, byWorker])
 
   const totalMs = useMemo(
-    () => Array.from(byWorker.values()).reduce((acc, evs) => acc + workedMs(evs), 0),
-    [byWorker],
+    () => Array.from(byWorker.values()).reduce((acc, evs) => acc + workedMs(evs, now), 0),
+    [byWorker, now],
   )
 
-  const projName = (id: string | null) => projects.find((p) => p.id === id)?.name ?? '—'
+  const rateByWorker = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const rate of rates) {
+      if (rate.hourly_rate !== null) m.set(rate.profile_id, Number(rate.hourly_rate))
+    }
+    return m
+  }, [rates])
+
+  const payDue = useMemo(() => {
+    if (rateByWorker.size === 0) return null
+    return Array.from(byWorker.entries()).reduce((acc, [workerId, evs]) => {
+      const rate = rateByWorker.get(workerId)
+      if (!rate) return acc
+      return acc + (workedMs(evs, now) / 3600000) * rate
+    }, 0)
+  }, [byWorker, now, rateByWorker])
+
+  const projectName = (id: string | null) => projects.find((p) => p.id === id)?.name ?? t('unknown_project')
+
+  const risks = useMemo<Risk[]>(() => {
+    const items: Risk[] = []
+
+    for (const worker of team) {
+      const evs = byWorker.get(worker.id) ?? []
+      if (evs.length === 0) continue
+
+      const sorted = [...evs].sort((a, b) => a.event_time.localeCompare(b.event_time))
+      const last = sorted[sorted.length - 1]
+      const state = shiftState(sorted)
+
+      if (state.status !== 'off' && state.since && now - new Date(state.since).getTime() > TEN_HOURS_MS) {
+        items.push({
+          id: `long-${worker.id}`,
+          tone: 'amber',
+          title: t('risk_open_shift_long'),
+          detail: `${worker.name} · ${projectName(state.projectId)} · ${fmtHours(workedMs(evs, now))}${t('h')}`,
+        })
+      }
+
+      if (last?.gps_status && last.gps_status !== 'good') {
+        items.push({
+          id: `gps-${worker.id}-${last.id}`,
+          tone: 'blue',
+          title: t('risk_gps_attention'),
+          detail: `${worker.name} · ${last.gps_status}`,
+        })
+      }
+    }
+
+    for (const task of donePhotoTasks) {
+      if (!photoTaskIds.has(task.id)) {
+        items.push({
+          id: `photo-${task.id}`,
+          tone: 'red',
+          title: t('risk_task_without_photo'),
+          detail: `${task.title} · ${projectName(task.project_id)}`,
+        })
+      }
+    }
+
+    return items
+  }, [byWorker, donePhotoTasks, photoTaskIds, team, now, projects])
+
+  const nextTask = useMemo(() => {
+    const score = { urgent: 4, high: 3, medium: 2, low: 1 }
+    return [...tasks].sort((a, b) => score[b.priority] - score[a.priority])[0] ?? null
+  }, [tasks])
+
+  const money = (value: number) =>
+    new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
+
+  const tiles = [
+    { label: t('on_site_now'), value: String(onSite.length), tone: onSite.length > 0 ? 'green' : 'grey' },
+    { label: t('hours_today'), value: fmtHours(totalMs), tone: totalMs > 0 ? 'blue' : 'grey' },
+    { label: t('pay_due'), value: payDue === null ? '—' : money(payDue), tone: payDue === null ? 'grey' : 'green', note: payDue === null ? t('finance_locked') : '' },
+    { label: t('requires_attention'), value: String(risks.length), tone: risks.length > 0 ? 'amber' : 'green' },
+    { label: t('tasks'), value: String(tasks.length), tone: tasks.length > 0 ? 'blue' : 'grey' },
+  ]
+
+  if (loading) {
+    return (
+      <div className="screen dashboard-screen">
+        <h1>{t('command_center')}</h1>
+        <div className="card center muted">{t('loading')}</div>
+      </div>
+    )
+  }
 
   return (
-    <div className="screen">
-      <h1>📊 {t('dashboard')}</h1>
+    <div className="screen dashboard-screen">
+      <h1>{t('command_center')}</h1>
+      {error && <p className="error-msg">{t('load_error')}</p>}
 
-      <div className="grid2">
-        <div className="card center">
-          <div className="big">{onSite.length}</div>
-          <div className="muted">{t('on_site_now')}</div>
-        </div>
-        <div className="card center">
-          <div className="big">{fmtHours(totalMs)}</div>
-          <div className="muted">{t('hours_today')}</div>
-        </div>
-        <div className="card center">
-          <div className="big">{projects.length}</div>
-          <div className="muted">{t('active_projects')}</div>
-        </div>
-        <div className="card center">
-          <div className="big">{tasks.length}</div>
-          <div className="muted">{t('open_tasks')}</div>
-        </div>
+      <div className="dashboard-tiles">
+        {tiles.map((tile) => (
+          <div key={tile.label} className={`card metric-card ${tile.tone}`}>
+            <div className="metric-value">{tile.value}</div>
+            <div className="muted">{tile.label}</div>
+            {tile.note && <div className="metric-note">{tile.note}</div>}
+          </div>
+        ))}
       </div>
 
-      <h2>{t('on_site_now')}</h2>
-      {onSite.length === 0 && <p className="muted">{t('nobody_on_site')}</p>}
-      {onSite.map((w) => {
-        const st = shiftState(byWorker.get(w.id) ?? [])
-        return (
-          <div key={w.id} className="card row">
-            <div>
-              <div style={{ fontWeight: 700 }}>{w.name}</div>
-              <div className="muted">{projName(st.projectId)}</div>
-            </div>
-            <span className={`badge ${st.status === 'break' ? 'amber' : 'green'}`}>
-              {st.status === 'break' ? t('on_break') : fmtHours(workedMs(byWorker.get(w.id) ?? [])) + t('h')}
-            </span>
-          </div>
-        )
-      })}
+      <div className="dashboard-panels">
+        <section className="card command-card">
+          <h2>{t('dashboard_now')}</h2>
+          <div className="command-value">{onSite.length > 0 ? `${onSite.length} · ${t('on_shift')}` : t('nobody_on_site')}</div>
+          <p className="muted">
+            {onSite.slice(0, 3).map((w) => w.name).join(', ') || t('all_clear')}
+          </p>
+        </section>
 
-      <h2>{t('recent_activity')}</h2>
-      {activity.map((a) => (
-        <div key={a.id} className="feed-item">
-          <div><b>{a.actor_name ?? '—'}</b> · {a.event_type}</div>
-          <div className="when">{new Date(a.created_at).toLocaleString()}</div>
-        </div>
-      ))}
+        <section className="card command-card">
+          <h2>{t('dashboard_risks')}</h2>
+          <div className={`command-value ${risks.length > 0 ? 'attention' : 'ok'}`}>
+            {risks.length > 0 ? `${risks.length} · ${t('requires_attention')}` : t('no_risks')}
+          </div>
+          <p className="muted">{risks[0]?.detail ?? t('all_clear')}</p>
+        </section>
+
+        <section className="card command-card">
+          <h2>{t('dashboard_next_step')}</h2>
+          <div className="command-value">{nextTask ? nextTask.title : t('next_no_tasks')}</div>
+          <p className="muted">{nextTask ? projectName(nextTask.project_id) : t('all_clear')}</p>
+        </section>
+      </div>
+
+      <div className="dashboard-columns">
+        <section>
+          <h2>{t('dashboard_risks')}</h2>
+          {risks.length === 0 && <div className="card muted">{t('no_risks')}</div>}
+          {risks.map((risk) => (
+            <div key={risk.id} className="card risk-row">
+              <span className={`status-dot ${risk.tone}`} />
+              <div>
+                <div className="item-title">{risk.title}</div>
+                <div className="muted">{risk.detail}</div>
+              </div>
+            </div>
+          ))}
+        </section>
+
+        <section>
+          <h2>{t('on_site_now')}</h2>
+          {onSite.length === 0 && <div className="card muted">{t('nobody_on_site')}</div>}
+          {onSite.map((w) => {
+            const evs = byWorker.get(w.id) ?? []
+            const st = shiftState(evs)
+            return (
+              <div key={w.id} className="card row dashboard-row">
+                <div>
+                  <div className="item-title">{w.name}</div>
+                  <div className="muted">{projectName(st.projectId)}</div>
+                </div>
+                <span className={`badge ${st.status === 'break' ? 'amber' : 'green'}`}>
+                  {st.status === 'break' ? t('on_break') : `${fmtHours(workedMs(evs, now))}${t('h')}`}
+                </span>
+              </div>
+            )
+          })}
+        </section>
+
+        <section>
+          <h2>{t('recent_activity')}</h2>
+          {activity.length === 0 && <div className="card muted">{t('no_activity')}</div>}
+          {activity.map((a) => (
+            <div key={a.id} className="feed-item">
+              <div><b>{a.actor_name ?? '—'}</b> · {a.event_type}</div>
+              <div className="when">{new Date(a.created_at).toLocaleString()}</div>
+            </div>
+          ))}
+        </section>
+      </div>
     </div>
   )
 }
