@@ -16,6 +16,7 @@ export default function Nav({ manager }: { manager: boolean }) {
       items: [
         { to: '/', end: true, icon: '📊', label: t('dashboard') },
         { to: '/checkin', icon: '⏱️', label: t('checkin') },
+        { to: '/messages', icon: '💬', label: t('messages') },
       ],
     },
     {
@@ -23,12 +24,16 @@ export default function Nav({ manager }: { manager: boolean }) {
       items: [
         { to: '/projects', icon: '📁', label: t('projects') },
         { to: '/team', icon: '👷', label: t('team') },
+        { to: '/dispatch', icon: '🧭', label: t('dispatch') },
+        { to: '/calendar', icon: '📅', label: t('calendar') },
       ],
     },
     {
       label: t('nav_group_finance_clients'),
       items: [
         { to: '/time', icon: '🕐', label: t('my_time') },
+        { to: '/payroll', icon: '💵', label: t('payroll') },
+        { to: '/sales', icon: '🤝', label: t('sales') },
       ],
     },
     {
