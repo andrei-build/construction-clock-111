@@ -452,3 +452,27 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 @media (min-width: 1120px) {
   .dispatch-board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+.calendar-screen { max-width: 920px; }
+.calendar-week { margin: -6px 0 14px; }
+.calendar-form { margin-bottom: 14px; }
+.calendar-list {
+  display: grid;
+  gap: 10px;
+}
+.calendar-event {
+  border: 1px solid transparent;
+}
+.calendar-event.inspection {
+  border-color: rgba(245,165,36,.32);
+}
+.inspection-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+@media (min-width: 760px) {
+  .calendar-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

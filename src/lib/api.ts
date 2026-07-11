@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, TimeEvent, Task, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment } from './types'
+import type { Profile, Project, ProjectProfit, TimeEvent, Task, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -234,6 +234,31 @@ export async function markMessageRead(p: Profile, messageId: string) {
     .eq('recipient_id', p.id)
   if (error) throw error
   await logEvent(p, 'message.read', 'message', messageId)
+}
+
+export async function getCalendarEvents(startISO: string, endISO: string): Promise<CalendarEvent[]> {
+  const { data, error } = await supabase.from('calendar_events')
+    .select('id, org_id, title, event_type, starts_at, permit_number, inspection_status')
+    .gte('starts_at', startISO)
+    .lt('starts_at', endISO)
+    .order('starts_at')
+  if (error) return []
+  return (data as CalendarEvent[]) ?? []
+}
+
+export async function createCalendarEvent(p: Profile, input: {
+  title: string
+  event_type: CalendarEvent['event_type']
+  starts_at: string
+  permit_number: string | null
+  inspection_status: string | null
+}) {
+  const { data, error } = await supabase.from('calendar_events')
+    .insert({ org_id: p.org_id, created_by: p.id, ...input })
+    .select('id')
+    .single()
+  if (error) throw error
+  await logEvent(p, 'calendar.created', 'calendar_event', data.id, { title: input.title, event_type: input.event_type })
 }
 
 export async function createWorker(name: string, pin: string, role: string): Promise<{ ok: boolean; error?: string }> {
