@@ -93,3 +93,82 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .feed-item { padding: 10px 0; border-bottom: 1px solid #222b3d; font-size: 14px; }
 .feed-item .when { color: var(--muted); font-size: 12px; }
 .spinner { text-align: center; padding: 40px; color: var(--muted); }
+
+.dashboard-screen { max-width: 1120px; }
+.dashboard-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.metric-card {
+  min-height: 108px;
+  border: 1px solid rgba(255,255,255,.04);
+}
+.metric-card.green { border-color: rgba(74,222,128,.24); }
+.metric-card.amber { border-color: rgba(245,165,36,.28); }
+.metric-card.red { border-color: rgba(248,113,113,.28); }
+.metric-card.blue { border-color: rgba(96,165,250,.28); }
+.metric-card.grey { border-color: rgba(138,148,168,.18); }
+.metric-value {
+  margin-bottom: 4px;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+.metric-note {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.dashboard-panels {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.command-card h2 { margin-top: 0; }
+.command-value {
+  margin-bottom: 6px;
+  font-size: 18px;
+  font-weight: 800;
+}
+.command-value.ok { color: var(--green); }
+.command-value.attention { color: var(--accent); }
+.dashboard-columns {
+  display: grid;
+  gap: 14px;
+}
+.dashboard-row { min-height: 72px; }
+.item-title {
+  font-weight: 800;
+  line-height: 1.25;
+}
+.risk-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+.status-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.status-dot.green { background: var(--green); }
+.status-dot.amber { background: var(--accent); }
+.status-dot.red { background: var(--red); }
+.status-dot.blue { background: var(--blue); }
+
+@media (min-width: 720px) {
+  .dashboard-tiles {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .dashboard-panels {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .dashboard-columns {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
