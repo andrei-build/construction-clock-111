@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 
@@ -13,6 +14,9 @@ export default function More() {
         <div style={{ fontWeight: 700, fontSize: 18 }}>{profile?.name}</div>
         <span className="badge amber">{profile?.role}</span>
       </div>
+
+      <h2>{t('communication')}</h2>
+      <Link to="/messages" className="btn ghost small more-link">{t('messages')}</Link>
 
       <h2>{t('language')}</h2>
       <div className="tabs">

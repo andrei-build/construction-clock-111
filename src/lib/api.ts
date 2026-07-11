@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType } from './types'
+import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType, MessageRow } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -86,6 +86,38 @@ export async function getRecentActivity(): Promise<EventRow[]> {
     .select('id, event_type, entity_type, actor_name, data, created_at')
     .order('created_at', { ascending: false }).limit(20)
   return (data as EventRow[]) ?? []
+}
+
+export async function getMessages(profileId: string): Promise<MessageRow[]> {
+  const { data } = await supabase.from('messages')
+    .select('id, sender_id, recipient_id, priority, body, read_at, done_at, created_at')
+    .or(`sender_id.eq.${profileId},recipient_id.eq.${profileId}`)
+    .order('created_at', { ascending: false })
+  return (data as MessageRow[]) ?? []
+}
+
+export async function sendMessage(p: Profile, recipientId: string, body: string, priority: MessageRow['priority']) {
+  const { data, error } = await supabase.from('messages')
+    .insert({
+      org_id: p.org_id,
+      sender_id: p.id,
+      recipient_id: recipientId,
+      body,
+      priority,
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+  await logEvent(p, 'message.sent', 'message', data.id, { recipient_id: recipientId, priority })
+}
+
+export async function markMessageRead(p: Profile, messageId: string) {
+  const { error } = await supabase.from('messages')
+    .update({ read_at: new Date().toISOString() })
+    .eq('id', messageId)
+    .eq('recipient_id', p.id)
+  if (error) throw error
+  await logEvent(p, 'message.read', 'message', messageId)
 }
 
 export async function createWorker(name: string, pin: string, role: string): Promise<{ ok: boolean; error?: string }> {

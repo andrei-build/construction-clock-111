@@ -54,5 +54,16 @@ export interface EventRow {
   created_at: string
 }
 
+export interface MessageRow {
+  id: string
+  sender_id: string
+  recipient_id: string
+  priority: 'urgent' | 'info' | 'good' | 'task'
+  body: string
+  read_at: string | null
+  done_at: string | null
+  created_at: string
+}
+
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)
 export const isManagerWrite = (r: Role) => ['manager', 'admin', 'owner'].includes(r)
