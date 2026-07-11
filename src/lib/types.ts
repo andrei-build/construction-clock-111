@@ -67,5 +67,12 @@ export interface ProfileRate {
   hourly_rate: number | null
 }
 
+export interface PayPeriod {
+  id: string
+  start_date: string
+  end_date: string
+  status: string | null
+}
+
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)
 export const isManagerWrite = (r: Role) => ['manager', 'admin', 'owner'].includes(r)

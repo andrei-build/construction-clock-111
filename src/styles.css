@@ -186,6 +186,41 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .profit-badge.amber .profit-dot { background: var(--accent); }
 .profit-badge.red .profit-dot { background: var(--red); }
 
+.more-link { margin-bottom: 12px; text-decoration: none; }
+.payroll-screen { max-width: 980px; }
+.payroll-head {
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.payroll-head h1 { margin-bottom: 4px; }
+.payroll-lock { display: grid; gap: 8px; }
+.payroll-totals { margin-bottom: 10px; }
+.payroll-table-wrap {
+  overflow-x: auto;
+  padding: 0;
+}
+.payroll-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.payroll-table th,
+.payroll-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+}
+.payroll-table th:first-child,
+.payroll-table td:first-child { text-align: left; }
+.payroll-table th {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.payroll-table tr:last-child td { border-bottom: 0; }
+
 @media (min-width: 720px) {
   .dashboard-tiles {
     grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -196,6 +231,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .dashboard-columns {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+  .payroll-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (min-width: 768px) {
