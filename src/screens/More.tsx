@@ -1,9 +1,13 @@
+import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { isManagerRole } from '../lib/types'
 
 export default function More() {
   const { profile, logout } = useAuth()
   const { t, lang, setLang } = useI18n()
+  const manager = profile ? isManagerRole(profile.role) : false
+  const salesAccess = profile ? manager || profile.role === 'sales' : false
 
   return (
     <div className="screen">
@@ -14,6 +18,25 @@ export default function More() {
         <span className="badge amber">{profile?.role}</span>
       </div>
 
+      {manager && (
+        <>
+          <h2>{t('work')}</h2>
+          <Link to="/dispatch" className="btn ghost small more-link">{t('dispatch')}</Link>
+          <h2>{t('office')}</h2>
+          <Link to="/calendar" className="btn ghost small more-link">{t('calendar')}</Link>
+          <Link to="/payroll" className="btn ghost small more-link">{t('payroll')}</Link>
+        </>
+      )}
+
+      <h2>{t('communication')}</h2>
+      <Link to="/messages" className="btn ghost small more-link">{t('messages')}</Link>
+
+      {salesAccess && (
+        <>
+          <h2>{t('finance_clients')}</h2>
+          <Link to="/sales" className="btn ghost small more-link">{t('sales')}</Link>
+        </>
+      )}
       <h2>{t('language')}</h2>
       <div className="tabs">
         {(['ru', 'en', 'es'] as const).map((l) => (

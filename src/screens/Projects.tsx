@@ -1,21 +1,23 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getProjects, getOpenTasks, createProject, markTaskDone } from '../lib/api'
+import { getProjects, getOpenTasks, getProjectProfit, createProject, markTaskDone } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
-import type { Project, Task } from '../lib/types'
+import type { Project, ProjectProfit, Task } from '../lib/types'
 
 export default function Projects() {
   const { profile } = useAuth()
   const { t } = useI18n()
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [profits, setProfits] = useState<ProjectProfit[]>([])
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const load = () => Promise.all([getProjects(), getOpenTasks()]).then(([p, tk]) => { setProjects(p); setTasks(tk) })
+  const load = () => Promise.all([getProjects(), getOpenTasks(), getProjectProfit()])
+    .then(([p, tk, pf]) => { setProjects(p); setTasks(tk); setProfits(pf) })
   useEffect(() => { load() }, [profile?.id])
 
   const canWrite = profile ? isManagerWrite(profile.role) : false
@@ -39,6 +41,8 @@ export default function Projects() {
   }
 
   const prio = (p: Task['priority']) => p === 'urgent' ? 'red' : p === 'high' ? 'amber' : 'blue'
+  const profitFor = (projectId: string) => profits.find((p) => p.project_id === projectId)
+  const formatMargin = (value: number) => `${Math.round(value * 10) / 10}%`
 
   return (
     <div className="screen">
@@ -59,9 +63,19 @@ export default function Projects() {
 
       {projects.map((p) => {
         const ptasks = tasks.filter((tk) => tk.project_id === p.id)
+        const profit = profitFor(p.id)
+        const showProfit = profit?.margin_pct !== null && profit?.margin_pct !== undefined && profit.profit_status && profit.profit_status !== 'grey'
         return (
           <div key={p.id} className="card">
-            <div style={{ fontWeight: 700, fontSize: 17 }}>{p.name}</div>
+            <div className="project-title-row">
+              <div style={{ fontWeight: 700, fontSize: 17 }}>{p.name}</div>
+              {showProfit && (
+                <span className={`profit-badge ${profit.profit_status}`}>
+                  <span className="profit-dot" />
+                  {formatMargin(profit.margin_pct!)}
+                </span>
+              )}
+            </div>
             <div className="muted">{p.address}</div>
             {ptasks.length > 0 && <h2>{t('tasks')}</h2>}
             {ptasks.map((tk) => (

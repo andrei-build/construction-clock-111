@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType } from './types'
+import type { Profile, Project, ProjectProfit, TimeEvent, Task, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -18,6 +18,13 @@ export async function getProjects(): Promise<Project[]> {
   return (data as Project[]) ?? []
 }
 
+export async function getProjectProfit(): Promise<ProjectProfit[]> {
+  const { data, error } = await supabase.from('v_project_profit')
+    .select('project_id, margin_pct, profit_status')
+  if (error) return []
+  return (data as ProjectProfit[]) ?? []
+}
+
 export async function getTodayEvents(profileId?: string): Promise<TimeEvent[]> {
   let q = supabase.from('time_events')
     .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, metadata')
@@ -31,6 +38,15 @@ export async function getEventsSince(sinceISO: string, profileId: string): Promi
   const { data } = await supabase.from('time_events')
     .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, metadata')
     .eq('profile_id', profileId).gte('event_time', sinceISO).order('event_time')
+  return (data as TimeEvent[]) ?? []
+}
+
+export async function getTimeEventsRange(startISO: string, endISO: string): Promise<TimeEvent[]> {
+  const { data } = await supabase.from('time_events')
+    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, metadata')
+    .gte('event_time', startISO)
+    .lt('event_time', endISO)
+    .order('event_time')
   return (data as TimeEvent[]) ?? []
 }
 
@@ -71,9 +87,96 @@ export async function getTeam(): Promise<Profile[]> {
 
 export async function getOpenTasks(): Promise<Task[]> {
   const { data } = await supabase.from('tasks')
-    .select('id, org_id, project_id, task_type, title, status, priority, assigned_to')
+    .select('id, org_id, project_id, task_type, title, status, priority, assigned_to, requires_photo')
     .in('status', ['open', 'in_progress']).order('priority', { ascending: false })
   return (data as Task[]) ?? []
+}
+
+export async function getDonePhotoTasks(): Promise<Task[]> {
+  const { data, error } = await supabase.from('tasks')
+    .select('id, org_id, project_id, task_type, title, status, priority, assigned_to, requires_photo, done_at')
+    .eq('status', 'done')
+    .eq('requires_photo', true)
+    .order('done_at', { ascending: false, nullsFirst: false })
+    .limit(20)
+  if (error) return []
+  return (data as Task[]) ?? []
+}
+
+export async function getTaskPhotoIds(taskIds: string[]): Promise<Set<string>> {
+  if (taskIds.length === 0) return new Set()
+
+  const ids = new Set<string>()
+  const byEntity = await supabase.from('media')
+    .select('entity_id')
+    .eq('entity_type', 'task')
+    .in('entity_id', taskIds)
+
+  if (!byEntity.error) {
+    for (const row of (byEntity.data ?? []) as Array<{ entity_id?: string | null }>) {
+      if (row.entity_id) ids.add(row.entity_id)
+    }
+  }
+
+  const byTask = await supabase.from('media')
+    .select('task_id')
+    .in('task_id', taskIds)
+
+  if (!byTask.error) {
+    for (const row of (byTask.data ?? []) as Array<{ task_id?: string | null }>) {
+      if (row.task_id) ids.add(row.task_id)
+    }
+  }
+
+  return ids
+}
+
+export async function getVisibleProfileRates(): Promise<ProfileRate[]> {
+  const { data, error } = await supabase.from('profile_rates')
+    .select('profile_id, hourly_rate')
+  if (error) return []
+  return (data as ProfileRate[]) ?? []
+}
+
+export async function getProjectAssignments(projectIds: string[]): Promise<ProjectAssignment[]> {
+  if (projectIds.length === 0) return []
+  const { data, error } = await supabase.from('project_assignments')
+    .select('id, project_id, profile_id')
+    .in('project_id', projectIds)
+  if (error) return []
+  return (data as ProjectAssignment[]) ?? []
+}
+
+export async function assignWorkerToProject(p: Profile, projectId: string, workerId: string) {
+  const { error } = await supabase.from('project_assignments')
+    .insert({ org_id: p.org_id, project_id: projectId, profile_id: workerId })
+  if (error) throw error
+  await logEvent(p, 'dispatch.assigned', 'project', projectId, { worker_id: workerId })
+}
+
+export async function unassignWorkerFromProject(p: Profile, projectId: string, workerId: string) {
+  const { error } = await supabase.from('project_assignments')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('profile_id', workerId)
+  if (error) throw error
+  await logEvent(p, 'dispatch.unassigned', 'project', projectId, { worker_id: workerId })
+}
+
+export async function sendDispatchPlan(p: Profile, project: Project, workers: Profile[], tasks: Task[], planDate: string, emptyTasksText: string) {
+  const taskText = tasks.length > 0 ? tasks.map((task) => `• ${task.title}`).join('\n') : emptyTasksText
+  const body = `${planDate}\n${project.name}\n${project.address ?? ''}\n\n${taskText}`.trim()
+  const rows = workers.map((worker) => ({
+    org_id: p.org_id,
+    sender_id: p.id,
+    recipient_id: worker.id,
+    priority: 'task',
+    body,
+  }))
+  if (rows.length === 0) return
+  const { error } = await supabase.from('messages').insert(rows)
+  if (error) throw error
+  await logEvent(p, 'dispatch.plan_sent', 'project', project.id, { workers: workers.length, tasks: tasks.length })
 }
 
 export async function markTaskDone(p: Profile, task: Task) {
@@ -86,6 +189,92 @@ export async function getRecentActivity(): Promise<EventRow[]> {
     .select('id, event_type, entity_type, actor_name, data, created_at')
     .order('created_at', { ascending: false }).limit(20)
   return (data as EventRow[]) ?? []
+}
+
+export async function getCurrentPayPeriod(): Promise<PayPeriod | null> {
+  const today = new Date().toISOString().slice(0, 10)
+  const { data, error } = await supabase.from('pay_periods')
+    .select('id, start_date, end_date, status')
+    .lte('start_date', today)
+    .gte('end_date', today)
+    .order('start_date', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null
+  return (data as PayPeriod | null) ?? null
+}
+
+export async function getMessages(profileId: string): Promise<MessageRow[]> {
+  const { data } = await supabase.from('messages')
+    .select('id, sender_id, recipient_id, priority, body, read_at, done_at, created_at')
+    .or(`sender_id.eq.${profileId},recipient_id.eq.${profileId}`)
+    .order('created_at', { ascending: false })
+  return (data as MessageRow[]) ?? []
+}
+
+export async function sendMessage(p: Profile, recipientId: string, body: string, priority: MessageRow['priority']) {
+  const { data, error } = await supabase.from('messages')
+    .insert({
+      org_id: p.org_id,
+      sender_id: p.id,
+      recipient_id: recipientId,
+      body,
+      priority,
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+  await logEvent(p, 'message.sent', 'message', data.id, { recipient_id: recipientId, priority })
+}
+
+export async function markMessageRead(p: Profile, messageId: string) {
+  const { error } = await supabase.from('messages')
+    .update({ read_at: new Date().toISOString() })
+    .eq('id', messageId)
+    .eq('recipient_id', p.id)
+  if (error) throw error
+  await logEvent(p, 'message.read', 'message', messageId)
+}
+
+export async function getCalendarEvents(startISO: string, endISO: string): Promise<CalendarEvent[]> {
+  const { data, error } = await supabase.from('calendar_events')
+    .select('id, org_id, title, event_type, starts_at, permit_number, inspection_status')
+    .gte('starts_at', startISO)
+    .lt('starts_at', endISO)
+    .order('starts_at')
+  if (error) return []
+  return (data as CalendarEvent[]) ?? []
+}
+
+export async function createCalendarEvent(p: Profile, input: {
+  title: string
+  event_type: CalendarEvent['event_type']
+  starts_at: string
+  permit_number: string | null
+  inspection_status: string | null
+}) {
+  const { data, error } = await supabase.from('calendar_events')
+    .insert({ org_id: p.org_id, created_by: p.id, ...input })
+    .select('id')
+    .single()
+  if (error) throw error
+  await logEvent(p, 'calendar.created', 'calendar_event', data.id, { title: input.title, event_type: input.event_type })
+}
+
+export async function getDeals(): Promise<Deal[]> {
+  const { data, error } = await supabase.from('deals')
+    .select('id, org_id, title, stage, expected_amount, next_action')
+    .order('expected_amount', { ascending: false })
+  if (error) return []
+  return (data as Deal[]) ?? []
+}
+
+export async function updateDealStage(p: Profile, deal: Deal, stage: DealStage) {
+  const { error } = await supabase.from('deals')
+    .update({ stage })
+    .eq('id', deal.id)
+  if (error) throw error
+  await logEvent(p, 'sales.stage_changed', 'deal', deal.id, { from: deal.stage, to: stage, title: deal.title })
 }
 
 export async function createWorker(name: string, pin: string, role: string): Promise<{ ok: boolean; error?: string }> {

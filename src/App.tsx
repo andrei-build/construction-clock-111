@@ -6,7 +6,12 @@ import Dashboard from './screens/Dashboard'
 import CheckIn from './screens/CheckIn'
 import Projects from './screens/Projects'
 import Team from './screens/Team'
+import Dispatch from './screens/Dispatch'
+import Calendar from './screens/Calendar'
+import Sales from './screens/Sales'
 import MyTime from './screens/MyTime'
+import Payroll from './screens/Payroll'
+import Messages from './screens/Messages'
 import More from './screens/More'
 import Nav from './components/Nav'
 
@@ -16,17 +21,25 @@ export default function App() {
   if (!profile) return <Login />
 
   const manager = isManagerRole(profile.role)
+  const salesAccess = manager || profile.role === 'sales'
   return (
-    <div className="app">
-      <Routes>
-        <Route path="/" element={manager ? <Dashboard /> : <CheckIn />} />
-        <Route path="/checkin" element={<CheckIn />} />
-        <Route path="/projects" element={<Projects />} />
-        <Route path="/team" element={manager ? <Team /> : <Navigate to="/" />} />
-        <Route path="/time" element={<MyTime />} />
-        <Route path="/more" element={<More />} />
-        <Route path="*" element={<Navigate to="/" />} />
-      </Routes>
+    <div className={`app ${manager ? 'manager-app' : ''}`}>
+      <main className="app-content">
+        <Routes>
+          <Route path="/" element={manager ? <Dashboard /> : <CheckIn />} />
+          <Route path="/checkin" element={<CheckIn />} />
+          <Route path="/projects" element={<Projects />} />
+          <Route path="/team" element={manager ? <Team /> : <Navigate to="/" />} />
+          <Route path="/dispatch" element={manager ? <Dispatch /> : <Navigate to="/" />} />
+          <Route path="/calendar" element={manager ? <Calendar /> : <Navigate to="/" />} />
+          <Route path="/sales" element={salesAccess ? <Sales /> : <Navigate to="/" />} />
+          <Route path="/time" element={<MyTime />} />
+          <Route path="/payroll" element={manager ? <Payroll /> : <Navigate to="/" />} />
+          <Route path="/messages" element={<Messages />} />
+          <Route path="/more" element={<More />} />
+          <Route path="*" element={<Navigate to="/" />} />
+        </Routes>
+      </main>
       <Nav manager={manager} />
     </div>
   )
