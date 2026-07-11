@@ -1,4 +1,4 @@
-# Construction Clock 🏗️ — v0.1 Foundation
+# Construction Clock 🏗️ — v0.2
 
 Операционная система строительной компании. Чистая переписка Check Time по карте 27 блоков.
 
