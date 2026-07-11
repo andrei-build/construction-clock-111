@@ -54,5 +54,15 @@ export interface EventRow {
   created_at: string
 }
 
+export interface CalendarEvent {
+  id: string
+  org_id: string
+  title: string
+  event_type: 'meeting' | 'inspection' | 'measure' | 'delivery' | 'other'
+  starts_at: string
+  permit_number: string | null
+  inspection_status: string | null
+}
+
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)
 export const isManagerWrite = (r: Role) => ['manager', 'admin', 'owner'].includes(r)
