@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType } from './types'
+import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType, ProjectAssignment } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -74,6 +74,47 @@ export async function getOpenTasks(): Promise<Task[]> {
     .select('id, org_id, project_id, task_type, title, status, priority, assigned_to')
     .in('status', ['open', 'in_progress']).order('priority', { ascending: false })
   return (data as Task[]) ?? []
+}
+
+export async function getProjectAssignments(projectIds: string[]): Promise<ProjectAssignment[]> {
+  if (projectIds.length === 0) return []
+  const { data, error } = await supabase.from('project_assignments')
+    .select('id, project_id, profile_id')
+    .in('project_id', projectIds)
+  if (error) return []
+  return (data as ProjectAssignment[]) ?? []
+}
+
+export async function assignWorkerToProject(p: Profile, projectId: string, workerId: string) {
+  const { error } = await supabase.from('project_assignments')
+    .insert({ org_id: p.org_id, project_id: projectId, profile_id: workerId })
+  if (error) throw error
+  await logEvent(p, 'dispatch.assigned', 'project', projectId, { worker_id: workerId })
+}
+
+export async function unassignWorkerFromProject(p: Profile, projectId: string, workerId: string) {
+  const { error } = await supabase.from('project_assignments')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('profile_id', workerId)
+  if (error) throw error
+  await logEvent(p, 'dispatch.unassigned', 'project', projectId, { worker_id: workerId })
+}
+
+export async function sendDispatchPlan(p: Profile, project: Project, workers: Profile[], tasks: Task[], planDate: string, emptyTasksText: string) {
+  const taskText = tasks.length > 0 ? tasks.map((task) => `• ${task.title}`).join('\n') : emptyTasksText
+  const body = `${planDate}\n${project.name}\n${project.address ?? ''}\n\n${taskText}`.trim()
+  const rows = workers.map((worker) => ({
+    org_id: p.org_id,
+    sender_id: p.id,
+    recipient_id: worker.id,
+    priority: 'task',
+    body,
+  }))
+  if (rows.length === 0) return
+  const { error } = await supabase.from('messages').insert(rows)
+  if (error) throw error
+  await logEvent(p, 'dispatch.plan_sent', 'project', project.id, { workers: workers.length, tasks: tasks.length })
 }
 
 export async function markTaskDone(p: Profile, task: Task) {

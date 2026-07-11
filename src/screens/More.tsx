@@ -1,9 +1,12 @@
+import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { isManagerRole } from '../lib/types'
 
 export default function More() {
   const { profile, logout } = useAuth()
   const { t, lang, setLang } = useI18n()
+  const manager = profile ? isManagerRole(profile.role) : false
 
   return (
     <div className="screen">
@@ -13,6 +16,13 @@ export default function More() {
         <div style={{ fontWeight: 700, fontSize: 18 }}>{profile?.name}</div>
         <span className="badge amber">{profile?.role}</span>
       </div>
+
+      {manager && (
+        <>
+          <h2>{t('work')}</h2>
+          <Link to="/dispatch" className="btn ghost small more-link">{t('dispatch')}</Link>
+        </>
+      )}
 
       <h2>{t('language')}</h2>
       <div className="tabs">
