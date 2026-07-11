@@ -85,5 +85,11 @@ export interface MessageRow {
   created_at: string
 }
 
+export interface ProjectAssignment {
+  id: string
+  project_id: string
+  profile_id: string
+}
+
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)
 export const isManagerWrite = (r: Role) => ['manager', 'admin', 'owner'].includes(r)

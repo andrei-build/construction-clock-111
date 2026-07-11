@@ -271,6 +271,44 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-size: 11px;
 }
 
+.dispatch-screen { max-width: 1120px; }
+.dispatch-date { margin: -6px 0 14px; }
+.dispatch-board {
+  display: grid;
+  gap: 12px;
+}
+.dispatch-card {
+  display: grid;
+  gap: 8px;
+}
+.dispatch-card h2 { margin-bottom: 0; }
+.dispatch-workers {
+  display: grid;
+  gap: 8px;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+.check-row input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.dispatch-task {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+
 @media (min-width: 720px) {
   .dashboard-tiles {
     grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -408,4 +446,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 
 @media (min-width: 760px) {
   .messages-layout { grid-template-columns: 280px minmax(0, 1fr); align-items: start; }
+  .dispatch-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1120px) {
+  .dispatch-board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

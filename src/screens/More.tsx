@@ -19,6 +19,8 @@ export default function More() {
 
       {manager && (
         <>
+          <h2>{t('work')}</h2>
+          <Link to="/dispatch" className="btn ghost small more-link">{t('dispatch')}</Link>
           <h2>{t('office')}</h2>
           <Link to="/payroll" className="btn ghost small more-link">{t('payroll')}</Link>
         </>
@@ -26,7 +28,6 @@ export default function More() {
 
       <h2>{t('communication')}</h2>
       <Link to="/messages" className="btn ghost small more-link">{t('messages')}</Link>
-
       <h2>{t('language')}</h2>
       <div className="tabs">
         {(['ru', 'en', 'es'] as const).map((l) => (

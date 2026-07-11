@@ -6,6 +6,7 @@ import Dashboard from './screens/Dashboard'
 import CheckIn from './screens/CheckIn'
 import Projects from './screens/Projects'
 import Team from './screens/Team'
+import Dispatch from './screens/Dispatch'
 import MyTime from './screens/MyTime'
 import Payroll from './screens/Payroll'
 import Messages from './screens/Messages'
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/checkin" element={<CheckIn />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/team" element={manager ? <Team /> : <Navigate to="/" />} />
+          <Route path="/dispatch" element={manager ? <Dispatch /> : <Navigate to="/" />} />
           <Route path="/time" element={<MyTime />} />
           <Route path="/payroll" element={manager ? <Payroll /> : <Navigate to="/" />} />
           <Route path="/messages" element={<Messages />} />
