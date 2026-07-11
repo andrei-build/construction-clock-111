@@ -24,6 +24,9 @@ export default function More() {
         </>
       )}
 
+      <h2>{t('communication')}</h2>
+      <Link to="/messages" className="btn ghost small more-link">{t('messages')}</Link>
+
       <h2>{t('language')}</h2>
       <div className="tabs">
         {(['ru', 'en', 'es'] as const).map((l) => (
