@@ -4,6 +4,12 @@ type Lang = 'ru' | 'en' | 'es'
 
 const dict: Record<string, Record<Lang, string>> = {
   appName: { ru: 'Construction Clock', en: 'Construction Clock', es: 'Construction Clock' },
+  desktop_nav: { ru: 'Навигация офиса', en: 'Office navigation', es: 'Navegación de oficina' },
+  desktop_workspace: { ru: 'Офис', en: 'Office', es: 'Oficina' },
+  nav_group_main: { ru: 'ОСНОВНОЕ', en: 'MAIN', es: 'PRINCIPAL' },
+  nav_group_work: { ru: 'РАБОТА', en: 'WORK', es: 'TRABAJO' },
+  nav_group_finance_clients: { ru: 'ФИНАНСЫ И КЛИЕНТЫ', en: 'FINANCE & CLIENTS', es: 'FINANZAS Y CLIENTES' },
+  nav_group_admin: { ru: 'АДМИН', en: 'ADMIN', es: 'ADMIN' },
   login_office: { ru: 'Офис / Владелец', en: 'Office / Owner', es: 'Oficina / Dueño' },
   login_worker: { ru: 'Работник (PIN)', en: 'Worker (PIN)', es: 'Trabajador (PIN)' },
   email: { ru: 'Почта', en: 'Email', es: 'Correo' },

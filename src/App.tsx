@@ -17,16 +17,18 @@ export default function App() {
 
   const manager = isManagerRole(profile.role)
   return (
-    <div className="app">
-      <Routes>
-        <Route path="/" element={manager ? <Dashboard /> : <CheckIn />} />
-        <Route path="/checkin" element={<CheckIn />} />
-        <Route path="/projects" element={<Projects />} />
-        <Route path="/team" element={manager ? <Team /> : <Navigate to="/" />} />
-        <Route path="/time" element={<MyTime />} />
-        <Route path="/more" element={<More />} />
-        <Route path="*" element={<Navigate to="/" />} />
-      </Routes>
+    <div className={`app ${manager ? 'manager-app' : ''}`}>
+      <main className="app-content">
+        <Routes>
+          <Route path="/" element={manager ? <Dashboard /> : <CheckIn />} />
+          <Route path="/checkin" element={<CheckIn />} />
+          <Route path="/projects" element={<Projects />} />
+          <Route path="/team" element={manager ? <Team /> : <Navigate to="/" />} />
+          <Route path="/time" element={<MyTime />} />
+          <Route path="/more" element={<More />} />
+          <Route path="*" element={<Navigate to="/" />} />
+        </Routes>
+      </main>
       <Nav manager={manager} />
     </div>
   )
