@@ -1,6 +1,6 @@
 export type Role =
   | 'owner' | 'admin' | 'manager' | 'supervisor'
-  | 'worker' | 'driver' | 'subcontractor' | 'client'
+  | 'worker' | 'driver' | 'subcontractor' | 'client' | 'sales'
 
 export interface Profile {
   id: string
@@ -99,6 +99,17 @@ export interface CalendarEvent {
   starts_at: string
   permit_number: string | null
   inspection_status: string | null
+}
+
+export type DealStage = 'lead' | 'contacted' | 'measured' | 'quoted' | 'negotiation' | 'signed' | 'handed_off' | 'lost'
+
+export interface Deal {
+  id: string
+  org_id: string
+  title: string
+  stage: DealStage
+  expected_amount: number | null
+  next_action: string | null
 }
 
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)

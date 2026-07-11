@@ -476,3 +476,34 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 @media (min-width: 760px) {
   .calendar-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.sales-screen { max-width: 1180px; }
+.sales-board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(240px, 78vw);
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+.sales-column {
+  min-width: 0;
+}
+.sales-column h2 { margin-top: 0; }
+.deal-card {
+  display: grid;
+  gap: 8px;
+}
+.deal-amount {
+  color: var(--green);
+  font-size: 18px;
+  font-weight: 800;
+}
+
+@media (min-width: 1020px) {
+  .sales-board {
+    grid-auto-flow: initial;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: visible;
+  }
+}

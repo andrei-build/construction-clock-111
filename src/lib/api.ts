@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, TimeEvent, Task, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent } from './types'
+import type { Profile, Project, ProjectProfit, TimeEvent, Task, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -259,6 +259,22 @@ export async function createCalendarEvent(p: Profile, input: {
     .single()
   if (error) throw error
   await logEvent(p, 'calendar.created', 'calendar_event', data.id, { title: input.title, event_type: input.event_type })
+}
+
+export async function getDeals(): Promise<Deal[]> {
+  const { data, error } = await supabase.from('deals')
+    .select('id, org_id, title, stage, expected_amount, next_action')
+    .order('expected_amount', { ascending: false })
+  if (error) return []
+  return (data as Deal[]) ?? []
+}
+
+export async function updateDealStage(p: Profile, deal: Deal, stage: DealStage) {
+  const { error } = await supabase.from('deals')
+    .update({ stage })
+    .eq('id', deal.id)
+  if (error) throw error
+  await logEvent(p, 'sales.stage_changed', 'deal', deal.id, { from: deal.stage, to: stage, title: deal.title })
 }
 
 export async function createWorker(name: string, pin: string, role: string): Promise<{ ok: boolean; error?: string }> {

@@ -7,6 +7,7 @@ export default function More() {
   const { profile, logout } = useAuth()
   const { t, lang, setLang } = useI18n()
   const manager = profile ? isManagerRole(profile.role) : false
+  const salesAccess = profile ? manager || profile.role === 'sales' : false
 
   return (
     <div className="screen">
@@ -29,6 +30,13 @@ export default function More() {
 
       <h2>{t('communication')}</h2>
       <Link to="/messages" className="btn ghost small more-link">{t('messages')}</Link>
+
+      {salesAccess && (
+        <>
+          <h2>{t('finance_clients')}</h2>
+          <Link to="/sales" className="btn ghost small more-link">{t('sales')}</Link>
+        </>
+      )}
       <h2>{t('language')}</h2>
       <div className="tabs">
         {(['ru', 'en', 'es'] as const).map((l) => (
