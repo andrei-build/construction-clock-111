@@ -21,6 +21,12 @@ export interface Project {
   gps_radius_m: number
 }
 
+export interface ProjectProfit {
+  project_id: string
+  margin_pct: number | null
+  profit_status: 'green' | 'amber' | 'red' | 'grey' | null
+}
+
 export type TimeEventType = 'check_in' | 'check_out' | 'break_start' | 'break_end' | 'adjustment'
 
 export interface TimeEvent {

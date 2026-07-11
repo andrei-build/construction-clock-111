@@ -166,6 +166,26 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .status-dot.red { background: var(--red); }
 .status-dot.blue { background: var(--blue); }
 
+.project-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.profit-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.04);
+  font-size: 12px;
+  font-weight: 800;
+}
+.profit-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.profit-badge.green { color: var(--green); }
+.profit-badge.amber { color: var(--accent); }
+.profit-badge.red { color: var(--red); }
+.profit-badge.green .profit-dot { background: var(--green); }
+.profit-badge.amber .profit-dot { background: var(--accent); }
+.profit-badge.red .profit-dot { background: var(--red); }
+
 @media (min-width: 720px) {
   .dashboard-tiles {
     grid-template-columns: repeat(5, minmax(0, 1fr));

@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, TimeEvent, Task, EventRow, TimeEventType, ProfileRate } from './types'
+import type { Profile, Project, ProjectProfit, TimeEvent, Task, EventRow, TimeEventType, ProfileRate } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -16,6 +16,13 @@ export async function getProjects(): Promise<Project[]> {
     .select('id, org_id, name, address, status, gps_radius_m')
     .eq('status', 'active').order('name')
   return (data as Project[]) ?? []
+}
+
+export async function getProjectProfit(): Promise<ProjectProfit[]> {
+  const { data, error } = await supabase.from('v_project_profit')
+    .select('project_id, margin_pct, profit_status')
+  if (error) return []
+  return (data as ProjectProfit[]) ?? []
 }
 
 export async function getTodayEvents(profileId?: string): Promise<TimeEvent[]> {
