@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, TimeEvent, Task, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow } from './types'
+import type { Profile, Project, ProjectProfit, TimeEvent, Task, TaskMedia, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -126,6 +126,17 @@ export async function getTaskPhotoIds(taskIds: string[]): Promise<Set<string>> {
     }
   }
 
+  const byEntityName = await supabase.from('media')
+    .select('entity_id')
+    .eq('entity', 'task')
+    .in('entity_id', taskIds)
+
+  if (!byEntityName.error) {
+    for (const row of (byEntityName.data ?? []) as Array<{ entity_id?: string | null }>) {
+      if (row.entity_id) ids.add(row.entity_id)
+    }
+  }
+
   const byTask = await supabase.from('media')
     .select('task_id')
     .in('task_id', taskIds)
@@ -137,6 +148,76 @@ export async function getTaskPhotoIds(taskIds: string[]): Promise<Set<string>> {
   }
 
   return ids
+}
+
+const TASK_MEDIA_BUCKET = 'task-media'
+
+function safeFileName(name: string) {
+  const fallback = 'photo.jpg'
+  return (name || fallback).replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || fallback
+}
+
+async function insertTaskMediaRow(p: Profile, task: Task, storagePath: string, file: File) {
+  const attempts: Array<Record<string, unknown>> = [
+    {
+      org_id: p.org_id,
+      entity_type: 'task',
+      entity_id: task.id,
+      task_id: task.id,
+      bucket: TASK_MEDIA_BUCKET,
+      storage_path: storagePath,
+      file_name: file.name,
+      mime_type: file.type || 'image/jpeg',
+      size_bytes: file.size,
+      uploaded_by: p.id,
+    },
+    {
+      org_id: p.org_id,
+      entity_type: 'task',
+      entity_id: task.id,
+      bucket: TASK_MEDIA_BUCKET,
+      storage_path: storagePath,
+      mime_type: file.type || 'image/jpeg',
+      uploaded_by: p.id,
+    },
+    {
+      org_id: p.org_id,
+      entity: 'task',
+      entity_id: task.id,
+      bucket: TASK_MEDIA_BUCKET,
+      storage_path: storagePath,
+      mime_type: file.type || 'image/jpeg',
+      uploaded_by: p.id,
+    },
+    {
+      entity_type: 'task',
+      entity_id: task.id,
+      storage_path: storagePath,
+    },
+  ]
+
+  let lastError: unknown = null
+  for (const row of attempts) {
+    const { data, error } = await supabase.from('media').insert(row).select('id').single()
+    if (!error && data?.id) return String(data.id)
+    lastError = error
+  }
+  throw lastError
+}
+
+export async function uploadTaskPhoto(p: Profile, task: Task, file: File): Promise<TaskMedia> {
+  const ext = safeFileName(file.name).split('.').pop() || 'jpg'
+  const storagePath = `${p.org_id}/tasks/${task.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`
+  const { error: uploadError } = await supabase.storage
+    .from(TASK_MEDIA_BUCKET)
+    .upload(storagePath, file, {
+      contentType: file.type || 'image/jpeg',
+      upsert: false,
+    })
+
+  if (uploadError) throw uploadError
+  const mediaId = await insertTaskMediaRow(p, task, storagePath, file)
+  return { id: mediaId, storage_path: storagePath, preview_url: URL.createObjectURL(file) }
 }
 
 export async function getVisibleProfileRates(): Promise<ProfileRate[]> {
@@ -217,9 +298,9 @@ export async function sendDispatchPlan(p: Profile, project: Project, workers: Pr
   await logEvent(p, 'dispatch.plan_sent', 'project', project.id, { workers: workers.length, tasks: tasks.length })
 }
 
-export async function markTaskDone(p: Profile, task: Task) {
+export async function markTaskDone(p: Profile, task: Task, mediaId: string | null = null) {
   await supabase.from('tasks').update({ status: 'done', done_at: new Date().toISOString(), done_by: p.id }).eq('id', task.id)
-  await logEvent(p, 'task.done', 'task', task.id, { title: task.title })
+  await logEvent(p, 'task.completed', 'task', task.id, { title: task.title, media_id: mediaId })
 }
 
 export async function getRecentActivity(): Promise<EventRow[]> {

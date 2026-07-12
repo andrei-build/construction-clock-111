@@ -53,6 +53,12 @@ export interface Task {
   done_at?: string | null
 }
 
+export interface TaskMedia {
+  id: string
+  preview_url: string
+  storage_path: string
+}
+
 export interface EventRow {
   id: number
   event_type: string
