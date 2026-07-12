@@ -99,7 +99,7 @@ export async function addTimeEvent(
     org_id: p.org_id, profile_id: p.id, project_id: projectId,
     event_type: type, event_time: eventTime,
     gps_status: geo.status, gps_accuracy_m: geo.accuracy, gps_source: 'browser',
-    metadata: { lat: geo.lat, lng: geo.lng, ...metadata },
+    metadata: { lat: geo.lat, lng: geo.lng, client_id: crypto.randomUUID(), ...metadata },
   }
   if (geo.lat !== null && geo.lng !== null) row.gps_point = `SRID=4326;POINT(${geo.lng} ${geo.lat})`
   const { error } = await supabase.from('time_events').insert(row)

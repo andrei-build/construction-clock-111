@@ -173,7 +173,13 @@ export async function flushQueuedTimeEvents(
 
   for (const row of rows) {
     if (typeof navigator !== 'undefined' && !navigator.onLine) break
-    await addTimeEvent(profile, row.type, row.projectId, row.geo, row.queuedAt, { offline_queued: true })
+    try {
+      await addTimeEvent(profile, row.type, row.projectId, row.geo, row.queuedAt, { offline_queued: true, client_id: row.id })
+    } catch (err) {
+      const code = (err as { code?: string } | null)?.code
+      if (code !== '23505') throw err
+      // 23505: this exact event already landed on a previous flush — safe to drop from queue
+    }
     await removeQueuedTimeEvent(row.id)
     sent += 1
     onSent?.(row)
