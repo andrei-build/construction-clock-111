@@ -1033,6 +1033,32 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 
 .dispatch-screen { max-width: 1120px; }
 .dispatch-date { margin: -6px 0 14px; }
+.dispatch-conflicts-card {
+  border-radius: var(--radius-panel);
+}
+.dispatch-conflicts-card h2 {
+  margin-top: 0;
+}
+.dispatch-conflicts-list {
+  display: grid;
+  gap: 8px;
+}
+.dispatch-conflict-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel2);
+}
+.dispatch-conflict-row.amber {
+  border-color: rgba(200,169,59,.32);
+}
+.dispatch-conflict-row.red {
+  border-color: rgba(239,102,116,.32);
+}
 .dispatch-board {
   display: grid;
   gap: 12px;
