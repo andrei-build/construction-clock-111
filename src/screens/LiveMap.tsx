@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useEntityDrawer } from '../components/EntityDrawer'
-import { getMapProjects, getTeam, getTodayEvents } from '../lib/api'
+import { getMapProjects, getTeam, getTodayEvents, getWorkerLastLocations, type WorkerLocation } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { shiftState } from '../lib/time'
 import type { Profile, Project, TimeEvent } from '../lib/types'
@@ -124,21 +124,24 @@ export default function LiveMap() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [locations, setLocations] = useState<Map<string, WorkerLocation>>(new Map())
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true)
     else setLoading(true)
     setError(false)
     try {
-      const [projectRows, people, todayEvents] = await Promise.all([
+      const [projectRows, people, todayEvents, locs] = await Promise.all([
         getMapProjects(),
         getTeam(),
         getTodayEvents(),
+        getWorkerLastLocations(),
       ])
       if (!mountedRef.current) return
       setProjects(projectRows)
       setTeam(people)
       setEvents(todayEvents)
+      setLocations(locs)
       setLastUpdated(new Date())
     } catch {
       if (mountedRef.current) setError(true)
@@ -194,7 +197,8 @@ export default function LiveMap() {
       const state = shiftState(workerEvents)
       if (state.status === 'off') continue
 
-      const gps = latestGps(workerEvents)
+      const loc = locations.get(worker.id)
+      const gps = loc ? { point: { lat: loc.lat, lng: loc.lng }, at: loc.server_time } : { point: null as MapPoint | null, at: null as string | null }
       const currentProject = state.projectId ? projectById.get(state.projectId) ?? null : null
       if (gps.point) {
         markers.push({
@@ -218,17 +222,17 @@ export default function LiveMap() {
       })
     }
     return markers
-  }, [eventsByWorker, projectById, team])
+  }, [eventsByWorker, projectById, team, locations])
 
   const hiddenNoDataWorkers = useMemo(() => {
     return team.reduce((count, worker) => {
       const workerEvents = eventsByWorker.get(worker.id) ?? []
       const state = shiftState(workerEvents)
-      if (state.status === 'off' || latestGps(workerEvents).point) return count
+      if (state.status === 'off' || locations.get(worker.id)) return count
       const currentProject = state.projectId ? projectById.get(state.projectId) ?? null : null
       return currentProject && projectPoint(currentProject) ? count : count + 1
     }, 0)
-  }, [eventsByWorker, projectById, team])
+  }, [eventsByWorker, projectById, team, locations])
 
   useEffect(() => {
     const map = mapRef.current

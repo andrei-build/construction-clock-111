@@ -18,6 +18,19 @@ export async function getProjects(): Promise<Project[]> {
   return (data as Project[]) ?? []
 }
 
+export type WorkerLocation = { profile_id: string; lat: number; lng: number; server_time: string }
+
+export async function getWorkerLastLocations(): Promise<Map<string, WorkerLocation>> {
+  const { data, error } = await supabase.from('v_worker_last_location')
+    .select('profile_id, lat, lng, server_time')
+  const out = new Map<string, WorkerLocation>()
+  if (error) return out
+  for (const row of (data ?? []) as WorkerLocation[]) {
+    if (row.profile_id && Number.isFinite(row.lat) && Number.isFinite(row.lng)) out.set(row.profile_id, row)
+  }
+  return out
+}
+
 export async function getMapProjects(): Promise<Project[]> {
   const { data, error } = await supabase.from('projects')
     .select('*')
