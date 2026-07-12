@@ -142,6 +142,23 @@ export interface Deal {
   next_action: string | null
 }
 
+export interface SuspiciousShift {
+  checkout_event_id: string
+  org_id: string
+  profile_id: string
+  name: string
+  project_id: string | null
+  project_name: string | null
+  started_at: string
+  ended_at: string
+  hours: number
+  too_long: boolean
+  gps_issue: boolean
+  time_gap_issue: boolean
+  review_status: 'approved' | null
+  reviewed_at: string | null
+}
+
 export type ReportKind = 'hours' | 'payroll' | 'expenses'
 export type ReportCell = string | number | boolean | null
 export type ReportRow = Record<string, ReportCell>
