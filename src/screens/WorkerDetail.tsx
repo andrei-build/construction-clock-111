@@ -8,16 +8,16 @@ import {
   getProjectAssignments,
   getProjects,
   getVisibleProfileRates,
+  getWorkerIntervals,
   getWorkerPinAccess,
   getWorkerProfile,
-  getWorkerTimeEvents,
   setWorkerPinEnabled,
   setWorkerRate,
   unassignWorkerFromProject,
   updateWorkerProfileSettings,
 } from '../lib/api'
-import { fmtClock, fmtHours, workedMs } from '../lib/time'
-import { isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type Role, type TimeEvent } from '../lib/types'
+import { fmtClock, fmtHours } from '../lib/time'
+import { isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type Role, type WorkInterval } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
 
 const ELEVEN_HOURS_MS = 11 * 60 * 60 * 1000
@@ -26,14 +26,11 @@ const roleOptions: Role[] = ['worker', 'driver', 'supervisor', 'manager', 'subco
 
 type BusyKey = 'settings' | 'access' | 'adjustment' | string | null
 
-interface ShiftRow {
+interface IntervalRow {
   key: string
-  projectId: string | null
+  interval: WorkInterval
   projectName: string
-  checkIn: TimeEvent
-  checkOut: TimeEvent | null
   hoursMs: number
-  gpsBad: boolean
 }
 
 function startOfDay(date: Date) {
@@ -63,17 +60,29 @@ function startOfNextMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth() + 1, 1)
 }
 
-function eventsInRange(events: TimeEvent[], start: Date, end: Date) {
-  const startMs = start.getTime()
-  const endMs = end.getTime()
-  return events.filter((event) => {
-    const ms = new Date(event.event_time).getTime()
-    return ms >= startMs && ms < endMs
-  })
+function intervalEnd(interval: WorkInterval, now: number) {
+  return interval.end_at ? new Date(interval.end_at).getTime() : now
 }
 
-function rangeWorkedMs(events: TimeEvent[], start: Date, end: Date, now: number) {
-  return workedMs(eventsInRange(events, start, end), Math.min(now, end.getTime()))
+// Часы интервалов, попавших в окно [start, end); открытые интервалы считаются до "сейчас"
+function rangeIntervalMs(intervals: WorkInterval[], start: Date, end: Date, now: number) {
+  const rangeStart = start.getTime()
+  const rangeEnd = end.getTime()
+  let total = 0
+  for (const interval of intervals) {
+    const clipStart = Math.max(new Date(interval.start_at).getTime(), rangeStart)
+    const clipEnd = Math.min(intervalEnd(interval, now), rangeEnd)
+    if (clipEnd > clipStart) total += clipEnd - clipStart
+  }
+  return total
+}
+
+function totalIntervalMs(intervals: WorkInterval[], now: number) {
+  let total = 0
+  for (const interval of intervals) {
+    total += Math.max(0, intervalEnd(interval, now) - new Date(interval.start_at).getTime())
+  }
+  return total
 }
 
 function toDatetimeLocal(iso: string) {
@@ -90,43 +99,15 @@ function dateLabel(iso: string) {
   return new Date(iso).toLocaleDateString()
 }
 
-function shiftRows(events: TimeEvent[], projects: Project[], now: number): ShiftRow[] {
+// Строки смен строятся из v_work_intervals (корректировки менеджера уже применены), новейшие сверху
+function intervalRows(intervals: WorkInterval[], projects: Project[], now: number): IntervalRow[] {
   const projectNames = new Map(projects.map((project) => [project.id, project.name]))
-  const rows: ShiftRow[] = []
-  let active: { start: TimeEvent; events: TimeEvent[] } | null = null
-  const sorted = events
-    .filter((event) => event.event_type !== 'adjustment')
-    .sort((a, b) => a.event_time.localeCompare(b.event_time))
-
-  const closeActive = (checkOut: TimeEvent | null) => {
-    if (!active) return
-    const rowEvents = checkOut ? [...active.events, checkOut] : active.events
-    const endMs = checkOut ? new Date(checkOut.event_time).getTime() : now
-    rows.push({
-      key: `${active.start.id}-${checkOut?.id ?? 'open'}`,
-      projectId: active.start.project_id,
-      projectName: active.start.project_id ? projectNames.get(active.start.project_id) ?? active.start.project_id : '—',
-      checkIn: active.start,
-      checkOut,
-      hoursMs: workedMs(rowEvents, endMs),
-      gpsBad: rowEvents.some((event) => event.gps_status !== 'good'),
-    })
-    active = null
-  }
-
-  for (const event of sorted) {
-    if (event.event_type === 'check_in') {
-      if (active) closeActive(null)
-      active = { start: event, events: [event] }
-    } else if (active && event.event_type === 'check_out') {
-      closeActive(event)
-    } else if (active && (event.event_type === 'break_start' || event.event_type === 'break_end')) {
-      active.events.push(event)
-    }
-  }
-
-  if (active) closeActive(null)
-  return rows.sort((a, b) => b.checkIn.event_time.localeCompare(a.checkIn.event_time))
+  return intervals.map((interval) => ({
+    key: `${interval.start_event_id}-${interval.end_event_id ?? 'open'}`,
+    interval,
+    projectName: interval.project_id ? projectNames.get(interval.project_id) ?? interval.project_id : '—',
+    hoursMs: Math.max(0, intervalEnd(interval, now) - new Date(interval.start_at).getTime()),
+  }))
 }
 
 export default function WorkerDetail() {
@@ -135,7 +116,7 @@ export default function WorkerDetail() {
   const { t } = useI18n()
   const [worker, setWorker] = useState<Profile | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
-  const [events, setEvents] = useState<TimeEvent[]>([])
+  const [intervals, setIntervals] = useState<WorkInterval[]>([])
   const [rates, setRates] = useState<ProfileRate[]>([])
   const [assignments, setAssignments] = useState<ProjectAssignment[]>([])
   const [loading, setLoading] = useState(true)
@@ -165,17 +146,17 @@ export default function WorkerDetail() {
     setLoading(true)
     setError(false)
     try {
-      const [workerRow, projectRows, eventRows, rateRows, pinAccess] = await Promise.all([
+      const [workerRow, projectRows, intervalRowsData, rateRows, pinAccess] = await Promise.all([
         getWorkerProfile(id),
         getProjects(),
-        getWorkerTimeEvents(id),
+        getWorkerIntervals(id),
         getVisibleProfileRates(),
         getWorkerPinAccess(id),
       ])
       const assignmentRows = await getProjectAssignments(projectRows.map((project) => project.id))
       setWorker(workerRow)
       setProjects(projectRows)
-      setEvents(eventRows)
+      setIntervals(intervalRowsData)
       setRates(rateRows)
       setAssignments(assignmentRows)
       setPinSupported(pinAccess.supported)
@@ -204,31 +185,30 @@ export default function WorkerDetail() {
 
   if (!canView) return <Navigate to="/" />
 
-  const timeEvents = events.filter((event) => event.event_type !== 'adjustment')
   const today = startOfDay(new Date(now))
   const tomorrow = addDays(today, 1)
   const yesterday = addDays(today, -1)
   const weekStart = startOfWeek(new Date(now))
   const lastWeekStart = addDays(weekStart, -7)
   const monthStart = startOfMonth(new Date(now))
-  const shifts = shiftRows(events, projects, now)
+  const shifts = intervalRows(intervals, projects, now)
   const latestShifts = shifts.slice(0, 10)
   const ratesVisible = rates.length > 0
   const assignmentSet = new Set(assignments.filter((row) => row.profile_id === worker?.id).map((row) => row.project_id))
 
   const tiles = [
-    { key: 'today', label: t('today'), value: rangeWorkedMs(timeEvents, today, tomorrow, now) },
-    { key: 'yesterday', label: t('yesterday'), value: rangeWorkedMs(timeEvents, yesterday, today, now) },
-    { key: 'current_week', label: t('current_week'), value: rangeWorkedMs(timeEvents, weekStart, addDays(weekStart, 7), now) },
-    { key: 'last_week', label: t('last_week'), value: rangeWorkedMs(timeEvents, lastWeekStart, weekStart, now) },
-    { key: 'month', label: t('month'), value: rangeWorkedMs(timeEvents, monthStart, startOfNextMonth(monthStart), now) },
-    { key: 'all_time', label: t('all_time'), value: workedMs(timeEvents, now) },
+    { key: 'today', label: t('today'), value: rangeIntervalMs(intervals, today, tomorrow, now) },
+    { key: 'yesterday', label: t('yesterday'), value: rangeIntervalMs(intervals, yesterday, today, now) },
+    { key: 'current_week', label: t('current_week'), value: rangeIntervalMs(intervals, weekStart, addDays(weekStart, 7), now) },
+    { key: 'last_week', label: t('last_week'), value: rangeIntervalMs(intervals, lastWeekStart, weekStart, now) },
+    { key: 'month', label: t('month'), value: rangeIntervalMs(intervals, monthStart, startOfNextMonth(monthStart), now) },
+    { key: 'all_time', label: t('all_time'), value: totalIntervalMs(intervals, now) },
   ]
 
   const dailyRows = Array.from({ length: 7 }, (_, index) => {
     const start = addDays(today, -index)
     const end = addDays(start, 1)
-    const hoursMs = rangeWorkedMs(timeEvents, start, end, now)
+    const hoursMs = rangeIntervalMs(intervals, start, end, now)
     return { key: start.toISOString(), label: start.toLocaleDateString(), hoursMs }
   })
 
@@ -298,15 +278,15 @@ export default function WorkerDetail() {
     }
   }
 
-  const openAdjustment = (row: ShiftRow) => {
+  const openAdjustment = (row: IntervalRow) => {
     setEditingKey(row.key)
-    setAdjustIn(toDatetimeLocal(row.checkIn.event_time))
-    setAdjustOut(toDatetimeLocal(row.checkOut?.event_time ?? new Date(now).toISOString()))
+    setAdjustIn(toDatetimeLocal(row.interval.start_at))
+    setAdjustOut(toDatetimeLocal(row.interval.end_at ?? new Date(now).toISOString()))
     setAdjustReason('')
     setMsg(null)
   }
 
-  const submitAdjustment = async (e: React.FormEvent, row: ShiftRow) => {
+  const submitAdjustment = async (e: React.FormEvent, row: IntervalRow) => {
     e.preventDefault()
     if (!profile || busy) return
     if (!adjustReason.trim()) {
@@ -323,16 +303,17 @@ export default function WorkerDetail() {
     setMsg(null)
     try {
       await createTimeAdjustment(profile, {
-        workerId: row.checkIn.profile_id,
-        projectId: row.projectId,
-        originalEventId: row.checkIn.id,
+        workerId: row.interval.profile_id,
+        projectId: row.interval.project_id,
+        originalEventId: row.interval.end_event_id ?? row.interval.start_event_id,
         adjustedCheckIn,
         adjustedCheckOut,
         reason: adjustReason.trim(),
       })
       setMsg('adjustment_saved')
       setEditingKey(null)
-      await load()
+      // Перечитываем интервалы, чтобы часы обновились сразу с учётом корректировки
+      if (id) setIntervals(await getWorkerIntervals(id))
     } catch {
       setMsg('adjustment_failed')
     } finally {
@@ -445,16 +426,18 @@ export default function WorkerDetail() {
                 <div className="card worker-shift-card" key={row.key}>
                   <div className="worker-shift-main">
                     <div>
-                      <div className="item-title">{dateLabel(row.checkIn.event_time)}</div>
+                      <div className="item-title">{dateLabel(row.interval.start_at)}</div>
                       <div className="muted">{row.projectName}</div>
                     </div>
                     <div className="worker-shift-times">
-                      <span>{fmtClock(row.checkIn.event_time)}</span>
+                      <span>{fmtClock(row.interval.start_at)}</span>
                       <span>→</span>
-                      <span>{row.checkOut ? fmtClock(row.checkOut.event_time) : '—'}</span>
+                      <span>{row.interval.end_at ? fmtClock(row.interval.end_at) : '—'}</span>
                     </div>
                     <span className="badge blue">{fmtHours(row.hoursMs)} {t('h')}</span>
-                    {row.gpsBad && <span className="badge amber">{t('no_gps')}</span>}
+                    {row.interval.was_adjusted && (
+                      <span className="badge amber" title={row.interval.adjust_reason ?? undefined}>{t('adjusted')}</span>
+                    )}
                     <button className="btn ghost small" disabled={busy !== null} onClick={() => openAdjustment(row)}>
                       {t('edit')}
                     </button>

@@ -218,6 +218,7 @@ const dict: Record<string, Record<Lang, string>> = {
   over_11h: { ru: 'СВЕРХ 11Ч', en: 'OVER 11H', es: 'MÁS DE 11H' },
   latest_shifts: { ru: 'Последние смены', en: 'Latest shifts', es: 'Últimos turnos' },
   no_gps: { ru: 'Без GPS', en: 'No GPS', es: 'Sin GPS' },
+  adjusted: { ru: 'СКОРРЕКТИРОВАНО', en: 'ADJUSTED', es: 'AJUSTADO' },
   edit: { ru: 'Редактировать', en: 'Edit', es: 'Editar' },
   new_check_in: { ru: 'Новый приход', en: 'New check-in', es: 'Nueva entrada' },
   new_check_out: { ru: 'Новый уход', en: 'New check-out', es: 'Nueva salida' },

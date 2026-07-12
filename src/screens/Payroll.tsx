@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getCurrentPayPeriod, getTeam, getTimeEventsRange, getVisibleProfileRates, logEvent } from '../lib/api'
-import type { PayPeriod, Profile, ProfileRate, TimeEvent } from '../lib/types'
+import { getCurrentPayPeriod, getIntervalsBetween, getTeam, getVisibleProfileRates, logEvent } from '../lib/api'
+import type { PayPeriod, Profile, ProfileRate, WorkInterval } from '../lib/types'
 
 interface PeriodWindow {
   id: string | null
@@ -55,38 +55,17 @@ function weekKey(ms: number) {
   return startOfWeek(new Date(ms)).toISOString()
 }
 
-function addInterval(weeks: Map<string, number>, startMs: number, endMs: number, period: PeriodWindow) {
-  let cursor = Math.max(startMs, period.start.getTime())
-  const end = Math.min(endMs, period.end.getTime())
-  while (cursor < end) {
-    const nextWeek = startOfWeek(new Date(cursor))
-    nextWeek.setDate(nextWeek.getDate() + 7)
-    const segmentEnd = Math.min(end, nextWeek.getTime())
-    weeks.set(weekKey(cursor), (weeks.get(weekKey(cursor)) ?? 0) + (segmentEnd - cursor) / 3600000)
-    cursor = segmentEnd
-  }
-}
-
-function weeklyHours(events: TimeEvent[], period: PeriodWindow, now = Date.now()) {
+// Часы по неделям из v_work_intervals (корректировки уже применены); неделя — по start_at интервала
+function weeklyHours(intervals: WorkInterval[], period: PeriodWindow, now = Date.now()) {
   const weeks = new Map<string, number>()
-  const sorted = [...events].sort((a, b) => a.event_time.localeCompare(b.event_time))
-  let activeStart: number | null = null
-
-  for (const event of sorted) {
-    const t = new Date(event.event_time).getTime()
-    if (event.event_type === 'check_in') activeStart = t
-    else if (event.event_type === 'break_start' && activeStart !== null) {
-      addInterval(weeks, activeStart, t, period)
-      activeStart = null
-    } else if (event.event_type === 'break_end') {
-      activeStart = t
-    } else if (event.event_type === 'check_out' && activeStart !== null) {
-      addInterval(weeks, activeStart, t, period)
-      activeStart = null
-    }
+  for (const interval of intervals) {
+    const startMs = new Date(interval.start_at).getTime()
+    if (startMs < period.start.getTime() || startMs >= period.end.getTime()) continue
+    const endMs = interval.end_at ? new Date(interval.end_at).getTime() : Math.min(now, period.end.getTime())
+    const hours = Math.max(0, endMs - startMs) / 3600000
+    const key = weekKey(startMs)
+    weeks.set(key, (weeks.get(key) ?? 0) + hours)
   }
-
-  if (activeStart !== null) addInterval(weeks, activeStart, Math.min(now, period.end.getTime()), period)
   return weeks
 }
 
@@ -103,7 +82,7 @@ export default function Payroll() {
   const { t } = useI18n()
   const [period, setPeriod] = useState<PeriodWindow>(() => fallbackPeriod())
   const [team, setTeam] = useState<Profile[]>([])
-  const [events, setEvents] = useState<TimeEvent[]>([])
+  const [intervals, setIntervals] = useState<WorkInterval[]>([])
   const [rates, setRates] = useState<ProfileRate[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -116,15 +95,15 @@ export default function Payroll() {
       try {
         const dbPeriod = await getCurrentPayPeriod()
         const currentPeriod = periodFromDb(dbPeriod)
-        const [workers, timeEvents, visibleRates] = await Promise.all([
+        const [workers, intervalRows, visibleRates] = await Promise.all([
           getTeam(),
-          getTimeEventsRange(currentPeriod.start.toISOString(), currentPeriod.end.toISOString()),
+          getIntervalsBetween(currentPeriod.start.toISOString(), currentPeriod.end.toISOString()),
           getVisibleProfileRates(),
         ])
         if (!mounted) return
         setPeriod(currentPeriod)
         setTeam(workers)
-        setEvents(timeEvents)
+        setIntervals(intervalRows)
         setRates(visibleRates)
       } catch {
         if (mounted) setError(true)
@@ -137,10 +116,10 @@ export default function Payroll() {
   }, [profile?.id])
 
   const rows = useMemo<PayrollRow[]>(() => {
-    const byWorker = new Map<string, TimeEvent[]>()
-    for (const event of events) {
-      if (!byWorker.has(event.profile_id)) byWorker.set(event.profile_id, [])
-      byWorker.get(event.profile_id)!.push(event)
+    const byWorker = new Map<string, WorkInterval[]>()
+    for (const interval of intervals) {
+      if (!byWorker.has(interval.profile_id)) byWorker.set(interval.profile_id, [])
+      byWorker.get(interval.profile_id)!.push(interval)
     }
 
     const rateByWorker = new Map(rates.map((r) => [r.profile_id, r.hourly_rate === null ? null : Number(r.hourly_rate)]))
@@ -160,7 +139,7 @@ export default function Payroll() {
         return { worker, regularHours, overtimeHours, rate, total }
       })
       .sort((a, b) => a.worker.name.localeCompare(b.worker.name))
-  }, [events, period, rates, team])
+  }, [intervals, period, rates, team])
 
   const totals = rows.reduce((acc, row) => ({
     regular: acc.regular + row.regularHours,

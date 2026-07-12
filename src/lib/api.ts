@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, Task, TaskMedia, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -72,6 +72,27 @@ export async function getTimeEventsRange(startISO: string, endISO: string): Prom
     .lt('event_time', endISO)
     .order('event_time')
   return (data as TimeEvent[]) ?? []
+}
+
+// Отработанные интервалы одного работника — с учётом корректировок (v_work_intervals)
+export async function getWorkerIntervals(profileId: string): Promise<WorkInterval[]> {
+  const { data, error } = await supabase.from('v_work_intervals')
+    .select('*')
+    .eq('profile_id', profileId)
+    .order('start_at', { ascending: false })
+  if (error) throw error
+  return (data as WorkInterval[]) ?? []
+}
+
+// Отработанные интервалы всех работников за период — для зарплаты (v_work_intervals)
+export async function getIntervalsBetween(fromISO: string, toISO: string): Promise<WorkInterval[]> {
+  const { data, error } = await supabase.from('v_work_intervals')
+    .select('*')
+    .gte('start_at', fromISO)
+    .lt('start_at', toISO)
+    .order('start_at', { ascending: false })
+  if (error) throw error
+  return (data as WorkInterval[]) ?? []
 }
 
 export async function getProjectShiftEvents(projectId: string, sinceISO: string): Promise<TimeEvent[]> {

@@ -57,6 +57,19 @@ export interface TimeEvent {
   metadata: Record<string, unknown>
 }
 
+// Единый источник правды по отработанным интервалам — с учётом корректировок менеджера (v_work_intervals)
+export interface WorkInterval {
+  org_id: string
+  profile_id: string
+  project_id: string | null
+  start_event_id: string
+  end_event_id: string | null
+  start_at: string
+  end_at: string | null
+  was_adjusted: boolean
+  adjust_reason: string | null
+}
+
 export interface Task {
   id: string
   org_id: string
