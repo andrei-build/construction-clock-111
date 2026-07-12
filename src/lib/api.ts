@@ -13,7 +13,7 @@ export async function logEvent(p: Profile, eventType: string, entityType: string
 
 export async function getProjects(): Promise<Project[]> {
   const { data } = await supabase.from('projects')
-    .select('id, org_id, name, address, status, gps_radius_m')
+    .select('*')
     .eq('status', 'active').order('name')
   return (data as Project[]) ?? []
 }
@@ -49,7 +49,7 @@ export async function getProjectProfit(): Promise<ProjectProfit[]> {
 
 export async function getTodayEvents(profileId?: string): Promise<TimeEvent[]> {
   let q = supabase.from('time_events')
-    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, metadata')
+    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, metadata')
     .gte('event_time', todayStartISO()).order('event_time')
   if (profileId) q = q.eq('profile_id', profileId)
   const { data } = await q
@@ -58,17 +58,28 @@ export async function getTodayEvents(profileId?: string): Promise<TimeEvent[]> {
 
 export async function getEventsSince(sinceISO: string, profileId: string): Promise<TimeEvent[]> {
   const { data } = await supabase.from('time_events')
-    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, metadata')
+    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, metadata')
     .eq('profile_id', profileId).gte('event_time', sinceISO).order('event_time')
   return (data as TimeEvent[]) ?? []
 }
 
 export async function getTimeEventsRange(startISO: string, endISO: string): Promise<TimeEvent[]> {
   const { data } = await supabase.from('time_events')
-    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, metadata')
+    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, metadata')
     .gte('event_time', startISO)
     .lt('event_time', endISO)
     .order('event_time')
+  return (data as TimeEvent[]) ?? []
+}
+
+export async function getProjectShiftEvents(projectId: string, sinceISO: string): Promise<TimeEvent[]> {
+  const { data, error } = await supabase.from('time_events')
+    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, metadata')
+    .eq('project_id', projectId)
+    .gte('event_time', sinceISO)
+    .in('event_type', ['check_in', 'check_out', 'break_start', 'break_end'])
+    .order('event_time')
+  if (error) return []
   return (data as TimeEvent[]) ?? []
 }
 
@@ -102,9 +113,10 @@ export async function addTimeEvent(
     metadata: { lat: geo.lat, lng: geo.lng, client_id: crypto.randomUUID(), ...metadata },
   }
   if (geo.lat !== null && geo.lng !== null) row.gps_point = `SRID=4326;POINT(${geo.lng} ${geo.lat})`
-  const { error } = await supabase.from('time_events').insert(row)
+  const { data, error } = await supabase.from('time_events').insert(row).select('id').single()
   if (error) throw error
-  await logEvent(p, `time.${type}`, 'project', projectId, { gps: geo.status })
+  await logEvent(p, `time.${type}`, 'project', projectId, { gps: geo.status, time_event_id: data.id })
+  return String(data.id)
 }
 
 export async function startProjectTravel(p: Profile, project: Project, startedAt: string) {
@@ -197,6 +209,46 @@ async function mediaUrl(storagePath: string) {
   const signed = await supabase.storage.from(TASK_MEDIA_BUCKET).createSignedUrl(storagePath, 3600)
   if (!signed.error && signed.data?.signedUrl) return signed.data.signedUrl
   return supabase.storage.from(TASK_MEDIA_BUCKET).getPublicUrl(storagePath).data.publicUrl
+}
+
+export async function uploadCheckoutVideo(p: Profile, eventId: string, file: File) {
+  const storagePath = `videos/${p.org_id}/${eventId}.mp4`
+  const { error: uploadError } = await supabase.storage
+    .from(TASK_MEDIA_BUCKET)
+    .upload(storagePath, file, {
+      contentType: file.type || 'video/mp4',
+      upsert: true,
+    })
+  if (uploadError) throw uploadError
+
+  const { error } = await supabase.from('time_events')
+    .update({ video_status: 'uploaded', video_path: storagePath })
+    .eq('id', eventId)
+  if (error) throw error
+  await logEvent(p, 'time.checkout_video_uploaded', 'time_event', eventId, { video_path: storagePath })
+  return storagePath
+}
+
+export async function uploadSafetySignature(p: Profile, projectId: string, eventId: string, signature: Blob) {
+  const storagePath = `signatures/${p.org_id}/${eventId}.png`
+  const { error: uploadError } = await supabase.storage
+    .from(TASK_MEDIA_BUCKET)
+    .upload(storagePath, signature, {
+      contentType: 'image/png',
+      upsert: true,
+    })
+  if (uploadError) throw uploadError
+
+  const { error } = await supabase.from('safety_acknowledgements').insert({
+    worker_id: p.id,
+    project_id: projectId,
+    time_event_id: eventId,
+    signature_path: storagePath,
+    doc_version: 'v1',
+  })
+  if (error) throw error
+  await logEvent(p, 'safety.acknowledged', 'project', projectId, { time_event_id: eventId, signature_path: storagePath })
+  return storagePath
 }
 
 export async function getVisibleProfileRates(): Promise<ProfileRate[]> {

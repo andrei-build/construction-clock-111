@@ -19,6 +19,7 @@ export interface Project {
   address: string | null
   status: 'planned' | 'active' | 'paused' | 'completed' | 'archived'
   gps_radius_m: number
+  require_checkout_video?: boolean | null
   lat?: number | string | null
   lng?: number | string | null
   latitude?: number | string | null
@@ -47,6 +48,8 @@ export interface TimeEvent {
   event_type: TimeEventType
   event_time: string
   gps_status: string | null
+  video_status?: string | null
+  video_path?: string | null
   metadata: Record<string, unknown>
 }
 

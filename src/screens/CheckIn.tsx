@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getProjects, getTodayEvents, addTimeEvent, captureGPS, startProjectTravel } from '../lib/api'
+import {
+  getProjects,
+  getTodayEvents,
+  addTimeEvent,
+  captureGPS,
+  startProjectTravel,
+  uploadCheckoutVideo,
+  uploadSafetySignature,
+} from '../lib/api'
 import {
   flushQueuedTimeEvents,
   getQueuedTimeEvents,
@@ -28,8 +36,17 @@ function isNetworkError(error: unknown) {
 
 function messageClass(msg: string) {
   if (msg === 'error') return 'error-msg'
-  if (msg === 'offline_saved') return 'warn-msg'
+  if (['offline_saved', 'checkout_video_required', 'checkout_video_online_required', 'safety_signature_required', 'safety_online_required'].includes(msg)) return 'warn-msg'
   return 'ok-msg'
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob)
+      else reject(new Error('signature_empty'))
+    }, 'image/png')
+  })
 }
 
 export default function CheckIn() {
@@ -44,6 +61,11 @@ export default function CheckIn() {
   const [travel, setTravel] = useState<TravelState | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [checkoutVideo, setCheckoutVideo] = useState<File | null>(null)
+  const [safetyProjectId, setSafetyProjectId] = useState<string | null>(null)
+  const [signatureTouched, setSignatureTouched] = useState(false)
+  const drawingRef = useRef(false)
+  const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const syncRef = useRef(false)
   const [, tick] = useState(0)
 
@@ -96,10 +118,47 @@ export default function CheckIn() {
   const state = useMemo(() => shiftState(visibleEvents), [visibleEvents])
   const ms = useMemo(() => workedMs(visibleEvents), [visibleEvents, Date.now()])
   const selectedProject = useMemo(() => projects.find((p) => p.id === selected) ?? null, [projects, selected])
+  const currentProject = useMemo(() => projects.find((p) => p.id === state.projectId) ?? null, [projects, state.projectId])
+  const safetyProject = useMemo(() => projects.find((p) => p.id === safetyProjectId) ?? null, [projects, safetyProjectId])
+  const checkoutRequiresVideo = Boolean(currentProject?.require_checkout_video)
+  const selectedNeedsSafety = Boolean(selected && !visibleEvents.some((event) =>
+    event.event_type === 'check_in' && event.project_id === selected
+  ))
+
+  const completeOnlineTimeEvent = async (
+    type: 'check_in' | 'check_out' | 'break_start' | 'break_end',
+    projectId: string | null,
+    geo: Awaited<ReturnType<typeof captureGPS>>,
+    options: { checkoutVideo?: File | null; signatureBlob?: Blob | null } = {},
+  ) => {
+    if (!profile) throw new Error('missing_profile')
+    const eventId = await addTimeEvent(profile, type, projectId, geo)
+    if (options.checkoutVideo) {
+      setMsg('checkout_video_uploading')
+      await uploadCheckoutVideo(profile, eventId, options.checkoutVideo)
+    }
+    if (options.signatureBlob && projectId) {
+      setMsg('safety_uploading')
+      await uploadSafetySignature(profile, projectId, eventId, options.signatureBlob)
+    }
+    return eventId
+  }
 
   const act = async (type: 'check_in' | 'check_out' | 'break_start' | 'break_end') => {
     if (!profile || busy) return
     if (type === 'check_in' && !selected) return
+    if (type === 'check_in' && selectedNeedsSafety) {
+      setSafetyProjectId(selected)
+      setSignatureTouched(false)
+      setMsg(null)
+      return
+    }
+    const requiresVideo = type === 'check_out' && checkoutRequiresVideo
+    const videoFile = requiresVideo ? checkoutVideo : null
+    if (requiresVideo && !videoFile) {
+      setMsg('checkout_video_required')
+      return
+    }
     setBusy(true)
     setMsg('gps_wait')
     const geo = await captureGPS()
@@ -114,16 +173,108 @@ export default function CheckIn() {
 
     try {
       if (!isOnline()) {
+        if (requiresVideo) {
+          setMsg('checkout_video_online_required')
+          return
+        }
         await saveOffline()
         return
       }
-      await addTimeEvent(profile, type, projectId, geo)
+      await completeOnlineTimeEvent(type, projectId, geo, { checkoutVideo: videoFile })
       await load()
       if (type === 'check_in') setTravel(null)
+      if (type === 'check_out') setCheckoutVideo(null)
       setMsg('saved')
       setTimeout(() => setMsg(null), 2500)
     } catch (error) {
-      if (isNetworkError(error)) await saveOffline()
+      if (isNetworkError(error) && !requiresVideo) await saveOffline()
+      else if (requiresVideo && isNetworkError(error)) setMsg('checkout_video_online_required')
+      else setMsg('error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const signaturePoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.height,
+    }
+  }
+
+  const beginSignature = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current
+    const point = signaturePoint(event)
+    if (!canvas || !point) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    drawingRef.current = true
+    setSignatureTouched(true)
+    ctx.lineWidth = 4
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = '#edf6fb'
+    ctx.beginPath()
+    ctx.moveTo(point.x, point.y)
+  }
+
+  const drawSignature = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!drawingRef.current) return
+    const canvas = signatureCanvasRef.current
+    const point = signaturePoint(event)
+    if (!canvas || !point) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.lineTo(point.x, point.y)
+    ctx.stroke()
+  }
+
+  const endSignature = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    drawingRef.current = false
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  const clearSignature = () => {
+    const canvas = signatureCanvasRef.current
+    const ctx = canvas?.getContext('2d')
+    if (!canvas || !ctx) return
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    setSignatureTouched(false)
+  }
+
+  const submitSafetyCheckIn = async () => {
+    if (!profile || !safetyProjectId || busy) return
+    const canvas = signatureCanvasRef.current
+    if (!canvas || !signatureTouched) {
+      setMsg('safety_signature_required')
+      return
+    }
+    if (!isOnline()) {
+      setMsg('safety_online_required')
+      return
+    }
+
+    setBusy(true)
+    try {
+      const signatureBlob = await canvasToBlob(canvas)
+      setMsg('gps_wait')
+      const geo = await captureGPS()
+      setMsg(geo.status === 'good' ? 'gps_ok' : 'gps_fail')
+      await completeOnlineTimeEvent('check_in', safetyProjectId, geo, { signatureBlob })
+      await load()
+      setTravel(null)
+      setSafetyProjectId(null)
+      setSignatureTouched(false)
+      setMsg('safety_saved')
+      setTimeout(() => setMsg(null), 2500)
+    } catch (error) {
+      if (isNetworkError(error)) setMsg('safety_online_required')
       else setMsg('error')
     } finally {
       setBusy(false)
@@ -147,6 +298,63 @@ export default function CheckIn() {
   }
 
   const projName = (id: string | null) => projects.find((p) => p.id === id)?.name ?? ''
+  const checkoutVideoBlock = checkoutRequiresVideo ? (
+    <div className="card checkout-video-card">
+      <div className="item-title">{t('checkout_video_title')}</div>
+      <p className="muted">{t('checkout_video_hint')}</p>
+      <input
+        id="checkout-video"
+        className="photo-input"
+        type="file"
+        accept="video/*"
+        capture="environment"
+        disabled={busy}
+        onChange={(event) => setCheckoutVideo(event.target.files?.[0] ?? null)}
+      />
+      <label className={`video-button ${busy ? 'disabled' : ''}`} htmlFor="checkout-video">
+        <span className="camera-icon">🎥</span>
+        <span>{checkoutVideo ? t('video_replace') : t('video_record')}</span>
+      </label>
+      {checkoutVideo && <p className="ok-msg video-file-name">{checkoutVideo.name}</p>}
+    </div>
+  ) : null
+
+  if (safetyProject) {
+    return (
+      <div className="screen safety-screen">
+        <h1>🦺 {t('safety_title')}</h1>
+        <div className="card safety-card">
+          <div className="item-title">{safetyProject.name}</div>
+          <p className="muted">{t('safety_intro')}</p>
+          <ul className="safety-list">
+            <li>{t('safety_rule_ppe')}</li>
+            <li>{t('safety_rule_tools')}</li>
+            <li>{t('safety_rule_report')}</li>
+          </ul>
+          <label>{t('signature')}</label>
+          <canvas
+            ref={signatureCanvasRef}
+            className="signature-canvas"
+            width={640}
+            height={220}
+            onPointerDown={beginSignature}
+            onPointerMove={drawSignature}
+            onPointerUp={endSignature}
+            onPointerCancel={endSignature}
+            onPointerLeave={endSignature}
+          />
+          <div className="row safety-actions">
+            <button className="btn ghost small" type="button" disabled={busy} onClick={clearSignature}>{t('clear_signature')}</button>
+            <button className="btn ghost small" type="button" disabled={busy} onClick={() => { setSafetyProjectId(null); setMsg(null) }}>{t('cancel')}</button>
+          </div>
+        </div>
+        <button className="btn green" disabled={busy || !signatureTouched} onClick={submitSafetyCheckIn}>
+          {busy ? t('loading') : t('safety_accept_checkin')}
+        </button>
+        {msg && <p className={messageClass(msg)}>{t(msg)}</p>}
+      </div>
+    )
+  }
 
   return (
     <div className="screen">
@@ -209,14 +417,20 @@ export default function CheckIn() {
       {state.status === 'on' && (
         <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
           <button className="btn ghost" disabled={busy} onClick={() => act('break_start')}>{t('break_start')}</button>
-          <button className="btn red" disabled={busy} onClick={() => act('check_out')}>{t('check_out')}</button>
+          {checkoutVideoBlock}
+          <button className="btn red" disabled={busy || (checkoutRequiresVideo && !checkoutVideo)} onClick={() => act('check_out')}>
+            {t('finish_shift')}
+          </button>
         </div>
       )}
 
       {state.status === 'break' && (
         <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
           <button className="btn" disabled={busy} onClick={() => act('break_end')}>{t('break_end')}</button>
-          <button className="btn red" disabled={busy} onClick={() => act('check_out')}>{t('check_out')}</button>
+          {checkoutVideoBlock}
+          <button className="btn red" disabled={busy || (checkoutRequiresVideo && !checkoutVideo)} onClick={() => act('check_out')}>
+            {t('finish_shift')}
+          </button>
         </div>
       )}
 
