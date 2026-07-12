@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, Task, TaskMedia, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, Task, TaskMedia, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, SuspiciousShift } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -259,6 +259,26 @@ export async function uploadSafetySignature(p: Profile, projectId: string, event
   if (error) throw error
   await logEvent(p, 'safety.acknowledged', 'project', projectId, { time_event_id: eventId, signature_path: storagePath })
   return storagePath
+}
+
+// Закрытые смены с подозрением (слишком долго / без GPS / разрыв во времени) — очередь на проверку
+export async function getSuspiciousShifts(): Promise<SuspiciousShift[]> {
+  const { data, error } = await supabase.from('v_suspicious_shifts')
+    .select('*')
+    .order('started_at', { ascending: false })
+  if (error) return []
+  return (data as SuspiciousShift[]) ?? []
+}
+
+// Менеджер подтверждает проверку смены; повторное подтверждение не создаёт дубль (onConflict)
+export async function approveShiftReview(p: Profile, checkoutEventId: string) {
+  const { error } = await supabase.from('shift_reviews')
+    .upsert(
+      { org_id: p.org_id, checkout_event_id: checkoutEventId, status: 'approved', reviewed_by: p.id },
+      { onConflict: 'checkout_event_id' },
+    )
+  if (error) throw error
+  await logEvent(p, 'shift.review_approved', 'time_event', checkoutEventId, {})
 }
 
 export async function getVisibleProfileRates(): Promise<ProfileRate[]> {

@@ -10,9 +10,12 @@ import {
   getDonePhotoTasks,
   getTaskPhotoIds,
   getVisibleProfileRates,
+  getSuspiciousShifts,
+  approveShiftReview,
 } from '../lib/api'
-import { shiftState, workedMs, fmtHours } from '../lib/time'
-import type { Profile, Project, TimeEvent, Task, EventRow, ProfileRate } from '../lib/types'
+import { shiftState, workedMs, fmtHours, fmtClock } from '../lib/time'
+import { isManagerWrite } from '../lib/types'
+import type { Profile, Project, TimeEvent, Task, EventRow, ProfileRate, SuspiciousShift } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
 
 type Risk = {
@@ -36,9 +39,13 @@ export default function Dashboard() {
   const [photoTaskIds, setPhotoTaskIds] = useState<Set<string>>(new Set())
   const [rates, setRates] = useState<ProfileRate[]>([])
   const [activity, setActivity] = useState<EventRow[]>([])
+  const [suspicious, setSuspicious] = useState<SuspiciousShift[]>([])
+  const [approvingId, setApprovingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+
+  const canReviewShifts = profile ? isManagerWrite(profile.role) : false
 
   useEffect(() => {
     if (!profile) return
@@ -58,6 +65,7 @@ export default function Dashboard() {
           getVisibleProfileRates(),
         ])
         const photoIds = await getTaskPhotoIds(doneTk.map((task) => task.id))
+        const susp = canReviewShifts ? await getSuspiciousShifts() : []
         if (!mounted) return
         setEvents(e)
         setTeam(tm)
@@ -67,6 +75,7 @@ export default function Dashboard() {
         setDonePhotoTasks(doneTk)
         setPhotoTaskIds(photoIds)
         setRates(visibleRates)
+        setSuspicious(susp)
       } catch {
         if (mounted) setError(true)
       } finally {
@@ -122,6 +131,25 @@ export default function Dashboard() {
 
   const projectFor = (id: string | null) => projects.find((p) => p.id === id) ?? null
   const projectName = (id: string | null) => projectFor(id)?.name ?? t('unknown_project')
+
+  const fmtHm = (hours: number) => {
+    const total = Math.round((Number(hours) || 0) * 60)
+    return `${Math.floor(total / 60)}${t('h')} ${total % 60}${t('min_short')}`
+  }
+
+  async function approveShift(s: SuspiciousShift) {
+    if (!profile || approvingId) return
+    setApprovingId(s.checkout_event_id)
+    try {
+      await approveShiftReview(profile, s.checkout_event_id)
+      const fresh = await getSuspiciousShifts()
+      setSuspicious(fresh)
+    } catch {
+      setError(true)
+    } finally {
+      setApprovingId(null)
+    }
+  }
 
   const risks = useMemo<Risk[]>(() => {
     const items: Risk[] = []
@@ -237,6 +265,60 @@ export default function Dashboard() {
           </p>
         </section>
       </div>
+
+      {canReviewShifts && (
+        <section className="card review-card">
+          <h2 className="review-title">{t('suspicious_shifts_title')}</h2>
+          {suspicious.length === 0 ? (
+            <div className="muted">{t('suspicious_none')}</div>
+          ) : (
+            suspicious.map((s) => (
+              <div key={s.checkout_event_id} className="review-row">
+                <div className="review-main">
+                  <button className="inline-link item-title" onClick={() => { const w = team.find((x) => x.id === s.profile_id); if (w) openWorker(w) }}>{s.name}</button>
+                  <div className="muted">{s.project_name ?? t('unknown_project')}</div>
+                  <div className="muted">
+                    {new Date(s.started_at).toLocaleDateString()} · {fmtClock(s.started_at)}–{fmtClock(s.ended_at)} · {fmtHm(s.hours)}
+                  </div>
+                  <div className="review-chips">
+                    {s.too_long && <span className="badge amber">{t('chip_too_long')}</span>}
+                    {s.gps_issue && <span className="badge red">{t('chip_no_gps')}</span>}
+                    {s.time_gap_issue && <span className="badge red">{t('chip_time_gap')}</span>}
+                  </div>
+                </div>
+                <div className="review-action">
+                  {s.review_status === 'approved' ? (
+                    <span className="badge green">{t('chip_reviewed')}</span>
+                  ) : (
+                    <>
+                      <span className="badge red">{t('chip_needs_review')}</span>
+                      <button className="btn small" disabled={approvingId === s.checkout_event_id} onClick={() => approveShift(s)}>
+                        {t('mark_reviewed')}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </section>
+      )}
+
+      <section className="card pulse-card">
+        <h2>{t('shift_pulse_title')}</h2>
+        {onSite.length === 0 ? (
+          <div className="muted">{t('shift_pulse_empty')}</div>
+        ) : (
+          onSite.map((w) => {
+            const st = shiftState(byWorker.get(w.id) ?? [])
+            return (
+              <div key={w.id} className="pulse-row muted">
+                <b>{w.name}</b> — {projectName(st.projectId)}{st.since ? ` — ${t('pulse_since')} ${fmtClock(st.since)}` : ''}
+              </div>
+            )
+          })
+        )}
+      </section>
 
       <div className="dashboard-columns">
         <section>

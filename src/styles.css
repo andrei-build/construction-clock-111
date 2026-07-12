@@ -510,6 +510,34 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .status-dot.red { background: var(--red); }
 .status-dot.blue { background: var(--blue); }
 
+.review-card {
+  border-radius: var(--radius-panel);
+  border-color: rgba(239,102,116,.28);
+  background: linear-gradient(180deg, rgba(239,102,116,.08), transparent 120px), var(--panel);
+}
+.review-title { color: var(--red); }
+.review-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.review-row:first-of-type { border-top: none; }
+.review-main { min-width: 0; display: grid; gap: 3px; }
+.review-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.review-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.pulse-card { border-radius: var(--radius-panel); }
+.pulse-row { padding: 6px 0; font-size: 14px; }
+.pulse-row + .pulse-row { border-top: 1px solid var(--line); }
+
 .project-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .task-card {
   display: grid;
