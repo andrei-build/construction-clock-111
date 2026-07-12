@@ -19,6 +19,16 @@ export interface Project {
   address: string | null
   status: 'planned' | 'active' | 'paused' | 'completed' | 'archived'
   gps_radius_m: number
+  lat?: number | string | null
+  lng?: number | string | null
+  latitude?: number | string | null
+  longitude?: number | string | null
+  site_lat?: number | string | null
+  site_lng?: number | string | null
+  gps_lat?: number | string | null
+  gps_lng?: number | string | null
+  site_point?: unknown
+  gps_point?: unknown
 }
 
 export interface ProjectProfit {

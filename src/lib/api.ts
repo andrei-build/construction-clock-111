@@ -18,6 +18,15 @@ export async function getProjects(): Promise<Project[]> {
   return (data as Project[]) ?? []
 }
 
+export async function getMapProjects(): Promise<Project[]> {
+  const { data, error } = await supabase.from('projects')
+    .select('*')
+    .eq('status', 'active')
+    .order('name')
+  if (error) return []
+  return (data as Project[]) ?? []
+}
+
 export async function getProjectProfit(): Promise<ProjectProfit[]> {
   const { data, error } = await supabase.from('v_project_profit')
     .select('project_id, margin_pct, profit_status')

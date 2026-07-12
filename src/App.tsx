@@ -8,6 +8,7 @@ import Projects from './screens/Projects'
 import Team from './screens/Team'
 import Dispatch from './screens/Dispatch'
 import Calendar from './screens/Calendar'
+import LiveMap from './screens/LiveMap'
 import Sales from './screens/Sales'
 import Reports from './screens/Reports'
 import MyTime from './screens/MyTime'
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="/team" element={manager ? <Team /> : <Navigate to="/" />} />
             <Route path="/dispatch" element={manager ? <Dispatch /> : <Navigate to="/" />} />
             <Route path="/calendar" element={manager ? <Calendar /> : <Navigate to="/" />} />
+            <Route path="/map" element={manager ? <LiveMap /> : <Navigate to="/" />} />
             <Route path="/sales" element={salesAccess ? <Sales /> : <Navigate to="/" />} />
             <Route path="/reports" element={manager ? <Reports /> : <Navigate to="/" />} />
             <Route path="/time" element={<MyTime />} />

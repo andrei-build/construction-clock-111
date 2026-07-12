@@ -26,6 +26,7 @@ export default function Nav({ manager }: { manager: boolean }) {
         { to: '/team', icon: '👷', label: t('team') },
         { to: '/dispatch', icon: '🧭', label: t('dispatch') },
         { to: '/calendar', icon: '📅', label: t('calendar') },
+        { to: '/map', icon: '🗺️', label: t('map') },
       ],
     },
     {
