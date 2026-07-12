@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -502,6 +502,20 @@ export async function getRecentActivityForActor(profileId: string, actorName: st
     .limit(8)
   if (byName.error) return []
   return (byName.data as EventRow[]) ?? []
+}
+
+export async function getTimelineEvents(limit: number, eventTypePrefix: string | null = null): Promise<TimelineEventRow[]> {
+  const safeLimit = Math.max(1, Math.floor(limit))
+  let query = supabase.from('events')
+    .select('id, org_id, event_type, entity_type, entity_id, data, actor_id, actor_name, actor_role, created_at')
+
+  if (eventTypePrefix) query = query.like('event_type', `${eventTypePrefix}%`)
+
+  const { data, error } = await query
+    .order('created_at', { ascending: false })
+    .range(0, safeLimit - 1)
+  if (error) throw error
+  return (data as TimelineEventRow[]) ?? []
 }
 
 export async function getProjectRecentPhotos(projectId: string): Promise<ProjectPhoto[]> {

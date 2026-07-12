@@ -31,6 +31,7 @@ export default function Nav({ manager }: { manager: boolean }) {
       label: t('nav_group_main'),
       items: [
         { to: '/', end: true, Icon: IconDashboard, label: t('dashboard') },
+        { to: '/timeline', Icon: IconChart, label: t('timeline') },
         { to: '/checkin', Icon: IconTarget, label: t('checkin') },
         { to: '/messages', Icon: IconChat, label: t('messages') },
       ],
@@ -68,6 +69,11 @@ export default function Nav({ manager }: { manager: boolean }) {
         {manager && (
           <NavLink to="/" end className={cls}>
             <span className="ico"><IconDashboard /></span>{t('dashboard')}
+          </NavLink>
+        )}
+        {manager && (
+          <NavLink to="/timeline" className={cls}>
+            <span className="ico"><IconChart /></span>{t('timeline')}
           </NavLink>
         )}
         <NavLink to="/checkin" className={cls}>

@@ -105,6 +105,19 @@ export interface EventRow {
   created_at: string
 }
 
+export interface TimelineEventRow {
+  id: string | number
+  org_id: string
+  event_type: string
+  entity_type: string | null
+  entity_id: string | null
+  data: Record<string, unknown> | null
+  actor_id: string | null
+  actor_name: string | null
+  actor_role: string | null
+  created_at: string
+}
+
 export interface ProfileRate {
   profile_id: string
   hourly_rate: number | null
