@@ -377,6 +377,40 @@ export async function uploadSafetySignature(p: Profile, projectId: string, event
   return storagePath
 }
 
+// GPS-согласие работника (закон штата WA): активная запись — это неотозванное согласие (revoked_at IS NULL)
+export async function getActiveLocationConsent(workerId: string): Promise<{ id: string } | null> {
+  const { data, error } = await supabase.from('worker_location_consents')
+    .select('id')
+    .eq('worker_id', workerId)
+    .is('revoked_at', null)
+    .limit(1)
+  if (error) throw error
+  return ((data ?? [])[0] as { id: string } | undefined) ?? null
+}
+
+// Подпись согласия на GPS: PNG в bucket media (signatures/consents/...) + строка worker_location_consents
+export async function signLocationConsent(p: Profile, signature: Blob) {
+  const storagePath = `signatures/consents/${p.org_id}/${p.id}/${Date.now()}.png`
+  const { error: uploadError } = await supabase.storage
+    .from(TASK_MEDIA_BUCKET)
+    .upload(storagePath, signature, {
+      contentType: 'image/png',
+      upsert: true,
+    })
+  if (uploadError) throw uploadError
+
+  const { error } = await supabase.from('worker_location_consents').insert({
+    org_id: p.org_id,
+    worker_id: p.id,
+    consent_version: 'v1',
+    signature_path: storagePath,
+    user_agent: navigator.userAgent,
+  })
+  if (error) throw error
+  await logEvent(p, 'consent.gps_signed', 'profile', p.id, { signature_path: storagePath })
+  return storagePath
+}
+
 // Закрытые смены с подозрением (слишком долго / без GPS / разрыв во времени) — очередь на проверку
 export async function getSuspiciousShifts(): Promise<SuspiciousShift[]> {
   const { data, error } = await supabase.from('v_suspicious_shifts')

@@ -18,6 +18,7 @@ import Messages from './screens/Messages'
 import More from './screens/More'
 import Nav from './components/Nav'
 import { EntityDrawerProvider } from './components/EntityDrawer'
+import LocationConsentGate from './components/LocationConsentGate'
 
 export default function App() {
   const { loading, profile } = useAuth()
@@ -27,6 +28,7 @@ export default function App() {
   const manager = isManagerRole(profile.role)
   const salesAccess = manager || profile.role === 'sales'
   return (
+    <LocationConsentGate profile={profile}>
     <EntityDrawerProvider>
       <div className={`app ${manager ? 'manager-app' : ''}`}>
         <main className="app-content">
@@ -51,5 +53,6 @@ export default function App() {
         <Nav manager={manager} />
       </div>
     </EntityDrawerProvider>
+    </LocationConsentGate>
   )
 }
