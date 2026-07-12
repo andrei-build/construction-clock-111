@@ -282,6 +282,7 @@ export async function getProjectRecentPhotos(projectId: string): Promise<Project
     .select('id, storage_path, filename, created_at')
     .eq('project_id', projectId)
     .eq('media_type', 'photo')
+    .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(6)
   if (error) return []
