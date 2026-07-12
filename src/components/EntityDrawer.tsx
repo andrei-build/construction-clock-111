@@ -262,6 +262,7 @@ function WorkerPanel({ worker, close, openProject }: {
           </section>
 
           <div className="drawer-actions">
+            <button className="btn ghost small" onClick={() => { close(); navigate(`/team/${worker.id}`) }}>{t('details')}</button>
             <button className="btn ghost small" onClick={() => { close(); navigate('/messages') }}>{t('write_message')}</button>
             <button className="btn small" onClick={() => { close(); navigate('/dispatch') }}>{t('assign_worker')}</button>
           </div>

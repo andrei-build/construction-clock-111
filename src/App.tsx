@@ -6,6 +6,7 @@ import Dashboard from './screens/Dashboard'
 import CheckIn from './screens/CheckIn'
 import Projects from './screens/Projects'
 import Team from './screens/Team'
+import WorkerDetail from './screens/WorkerDetail'
 import Dispatch from './screens/Dispatch'
 import Calendar from './screens/Calendar'
 import LiveMap from './screens/LiveMap'
@@ -34,6 +35,7 @@ export default function App() {
             <Route path="/checkin" element={<CheckIn />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/team" element={manager ? <Team /> : <Navigate to="/" />} />
+            <Route path="/team/:id" element={manager ? <WorkerDetail /> : <Navigate to="/" />} />
             <Route path="/dispatch" element={manager ? <Dispatch /> : <Navigate to="/" />} />
             <Route path="/calendar" element={manager ? <Calendar /> : <Navigate to="/" />} />
             <Route path="/map" element={manager ? <LiveMap /> : <Navigate to="/" />} />

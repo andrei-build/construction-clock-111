@@ -1,6 +1,8 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, Task, TaskMedia, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, Task, TaskMedia, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role } from './types'
 import { todayStartISO } from './time'
+
+const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
 export async function logEvent(p: Profile, eventType: string, entityType: string, entityId: string | null, data: Record<string, unknown> = {}) {
@@ -49,7 +51,7 @@ export async function getProjectProfit(): Promise<ProjectProfit[]> {
 
 export async function getTodayEvents(profileId?: string): Promise<TimeEvent[]> {
   let q = supabase.from('time_events')
-    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, metadata')
+    .select(TIME_EVENT_SELECT)
     .gte('event_time', todayStartISO()).order('event_time')
   if (profileId) q = q.eq('profile_id', profileId)
   const { data } = await q
@@ -58,14 +60,14 @@ export async function getTodayEvents(profileId?: string): Promise<TimeEvent[]> {
 
 export async function getEventsSince(sinceISO: string, profileId: string): Promise<TimeEvent[]> {
   const { data } = await supabase.from('time_events')
-    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, metadata')
+    .select(TIME_EVENT_SELECT)
     .eq('profile_id', profileId).gte('event_time', sinceISO).order('event_time')
   return (data as TimeEvent[]) ?? []
 }
 
 export async function getTimeEventsRange(startISO: string, endISO: string): Promise<TimeEvent[]> {
   const { data } = await supabase.from('time_events')
-    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, metadata')
+    .select(TIME_EVENT_SELECT)
     .gte('event_time', startISO)
     .lt('event_time', endISO)
     .order('event_time')
@@ -74,7 +76,7 @@ export async function getTimeEventsRange(startISO: string, endISO: string): Prom
 
 export async function getProjectShiftEvents(projectId: string, sinceISO: string): Promise<TimeEvent[]> {
   const { data, error } = await supabase.from('time_events')
-    .select('id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, metadata')
+    .select(TIME_EVENT_SELECT)
     .eq('project_id', projectId)
     .gte('event_time', sinceISO)
     .in('event_type', ['check_in', 'check_out', 'break_start', 'break_end'])
@@ -134,6 +136,63 @@ export async function getTeam(): Promise<Profile[]> {
   return (data as Profile[]) ?? []
 }
 
+export async function getWorkerProfile(workerId: string): Promise<Profile | null> {
+  const { data, error } = await supabase.from('profiles')
+    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video')
+    .eq('id', workerId)
+    .maybeSingle()
+  if (error) throw error
+  return (data as Profile | null) ?? null
+}
+
+export async function getWorkerTimeEvents(workerId: string): Promise<TimeEvent[]> {
+  const { data, error } = await supabase.from('time_events')
+    .select(TIME_EVENT_SELECT)
+    .eq('profile_id', workerId)
+    .order('event_time')
+  if (error) throw error
+  return (data as TimeEvent[]) ?? []
+}
+
+export async function updateWorkerProfileSettings(p: Profile, workerId: string, input: {
+  name?: string
+  role?: Role
+  require_checkout_video?: boolean
+  project_access_mode?: Profile['project_access_mode']
+}) {
+  const payload = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined))
+  if (Object.keys(payload).length === 0) return
+  const { error } = await supabase.from('profiles')
+    .update(payload)
+    .eq('id', workerId)
+  if (error) throw error
+  await logEvent(p, 'team.profile_updated', 'profile', workerId, payload)
+}
+
+export async function setWorkerRate(p: Profile, workerId: string, hourlyRate: number | null) {
+  const { error } = await supabase.from('profile_rates')
+    .upsert({ org_id: p.org_id, profile_id: workerId, hourly_rate: hourlyRate }, { onConflict: 'profile_id' })
+  if (error) throw error
+  await logEvent(p, 'team.rate_updated', 'profile', workerId, { hourly_rate: hourlyRate })
+}
+
+export async function getWorkerPinAccess(workerId: string): Promise<{ supported: boolean; enabled: boolean | null }> {
+  const { data, error } = await supabase.from('profiles')
+    .select('pin_enabled')
+    .eq('id', workerId)
+    .maybeSingle()
+  if (error) return { supported: false, enabled: null }
+  return { supported: true, enabled: Boolean((data as { pin_enabled?: boolean | null } | null)?.pin_enabled) }
+}
+
+export async function setWorkerPinEnabled(p: Profile, workerId: string, enabled: boolean) {
+  const { error } = await supabase.from('profiles')
+    .update({ pin_enabled: enabled })
+    .eq('id', workerId)
+  if (error) throw error
+  await logEvent(p, 'team.pin_access_updated', 'profile', workerId, { pin_enabled: enabled })
+}
+
 // Требование видео при уходе живёт на профиле работника; триггер БД пускает менять только менеджеров.
 export async function setWorkerCheckoutVideo(p: Profile, workerId: string, value: boolean) {
   const { error } = await supabase.from('profiles')
@@ -141,6 +200,42 @@ export async function setWorkerCheckoutVideo(p: Profile, workerId: string, value
     .eq('id', workerId)
   if (error) throw error
   await logEvent(p, 'team.checkout_video_toggled', 'profile', workerId, { require_checkout_video: value })
+}
+
+export async function createTimeAdjustment(p: Profile, input: {
+  workerId: string
+  projectId: string | null
+  originalEventId: string
+  adjustedCheckIn: string
+  adjustedCheckOut: string
+  reason: string
+}) {
+  const { data, error } = await supabase.from('time_events')
+    .insert({
+      org_id: p.org_id,
+      profile_id: input.workerId,
+      project_id: input.projectId,
+      event_type: 'adjustment',
+      event_time: new Date().toISOString(),
+      gps_status: 'off',
+      adjusts_event_id: input.originalEventId,
+      adjust_reason: input.reason,
+      adjusted_by: p.id,
+      metadata: {
+        adjusted_check_in: input.adjustedCheckIn,
+        adjusted_check_out: input.adjustedCheckOut,
+      },
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+  await logEvent(p, 'time.adjustment_created', 'time_event', data.id, {
+    worker_id: input.workerId,
+    adjusts_event_id: input.originalEventId,
+    adjusted_check_in: input.adjustedCheckIn,
+    adjusted_check_out: input.adjustedCheckOut,
+  })
+  return String(data.id)
 }
 
 export async function getOpenTasks(): Promise<Task[]> {

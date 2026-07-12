@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getMessages, getTeam, markMessageRead, sendMessage } from '../lib/api'
+import { getMessages, getTeam, markMessageRead } from '../lib/api'
 import type { MessageRow, Profile } from '../lib/types'
+import MessageComposer from '../components/MessageComposer'
 
 type Priority = MessageRow['priority']
 
@@ -21,8 +22,6 @@ export default function Messages() {
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [recipient, setRecipient] = useState('')
-  const [priority, setPriority] = useState<Priority>('info')
-  const [body, setBody] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
@@ -80,23 +79,6 @@ export default function Messages() {
   const activeMessages = activeThread ? [...activeThread.messages].reverse() : []
   const priorityTone = (p: Priority) => p === 'urgent' ? 'red' : p === 'good' ? 'green' : p === 'task' ? 'amber' : 'blue'
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!profile || !recipient || !body.trim() || busy) return
-    setBusy(true)
-    setError(false)
-    try {
-      await sendMessage(profile, recipient, body.trim(), priority)
-      setBody('')
-      setSelected(recipient)
-      await load()
-    } catch {
-      setError(true)
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const read = async (message: MessageRow) => {
     if (!profile || busy) return
     setBusy(true)
@@ -117,22 +99,15 @@ export default function Messages() {
       {loading && <div className="card center muted">{t('loading')}</div>}
       {error && <p className="error-msg">{t('load_error')}</p>}
 
-      <form className="card message-compose" onSubmit={submit}>
-        <label>{t('recipient')}</label>
-        <select value={recipient} onChange={(e) => setRecipient(e.target.value)}>
-          {team.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-        </select>
-        <label>{t('priority')}</label>
-        <select value={priority} onChange={(e) => setPriority(e.target.value as Priority)}>
-          <option value="info">{t('priority_info')}</option>
-          <option value="task">{t('priority_task')}</option>
-          <option value="good">{t('priority_good')}</option>
-          <option value="urgent">{t('priority_urgent')}</option>
-        </select>
-        <label>{t('message')}</label>
-        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} />
-        <button className="btn" disabled={busy || !recipient || !body.trim()}>{t('send')}</button>
-      </form>
+      <MessageComposer
+        recipients={team}
+        initialRecipientId={recipient}
+        onRecipientChange={setRecipient}
+        onSent={async (recipientId) => {
+          setSelected(recipientId)
+          await load()
+        }}
+      />
 
       {!loading && threads.length === 0 && <div className="card muted">{t('no_messages')}</div>}
       {threads.length > 0 && (

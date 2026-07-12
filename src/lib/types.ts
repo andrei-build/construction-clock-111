@@ -11,6 +11,7 @@ export interface Profile {
   is_active: boolean
   project_access_mode: 'assigned' | 'all_active'
   require_checkout_video?: boolean | null
+  pin_enabled?: boolean | null
 }
 
 export interface Project {
@@ -50,6 +51,9 @@ export interface TimeEvent {
   gps_status: string | null
   video_status?: string | null
   video_path?: string | null
+  adjusts_event_id?: string | null
+  adjust_reason?: string | null
+  adjusted_by?: string | null
   metadata: Record<string, unknown>
 }
 

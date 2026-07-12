@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { getTeam, getTodayEvents, createWorker, setWorkerCheckoutVideo } from '../lib/api'
@@ -10,6 +11,7 @@ export default function Team() {
   const { profile } = useAuth()
   const { t } = useI18n()
   const { openWorker } = useEntityDrawer()
+  const navigate = useNavigate()
   const [team, setTeam] = useState<Profile[]>([])
   const [events, setEvents] = useState<TimeEvent[]>([])
   const [adding, setAdding] = useState(false)
@@ -104,6 +106,9 @@ export default function Team() {
                   <span className="muted">{t('checkout_video_required')}</span>
                 </label>
               )}
+              <button className="btn ghost small team-details-btn" onClick={() => navigate(`/team/${w.id}`)}>
+                {t('details')}
+              </button>
             </div>
           </div>
         )
