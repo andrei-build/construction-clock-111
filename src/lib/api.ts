@@ -240,6 +240,7 @@ export async function uploadSafetySignature(p: Profile, projectId: string, event
   if (uploadError) throw uploadError
 
   const { error } = await supabase.from('safety_acknowledgements').insert({
+    org_id: p.org_id,
     worker_id: p.id,
     project_id: projectId,
     time_event_id: eventId,
