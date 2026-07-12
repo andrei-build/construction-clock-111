@@ -171,7 +171,7 @@ export async function updateWorkerProfileSettings(p: Profile, workerId: string, 
 
 export async function setWorkerRate(p: Profile, workerId: string, hourlyRate: number | null) {
   const { error } = await supabase.from('profile_rates')
-    .upsert({ org_id: p.org_id, profile_id: workerId, hourly_rate: hourlyRate }, { onConflict: 'profile_id' })
+    .insert({ org_id: p.org_id, profile_id: workerId, hourly_rate: hourlyRate, effective_from: new Date().toISOString() })
   if (error) throw error
   await logEvent(p, 'team.rate_updated', 'profile', workerId, { hourly_rate: hourlyRate })
 }
