@@ -13,6 +13,7 @@ import {
 } from '../lib/api'
 import { shiftState, workedMs, fmtHours } from '../lib/time'
 import type { Profile, Project, TimeEvent, Task, EventRow, ProfileRate } from '../lib/types'
+import { useEntityDrawer } from '../components/EntityDrawer'
 
 type Risk = {
   id: string
@@ -26,6 +27,7 @@ const TEN_HOURS_MS = 10 * 60 * 60 * 1000
 export default function Dashboard() {
   const { profile } = useAuth()
   const { t } = useI18n()
+  const { openWorker, openProject } = useEntityDrawer()
   const [events, setEvents] = useState<TimeEvent[]>([])
   const [team, setTeam] = useState<Profile[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -118,7 +120,8 @@ export default function Dashboard() {
     }, 0)
   }, [byWorker, now, rateByWorker])
 
-  const projectName = (id: string | null) => projects.find((p) => p.id === id)?.name ?? t('unknown_project')
+  const projectFor = (id: string | null) => projects.find((p) => p.id === id) ?? null
+  const projectName = (id: string | null) => projectFor(id)?.name ?? t('unknown_project')
 
   const risks = useMemo<Risk[]>(() => {
     const items: Risk[] = []
@@ -208,9 +211,12 @@ export default function Dashboard() {
         <section className="card command-card">
           <h2>{t('dashboard_now')}</h2>
           <div className="command-value">{onSite.length > 0 ? `${onSite.length} · ${t('on_shift')}` : t('nobody_on_site')}</div>
-          <p className="muted">
-            {onSite.slice(0, 3).map((w) => w.name).join(', ') || t('all_clear')}
-          </p>
+          <div className="muted inline-list">
+            {onSite.length === 0 && t('all_clear')}
+            {onSite.slice(0, 3).map((w) => (
+              <button key={w.id} className="inline-link" onClick={() => openWorker(w)}>{w.name}</button>
+            ))}
+          </div>
         </section>
 
         <section className="card command-card">
@@ -224,7 +230,11 @@ export default function Dashboard() {
         <section className="card command-card">
           <h2>{t('dashboard_next_step')}</h2>
           <div className="command-value">{nextTask ? nextTask.title : t('next_no_tasks')}</div>
-          <p className="muted">{nextTask ? projectName(nextTask.project_id) : t('all_clear')}</p>
+          <p className="muted">
+            {nextTask && projectFor(nextTask.project_id) ? (
+              <button className="inline-link" onClick={() => openProject(projectFor(nextTask.project_id)!)}>{projectName(nextTask.project_id)}</button>
+            ) : t('all_clear')}
+          </p>
         </section>
       </div>
 
@@ -252,8 +262,12 @@ export default function Dashboard() {
             return (
               <div key={w.id} className="card row dashboard-row">
                 <div>
-                  <div className="item-title">{w.name}</div>
-                  <div className="muted">{projectName(st.projectId)}</div>
+                  <button className="inline-link item-title" onClick={() => openWorker(w)}>{w.name}</button>
+                  <div className="muted">
+                    {projectFor(st.projectId) ? (
+                      <button className="inline-link" onClick={() => openProject(projectFor(st.projectId)!)}>{projectName(st.projectId)}</button>
+                    ) : projectName(st.projectId)}
+                  </div>
                 </div>
                 <span className={`badge ${st.status === 'break' ? 'amber' : 'green'}`}>
                   {st.status === 'break' ? t('on_break') : `${fmtHours(workedMs(evs, now))}${t('h')}`}

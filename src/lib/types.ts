@@ -59,6 +59,13 @@ export interface TaskMedia {
   storage_path: string
 }
 
+export interface ProjectPhoto {
+  id: string
+  url: string
+  filename: string | null
+  created_at: string | null
+}
+
 export interface EventRow {
   id: number
   event_type: string

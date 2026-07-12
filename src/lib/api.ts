@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, TimeEvent, Task, TaskMedia, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, Task, TaskMedia, EventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow } from './types'
 import { todayStartISO } from './time'
 
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
@@ -164,6 +164,12 @@ export async function uploadTaskPhoto(p: Profile, task: Task, file: File): Promi
   return { id: mediaId, storage_path: storagePath, preview_url: URL.createObjectURL(file) }
 }
 
+async function mediaUrl(storagePath: string) {
+  const signed = await supabase.storage.from(TASK_MEDIA_BUCKET).createSignedUrl(storagePath, 3600)
+  if (!signed.error && signed.data?.signedUrl) return signed.data.signedUrl
+  return supabase.storage.from(TASK_MEDIA_BUCKET).getPublicUrl(storagePath).data.publicUrl
+}
+
 export async function getVisibleProfileRates(): Promise<ProfileRate[]> {
   const { data, error } = await supabase.from('profile_rates')
     .select('profile_id, hourly_rate')
@@ -252,6 +258,50 @@ export async function getRecentActivity(): Promise<EventRow[]> {
     .select('id, event_type, entity_type, actor_name, data, created_at')
     .order('created_at', { ascending: false }).limit(20)
   return (data as EventRow[]) ?? []
+}
+
+export async function getRecentActivityForActor(profileId: string, actorName: string): Promise<EventRow[]> {
+  const byId = await supabase.from('events')
+    .select('id, event_type, entity_type, actor_name, data, created_at')
+    .eq('actor_id', profileId)
+    .order('created_at', { ascending: false })
+    .limit(8)
+  if (!byId.error) return (byId.data as EventRow[]) ?? []
+
+  const byName = await supabase.from('events')
+    .select('id, event_type, entity_type, actor_name, data, created_at')
+    .eq('actor_name', actorName)
+    .order('created_at', { ascending: false })
+    .limit(8)
+  if (byName.error) return []
+  return (byName.data as EventRow[]) ?? []
+}
+
+export async function getProjectRecentPhotos(projectId: string): Promise<ProjectPhoto[]> {
+  const { data, error } = await supabase.from('media')
+    .select('id, storage_path, filename, created_at')
+    .eq('project_id', projectId)
+    .eq('media_type', 'photo')
+    .order('created_at', { ascending: false })
+    .limit(6)
+  if (error) return []
+
+  const photos = await Promise.all(((data ?? []) as Array<{
+    id: string
+    storage_path: string | null
+    filename?: string | null
+    created_at?: string | null
+  }>).map(async (row) => {
+    if (!row.storage_path) return null
+    return {
+      id: row.id,
+      url: await mediaUrl(row.storage_path),
+      filename: row.filename ?? null,
+      created_at: row.created_at ?? null,
+    }
+  }))
+
+  return photos.filter((photo): photo is ProjectPhoto => photo !== null)
 }
 
 export async function getCurrentPayPeriod(): Promise<PayPeriod | null> {

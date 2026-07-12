@@ -4,10 +4,12 @@ import { useI18n } from '../lib/i18n'
 import { getProjects, getOpenTasks, getProjectProfit, createProject, markTaskDone, uploadTaskPhoto } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
+import { useEntityDrawer } from '../components/EntityDrawer'
 
 export default function Projects() {
   const { profile } = useAuth()
   const { t } = useI18n()
+  const { openProject } = useEntityDrawer()
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [profits, setProfits] = useState<ProjectProfit[]>([])
@@ -101,7 +103,7 @@ export default function Projects() {
         return (
           <div key={p.id} className="card">
             <div className="project-title-row">
-              <div style={{ fontWeight: 700, fontSize: 17 }}>{p.name}</div>
+              <button className="inline-link project-name-link" onClick={() => openProject(p)}>{p.name}</button>
               {showProfit && (
                 <span className={`profit-badge ${profit.profit_status}`}>
                   <span className="profit-dot" />

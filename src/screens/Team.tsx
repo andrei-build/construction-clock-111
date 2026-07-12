@@ -4,10 +4,12 @@ import { useI18n } from '../lib/i18n'
 import { getTeam, getTodayEvents, createWorker } from '../lib/api'
 import { workedMs, fmtHours, shiftState } from '../lib/time'
 import type { Profile, TimeEvent } from '../lib/types'
+import { useEntityDrawer } from '../components/EntityDrawer'
 
 export default function Team() {
   const { profile } = useAuth()
   const { t } = useI18n()
+  const { openWorker } = useEntityDrawer()
   const [team, setTeam] = useState<Profile[]>([])
   const [events, setEvents] = useState<TimeEvent[]>([])
   const [adding, setAdding] = useState(false)
@@ -71,7 +73,7 @@ export default function Team() {
         return (
           <div key={w.id} className="card row">
             <div>
-              <div style={{ fontWeight: 700 }}>{w.name}</div>
+              <button className="inline-link item-title" onClick={() => openWorker(w)}>{w.name}</button>
               <span className={`badge ${roleBadge(w.role)}`}>{w.role}</span>
             </div>
             <div className="center">

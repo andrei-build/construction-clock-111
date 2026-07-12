@@ -11,6 +11,7 @@ import {
   unassignWorkerFromProject,
 } from '../lib/api'
 import type { Profile, Project, ProjectAssignment, Task } from '../lib/types'
+import { useEntityDrawer } from '../components/EntityDrawer'
 
 function dateValue(date: Date) {
   const year = date.getFullYear()
@@ -22,6 +23,7 @@ function dateValue(date: Date) {
 export default function Dispatch() {
   const { profile } = useAuth()
   const { t } = useI18n()
+  const { openWorker, openProject } = useEntityDrawer()
   const [projects, setProjects] = useState<Project[]>([])
   const [team, setTeam] = useState<Profile[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
@@ -115,7 +117,7 @@ export default function Dispatch() {
             <section className="card dispatch-card" key={project.id}>
               <div className="row">
                 <div>
-                  <div className="item-title">{project.name}</div>
+                  <button className="inline-link item-title" onClick={() => openProject(project)}>{project.name}</button>
                   <div className="muted">{project.address}</div>
                 </div>
                 <span className="badge blue">{workers.length}</span>
@@ -133,7 +135,17 @@ export default function Dispatch() {
                         disabled={busy !== null}
                         onChange={(e) => toggleWorker(project.id, worker.id, e.target.checked)}
                       />
-                      <span>{worker.name}</span>
+                      <button
+                        type="button"
+                        className="inline-link"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          openWorker(worker)
+                        }}
+                      >
+                        {worker.name}
+                      </button>
                     </label>
                   )
                 })}
