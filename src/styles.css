@@ -16,6 +16,7 @@
   --red: #ef6674;
   --blue: #6bc8ff;
   --purple: #8aa0d7;
+  --cyan: #69e7ff;
   --radius: 14px;
   --radius-panel: 22px;
   --radius-pill: 50px;
@@ -114,15 +115,16 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 
 .nav {
   position: fixed; bottom: 0; left: 0; right: 0;
-  display: flex; background: rgba(13, 21, 34, .96); backdrop-filter: blur(10px);
+  display: flex; background: var(--panel); backdrop-filter: blur(10px);
   border-top: 1px solid var(--line); padding-bottom: var(--safe-bottom);
 }
 .nav a {
   flex: 1; text-align: center; padding: 10px 0 12px; text-decoration: none;
   color: var(--muted); font-size: 11px; font-weight: 600;
 }
-.nav a .ico { display: block; font-size: 22px; margin-bottom: 2px; }
-.nav a.active { color: var(--accent); }
+.nav a .ico { display: flex; justify-content: center; margin-bottom: 2px; }
+.nav a .ico svg { width: 24px; height: 24px; }
+.nav a.active { color: #e0c45a; }
 
 .sidebar-nav { display: none; }
 
@@ -131,6 +133,19 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .badge.amber { background: rgba(200,169,59,.15); color: var(--accent); }
 .badge.red { background: rgba(239,102,116,.15); color: var(--red); }
 .badge.blue { background: rgba(107,200,255,.15); color: var(--blue); }
+
+.side-role {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(200,169,59,.15);
+  color: #e0c45a;
+  border: 1px solid rgba(200,169,59,.4);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
 
 .pin-display { display: flex; gap: 12px; justify-content: center; margin: 18px 0; }
 .pin-dot { width: 16px; height: 16px; border-radius: 50%; background: var(--panel2); }
@@ -882,8 +897,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     display: flex;
     flex-direction: column;
     width: 248px;
+    height: 100%;
     padding: 18px 14px;
-    background: rgba(13, 21, 34, .98);
+    background: var(--panel);
     border-right: 1px solid var(--line);
   }
 
@@ -900,8 +916,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     place-items: center;
     width: 38px;
     height: 38px;
-    border-radius: 14px;
-    background: var(--accent);
+    border-radius: 50%;
+    background: linear-gradient(135deg, #e0c45a, #9f842d);
     color: #070b12;
     font-size: 13px;
     font-weight: 800;
@@ -944,7 +960,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     margin: 0 0 7px;
     padding: 0 10px;
     font-size: 11px;
-    letter-spacing: 0;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted2);
   }
 
   .side-link {
@@ -953,7 +971,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     gap: 10px;
     min-height: 42px;
     padding: 10px;
-    border-radius: var(--radius-pill);
+    border-left: 3px solid transparent;
+    border-radius: 10px;
     color: var(--muted);
     font-size: 14px;
     font-weight: 700;
@@ -962,18 +981,25 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 
   .side-link:hover {
     color: var(--text);
-    background: rgba(237, 246, 251, .04);
+    background: rgba(126, 160, 190, .08);
   }
 
   .side-link.active {
-    color: #070b12;
-    background: var(--accent);
+    color: var(--text);
+    border-left: 3px solid var(--cyan);
+    background: linear-gradient(90deg, rgba(105, 231, 255, .12), transparent);
   }
 
   .side-ico {
-    width: 22px;
-    text-align: center;
-    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+
+  .side-ico svg {
+    width: 20px;
+    height: 20px;
   }
 }
 

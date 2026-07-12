@@ -1,47 +1,63 @@
+import type { ComponentType, SVGProps } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import {
+  IconBriefcase,
+  IconCalendar,
+  IconChart,
+  IconChat,
+  IconClock,
+  IconDashboard,
+  IconDispatch,
+  IconFolder,
+  IconMap,
+  IconMoney,
+  IconSettings,
+  IconTarget,
+  IconUsers,
+} from './icons'
+
+type IconType = ComponentType<SVGProps<SVGSVGElement>>
 
 export default function Nav({ manager }: { manager: boolean }) {
   const { t } = useI18n()
   const { profile } = useAuth()
   const cls = ({ isActive }: { isActive: boolean }) => (isActive ? 'active' : '')
   const sideCls = ({ isActive }: { isActive: boolean }) => `side-link ${isActive ? 'active' : ''}`
-  const roleBadge = (role?: string) =>
-    role === 'owner' || role === 'admin' ? 'red' : role === 'manager' || role === 'supervisor' ? 'amber' : 'blue'
 
-  const groups = [
+  const groups: { label: string; items: { to: string; end?: boolean; Icon: IconType; label: string }[] }[] = [
     {
       label: t('nav_group_main'),
       items: [
-        { to: '/', end: true, icon: '📊', label: t('dashboard') },
-        { to: '/checkin', icon: '⏱️', label: t('checkin') },
-        { to: '/messages', icon: '💬', label: t('messages') },
+        { to: '/', end: true, Icon: IconDashboard, label: t('dashboard') },
+        { to: '/checkin', Icon: IconTarget, label: t('checkin') },
+        { to: '/messages', Icon: IconChat, label: t('messages') },
       ],
     },
     {
       label: t('nav_group_work'),
       items: [
-        { to: '/projects', icon: '📁', label: t('projects') },
-        { to: '/team', icon: '👷', label: t('team') },
-        { to: '/dispatch', icon: '🧭', label: t('dispatch') },
-        { to: '/calendar', icon: '📅', label: t('calendar') },
-        { to: '/map', icon: '🗺️', label: t('map') },
+        { to: '/projects', Icon: IconFolder, label: t('projects') },
+        { to: '/team', Icon: IconUsers, label: t('team') },
+        { to: '/dispatch', Icon: IconDispatch, label: t('dispatch') },
+        { to: '/calendar', Icon: IconCalendar, label: t('calendar') },
+        { to: '/map', Icon: IconMap, label: t('map') },
       ],
     },
     {
       label: t('nav_group_finance_clients'),
       items: [
-        { to: '/time', icon: '🕐', label: t('my_time') },
-        { to: '/payroll', icon: '💵', label: t('payroll') },
-        { to: '/reports', icon: '📈', label: t('reports') },
-        { to: '/sales', icon: '🤝', label: t('sales') },
+        { to: '/time', Icon: IconClock, label: t('my_time') },
+        { to: '/payroll', Icon: IconMoney, label: t('payroll') },
+        { to: '/reports', Icon: IconChart, label: t('reports') },
+        { to: '/sales', Icon: IconBriefcase, label: t('sales') },
       ],
     },
     {
       label: t('nav_group_admin'),
       items: [
-        { to: '/more', icon: '⚙️', label: t('more') },
+        { to: '/more', Icon: IconSettings, label: t('more') },
       ],
     },
   ]
@@ -49,12 +65,28 @@ export default function Nav({ manager }: { manager: boolean }) {
   return (
     <>
       <nav className="nav bottom-nav">
-        {manager && <NavLink to="/" end className={cls}><span className="ico">📊</span>{t('dashboard')}</NavLink>}
-        <NavLink to="/checkin" className={cls}><span className="ico">⏱️</span>{t('checkin')}</NavLink>
-        <NavLink to="/projects" className={cls}><span className="ico">📁</span>{t('projects')}</NavLink>
-        {manager && <NavLink to="/team" className={cls}><span className="ico">👷</span>{t('team')}</NavLink>}
-        <NavLink to="/time" className={cls}><span className="ico">🕐</span>{t('my_time')}</NavLink>
-        <NavLink to="/more" className={cls}><span className="ico">⚙️</span>{t('more')}</NavLink>
+        {manager && (
+          <NavLink to="/" end className={cls}>
+            <span className="ico"><IconDashboard /></span>{t('dashboard')}
+          </NavLink>
+        )}
+        <NavLink to="/checkin" className={cls}>
+          <span className="ico"><IconTarget /></span>{t('checkin')}
+        </NavLink>
+        <NavLink to="/projects" className={cls}>
+          <span className="ico"><IconFolder /></span>{t('projects')}
+        </NavLink>
+        {manager && (
+          <NavLink to="/team" className={cls}>
+            <span className="ico"><IconUsers /></span>{t('team')}
+          </NavLink>
+        )}
+        <NavLink to="/time" className={cls}>
+          <span className="ico"><IconClock /></span>{t('my_time')}
+        </NavLink>
+        <NavLink to="/more" className={cls}>
+          <span className="ico"><IconSettings /></span>{t('more')}
+        </NavLink>
       </nav>
 
       {manager && (
@@ -69,7 +101,7 @@ export default function Nav({ manager }: { manager: boolean }) {
 
           <div className="side-profile">
             <div className="side-profile-name">{profile?.name}</div>
-            <span className={`badge ${roleBadge(profile?.role)}`}>{profile?.role}</span>
+            <span className="side-role">{profile?.role}</span>
           </div>
 
           <div className="side-groups">
@@ -78,7 +110,7 @@ export default function Nav({ manager }: { manager: boolean }) {
                 <h2>{group.label}</h2>
                 {group.items.map((item) => (
                   <NavLink key={item.to} to={item.to} end={item.end} className={sideCls}>
-                    <span className="side-ico">{item.icon}</span>
+                    <span className="side-ico"><item.Icon /></span>
                     <span>{item.label}</span>
                   </NavLink>
                 ))}
