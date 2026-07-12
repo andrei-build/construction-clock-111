@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getTeam, getTodayEvents, createWorker } from '../lib/api'
+import { getTeam, getTodayEvents, createWorker, setWorkerCheckoutVideo } from '../lib/api'
 import { workedMs, fmtHours, shiftState } from '../lib/time'
-import type { Profile, TimeEvent } from '../lib/types'
+import { isManagerWrite, type Profile, type TimeEvent } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
 
 export default function Team() {
@@ -43,6 +43,21 @@ export default function Team() {
   const roleBadge = (r: string) =>
     r === 'owner' || r === 'admin' ? 'red' : r === 'manager' || r === 'supervisor' ? 'amber' : r === 'driver' ? 'blue' : 'green'
 
+  const canManage = profile ? isManagerWrite(profile.role) : false
+
+  const toggleCheckoutVideo = async (worker: Profile) => {
+    if (!profile) return
+    const next = !worker.require_checkout_video
+    // Optimistic: a DB trigger reverts self-changes by non-managers, so we roll back on error.
+    setTeam((rows) => rows.map((r) => (r.id === worker.id ? { ...r, require_checkout_video: next } : r)))
+    try {
+      await setWorkerCheckoutVideo(profile, worker.id, next)
+    } catch {
+      setTeam((rows) => rows.map((r) => (r.id === worker.id ? { ...r, require_checkout_video: worker.require_checkout_video } : r)))
+      setMsg('checkout_video_toggle_failed')
+    }
+  }
+
   return (
     <div className="screen">
       <h1>👷 {t('team')}</h1>
@@ -79,6 +94,16 @@ export default function Team() {
             <div className="center">
               <div style={{ fontWeight: 700 }}>{fmtHours(workedMs(evs))}{t('h')}</div>
               {st.status !== 'off' && <span className="badge green">●</span>}
+              {canManage && (
+                <label className="checkout-video-toggle" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(w.require_checkout_video)}
+                    onChange={() => toggleCheckoutVideo(w)}
+                  />
+                  <span className="muted">{t('checkout_video_required')}</span>
+                </label>
+              )}
             </div>
           </div>
         )

@@ -129,9 +129,18 @@ export async function startProjectTravel(p: Profile, project: Project, startedAt
 
 export async function getTeam(): Promise<Profile[]> {
   const { data } = await supabase.from('profiles')
-    .select('id, org_id, name, role, language, is_active, project_access_mode')
+    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video')
     .eq('is_active', true).order('name')
   return (data as Profile[]) ?? []
+}
+
+// Требование видео при уходе живёт на профиле работника; триггер БД пускает менять только менеджеров.
+export async function setWorkerCheckoutVideo(p: Profile, workerId: string, value: boolean) {
+  const { error } = await supabase.from('profiles')
+    .update({ require_checkout_video: value })
+    .eq('id', workerId)
+  if (error) throw error
+  await logEvent(p, 'team.checkout_video_toggled', 'profile', workerId, { require_checkout_video: value })
 }
 
 export async function getOpenTasks(): Promise<Task[]> {

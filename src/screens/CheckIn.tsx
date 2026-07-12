@@ -36,7 +36,7 @@ function isNetworkError(error: unknown) {
 
 function messageClass(msg: string) {
   if (msg === 'error') return 'error-msg'
-  if (['offline_saved', 'checkout_video_required', 'checkout_video_online_required', 'safety_signature_required', 'safety_online_required'].includes(msg)) return 'warn-msg'
+  if (['offline_saved', 'checkout_video_needed', 'checkout_video_online_required', 'safety_signature_required', 'safety_online_required'].includes(msg)) return 'warn-msg'
   return 'ok-msg'
 }
 
@@ -118,9 +118,8 @@ export default function CheckIn() {
   const state = useMemo(() => shiftState(visibleEvents), [visibleEvents])
   const ms = useMemo(() => workedMs(visibleEvents), [visibleEvents, Date.now()])
   const selectedProject = useMemo(() => projects.find((p) => p.id === selected) ?? null, [projects, selected])
-  const currentProject = useMemo(() => projects.find((p) => p.id === state.projectId) ?? null, [projects, state.projectId])
   const safetyProject = useMemo(() => projects.find((p) => p.id === safetyProjectId) ?? null, [projects, safetyProjectId])
-  const checkoutRequiresVideo = Boolean(currentProject?.require_checkout_video)
+  const checkoutRequiresVideo = Boolean(profile?.require_checkout_video)
   const selectedNeedsSafety = Boolean(selected && !visibleEvents.some((event) =>
     event.event_type === 'check_in' && event.project_id === selected
   ))
@@ -156,7 +155,7 @@ export default function CheckIn() {
     const requiresVideo = type === 'check_out' && checkoutRequiresVideo
     const videoFile = requiresVideo ? checkoutVideo : null
     if (requiresVideo && !videoFile) {
-      setMsg('checkout_video_required')
+      setMsg('checkout_video_needed')
       return
     }
     setBusy(true)

@@ -10,6 +10,7 @@ export interface Profile {
   language: string
   is_active: boolean
   project_access_mode: 'assigned' | 'all_active'
+  require_checkout_video?: boolean | null
 }
 
 export interface Project {
@@ -19,7 +20,6 @@ export interface Project {
   address: string | null
   status: 'planned' | 'active' | 'paused' | 'completed' | 'archived'
   gps_radius_m: number
-  require_checkout_video?: boolean | null
   lat?: number | string | null
   lng?: number | string | null
   latitude?: number | string | null

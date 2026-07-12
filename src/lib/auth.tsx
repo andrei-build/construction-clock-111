@@ -17,7 +17,7 @@ async function fetchProfile(): Promise<Profile | null> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
   const { data } = await supabase.from('profiles')
-    .select('id, org_id, name, role, language, is_active, project_access_mode')
+    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video')
     .eq('id', user.id).maybeSingle()
   return (data as Profile | null) ?? null
 }
