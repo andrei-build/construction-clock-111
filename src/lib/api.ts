@@ -87,12 +87,19 @@ export function captureGPS(timeoutMs = 8000): Promise<Geo> {
 }
 
 // Отметка: GPS не взялся — отметка всё равно проходит (ДНК §2 п.1)
-export async function addTimeEvent(p: Profile, type: TimeEventType, projectId: string | null, geo: Geo) {
+export async function addTimeEvent(
+  p: Profile,
+  type: TimeEventType,
+  projectId: string | null,
+  geo: Geo,
+  eventTime = new Date().toISOString(),
+  metadata: Record<string, unknown> = {},
+) {
   const row: Record<string, unknown> = {
     org_id: p.org_id, profile_id: p.id, project_id: projectId,
-    event_type: type, event_time: new Date().toISOString(),
+    event_type: type, event_time: eventTime,
     gps_status: geo.status, gps_accuracy_m: geo.accuracy, gps_source: 'browser',
-    metadata: { lat: geo.lat, lng: geo.lng },
+    metadata: { lat: geo.lat, lng: geo.lng, ...metadata },
   }
   if (geo.lat !== null && geo.lng !== null) row.gps_point = `SRID=4326;POINT(${geo.lng} ${geo.lat})`
   const { error } = await supabase.from('time_events').insert(row)
