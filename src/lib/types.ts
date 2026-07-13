@@ -108,6 +108,9 @@ export interface GalleryPhoto {
   project_id: string | null
   project_name: string | null
   category: string | null
+  // Кто загрузил (media.uploaded_by) и имя из profiles — для фильтра по автору в галерее.
+  uploaded_by: string | null
+  uploader_name: string | null
 }
 
 // Видео галереи: те же поля, что у GalleryPhoto (media_type='video'), url — подписанная ссылка на media bucket.
@@ -123,6 +126,9 @@ export interface GalleryPdf {
   created_at: string | null
   project_id: string | null
   project_name: string | null
+  // Кто загрузил (files.uploaded_by) и имя из profiles — для фильтра по автору в галерее.
+  uploaded_by: string | null
+  uploader_name: string | null
 }
 
 // Комментарий к медиа (media_comments): текст под фото. author тянем embed-ом из profiles(name).

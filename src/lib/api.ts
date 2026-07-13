@@ -981,6 +981,9 @@ export async function getProjectPhotos(projectId: string): Promise<GalleryPhoto[
       project_id: row.project_id ?? null,
       project_name: row.project?.name ?? null,
       category: row.category ?? null,
+      // Автор загрузки для этого экрана не нужен — держим поля контракта заполненными.
+      uploaded_by: null as string | null,
+      uploader_name: null as string | null,
     }
   }))
 
@@ -991,7 +994,7 @@ export async function getProjectPhotos(projectId: string): Promise<GalleryPhoto[
 // Подписанные URL берём пачкой, порядок — сначала свежие. Лимит держит галерею лёгкой.
 export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {
   const { data, error } = await supabase.from('media')
-    .select('id, storage_path, filename, created_at, project_id, category, project:projects(name)')
+    .select('id, storage_path, filename, created_at, project_id, category, uploaded_by, project:projects(name), uploader:profiles!media_uploaded_by_fkey(name)')
     .eq('media_type', 'photo')
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
@@ -1005,7 +1008,9 @@ export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {
     created_at?: string | null
     project_id?: string | null
     category?: string | null
+    uploaded_by?: string | null
     project?: { name: string | null } | null
+    uploader?: { name: string | null } | null
   }>).map(async (row) => {
     if (!row.storage_path) return null
     return {
@@ -1016,6 +1021,8 @@ export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {
       project_id: row.project_id ?? null,
       project_name: row.project?.name ?? null,
       category: row.category ?? null,
+      uploaded_by: row.uploaded_by ?? null,
+      uploader_name: row.uploader?.name ?? null,
     }
   }))
 
@@ -1026,7 +1033,7 @@ export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {
 // Строго по образцу getGalleryPhotos, только media_type='video'. Подписанные URL берём пачкой.
 export async function getGalleryVideos(): Promise<GalleryVideo[]> {
   const { data, error } = await supabase.from('media')
-    .select('id, storage_path, filename, created_at, project_id, category, project:projects(name)')
+    .select('id, storage_path, filename, created_at, project_id, category, uploaded_by, project:projects(name), uploader:profiles!media_uploaded_by_fkey(name)')
     .eq('media_type', 'video')
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
@@ -1040,7 +1047,9 @@ export async function getGalleryVideos(): Promise<GalleryVideo[]> {
     created_at?: string | null
     project_id?: string | null
     category?: string | null
+    uploaded_by?: string | null
     project?: { name: string | null } | null
+    uploader?: { name: string | null } | null
   }>).map(async (row) => {
     if (!row.storage_path) return null
     return {
@@ -1051,6 +1060,8 @@ export async function getGalleryVideos(): Promise<GalleryVideo[]> {
       project_id: row.project_id ?? null,
       project_name: row.project?.name ?? null,
       category: row.category ?? null,
+      uploaded_by: row.uploaded_by ?? null,
+      uploader_name: row.uploader?.name ?? null,
     }
   }))
 
@@ -1062,7 +1073,7 @@ export async function getGalleryVideos(): Promise<GalleryVideo[]> {
 // RLS files сама ограничивает org и видимость (менеджер видит всё, приватные — владелец/менеджер).
 export async function getGalleryPdfs(): Promise<GalleryPdf[]> {
   const { data, error } = await supabase.from('files')
-    .select('id, name, storage_path, scope, created_at, project_id, project:projects(name)')
+    .select('id, name, storage_path, scope, created_at, project_id, uploaded_by, project:projects(name), uploader:profiles!files_uploaded_by_fkey(name)')
     .ilike('mime', 'application/pdf')
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
@@ -1076,7 +1087,9 @@ export async function getGalleryPdfs(): Promise<GalleryPdf[]> {
     scope: string
     created_at?: string | null
     project_id?: string | null
+    uploaded_by?: string | null
     project?: { name: string | null } | null
+    uploader?: { name: string | null } | null
   }>).map((row) => ({
     id: row.id,
     name: row.name,
@@ -1085,6 +1098,8 @@ export async function getGalleryPdfs(): Promise<GalleryPdf[]> {
     created_at: row.created_at ?? null,
     project_id: row.project_id ?? null,
     project_name: row.project?.name ?? null,
+    uploaded_by: row.uploaded_by ?? null,
+    uploader_name: row.uploader?.name ?? null,
   }))
 }
 

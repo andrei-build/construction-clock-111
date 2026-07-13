@@ -22,6 +22,8 @@ const localeByLang = {
 
 // Ключ фильтра по объекту: реальный project_id либо '__none__' для медиа без объекта.
 const NO_PROJECT = '__none__'
+// Ключ фильтра по автору: реальный uploaded_by либо '__no_uploader__' для медиа без автора.
+const NO_UPLOADER = '__no_uploader__'
 
 // Активная вкладка типа медиа поверх фильтра по объекту.
 type MediaType = 'photos' | 'videos' | 'pdfs'
@@ -50,6 +52,10 @@ export default function Gallery() {
   const [pdfError, setPdfError] = useState(false)
 
   const [projectFilter, setProjectFilter] = useState<string | null>(null)
+  // Дополнительные фильтры поверх объекта/типа: автор загрузки и диапазон дат (локальные дни, YYYY-MM-DD).
+  const [uploaderFilter, setUploaderFilter] = useState<string | null>(null)
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [active, setActive] = useState<GalleryPhoto | null>(null)
   // Состояние формы флага в лайтбоксе.
   const [flagReason, setFlagReason] = useState('')
@@ -97,6 +103,10 @@ export default function Gallery() {
   const selectType = (next: MediaType) => {
     setMediaType(next)
     setProjectFilter(null)
+    // Набор объектов/авторов у разных типов свой — сбрасываем дополнительные фильтры при смене вкладки.
+    setUploaderFilter(null)
+    setFromDate('')
+    setToDate('')
     if (next === 'videos' && videosState === 'idle') {
       setVideosState('loading')
       getGalleryVideos()
@@ -189,13 +199,72 @@ export default function Gallery() {
     return items.filter((i) => i.project_id === projectFilter)
   }
 
-  // Элементы активной вкладки для построения фильтра по объекту.
-  const activeItems: WithProject[] = mediaType === 'photos' ? photos : mediaType === 'videos' ? videos : pdfs
-  const projectTabs = useMemo(() => buildProjectTabs(activeItems), [activeItems, t]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Что можно отфильтровать по автору: id загрузившего и его имя (если пришло embed-ом из profiles).
+  type WithUploader = { uploaded_by?: string | null; uploader_name?: string | null }
 
-  const visiblePhotos = useMemo(() => filterByProject(photos), [photos, projectFilter]) // eslint-disable-line react-hooks/exhaustive-deps
-  const visibleVideos = useMemo(() => filterByProject(videos), [videos, projectFilter]) // eslint-disable-line react-hooks/exhaustive-deps
-  const visiblePdfs = useMemo(() => filterByProject(pdfs), [pdfs, projectFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Ярлык автора: имя из profiles, иначе — «Пользователь <8 симв. id>» (имя не пришло, но id есть).
+  const uploaderLabel = (id: string, name?: string | null) =>
+    name?.trim() ? name.trim() : `${t('gallery_uploader_prefix')} ${id.slice(0, 8)}`
+
+  // Опции выпадающего списка авторов — только из уже загруженных элементов активной вкладки,
+  // по алфавиту; элементы без автора идут отдельной группой. Без дополнительных запросов к сети.
+  const buildUploaderOptions = (items: WithUploader[]) => {
+    const byId = new Map<string, string>()
+    let hasNone = false
+    for (const item of items) {
+      if (item.uploaded_by) {
+        if (!byId.has(item.uploaded_by)) byId.set(item.uploaded_by, uploaderLabel(item.uploaded_by, item.uploader_name))
+      } else {
+        hasNone = true
+      }
+    }
+    const opts = [...byId.entries()]
+      .map(([key, name]) => ({ key, name }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    if (hasNone) opts.push({ key: NO_UPLOADER, name: t('gallery_uploader_none') })
+    return opts
+  }
+
+  const filterByUploader = <T extends WithUploader>(items: T[]): T[] => {
+    if (!uploaderFilter) return items
+    if (uploaderFilter === NO_UPLOADER) return items.filter((i) => !i.uploaded_by)
+    return items.filter((i) => i.uploaded_by === uploaderFilter)
+  }
+
+  // Локальный «день» ISO-даты как YYYY-MM-DD (getFullYear/Month/Date — по локальной зоне),
+  // чтобы границы from/to сравнивались в терминах локального дня и совпадали со значениями <input type="date">.
+  const localDayKey = (iso: string) => {
+    const d = new Date(iso)
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+
+  // Диапазон дат включительно по локальному дню; пустая граница — без ограничения.
+  // Лексикографическое сравнение YYYY-MM-DD совпадает с хронологическим.
+  const filterByDate = <T extends { created_at: string | null }>(items: T[]): T[] => {
+    if (!fromDate && !toDate) return items
+    return items.filter((i) => {
+      if (!i.created_at) return false
+      const key = localDayKey(i.created_at)
+      if (fromDate && key < fromDate) return false
+      if (toDate && key > toDate) return false
+      return true
+    })
+  }
+
+  const applyFilters = <T extends WithProject & WithUploader & { created_at: string | null }>(items: T[]): T[] =>
+    filterByDate(filterByUploader(filterByProject(items)))
+
+  // Элементы активной вкладки для построения фильтров по объекту и автору.
+  const activeItems: (WithProject & WithUploader)[] = mediaType === 'photos' ? photos : mediaType === 'videos' ? videos : pdfs
+  const projectTabs = useMemo(() => buildProjectTabs(activeItems), [activeItems, t]) // eslint-disable-line react-hooks/exhaustive-deps
+  const uploaderOptions = useMemo(() => buildUploaderOptions(activeItems), [activeItems, t]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visiblePhotos = useMemo(() => applyFilters(photos), [photos, projectFilter, uploaderFilter, fromDate, toDate]) // eslint-disable-line react-hooks/exhaustive-deps
+  const visibleVideos = useMemo(() => applyFilters(videos), [videos, projectFilter, uploaderFilter, fromDate, toDate]) // eslint-disable-line react-hooks/exhaustive-deps
+  const visiblePdfs = useMemo(() => applyFilters(pdfs), [pdfs, projectFilter, uploaderFilter, fromDate, toDate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const formatDate = (iso: string | null) => {
     if (!iso) return ''
@@ -242,6 +311,51 @@ export default function Gallery() {
     </div>
   )
 
+  const hasSecondaryFilter = uploaderFilter !== null || fromDate !== '' || toDate !== ''
+  const resetSecondaryFilters = () => {
+    setUploaderFilter(null)
+    setFromDate('')
+    setToDate('')
+  }
+
+  // Ряд дополнительных фильтров (автор + диапазон дат) — клиентские, поверх объекта/типа.
+  const secondaryFiltersRow = (
+    <div className="gallery-filters">
+      {uploaderOptions.length > 0 && (
+        <label className="gallery-filter">
+          <span className="gallery-filter-label">{t('gallery_filter_uploader')}</span>
+          <select value={uploaderFilter ?? ''} onChange={(e) => setUploaderFilter(e.target.value || null)}>
+            <option value="">{t('gallery_filter_all_uploaders')}</option>
+            {uploaderOptions.map((opt) => (
+              <option key={opt.key} value={opt.key}>{opt.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="gallery-filter">
+        <span className="gallery-filter-label">{t('gallery_filter_from')}</span>
+        <input type="date" value={fromDate} max={toDate || undefined} onChange={(e) => setFromDate(e.target.value)} />
+      </label>
+      <label className="gallery-filter">
+        <span className="gallery-filter-label">{t('gallery_filter_to')}</span>
+        <input type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} />
+      </label>
+      {hasSecondaryFilter && (
+        <button type="button" className="btn small gallery-filter-reset" onClick={resetSecondaryFilters}>
+          {t('gallery_filter_reset')}
+        </button>
+      )}
+    </div>
+  )
+
+  // Общий блок фильтров для каждого типа: вкладки объектов + автор/даты.
+  const filtersBar = (
+    <>
+      {projectTabsRow}
+      {secondaryFiltersRow}
+    </>
+  )
+
   return (
     <div className="screen">
       <h1>🖼️ {t('gallery')}</h1>
@@ -269,7 +383,7 @@ export default function Gallery() {
 
               {photos.length > 0 && (
                 <>
-                  {projectTabsRow}
+                  {filtersBar}
 
                   <p className="muted" style={{ fontSize: 13 }}>{visiblePhotos.length} {t('gallery_count')}</p>
 
@@ -311,7 +425,7 @@ export default function Gallery() {
 
               {videos.length > 0 && (
                 <>
-                  {projectTabsRow}
+                  {filtersBar}
 
                   <p className="muted" style={{ fontSize: 13 }}>{visibleVideos.length} {t('gallery_count_videos')}</p>
 
@@ -344,7 +458,7 @@ export default function Gallery() {
 
               {pdfs.length > 0 && (
                 <>
-                  {projectTabsRow}
+                  {filtersBar}
 
                   <p className="muted" style={{ fontSize: 13 }}>{visiblePdfs.length} {t('gallery_count_pdfs')}</p>
                   {pdfError && <p className="error-msg" style={{ fontSize: 12 }}>{t('gallery_pdf_error')}</p>}
