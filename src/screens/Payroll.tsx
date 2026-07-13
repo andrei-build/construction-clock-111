@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getCurrentPayPeriod, getIntervalsBetween, getTeam, getVisibleProfileRates, logEvent } from '../lib/api'
+import { closePayPeriod, getCurrentPayPeriod, getIntervalsBetween, getTeam, getVisibleProfileRates, logEvent, markPayPeriodPaid } from '../lib/api'
 import type { PayPeriod, Profile, ProfileRate, WorkInterval } from '../lib/types'
 
 interface PeriodWindow {
   id: string | null
   start: Date
   end: Date
+  status: string | null
 }
 
 interface PayrollRow {
@@ -40,15 +41,23 @@ function fallbackPeriod(): PeriodWindow {
   const diffWeeks = Math.floor((weekStart.getTime() - TWO_WEEK_ANCHOR.getTime()) / WEEK_MS)
   const start = new Date(weekStart)
   if (Math.abs(diffWeeks % 2) === 1) start.setDate(start.getDate() - 7)
-  return { id: null, start, end: new Date(start.getTime() + 14 * DAY_MS) }
+  return { id: null, start, end: new Date(start.getTime() + 14 * DAY_MS), status: null }
 }
 
 function periodFromDb(period: PayPeriod | null): PeriodWindow {
   if (!period) return fallbackPeriod()
-  const start = startOfDay(new Date(`${period.start_date}T00:00:00`))
-  const end = startOfDay(new Date(`${period.end_date}T00:00:00`))
+  const start = startOfDay(new Date(`${period.period_start}T00:00:00`))
+  const end = startOfDay(new Date(`${period.period_end}T00:00:00`))
   end.setDate(end.getDate() + 1)
-  return { id: period.id, start, end }
+  return { id: period.id, start, end, status: period.status }
+}
+
+// Локальная дата YYYY-MM-DD (без сдвига часового пояса, в отличие от toISOString)
+function ymd(d: Date) {
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function weekKey(ms: number) {
@@ -86,6 +95,8 @@ export default function Payroll() {
   const [rates, setRates] = useState<ProfileRate[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [working, setWorking] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -180,6 +191,62 @@ export default function Payroll() {
     })
   }
 
+  const reloadPeriod = async () => {
+    const dbPeriod = await getCurrentPayPeriod()
+    setPeriod(periodFromDb(dbPeriod))
+  }
+
+  const closePeriod = async () => {
+    if (!profile || locked || working) return
+    setWorking(true)
+    setMsg(null)
+    try {
+      const items = rows
+        .filter((row) => row.regularHours > 0 || row.overtimeHours > 0 || row.rate !== null)
+        .map((row) => ({
+          profile_id: row.worker.id,
+          regular_hours: row.regularHours,
+          overtime_hours: row.overtimeHours,
+          hourly_rate: row.rate,
+          total: row.total,
+        }))
+      await closePayPeriod(profile, {
+        payPeriodId: period.id,
+        periodStart: ymd(period.start),
+        periodEnd: ymd(endInclusive),
+        label: `${dateLabel(period.start)} – ${dateLabel(endInclusive)}`,
+        items,
+        totalPay: totals.pay,
+      })
+      await reloadPeriod()
+      setMsg('period_closed_ok')
+    } catch {
+      setMsg('period_action_failed')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  const markPaid = async () => {
+    if (!profile || locked || working || !period.id) return
+    setWorking(true)
+    setMsg(null)
+    try {
+      await markPayPeriodPaid(profile, period.id, {
+        periodStart: ymd(period.start),
+        periodEnd: ymd(endInclusive),
+        workers: rows.length,
+        totalPay: totals.pay,
+      })
+      await reloadPeriod()
+      setMsg('period_paid_ok')
+    } catch {
+      setMsg('period_action_failed')
+    } finally {
+      setWorking(false)
+    }
+  }
+
   return (
     <div className="screen payroll-screen">
       <div className="row payroll-head">
@@ -187,11 +254,27 @@ export default function Payroll() {
           <h1>💵 {t('payroll')}</h1>
           <p className="muted">{t('pay_period')}: {dateLabel(period.start)} – {dateLabel(endInclusive)}</p>
         </div>
-        <button className="btn ghost small" disabled={locked || rows.length === 0} onClick={exportCsv}>
-          {t('export_csv')}
-        </button>
+        <div className="payroll-actions">
+          {!locked && period.status === 'paid' && (
+            <span className="badge green">{t('period_paid_badge')}</span>
+          )}
+          {!locked && period.status === 'approved' && (
+            <button className="btn small" disabled={working} onClick={markPaid}>
+              {t('mark_period_paid')}
+            </button>
+          )}
+          {!locked && (period.status === null || period.status === 'draft') && (
+            <button className="btn small" disabled={working} onClick={closePeriod}>
+              {t('close_period')}
+            </button>
+          )}
+          <button className="btn ghost small" disabled={locked || rows.length === 0} onClick={exportCsv}>
+            {t('export_csv')}
+          </button>
+        </div>
       </div>
 
+      {msg && <p className={msg === 'period_action_failed' ? 'error-msg' : 'ok-msg'}>{t(msg)}</p>}
       {loading && <div className="card center muted">{t('loading')}</div>}
       {error && <p className="error-msg">{t('load_error')}</p>}
       {locked && (

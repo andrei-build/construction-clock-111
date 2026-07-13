@@ -616,14 +616,107 @@ export async function getProjectRecentPhotos(projectId: string): Promise<Project
 export async function getCurrentPayPeriod(): Promise<PayPeriod | null> {
   const today = new Date().toISOString().slice(0, 10)
   const { data, error } = await supabase.from('pay_periods')
-    .select('id, start_date, end_date, status')
-    .lte('start_date', today)
-    .gte('end_date', today)
-    .order('start_date', { ascending: false })
+    .select('id, period_start, period_end, status')
+    .lte('period_start', today)
+    .gte('period_end', today)
+    .order('period_start', { ascending: false })
     .limit(1)
     .maybeSingle()
   if (error) return null
   return (data as PayPeriod | null) ?? null
+}
+
+// Строка снапшота зарплаты — считается на клиенте из уже рассчитанных строк таблицы (rows)
+export interface PayPeriodItemInput {
+  profile_id: string
+  regular_hours: number
+  overtime_hours: number
+  hourly_rate: number | null
+  total: number
+}
+
+// Закрыть период: draft → approved. Апсертит pay_periods и переснимает pay_period_items из строк таблицы.
+export async function closePayPeriod(p: Profile, input: {
+  payPeriodId: string | null
+  periodStart: string
+  periodEnd: string
+  label: string
+  items: PayPeriodItemInput[]
+  totalPay: number
+}): Promise<string> {
+  const now = new Date().toISOString()
+  let payPeriodId = input.payPeriodId
+
+  if (payPeriodId) {
+    const { error } = await supabase.from('pay_periods')
+      .update({ status: 'approved', approved_by: p.id, approved_at: now })
+      .eq('id', payPeriodId)
+    if (error) throw error
+  } else {
+    const { data, error } = await supabase.from('pay_periods')
+      .insert({
+        org_id: p.org_id,
+        label: input.label,
+        period_start: input.periodStart,
+        period_end: input.periodEnd,
+        status: 'approved',
+        approved_by: p.id,
+        approved_at: now,
+      })
+      .select('id')
+      .single()
+    if (error) throw error
+    payPeriodId = String(data.id)
+  }
+
+  const { error: delError } = await supabase.from('pay_period_items')
+    .delete()
+    .eq('pay_period_id', payPeriodId)
+  if (delError) throw delError
+
+  if (input.items.length > 0) {
+    const rows = input.items.map((item) => ({
+      pay_period_id: payPeriodId,
+      profile_id: item.profile_id,
+      regular_hours: item.regular_hours,
+      overtime_hours: item.overtime_hours,
+      overtime_multiplier: 1.5,
+      hourly_rate: item.hourly_rate,
+      bonus: 0,
+      reimbursement: 0,
+      deduction: 0,
+      total: item.total,
+    }))
+    const { error: insError } = await supabase.from('pay_period_items').insert(rows)
+    if (insError) throw insError
+  }
+
+  await logEvent(p, 'payroll.period_closed', 'pay_period', payPeriodId, {
+    period_start: input.periodStart,
+    period_end: input.periodEnd,
+    workers: input.items.length,
+    total: input.totalPay,
+  })
+  return payPeriodId
+}
+
+// Отметить период оплаченным: approved → paid.
+export async function markPayPeriodPaid(p: Profile, payPeriodId: string, meta: {
+  periodStart: string
+  periodEnd: string
+  workers: number
+  totalPay: number
+}): Promise<void> {
+  const { error } = await supabase.from('pay_periods')
+    .update({ status: 'paid', paid_at: new Date().toISOString() })
+    .eq('id', payPeriodId)
+  if (error) throw error
+  await logEvent(p, 'payroll.period_paid', 'pay_period', payPeriodId, {
+    period_start: meta.periodStart,
+    period_end: meta.periodEnd,
+    workers: meta.workers,
+    total: meta.totalPay,
+  })
 }
 
 export async function getMessages(profileId: string): Promise<MessageRow[]> {

@@ -619,6 +619,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin-bottom: 12px;
 }
 .payroll-head h1 { margin-bottom: 4px; }
+.payroll-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .payroll-lock { display: grid; gap: 8px; }
 .payroll-totals { margin-bottom: 10px; }
 .payroll-table-wrap {

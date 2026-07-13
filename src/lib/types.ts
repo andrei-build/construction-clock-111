@@ -125,8 +125,8 @@ export interface ProfileRate {
 
 export interface PayPeriod {
   id: string
-  start_date: string
-  end_date: string
+  period_start: string
+  period_end: string
   status: string | null
 }
 
