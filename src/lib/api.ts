@@ -467,9 +467,20 @@ export async function uploadTaskPhoto(p: Profile, task: Task, file: File): Promi
   return { id: mediaId, storage_path: storagePath, preview_url: URL.createObjectURL(file) }
 }
 
+const MEDIA_SIGN_TIMEOUT_MS = 9000
+
 export async function mediaUrl(storagePath: string) {
-  const signed = await supabase.storage.from(TASK_MEDIA_BUCKET).createSignedUrl(storagePath, 3600)
-  if (!signed.error && signed.data?.signedUrl) return signed.data.signedUrl
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const signPromise = supabase.storage.from(TASK_MEDIA_BUCKET).createSignedUrl(storagePath, 3600)
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), MEDIA_SIGN_TIMEOUT_MS)
+  })
+  try {
+    const signed = await Promise.race([signPromise, timeoutPromise])
+    if (signed && !signed.error && signed.data?.signedUrl) return signed.data.signedUrl
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
   return supabase.storage.from(TASK_MEDIA_BUCKET).getPublicUrl(storagePath).data.publicUrl
 }
 
