@@ -125,6 +125,7 @@ export default function LiveMap() {
   const [error, setError] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [locations, setLocations] = useState<Map<string, WorkerLocation>>(new Map())
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null)
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true)
@@ -262,8 +263,25 @@ export default function LiveMap() {
         ? `${title}<br>${t('last_seen')}: ${new Date(markerRow.lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
         : `${title}<br>${t('no_gps_data')}`
       marker.bindTooltip(detail)
-      marker.on('click', () => openWorker(markerRow.worker))
+      marker.on('click', () => {
+        setSelectedWorkerId((current) => (current === markerRow.worker.id ? null : markerRow.worker.id))
+        openWorker(markerRow.worker)
+      })
       bounds.push([markerRow.point.lat, markerRow.point.lng])
+    }
+
+    if (selectedWorkerId) {
+      const trackPoints = (eventsByWorker.get(selectedWorkerId) ?? [])
+        .slice()
+        .sort((a, b) => a.event_time.localeCompare(b.event_time))
+        .map(eventPoint)
+        .filter((point): point is MapPoint => point !== null)
+      if (trackPoints.length >= 2) {
+        L.polyline(
+          trackPoints.map((point) => [point.lat, point.lng] as L.LatLngExpression),
+          { color: '#2563eb', weight: 3, opacity: 0.85 },
+        ).addTo(layer)
+      }
     }
 
     if (!fittedRef.current && bounds.length > 0) {
@@ -271,7 +289,14 @@ export default function LiveMap() {
       else map.fitBounds(L.latLngBounds(bounds), { padding: [34, 34], maxZoom: 14 })
       fittedRef.current = true
     }
-  }, [openProject, openWorker, projectMarkers, t, workerMarkers])
+  }, [eventsByWorker, openProject, openWorker, projectMarkers, selectedWorkerId, t, workerMarkers])
+
+  const selectedTrackPoints = useMemo(() => {
+    if (!selectedWorkerId) return 0
+    return (eventsByWorker.get(selectedWorkerId) ?? [])
+      .map(eventPoint)
+      .filter((point): point is MapPoint => point !== null).length
+  }, [eventsByWorker, selectedWorkerId])
 
   const projectsWithoutGeo = projects.length - projectMarkers.length
   const grayWorkers = workerMarkers.filter((marker) => marker.tone === 'gray').length
@@ -325,6 +350,9 @@ export default function LiveMap() {
       )}
 
       {!loading && markerCount === 0 && <div className="card muted">{t('map_no_points')}</div>}
+      {!loading && selectedWorkerId && selectedTrackPoints < 2 && (
+        <div className="card muted">{t('track_no_points')}</div>
+      )}
       {!loading && projectsWithoutGeo > 0 && (
         <div className="card muted">
           {t('map_projects_without_geo')}: {projectsWithoutGeo}

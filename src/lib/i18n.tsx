@@ -99,6 +99,7 @@ const dict: Record<string, Record<Lang, string>> = {
   map_no_points: { ru: 'Пока нет координат для карты.', en: 'No map coordinates yet.', es: 'Aún no hay coordenadas para el mapa.' },
   map_projects_without_geo: { ru: 'Проекты без координат', en: 'Projects without coordinates', es: 'Proyectos sin coordenadas' },
   map_workers_without_position: { ru: 'Работники без точки на карте', en: 'Workers without a map point', es: 'Trabajadores sin punto en el mapa' },
+  track_no_points: { ru: 'Недостаточно точек GPS для трека за сегодня.', en: 'Not enough GPS points to draw today’s track.', es: 'No hay suficientes puntos GPS para el recorrido de hoy.' },
   write_message: { ru: 'Написать', en: 'Write', es: 'Escribir' },
   assign_worker: { ru: 'Назначить', en: 'Assign', es: 'Asignar' },
   close: { ru: 'Закрыть', en: 'Close', es: 'Cerrar' },
