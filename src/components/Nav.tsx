@@ -11,6 +11,7 @@ import {
   IconDashboard,
   IconDispatch,
   IconFolder,
+  IconImage,
   IconMap,
   IconMoney,
   IconSettings,
@@ -45,6 +46,7 @@ export default function Nav({ manager }: { manager: boolean }) {
         { to: '/dispatch', Icon: IconDispatch, label: t('dispatch') },
         { to: '/calendar', Icon: IconCalendar, label: t('calendar') },
         { to: '/map', Icon: IconMap, label: t('map') },
+        { to: '/gallery', Icon: IconImage, label: t('gallery') },
       ],
     },
     {

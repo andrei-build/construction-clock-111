@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -611,6 +611,41 @@ export async function getProjectRecentPhotos(projectId: string): Promise<Project
   }))
 
   return photos.filter((photo): photo is ProjectPhoto => photo !== null)
+}
+
+// «Галерея»: все фото объектов (media_type='photo', не удалённые) с именем проекта.
+// Подписанные URL берём пачкой, порядок — сначала свежие. Лимит держит галерею лёгкой.
+export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {
+  const { data, error } = await supabase.from('media')
+    .select('id, storage_path, filename, created_at, project_id, category, project:projects(name)')
+    .eq('media_type', 'photo')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(200)
+  if (error) return []
+
+  const photos = await Promise.all(((data ?? []) as unknown as Array<{
+    id: string
+    storage_path: string | null
+    filename?: string | null
+    created_at?: string | null
+    project_id?: string | null
+    category?: string | null
+    project?: { name: string | null } | null
+  }>).map(async (row) => {
+    if (!row.storage_path) return null
+    return {
+      id: row.id,
+      url: await mediaUrl(row.storage_path),
+      filename: row.filename ?? null,
+      created_at: row.created_at ?? null,
+      project_id: row.project_id ?? null,
+      project_name: row.project?.name ?? null,
+      category: row.category ?? null,
+    }
+  }))
+
+  return photos.filter((photo): photo is GalleryPhoto => photo !== null)
 }
 
 export async function getCurrentPayPeriod(): Promise<PayPeriod | null> {

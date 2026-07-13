@@ -96,6 +96,17 @@ export interface ProjectPhoto {
   created_at: string | null
 }
 
+// Фото для экрана «Галерея» — все снимки объектов с именем проекта и категорией.
+export interface GalleryPhoto {
+  id: string
+  url: string
+  filename: string | null
+  created_at: string | null
+  project_id: string | null
+  project_name: string | null
+  category: string | null
+}
+
 export interface EventRow {
   id: number
   event_type: string
