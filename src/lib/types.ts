@@ -251,6 +251,20 @@ export interface StoreVisit {
   project?: { name: string | null } | null
 }
 
+// Дневной рапорт бригадира по проекту (daily_reports): автор пишет свой, менеджер видит все (RLS).
+export interface DailyReport {
+  id: string
+  org_id: string
+  project_id: string
+  author_id: string
+  report_date: string
+  body: string
+  media_ids: string[] | null
+  created_at: string
+  project?: { name: string | null } | null
+  author?: { name: string | null } | null
+}
+
 export type ReportKind = 'hours' | 'payroll' | 'expenses'
 export type ReportCell = string | number | boolean | null
 export type ReportRow = Record<string, ReportCell>

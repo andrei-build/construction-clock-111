@@ -332,6 +332,18 @@ const dict: Record<string, Record<Lang, string>> = {
   stores_unpaid: { ru: 'Не оплачено', en: 'Unpaid', es: 'No pagado' },
   stores_unknown_worker: { ru: 'Работник', en: 'Worker', es: 'Trabajador' },
   stores_unknown_store: { ru: 'Магазин', en: 'Store', es: 'Tienda' },
+  daily_reports: { ru: 'Дневные рапорты', en: 'Daily reports', es: 'Reportes diarios' },
+  daily_pick_project: { ru: 'Выберите проект', en: 'Select project', es: 'Elija proyecto' },
+  daily_body_placeholder: { ru: 'Что сделано за день, материалы, задержки…', en: 'What was done today, materials, delays…', es: 'Trabajo del día, materiales, retrasos…' },
+  daily_submit: { ru: 'Отправить рапорт', en: 'Submit report', es: 'Enviar reporte' },
+  daily_saving: { ru: 'Сохраняю…', en: 'Saving…', es: 'Guardando…' },
+  daily_save_failed: { ru: 'Не удалось сохранить рапорт', en: 'Could not save report', es: 'No se pudo guardar el reporte' },
+  daily_filter: { ru: 'Фильтр по проекту', en: 'Project filter', es: 'Filtro por proyecto' },
+  daily_all_projects: { ru: 'Все проекты', en: 'All projects', es: 'Todos los proyectos' },
+  daily_empty: { ru: 'Рапортов пока нет', en: 'No reports yet', es: 'Aún no hay reportes' },
+  daily_unknown_project: { ru: 'Без проекта', en: 'No project', es: 'Sin proyecto' },
+  daily_unknown_author: { ru: 'Автор', en: 'Author', es: 'Autor' },
+  daily_you: { ru: 'Вы', en: 'You', es: 'Usted' },
 }
 
 interface I18n {

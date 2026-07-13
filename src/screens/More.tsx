@@ -18,9 +18,11 @@ export default function More() {
         <span className="badge amber">{profile?.role}</span>
       </div>
 
+      <h2>{t('work')}</h2>
+      <Link to="/daily" className="btn ghost small more-link">{t('daily_reports')}</Link>
+
       {manager && (
         <>
-          <h2>{t('work')}</h2>
           <Link to="/dispatch" className="btn ghost small more-link">{t('dispatch')}</Link>
           <Link to="/map" className="btn ghost small more-link">{t('map')}</Link>
           <h2>{t('office')}</h2>
