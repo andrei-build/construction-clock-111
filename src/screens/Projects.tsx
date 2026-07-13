@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, markTaskDone, uploadTaskPhoto, validateUpload, uploadErrorCode } from '../lib/api'
+import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, markTaskDone, uploadTaskPhoto, validateUpload, uploadErrorCode, captureGPS } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
 import MediaComments from '../components/MediaComments'
@@ -19,6 +19,10 @@ export default function Projects() {
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
+  const [lat, setLat] = useState('')
+  const [lng, setLng] = useState('')
+  const [geoBusy, setGeoBusy] = useState(false)
+  const [geoError, setGeoError] = useState(false)
   const [busy, setBusy] = useState(false)
   const [taskBusy, setTaskBusy] = useState<string | null>(null)
   const [photoBusy, setPhotoBusy] = useState<string | null>(null)
@@ -36,11 +40,28 @@ export default function Projects() {
     if (!profile || !name.trim()) return
     setBusy(true)
     try {
-      await createProject(profile, name.trim(), address.trim())
-      setName(''); setAddress(''); setAdding(false)
+      const latNum = lat.trim() === '' ? undefined : Number(lat)
+      const lngNum = lng.trim() === '' ? undefined : Number(lng)
+      await createProject(profile, name.trim(), address.trim(), latNum, lngNum)
+      setName(''); setAddress(''); setLat(''); setLng(''); setGeoError(false); setAdding(false)
       await load()
     } catch { /* показывается пустым — RLS не пустит не-менеджера */ }
     setBusy(false)
+  }
+
+  const useMyLocation = async () => {
+    setGeoBusy(true)
+    setGeoError(false)
+    try {
+      const geo = await captureGPS()
+      if (geo.status === 'off' || geo.lat === null || geo.lng === null) {
+        setGeoError(true)
+        return
+      }
+      setLat(String(geo.lat)); setLng(String(geo.lng))
+    } finally {
+      setGeoBusy(false)
+    }
   }
 
   const done = async (task: Task) => {
@@ -97,6 +118,20 @@ export default function Projects() {
           <input value={name} onChange={(e) => setName(e.target.value)} />
           <label>{t('address')}</label>
           <input value={address} onChange={(e) => setAddress(e.target.value)} />
+          <div className="row coord-row">
+            <div className="coord-field">
+              <label>{t('project_lat')}</label>
+              <input inputMode="decimal" value={lat} onChange={(e) => setLat(e.target.value)} />
+            </div>
+            <div className="coord-field">
+              <label>{t('project_lng')}</label>
+              <input inputMode="decimal" value={lng} onChange={(e) => setLng(e.target.value)} />
+            </div>
+          </div>
+          <button type="button" className="btn ghost small" disabled={geoBusy} onClick={useMyLocation}>
+            {geoBusy ? t('locating') : t('use_my_location')}
+          </button>
+          {geoError && <p className="error-msg">{t('location_unavailable')}</p>}
           <button className="btn" disabled={busy || !name.trim()}>{t('create')}</button>
         </form>
       )}
