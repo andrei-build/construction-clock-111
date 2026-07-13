@@ -2042,3 +2042,18 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-placeholder h2 { margin-bottom: 8px; }
 .project-row-dots { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; }
 .project-row-dots .status-dot { margin-top: 0; }
+
+/* Check-out confirmation (Cancel — stay checked in) */
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, .54);
+}
+.confirm-modal {
+  width: min(420px, 100%);
+  margin: 0;
+}
