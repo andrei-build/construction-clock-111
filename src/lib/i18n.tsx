@@ -717,6 +717,8 @@ const dict: Record<string, Record<Lang, string>> = {
   about_version: { ru: 'Версия', en: 'Version', es: 'Versión' },
   about_env: { ru: 'Окружение', en: 'Environment', es: 'Entorno' },
   about_base_url: { ru: 'Базовый URL', en: 'Base URL', es: 'URL base' },
+  // Offline read cache (F65)
+  offline_cache_notice: { ru: 'Показаны сохранённые данные от {time}', en: 'Showing cached data from {time}', es: 'Mostrando datos guardados de {time}' },
 }
 
 interface I18n {
