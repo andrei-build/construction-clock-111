@@ -1842,10 +1842,13 @@ export async function softDeleteProjectNote(id: string): Promise<void> {
   if (error) throw error
 }
 
-export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number) {
+export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number, gpsRadiusM?: number) {
   const row: Record<string, unknown> = { org_id: p.org_id, name, address, created_by: p.id }
   if (lat !== undefined && lng !== undefined && !Number.isNaN(lat) && !Number.isNaN(lng)) {
     row.site_point = `SRID=4326;POINT(${lng} ${lat})`
+  }
+  if (gpsRadiusM !== undefined && !Number.isNaN(gpsRadiusM)) {
+    row.gps_radius_m = Math.round(gpsRadiusM)
   }
   const { data, error } = await supabase.from('projects').insert(row).select('id').single()
   if (error) throw error

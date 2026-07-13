@@ -165,6 +165,8 @@ const dict: Record<string, Record<Lang, string>> = {
   address: { ru: 'Адрес', en: 'Address', es: 'Dirección' },
   project_lat: { ru: 'Широта', en: 'Latitude', es: 'Latitud' },
   project_lng: { ru: 'Долгота', en: 'Longitude', es: 'Longitud' },
+  project_gps_radius: { ru: 'Радиус GPS (м)', en: 'GPS radius (m)', es: 'Radio GPS (m)' },
+  copy_project: { ru: 'Копировать', en: 'Copy', es: 'Copiar' },
   use_my_location: { ru: '📍 Моё текущее местоположение', en: '📍 Use My Current Location', es: '📍 Usar mi ubicación actual' },
   locating: { ru: 'Определяю местоположение…', en: 'Getting location…', es: 'Obteniendo ubicación…' },
   location_unavailable: { ru: 'Не удалось получить местоположение. Разрешите доступ к геолокации и попробуйте снова.', en: 'Could not get your location. Allow location access and try again.', es: 'No se pudo obtener tu ubicación. Permite el acceso a la ubicación e inténtalo de nuevo.' },
