@@ -243,6 +243,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   justify-content: flex-start;
   flex-wrap: wrap;
 }
+.consent-name-input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel2);
+  color: inherit;
+  font-size: 15px;
+}
+.consent-agree {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  cursor: pointer;
+}
+.consent-agree input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
 .center { text-align: center; }
 .error-msg { color: var(--red); text-align: center; margin: 10px 0; font-weight: 600; }
 .ok-msg { color: var(--green); text-align: center; margin: 10px 0; font-weight: 600; }

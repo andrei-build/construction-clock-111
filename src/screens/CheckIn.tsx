@@ -38,7 +38,7 @@ function isNetworkError(error: unknown) {
 
 function messageClass(msg: string) {
   if (msg === 'error') return 'error-msg'
-  if (['offline_saved', 'checkout_video_needed', 'checkout_video_online_required', 'safety_signature_required', 'safety_online_required', 'file_too_large', 'file_type_not_allowed'].includes(msg)) return 'warn-msg'
+  if (['offline_saved', 'checkout_video_needed', 'checkout_video_online_required', 'safety_signature_required', 'safety_online_required', 'consent_agree_required', 'file_too_large', 'file_type_not_allowed'].includes(msg)) return 'warn-msg'
   return 'ok-msg'
 }
 
@@ -75,6 +75,8 @@ export default function CheckIn() {
   const [confirmingCheckout, setConfirmingCheckout] = useState(false)
   const [safetyProjectId, setSafetyProjectId] = useState<string | null>(null)
   const [signatureTouched, setSignatureTouched] = useState(false)
+  const [consentName, setConsentName] = useState('')
+  const [consentAgreed, setConsentAgreed] = useState(false)
   const drawingRef = useRef(false)
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const syncRef = useRef(false)
@@ -160,6 +162,8 @@ export default function CheckIn() {
     if (type === 'check_in' && selectedNeedsSafety) {
       setSafetyProjectId(selected)
       setSignatureTouched(false)
+      setConsentName('')
+      setConsentAgreed(false)
       setMsg(null)
       return
     }
@@ -280,6 +284,11 @@ export default function CheckIn() {
       setMsg('safety_signature_required')
       return
     }
+    // Паритет с Check Time (canConfirmGpsConsent): напечатанное имя + явная галочка «Согласен» — клиентский гейт.
+    if (consentName.trim().length === 0 || !consentAgreed) {
+      setMsg('consent_agree_required')
+      return
+    }
     if (!isOnline()) {
       setMsg('safety_online_required')
       return
@@ -298,6 +307,8 @@ export default function CheckIn() {
       setTravel(null)
       setSafetyProjectId(null)
       setSignatureTouched(false)
+      setConsentName('')
+      setConsentAgreed(false)
       setMsg('safety_saved')
       setTimeout(() => setMsg(null), 2500)
     } catch (error) {
@@ -406,8 +417,28 @@ export default function CheckIn() {
             <button className="btn ghost small" type="button" disabled={busy} onClick={clearSignature}>{t('clear_signature')}</button>
             <button className="btn ghost small" type="button" disabled={busy} onClick={() => { setSafetyProjectId(null); setMsg(null) }}>{t('cancel')}</button>
           </div>
+          <label htmlFor="consent-name">{t('consent_name_label')}</label>
+          <input
+            id="consent-name"
+            className="consent-name-input"
+            type="text"
+            autoComplete="name"
+            disabled={busy}
+            placeholder={t('consent_name_placeholder')}
+            value={consentName}
+            onChange={(event) => setConsentName(event.target.value)}
+          />
+          <label className="consent-agree">
+            <input
+              type="checkbox"
+              disabled={busy}
+              checked={consentAgreed}
+              onChange={(event) => setConsentAgreed(event.target.checked)}
+            />
+            <span>{t('consent_agree_label')}</span>
+          </label>
         </div>
-        <button className="btn green" disabled={busy || !signatureTouched} onClick={submitSafetyCheckIn}>
+        <button className="btn green" disabled={busy || !signatureTouched || consentName.trim().length === 0 || !consentAgreed} onClick={submitSafetyCheckIn}>
           {busy ? t('loading') : t('safety_accept_checkin')}
         </button>
         {msg && <p className={messageClass(msg)}>{t(msg)}</p>}
