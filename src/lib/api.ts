@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -854,6 +854,47 @@ export async function restoreEntity(p: Profile, table: ArchiveTable, id: string)
   if (error) throw error
   const entityType = RESTORE_ENTITY_TYPE[table]
   await logEvent(p, `${entityType}.restored`, entityType, id, {})
+}
+
+// «Магазины поставок»: справочник supply_stores. NB: point — PostGIS geography, никогда не селектим (hex EWKB).
+export async function getSupplyStores(): Promise<SupplyStore[]> {
+  const { data, error } = await supabase.from('supply_stores')
+    .select('id, org_id, name, address, radius_m, is_active, created_at')
+    .order('name')
+  if (error) return []
+  return (data as SupplyStore[]) ?? []
+}
+
+export async function createSupplyStore(
+  p: Profile,
+  { name, address, radius_m, lat, lng }: { name: string; address?: string; radius_m?: number; lat?: number; lng?: number },
+): Promise<SupplyStore | null> {
+  const row: Record<string, unknown> = { org_id: p.org_id, name, address, radius_m: radius_m ?? 120 }
+  // X Y = lon lat: сначала долгота, потом широта. Обе координаты должны быть конечными числами.
+  if (typeof lat === 'number' && typeof lng === 'number' && Number.isFinite(lat) && Number.isFinite(lng)) {
+    row.point = `SRID=4326;POINT(${lng} ${lat})`
+  }
+  const { data, error } = await supabase.from('supply_stores').insert(row)
+    .select('id, org_id, name, address, radius_m, is_active, created_at').single()
+  if (error) throw error
+  await logEvent(p, 'supply_store.created', 'supply_store', data.id, {})
+  return data as SupplyStore
+}
+
+export async function setSupplyStoreActive(p: Profile, id: string, is_active: boolean) {
+  const { error } = await supabase.from('supply_stores').update({ is_active }).eq('id', id)
+  if (error) throw error
+  await logEvent(p, 'supply_store.updated', 'supply_store', id, { is_active })
+}
+
+// Заезды store_visits: строки пишет бэкенд edge-function, экран только читает (может быть пусто).
+export async function getStoreVisits(): Promise<StoreVisit[]> {
+  const { data, error } = await supabase.from('store_visits')
+    .select('id, worker_id, store_id, project_id, entered_at, exited_at, is_paid, note, worker:profiles(name), store:supply_stores(name), project:projects(name)')
+    .order('entered_at', { ascending: false })
+    .limit(50)
+  if (error) return []
+  return (data as unknown as StoreVisit[]) ?? []
 }
 
 export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number) {

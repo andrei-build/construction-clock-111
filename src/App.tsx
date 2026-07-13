@@ -15,6 +15,7 @@ import Reports from './screens/Reports'
 import Timeline from './screens/Timeline'
 import Consents from './screens/Consents'
 import Archive from './screens/Archive'
+import Stores from './screens/Stores'
 import MyTime from './screens/MyTime'
 import Payroll from './screens/Payroll'
 import Messages from './screens/Messages'
@@ -49,6 +50,7 @@ export default function App() {
             <Route path="/timeline" element={manager ? <Timeline /> : <Navigate to="/" />} />
             <Route path="/consents" element={manager ? <Consents /> : <Navigate to="/" />} />
             <Route path="/archive" element={manager ? <Archive /> : <Navigate to="/" />} />
+            <Route path="/stores" element={manager ? <Stores /> : <Navigate to="/" />} />
             <Route path="/time" element={<MyTime />} />
             <Route path="/payroll" element={manager ? <Payroll /> : <Navigate to="/" />} />
             <Route path="/messages" element={<Messages />} />

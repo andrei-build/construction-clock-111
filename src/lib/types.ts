@@ -225,6 +225,32 @@ export interface ArchivedMedia {
   project?: { name: string | null } | null
 }
 
+// Справочник «Магазины поставок» — менеджер ведёт список для авто-детекта заездов (детект — бэкенд).
+export interface SupplyStore {
+  id: string
+  org_id: string
+  name: string
+  address: string | null
+  radius_m: number
+  is_active: boolean
+  created_at: string
+}
+
+// Заезд в магазин (store_visits) — строки пишет бэкенд edge-function, экран только читает.
+export interface StoreVisit {
+  id: string
+  worker_id: string
+  store_id: string | null
+  project_id: string | null
+  entered_at: string
+  exited_at: string | null
+  is_paid: boolean
+  note: string | null
+  worker?: { name: string | null } | null
+  store?: { name: string | null } | null
+  project?: { name: string | null } | null
+}
+
 export type ReportKind = 'hours' | 'payroll' | 'expenses'
 export type ReportCell = string | number | boolean | null
 export type ReportRow = Record<string, ReportCell>
