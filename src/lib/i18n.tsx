@@ -518,6 +518,7 @@ const dict: Record<string, Record<Lang, string>> = {
   gallery_empty: { ru: 'Фотографий пока нет', en: 'No photos yet', es: 'Aún no hay fotos' },
   gallery_empty_filter: { ru: 'По этому объекту фото нет', en: 'No photos for this site', es: 'No hay fotos para esta obra' },
   gallery_count: { ru: 'фото', en: 'photos', es: 'fotos' },
+  gallery_load_more: { ru: 'Показать ещё', en: 'Load more', es: 'Cargar más' },
   gallery_close: { ru: 'Закрыть просмотр', en: 'Close viewer', es: 'Cerrar visor' },
   gallery_prev: { ru: 'Предыдущее фото', en: 'Previous photo', es: 'Foto anterior' },
   gallery_next: { ru: 'Следующее фото', en: 'Next photo', es: 'Foto siguiente' },

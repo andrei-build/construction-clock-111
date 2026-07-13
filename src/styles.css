@@ -1736,6 +1736,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
+/* Ряд с кнопкой «Показать ещё» — по центру под сеткой/списком вкладки */
+.gallery-load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
 .gallery-item {
   position: relative;
   display: block;

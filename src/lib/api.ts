@@ -1031,13 +1031,16 @@ export async function getProjectVideos(projectId: string): Promise<GalleryVideo[
 
 // «Галерея»: все фото объектов (media_type='photo', не удалённые) с именем проекта.
 // Подписанные URL берём пачкой, порядок — сначала свежие. Лимит держит галерею лёгкой.
-export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {
+// Размер страницы галереи по умолчанию — сохраняет прежний потолок в 200 для существующих вызовов.
+export const GALLERY_PAGE_SIZE = 200
+
+export async function getGalleryPhotos(offset = 0, limit = GALLERY_PAGE_SIZE): Promise<GalleryPhoto[]> {
   const { data, error } = await supabase.from('media')
     .select('id, storage_path, filename, created_at, project_id, category, uploaded_by, project:projects(name), uploader:profiles!media_uploaded_by_fkey(name)')
     .eq('media_type', 'photo')
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
-    .limit(200)
+    .range(offset, offset + limit - 1)
   if (error) return []
 
   const photos = await Promise.all(((data ?? []) as unknown as Array<{
@@ -1070,13 +1073,13 @@ export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {
 
 // «Галерея» → вкладка Видео: все видео объектов (media_type='video', не удалённые) с именем проекта.
 // Строго по образцу getGalleryPhotos, только media_type='video'. Подписанные URL берём пачкой.
-export async function getGalleryVideos(): Promise<GalleryVideo[]> {
+export async function getGalleryVideos(offset = 0, limit = GALLERY_PAGE_SIZE): Promise<GalleryVideo[]> {
   const { data, error } = await supabase.from('media')
     .select('id, storage_path, filename, created_at, project_id, category, uploaded_by, project:projects(name), uploader:profiles!media_uploaded_by_fkey(name)')
     .eq('media_type', 'video')
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
-    .limit(200)
+    .range(offset, offset + limit - 1)
   if (error) return []
 
   const videos = await Promise.all(((data ?? []) as unknown as Array<{
@@ -1110,13 +1113,13 @@ export async function getGalleryVideos(): Promise<GalleryVideo[]> {
 // «Галерея» → вкладка PDF: PDF-документы из таблицы files (mime pdf, не удалённые) с именем проекта.
 // URL не резолвим здесь (зависит от scope) — открываем по клику через getGalleryPdfUrl.
 // RLS files сама ограничивает org и видимость (менеджер видит всё, приватные — владелец/менеджер).
-export async function getGalleryPdfs(): Promise<GalleryPdf[]> {
+export async function getGalleryPdfs(offset = 0, limit = GALLERY_PAGE_SIZE): Promise<GalleryPdf[]> {
   const { data, error } = await supabase.from('files')
     .select('id, name, storage_path, scope, created_at, project_id, uploaded_by, project:projects(name), uploader:profiles!files_uploaded_by_fkey(name)')
     .ilike('mime', 'application/pdf')
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
-    .limit(200)
+    .range(offset, offset + limit - 1)
   if (error) return []
 
   return ((data ?? []) as unknown as Array<{
