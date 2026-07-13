@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { getTeam, getTodayEvents, createWorker, setWorkerCheckoutVideo } from '../lib/api'
 import { workedMs, fmtHours, shiftState } from '../lib/time'
+import { buildWorkerDisambiguationMap } from '../lib/worker-utils'
 import { canAssignRole, isManagerWrite, type Profile, type Role, type TimeEvent } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
 
@@ -32,6 +33,9 @@ export default function Team() {
     }
     return m
   }, [events])
+
+  // F16: same-name workers get a role / id suffix so the list stays tellable-apart.
+  const workerLabels = useMemo(() => buildWorkerDisambiguationMap(team), [team])
 
   const onShiftCount = useMemo(
     () => team.filter((w) => shiftState(byWorker.get(w.id) ?? []).status !== 'off').length,
@@ -103,7 +107,7 @@ export default function Team() {
         return (
           <div key={w.id} className="card row">
             <div>
-              <button className="inline-link item-title" onClick={() => openWorker(w)}>{w.name}</button>
+              <button className="inline-link item-title" onClick={() => openWorker(w)}>{workerLabels.get(w.id) ?? w.name}</button>
               <span className={`badge ${roleBadge(w.role)}`}>{w.role}</span>
             </div>
             <div className="center">

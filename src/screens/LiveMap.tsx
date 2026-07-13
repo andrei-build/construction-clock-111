@@ -5,6 +5,7 @@ import { useEntityDrawer } from '../components/EntityDrawer'
 import { getMapProjects, getTeam, getTodayEvents, getWorkerLastLocations, type WorkerLocation } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { shiftState } from '../lib/time'
+import { buildWorkerDisambiguationMap } from '../lib/worker-utils'
 import type { Profile, Project, TimeEvent } from '../lib/types'
 
 type MapPoint = { lat: number; lng: number }
@@ -190,6 +191,8 @@ export default function LiveMap() {
 
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects])
   const eventsByWorker = useMemo(() => groupEventsByWorker(events), [events])
+  // F16: disambiguate same-name workers in marker labels.
+  const workerLabels = useMemo(() => buildWorkerDisambiguationMap(team), [team])
 
   const workerMarkers = useMemo<WorkerMarker[]>(() => {
     const markers: WorkerMarker[] = []
@@ -254,7 +257,8 @@ export default function LiveMap() {
     }
 
     for (const markerRow of workerMarkers) {
-      const title = markerRow.projectName ? `${markerRow.worker.name} · ${markerRow.projectName}` : markerRow.worker.name
+      const workerName = workerLabels.get(markerRow.worker.id) ?? markerRow.worker.name
+      const title = markerRow.projectName ? `${workerName} · ${markerRow.projectName}` : workerName
       const marker = L.marker([markerRow.point.lat, markerRow.point.lng], {
         icon: markerIcon('worker', markerRow.tone),
         title,
@@ -289,7 +293,7 @@ export default function LiveMap() {
       else map.fitBounds(L.latLngBounds(bounds), { padding: [34, 34], maxZoom: 14 })
       fittedRef.current = true
     }
-  }, [eventsByWorker, openProject, openWorker, projectMarkers, selectedWorkerId, t, workerMarkers])
+  }, [eventsByWorker, openProject, openWorker, projectMarkers, selectedWorkerId, t, workerMarkers, workerLabels])
 
   const selectedTrackPoints = useMemo(() => {
     if (!selectedWorkerId) return 0
