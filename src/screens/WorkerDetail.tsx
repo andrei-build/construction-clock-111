@@ -13,6 +13,7 @@ import {
   getVisibleProfileRates,
   getWorkerDayClosedTasks,
   getWorkerDayPhotos,
+  getWorkerDayTimeEvents,
   getWorkerIntervals,
   getWorkerPinAccess,
   getWorkerProfile,
@@ -58,6 +59,8 @@ interface DayDetail {
   state: 'loading' | 'ready' | 'error'
   photos: WorkerDayPhoto[]
   tasks: WorkerDayClosedTask[]
+  // F13: есть ли в этот день отметка с непроверенной локацией (metadata.needs_review/location_unverified).
+  needsReview: boolean
 }
 
 function startOfDay(date: Date) {
@@ -295,16 +298,19 @@ export default function WorkerDetail() {
     if (expandedDay === day.key) { setExpandedDay(null); return }
     setExpandedDay(day.key)
     if (!id || dayDetails[day.key]) return
-    setDayDetails((prev) => ({ ...prev, [day.key]: { state: 'loading', photos: [], tasks: [] } }))
+    setDayDetails((prev) => ({ ...prev, [day.key]: { state: 'loading', photos: [], tasks: [], needsReview: false } }))
     Promise.all([
       getWorkerDayPhotos(id, day.startISO, day.endISO),
       getWorkerDayClosedTasks(id, day.startISO, day.endISO),
+      getWorkerDayTimeEvents(id, day.startISO, day.endISO),
     ])
-      .then(([photos, tasks]) => {
-        setDayDetails((prev) => ({ ...prev, [day.key]: { state: 'ready', photos, tasks } }))
+      .then(([photos, tasks, events]) => {
+        // F13: только показ — часы/оплату не трогаем; флаг из additive-метаданных отметок.
+        const needsReview = events.some((e) => Boolean(e.metadata?.needs_review) || Boolean(e.metadata?.location_unverified))
+        setDayDetails((prev) => ({ ...prev, [day.key]: { state: 'ready', photos, tasks, needsReview } }))
       })
       .catch(() => {
-        setDayDetails((prev) => ({ ...prev, [day.key]: { state: 'error', photos: [], tasks: [] } }))
+        setDayDetails((prev) => ({ ...prev, [day.key]: { state: 'error', photos: [], tasks: [], needsReview: false } }))
       })
   }
 
@@ -579,6 +585,11 @@ export default function WorkerDetail() {
                         {detail?.state === 'error' && <p className="error-msg">{t('load_error')}</p>}
                         {detail?.state === 'ready' && (
                           <>
+                            {detail.needsReview && (
+                              <p className="gps-review-note" title={t('location_needs_review_hint')}>
+                                ⚠ {t('location_needs_review')}
+                              </p>
+                            )}
                             <h3>{t('day_photos')}</h3>
                             {detail.photos.length === 0 ? (
                               <p className="muted">{t('day_no_photos')}</p>

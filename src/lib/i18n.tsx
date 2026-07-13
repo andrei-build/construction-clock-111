@@ -449,6 +449,8 @@ const dict: Record<string, Record<Lang, string>> = {
   chip_time_gap: { ru: 'РАЗРЫВ ВРЕМЕНИ', en: 'TIME GAP', es: 'HUECO DE TIEMPO' },
   chip_reviewed: { ru: 'ПРОВЕРЕНО', en: 'REVIEWED', es: 'REVISADO' },
   chip_needs_review: { ru: 'НУЖНА ПРОВЕРКА', en: 'NEEDS REVIEW', es: 'REQUIERE REVISIÓN' },
+  location_needs_review: { ru: 'Локация не подтверждена · нужна проверка', en: 'Location unverified · needs review', es: 'Ubicación no verificada · requiere revisión' },
+  location_needs_review_hint: { ru: 'GPS не взялся при отметке — проверьте вручную. На часы/оплату не влияет.', en: 'GPS did not resolve at check-in — verify manually. Does not affect hours/pay.', es: 'El GPS no se obtuvo al fichar — verifique manualmente. No afecta horas/pago.' },
   mark_reviewed: { ru: 'Проверено', en: 'Reviewed', es: 'Revisado' },
   shift_pulse_title: { ru: 'Пульс смен', en: 'Shift pulse', es: 'Pulso de turnos' },
   shift_pulse_empty: { ru: 'Сейчас никто не на смене.', en: 'Nobody is on shift right now.', es: 'Nadie está en turno ahora.' },

@@ -136,15 +136,25 @@ export async function getProjectShiftEvents(projectId: string, sinceISO: string)
   return (data as TimeEvent[]) ?? []
 }
 
-export interface Geo { lat: number | null; lng: number | null; accuracy: number | null; status: 'good' | 'off' }
+// F13: почему GPS не взялся (паритет с Check Time-таксономией) — ДОП. поле, статус остаётся 'good'/'off'.
+export type GeoErrorKind = 'denied' | 'unavailable' | 'timeout' | 'unsupported'
+
+export interface Geo { lat: number | null; lng: number | null; accuracy: number | null; status: 'good' | 'off'; errorKind?: GeoErrorKind }
+
+// GeolocationPositionError.code → наша причина (1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT).
+function geoErrorKindFromCode(code: number): GeoErrorKind {
+  if (code === 1) return 'denied'
+  if (code === 2) return 'unavailable'
+  return 'timeout'
+}
 
 export function captureGPS(timeoutMs = 8000): Promise<Geo> {
   return new Promise((resolve) => {
-    if (!('geolocation' in navigator)) return resolve({ lat: null, lng: null, accuracy: null, status: 'off' })
-    const timer = setTimeout(() => resolve({ lat: null, lng: null, accuracy: null, status: 'off' }), timeoutMs)
+    if (!('geolocation' in navigator)) return resolve({ lat: null, lng: null, accuracy: null, status: 'off', errorKind: 'unsupported' })
+    const timer = setTimeout(() => resolve({ lat: null, lng: null, accuracy: null, status: 'off', errorKind: 'timeout' }), timeoutMs)
     navigator.geolocation.getCurrentPosition(
       (pos) => { clearTimeout(timer); resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, status: 'good' }) },
-      () => { clearTimeout(timer); resolve({ lat: null, lng: null, accuracy: null, status: 'off' }) },
+      (err) => { clearTimeout(timer); resolve({ lat: null, lng: null, accuracy: null, status: 'off', errorKind: geoErrorKindFromCode(err?.code ?? 0) }) },
       { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 30000 },
     )
   })
@@ -159,11 +169,20 @@ export async function addTimeEvent(
   eventTime = new Date().toISOString(),
   metadata: Record<string, unknown> = {},
 ) {
+  // F13: ДОП. метаданные для триажа менеджера — gps_status ('good'/'off') НЕ трогаем.
+  // location_unverified/needs_review — когда фикс не взялся; gps_error_kind — причина (denied/…).
+  const unverified = geo.status !== 'good'
+  const reviewMeta: Record<string, unknown> = {}
+  if (geo.errorKind) reviewMeta.gps_error_kind = geo.errorKind
+  if (unverified) {
+    reviewMeta.location_unverified = true
+    reviewMeta.needs_review = true
+  }
   const row: Record<string, unknown> = {
     org_id: p.org_id, profile_id: p.id, project_id: projectId,
     event_type: type, event_time: eventTime,
     gps_status: geo.status, gps_accuracy_m: geo.accuracy, gps_source: 'browser',
-    metadata: { lat: geo.lat, lng: geo.lng, client_id: crypto.randomUUID(), ...metadata },
+    metadata: { lat: geo.lat, lng: geo.lng, client_id: crypto.randomUUID(), ...reviewMeta, ...metadata },
   }
   if (geo.lat !== null && geo.lng !== null) row.gps_point = `SRID=4326;POINT(${geo.lng} ${geo.lat})`
   const { data, error } = await supabase.from('time_events').insert(row).select('id').single()
@@ -2170,4 +2189,17 @@ export async function getWorkerDayClosedTasks(workerId: string, dayStartISO: str
     project_id: row.project_id ?? null,
     project_name: row.project?.name ?? null,
   }))
+}
+
+// F13: события времени работника в границах суток — для бейджа «нужна проверка» в деталях дня.
+// Читаем metadata (jsonb), где лежат additive-ключи needs_review/location_unverified/gps_error_kind. Только чтение.
+export async function getWorkerDayTimeEvents(workerId: string, dayStartISO: string, dayEndISO: string): Promise<TimeEvent[]> {
+  const { data, error } = await supabase.from('time_events')
+    .select(TIME_EVENT_SELECT)
+    .eq('profile_id', workerId)
+    .gte('event_time', dayStartISO)
+    .lt('event_time', dayEndISO)
+    .order('event_time')
+  if (error) return []
+  return (data as TimeEvent[]) ?? []
 }
