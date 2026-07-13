@@ -398,5 +398,26 @@ export interface Unit {
   abbreviation: string | null
 }
 
+// Файл/документ (files): менеджер+ видит все, автор — свои. Мягкое удаление через deleted_at.
+// storage_path указывает в тот же bucket, что и медиа задач; подписанные ссылки — через mediaUrl.
+export interface FileRow {
+  id: string
+  org_id: string
+  scope: string
+  project_id: string | null
+  profile_id: string | null
+  account_id: string | null
+  folder: string
+  name: string
+  storage_path: string
+  mime: string | null
+  size_bytes: number | null
+  doc_kind: string | null
+  expires_at: string | null
+  is_private: boolean
+  uploaded_by: string | null
+  created_at: string
+}
+
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)
 export const isManagerWrite = (r: Role) => ['manager', 'admin', 'owner'].includes(r)

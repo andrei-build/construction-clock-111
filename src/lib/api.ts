@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, Account, DocumentProjectOption, DocumentRow, DocumentItem, Unit } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, Account, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -352,7 +352,7 @@ export async function uploadTaskPhoto(p: Profile, task: Task, file: File): Promi
   return { id: mediaId, storage_path: storagePath, preview_url: URL.createObjectURL(file) }
 }
 
-async function mediaUrl(storagePath: string) {
+export async function mediaUrl(storagePath: string) {
   const signed = await supabase.storage.from(TASK_MEDIA_BUCKET).createSignedUrl(storagePath, 3600)
   if (!signed.error && signed.data?.signedUrl) return signed.data.signedUrl
   return supabase.storage.from(TASK_MEDIA_BUCKET).getPublicUrl(storagePath).data.publicUrl
@@ -1305,6 +1305,73 @@ export async function createDailyReport(
   if (error) throw error
   await logEvent(p, 'daily_report.created', 'daily_report', data.id, { project_id: projectId, report_date: reportDate })
   return data as unknown as DailyReport
+}
+
+// «Файлы и документы» (files): storage_path — в тот же bucket, что и медиа задач (TASK_MEDIA_BUCKET).
+// RLS: SELECT org-скоуп + видимость (менеджер видит всё, приватные — владелец/менеджер); удалённые прячем.
+const FILE_SELECT = 'id, org_id, scope, project_id, profile_id, account_id, folder, name, storage_path, mime, size_bytes, doc_kind, expires_at, is_private, uploaded_by, created_at'
+
+export async function getFiles(): Promise<FileRow[]> {
+  const { data, error } = await supabase.from('files')
+    .select(FILE_SELECT)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data as FileRow[]) ?? []
+}
+
+// Загрузка файла: blob в bucket медиа + строка files. RLS INSERT требует org_id=app.org_id()
+// и (менеджер ИЛИ uploaded_by=uid) — потому всегда пишем uploaded_by=p.id и org_id=p.org_id.
+export async function uploadFile(p: Profile, input: {
+  file: Blob
+  name: string
+  scope: string
+  folder: string
+  is_private: boolean
+  doc_kind?: string | null
+  expires_at?: string | null
+  project_id?: string | null
+  profile_id?: string | null
+  account_id?: string | null
+}): Promise<FileRow> {
+  const safeName = safeFileName(input.name)
+  const storagePath = `files/${p.org_id}/${crypto.randomUUID()}-${safeName}`
+  const { error: uploadError } = await supabase.storage
+    .from(TASK_MEDIA_BUCKET)
+    .upload(storagePath, input.file, {
+      contentType: input.file.type || 'application/octet-stream',
+      upsert: false,
+    })
+  if (uploadError) throw uploadError
+
+  const { data, error } = await supabase.from('files').insert({
+    org_id: p.org_id,
+    scope: input.scope,
+    folder: input.folder,
+    name: input.name,
+    storage_path: storagePath,
+    mime: input.file.type || null,
+    size_bytes: input.file.size,
+    doc_kind: input.doc_kind ?? null,
+    expires_at: input.expires_at ?? null,
+    is_private: input.is_private,
+    uploaded_by: p.id,
+    project_id: input.project_id ?? null,
+    profile_id: input.profile_id ?? null,
+    account_id: input.account_id ?? null,
+  }).select(FILE_SELECT).single()
+  if (error) throw error
+  await logEvent(p, 'file.uploaded', 'file', data.id, { name: input.name })
+  return data as unknown as FileRow
+}
+
+// Мягкое удаление файла: deleted_at = now(). RLS UPDATE — менеджер ИЛИ владелец.
+export async function softDeleteFile(p: Profile, id: string): Promise<void> {
+  const { error } = await supabase.from('files')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw error
+  await logEvent(p, 'file.deleted', 'file', id, {})
 }
 
 export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number) {
