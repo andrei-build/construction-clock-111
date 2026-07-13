@@ -434,6 +434,42 @@ function safeFileName(name: string, mime?: string) {
   return ext ? `photo.${ext}` : fallback
 }
 
+// Паритет Check Time (upload-limits.ts inferUploadContentType): часть браузеров отдаёт File
+// с пустым type или общим 'application/octet-stream' (нередко для PDF, office-докам и
+// .webm/.mov на ряде платформ). Прежний `file.type || 'image/jpeg'` в таком случае метил
+// не-картинки как JPEG → ломался inline-preview и content-type скачивания для pdf/office/webm.
+// Здесь выводим content-type из расширения имени. Неизвестное расширение → 'application/octet-stream'
+// (НЕ image/jpeg). Только клиентский content-type для storage PUT — БД/insert-колонки не трогаем.
+const EXT_CONTENT_TYPE: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  csv: 'text/csv',
+  txt: 'text/plain',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  mp4: 'video/mp4',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  webp: 'image/webp',
+  gif: 'image/gif',
+}
+
+export function inferUploadContentType(file: { name?: string | null; type?: string | null }): string {
+  const type = (file.type || '').trim().toLowerCase()
+  // Конкретный MIME от браузера — доверяем ему как есть.
+  if (type && type !== 'application/octet-stream') return type
+  // Пустой или общий octet-stream → выводим по расширению имени файла.
+  const name = file.name || ''
+  const ext = name.includes('.') ? (name.split('.').pop() || '').toLowerCase() : ''
+  return EXT_CONTENT_TYPE[ext] || 'application/octet-stream'
+}
+
 async function insertTaskMediaRow(p: Profile, task: Task, storagePath: string, file: File) {
   const { data, error } = await supabase.from('media').insert({
     org_id: p.org_id,
@@ -458,7 +494,7 @@ export async function uploadTaskPhoto(p: Profile, task: Task, file: File): Promi
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
     .upload(storagePath, file, {
-      contentType: file.type || 'image/jpeg',
+      contentType: inferUploadContentType(file),
       upsert: false,
     })
 
@@ -490,7 +526,7 @@ export async function uploadCheckoutVideo(p: Profile, eventId: string, file: Fil
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
     .upload(storagePath, file, {
-      contentType: file.type || 'video/mp4',
+      contentType: inferUploadContentType(file),
       upsert: true,
     })
   if (uploadError) throw uploadError
@@ -1664,7 +1700,7 @@ export async function uploadDailyReportPhoto(p: Profile, projectId: string, file
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
     .upload(storagePath, file, {
-      contentType: file.type || 'image/jpeg',
+      contentType: inferUploadContentType(file),
       upsert: false,
     })
   if (uploadError) throw uploadError
@@ -1767,7 +1803,7 @@ export async function uploadFile(p: Profile, input: {
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
     .upload(storagePath, input.file, {
-      contentType: input.file.type || 'application/octet-stream',
+      contentType: inferUploadContentType(input.file),
       upsert: false,
     })
   if (uploadError) throw uploadError
@@ -1842,7 +1878,7 @@ export async function uploadProjectFileToR2(p: Profile, projectId: string, file:
   const putRes = await fetch(signed.url, {
     method: 'PUT',
     body: file,
-    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    headers: { 'Content-Type': inferUploadContentType(file) },
   })
   if (!putRes.ok) throw new Error(`R2 upload failed: ${putRes.status}`)
 
