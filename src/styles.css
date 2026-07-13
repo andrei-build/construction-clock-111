@@ -208,6 +208,29 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   color: var(--text);
   line-height: 1.4;
 }
+.safety-refs {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.safety-refs-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.safety-refs-list {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
 .signature-canvas {
   width: 100%;
   height: 220px;

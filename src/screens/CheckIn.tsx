@@ -367,11 +367,29 @@ export default function CheckIn() {
         <div className="card safety-card">
           <div className="item-title">{safetyProject.name}</div>
           <p className="muted">{t('safety_intro')}</p>
-          <ul className="safety-list">
-            <li>{t('safety_rule_ppe')}</li>
-            <li>{t('safety_rule_tools')}</li>
-            <li>{t('safety_rule_report')}</li>
-          </ul>
+          <ol className="safety-list">
+            <li>{t('safety_rule_1')}</li>
+            <li>{t('safety_rule_2')}</li>
+            <li>{t('safety_rule_3')}</li>
+            <li>{t('safety_rule_4')}</li>
+            <li>{t('safety_rule_5')}</li>
+            <li>{t('safety_rule_6')}</li>
+            <li>{t('safety_rule_7')}</li>
+            <li>{t('safety_rule_8')}</li>
+            <li>{t('safety_rule_9')}</li>
+            <li>{t('safety_rule_10')}</li>
+          </ol>
+          <div className="safety-refs">
+            <div className="safety-refs-title">{t('safety_refs_title')}</div>
+            <ul className="safety-refs-list">
+              <li>{t('safety_ref_155')}</li>
+              <li>{t('safety_ref_155_110')}</li>
+              <li>{t('safety_ref_155_205')}</li>
+              <li>{t('safety_ref_155_426')}</li>
+              <li>{t('safety_ref_880')}</li>
+              <li>{t('safety_ref_876')}</li>
+            </ul>
+          </div>
           <label>{t('signature')}</label>
           <canvas
             ref={signatureCanvasRef}
