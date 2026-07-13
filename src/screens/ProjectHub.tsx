@@ -28,6 +28,7 @@ import {
   uploadProjectFileToR2,
 } from '../lib/api'
 import { buildDirectionsUrl } from '../lib/project-navigation'
+import { elapsedPercent, formatProjectCountdown, projectScheduleState } from '../lib/project-schedule'
 import { isManagerWrite } from '../lib/types'
 import { isBrowserUnsafeVideo } from '../lib/media-playback'
 import type { Account, AccountRating, ClientGrant, Contact, DailyReport, DocumentRow, FileRow, GalleryPhoto, GalleryVideo, Project, ProjectNote, ProjectProfit, WorkInterval } from '../lib/types'
@@ -456,6 +457,10 @@ export default function ProjectHub() {
   const directionsUrl = project ? buildDirectionsUrl({ address: project.address, lat: project.lat, lng: project.lng }) : ''
 
   const dl = deadlineStatus(project?.end_date)
+  // Богатый статус графика (паритет Check Time): прогресс + обратный отсчёт (F75).
+  const schedState = projectScheduleState({ start_date: project?.start_date, end_date: project?.end_date })
+  const schedElapsed = elapsedPercent({ start_date: project?.start_date, end_date: project?.end_date })
+  const schedCountdown = formatProjectCountdown(project?.end_date)
   const profit = profits.find((row) => row.project_id === id)
   const profitKnown = profit?.profit_status && profit.profit_status !== 'grey'
   const marginStatus = profitKnown ? (profit!.profit_status as 'green' | 'amber' | 'red') : 'neutral'
@@ -533,6 +538,22 @@ export default function ProjectHub() {
                 <div className="muted">{t(DEADLINE_LABEL[dl])}</div>
                 {project.end_date && (
                   <div className="muted">{new Date(`${project.end_date}T00:00:00`).toLocaleDateString()}</div>
+                )}
+                {schedState !== 'unscheduled' && (
+                  <div className="schedule-progress-block">
+                    {project.start_date && project.end_date && (
+                      <div className="schedule-progress" role="progressbar" aria-valuenow={Math.round(schedElapsed)} aria-valuemin={0} aria-valuemax={100}>
+                        <div className={`schedule-progress-fill ${dl}`} style={{ width: `${schedElapsed}%` }} />
+                      </div>
+                    )}
+                    <div className="muted schedule-countdown">
+                      {schedState === 'overdue'
+                        ? t('hub_deadline_overdue')
+                        : schedState === 'not_started'
+                          ? t('hub_schedule_not_started')
+                          : `${t('hub_schedule_remaining')}: ${schedCountdown}`}
+                    </div>
+                  </div>
                 )}
               </div>
 
