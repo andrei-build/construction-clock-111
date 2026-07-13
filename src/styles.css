@@ -2427,3 +2427,83 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   word-break: break-all;
   text-align: right;
 }
+
+/* F69: manager work-alert bell — sidebar button + priority-first dropdown (poll-only). */
+.manager-alert-bell { position: relative; margin-bottom: 18px; }
+.manager-alert-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--elevated);
+  color: var(--muted);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.manager-alert-btn:hover { color: var(--text, inherit); border-color: var(--accent); }
+.manager-alert-ico { display: inline-flex; }
+.manager-alert-text { flex: 1; text-align: left; }
+.manager-alert-count { margin-left: auto; }
+.manager-alert-dropdown {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .4);
+}
+.manager-alert-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 4px 8px;
+  font-weight: 800;
+  font-size: 13px;
+}
+.manager-alert-mute {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+}
+.manager-alert-empty { padding: 12px 6px; color: var(--muted); font-size: 13px; }
+.manager-alert-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.manager-alert-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.manager-alert-item:hover { background: var(--elevated); }
+.manager-alert-kind { flex: 0 0 auto; }
+.manager-alert-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
