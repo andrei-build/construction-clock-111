@@ -86,6 +86,8 @@ const dict: Record<string, Record<Lang, string>> = {
   photo_replace: { ru: 'Заменить фото', en: 'Replace photo', es: 'Reemplazar foto' },
   photo_uploading: { ru: 'Загружаю фото…', en: 'Uploading photo…', es: 'Subiendo foto…' },
   photo_upload_failed: { ru: 'Фото не загрузилось. Проверьте доступ или сеть.', en: 'Photo did not upload. Check access or network.', es: 'La foto no se subió. Revise acceso o red.' },
+  file_too_large: { ru: 'Слишком большой файл. Уменьшите размер и попробуйте снова.', en: 'File is too large. Reduce the size and try again.', es: 'Archivo demasiado grande. Reduzca el tamaño e inténtelo de nuevo.' },
+  file_type_not_allowed: { ru: 'Тип файла не поддерживается.', en: 'File type is not allowed.', es: 'Tipo de archivo no permitido.' },
   photo_preview: { ru: 'Фото задачи', en: 'Task photo', es: 'Foto de la tarea' },
   recent_activity: { ru: 'Последняя активность', en: 'Recent activity', es: 'Actividad reciente' },
   current_project: { ru: 'Сейчас на объекте', en: 'Current site', es: 'Obra actual' },

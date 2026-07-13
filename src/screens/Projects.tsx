@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, markTaskDone, uploadTaskPhoto } from '../lib/api'
+import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, markTaskDone, uploadTaskPhoto, validateUpload, uploadErrorCode } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
 import MediaComments from '../components/MediaComments'
@@ -61,8 +61,10 @@ export default function Projects() {
 
   const addPhoto = async (task: Task, file: File | undefined) => {
     if (!profile || !file || photoBusy) return
-    if (!file.type.startsWith('image/')) {
-      setTaskError('photo_upload_failed')
+    try {
+      validateUpload(file, 'photo')
+    } catch (err) {
+      setTaskError(uploadErrorCode(err) ?? 'photo_upload_failed')
       return
     }
     setPhotoBusy(task.id)
@@ -70,8 +72,8 @@ export default function Projects() {
     try {
       const media = await uploadTaskPhoto(profile, task, file)
       setPhotoByTask((current) => ({ ...current, [task.id]: media }))
-    } catch {
-      setTaskError('photo_upload_failed')
+    } catch (err) {
+      setTaskError(uploadErrorCode(err) ?? 'photo_upload_failed')
     } finally {
       setPhotoBusy(null)
     }

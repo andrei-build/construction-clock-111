@@ -23,6 +23,7 @@ import {
   softDeleteFile,
   softDeleteProjectNote,
   toggleProjectNotePinned,
+  uploadErrorCode,
   uploadProjectFileToR2,
 } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
@@ -408,8 +409,8 @@ export default function ProjectHub() {
     try {
       const row = await uploadProjectFileToR2(profile, id, file)
       setFiles((rows) => [row, ...rows])
-    } catch {
-      setFileError('hub_file_upload_failed')
+    } catch (err) {
+      setFileError(uploadErrorCode(err) ?? 'hub_file_upload_failed')
     } finally {
       setUploading(false)
     }
@@ -591,7 +592,7 @@ export default function ProjectHub() {
                     {canManage && (
                       <label className="btn small hub-files-upload">
                         {uploading ? t('hub_files_uploading') : t('hub_files_upload')}
-                        <input type="file" hidden disabled={uploading} onChange={onUpload} />
+                        <input type="file" accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/csv,text/plain" hidden disabled={uploading} onChange={onUpload} />
                       </label>
                     )}
                   </div>
