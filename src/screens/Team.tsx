@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { getTeam, getTodayEvents, createWorker, setWorkerCheckoutVideo } from '../lib/api'
 import { workedMs, fmtHours, shiftState } from '../lib/time'
-import { isManagerWrite, type Profile, type TimeEvent } from '../lib/types'
+import { canAssignRole, isManagerWrite, type Profile, type Role, type TimeEvent } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
 
 export default function Team() {
@@ -52,6 +52,11 @@ export default function Team() {
 
   const canManage = profile ? isManagerWrite(profile.role) : false
 
+  // F3: гейт создания работника — предлагаем только роли, которые актёр вправе назначить.
+  // Плоский менеджер не увидит driver (его выдают только owner/admin) и не создаст роль >= своей.
+  const addRoleOptions: Role[] = ['worker', 'driver', 'supervisor', 'manager', 'subcontractor']
+  const creatableRoles = addRoleOptions.filter((r) => (profile ? canAssignRole(profile.role, r) : false))
+
   const toggleCheckoutVideo = async (worker: Profile) => {
     if (!profile) return
     const next = !worker.require_checkout_video
@@ -83,11 +88,9 @@ export default function Team() {
           <input value={pin} inputMode="numeric" pattern="[0-9]*" onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} />
           <label>{t('role')}</label>
           <select value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="worker">worker</option>
-            <option value="driver">driver</option>
-            <option value="supervisor">supervisor</option>
-            <option value="manager">manager</option>
-            <option value="subcontractor">subcontractor</option>
+            {creatableRoles.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
           </select>
           <button className="btn" disabled={busy || !name.trim() || pin.length < 4}>{t('create')}</button>
         </form>

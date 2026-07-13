@@ -555,3 +555,26 @@ export interface FileRow {
 
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)
 export const isManagerWrite = (r: Role) => ['manager', 'admin', 'owner'].includes(r)
+
+// Иерархия власти ролей: чем выше число, тем больше прав. Основа гейта назначения ролей (F3).
+export const ROLE_POWER: Record<Role, number> = {
+  owner: 100,
+  admin: 90,
+  manager: 70,
+  supervisor: 60,
+  sales: 40,
+  subcontractor: 30,
+  driver: 20,
+  worker: 10,
+  client: 5,
+}
+
+// Может ли actor назначить/создать роль target.
+// owner — любую; admin — любую, кроме owner; ниже admin — только роли строго ниже admin И ниже
+// собственной власти, и НИКОГДА driver/admin/owner (driver выдают только owner/admin).
+export function canAssignRole(actor: Role, target: Role): boolean {
+  if (actor === 'owner') return true
+  if (actor === 'admin') return target !== 'owner'
+  if (target === 'owner' || target === 'admin' || target === 'driver') return false
+  return ROLE_POWER[target] < ROLE_POWER[actor]
+}
