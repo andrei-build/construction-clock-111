@@ -2081,3 +2081,6 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .coord-row { align-items: flex-end; gap: 10px; }
 .coord-field { flex: 1; min-width: 0; }
 .coord-field input { width: 100%; }
+
+/* Кнопка «Копировать проект как шаблон» в строке заголовка проекта */
+.project-copy-btn { margin-left: auto; padding: 4px 8px; line-height: 1; flex: 0 0 auto; }

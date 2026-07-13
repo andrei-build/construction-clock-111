@@ -21,6 +21,7 @@ export default function Projects() {
   const [address, setAddress] = useState('')
   const [lat, setLat] = useState('')
   const [lng, setLng] = useState('')
+  const [gpsRadius, setGpsRadius] = useState('')
   const [geoBusy, setGeoBusy] = useState(false)
   const [geoError, setGeoError] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -42,11 +43,24 @@ export default function Projects() {
     try {
       const latNum = lat.trim() === '' ? undefined : Number(lat)
       const lngNum = lng.trim() === '' ? undefined : Number(lng)
-      await createProject(profile, name.trim(), address.trim(), latNum, lngNum)
-      setName(''); setAddress(''); setLat(''); setLng(''); setGeoError(false); setAdding(false)
+      const radiusNum = gpsRadius.trim() === '' ? undefined : Number(gpsRadius)
+      await createProject(profile, name.trim(), address.trim(), latNum, lngNum, radiusNum)
+      setName(''); setAddress(''); setLat(''); setLng(''); setGpsRadius(''); setGeoError(false); setAdding(false)
       await load()
     } catch { /* показывается пустым — RLS не пустит не-менеджера */ }
     setBusy(false)
+  }
+
+  // Копировать проект как шаблон: переносим name (+ « (copy)»), address, gps_radius_m.
+  // ЯВНО НЕ переносим геопривязку смены (lat/lng/site_point) — поля координат оставляем пустыми.
+  const copyProject = (src: Project) => {
+    setName(`${src.name} (copy)`)
+    setAddress(src.address ?? '')
+    setLat(''); setLng('')
+    setGpsRadius(src.gps_radius_m != null ? String(src.gps_radius_m) : '')
+    setGeoError(false)
+    setAdding(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const useMyLocation = async () => {
@@ -128,6 +142,8 @@ export default function Projects() {
               <input inputMode="decimal" value={lng} onChange={(e) => setLng(e.target.value)} />
             </div>
           </div>
+          <label>{t('project_gps_radius')}</label>
+          <input inputMode="numeric" value={gpsRadius} onChange={(e) => setGpsRadius(e.target.value)} />
           <button type="button" className="btn ghost small" disabled={geoBusy} onClick={useMyLocation}>
             {geoBusy ? t('locating') : t('use_my_location')}
           </button>
@@ -150,6 +166,9 @@ export default function Projects() {
                 <span className={statusDotClass(rating ?? 'neutral')} title={t('hub_client_rating')} />
               </span>
               <button className="inline-link project-name-link" onClick={() => navigate(`/projects/${p.id}`)}>{p.name}</button>
+              {canWrite && (
+                <button className="btn ghost small project-copy-btn" title={t('copy_project')} aria-label={t('copy_project')} onClick={() => copyProject(p)}>📋</button>
+              )}
               {showProfit && (
                 <span className={`profit-badge ${profit.profit_status}`}>
                   <span className="profit-dot" />
