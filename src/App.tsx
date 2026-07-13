@@ -13,6 +13,7 @@ import LiveMap from './screens/LiveMap'
 import Sales from './screens/Sales'
 import Reports from './screens/Reports'
 import Timeline from './screens/Timeline'
+import Consents from './screens/Consents'
 import MyTime from './screens/MyTime'
 import Payroll from './screens/Payroll'
 import Messages from './screens/Messages'
@@ -45,6 +46,7 @@ export default function App() {
             <Route path="/sales" element={salesAccess ? <Sales /> : <Navigate to="/" />} />
             <Route path="/reports" element={manager ? <Reports /> : <Navigate to="/" />} />
             <Route path="/timeline" element={manager ? <Timeline /> : <Navigate to="/" />} />
+            <Route path="/consents" element={manager ? <Consents /> : <Navigate to="/" />} />
             <Route path="/time" element={<MyTime />} />
             <Route path="/payroll" element={manager ? <Payroll /> : <Navigate to="/" />} />
             <Route path="/messages" element={<Messages />} />

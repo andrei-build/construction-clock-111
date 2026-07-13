@@ -185,6 +185,17 @@ export interface SuspiciousShift {
   reviewed_at: string | null
 }
 
+export interface WorkerConsentRow {
+  worker_id: string
+  signed_at: string | null
+  created_at: string
+}
+
+export interface SafetyAckRow {
+  worker_id: string
+  signed_at: string | null
+}
+
 export type ReportKind = 'hours' | 'payroll' | 'expenses'
 export type ReportCell = string | number | boolean | null
 export type ReportRow = Record<string, ReportCell>

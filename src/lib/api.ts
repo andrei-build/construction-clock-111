@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -409,6 +409,39 @@ export async function signLocationConsent(p: Profile, signature: Blob) {
   if (error) throw error
   await logEvent(p, 'consent.gps_signed', 'profile', p.id, { signature_path: storagePath })
   return storagePath
+}
+
+// Работники и водители для экрана «Согласия»: активные, не удалённые, по алфавиту
+export async function getConsentWorkers(): Promise<Profile[]> {
+  const { data, error } = await supabase.from('profiles')
+    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video')
+    .in('role', ['worker', 'driver'])
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .order('name')
+  if (error) return []
+  return (data as Profile[]) ?? []
+}
+
+// Все активные (неотозванные) GPS-согласия для набора работников — одним запросом (без N+1)
+export async function getActiveWorkerConsents(workerIds: string[]): Promise<WorkerConsentRow[]> {
+  if (workerIds.length === 0) return []
+  const { data, error } = await supabase.from('worker_location_consents')
+    .select('worker_id, signed_at, created_at')
+    .in('worker_id', workerIds)
+    .is('revoked_at', null)
+  if (error) return []
+  return (data as WorkerConsentRow[]) ?? []
+}
+
+// Подписи ТБ для набора работников — одним запросом; самую свежую на работника считаем в JS
+export async function getSafetyAcknowledgements(workerIds: string[]): Promise<SafetyAckRow[]> {
+  if (workerIds.length === 0) return []
+  const { data, error } = await supabase.from('safety_acknowledgements')
+    .select('worker_id, signed_at')
+    .in('worker_id', workerIds)
+  if (error) return []
+  return (data as SafetyAckRow[]) ?? []
 }
 
 // Закрытые смены с подозрением (слишком долго / без GPS / разрыв во времени) — очередь на проверку

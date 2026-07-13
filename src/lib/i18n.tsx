@@ -287,6 +287,13 @@ const dict: Record<string, Record<Lang, string>> = {
   yes: { ru: 'Да', en: 'Yes', es: 'Sí' },
   no: { ru: 'Нет', en: 'No', es: 'No' },
   org: { ru: 'Организация', en: 'Organization', es: 'Organización' },
+  consents: { ru: 'Согласия', en: 'Consents', es: 'Consentimientos' },
+  consents_filters: { ru: 'Фильтры согласий', en: 'Consent filters', es: 'Filtros de consentimientos' },
+  consents_filter_missing: { ru: 'Без согласия', en: 'Without consent', es: 'Sin consentimiento' },
+  consents_gps: { ru: 'GPS-согласие', en: 'GPS consent', es: 'Consentimiento GPS' },
+  consents_safety: { ru: 'Подпись ТБ', en: 'Safety signature', es: 'Firma de seguridad' },
+  consents_none: { ru: 'Нет согласия', en: 'No consent', es: 'Sin consentimiento' },
+  consents_empty: { ru: 'Работников нет', en: 'No workers', es: 'Sin trabajadores' },
 }
 
 interface I18n {
