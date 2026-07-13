@@ -385,6 +385,8 @@ const dict: Record<string, Record<Lang, string>> = {
   day_no_closed_tasks: { ru: 'Закрытых задач за этот день нет', en: 'No closed tasks for this day', es: 'No hay tareas cerradas de este día' },
   day_details_loading: { ru: 'Загрузка деталей дня…', en: 'Loading day details…', es: 'Cargando detalles del día…' },
   latest_shifts: { ru: 'Последние смены', en: 'Latest shifts', es: 'Últimos turnos' },
+  transfer_gap: { ru: 'Разрыв', en: 'Gap', es: 'Brecha' },
+  transfer_gap_hint: { ru: 'Разрыв между уходом с одного объекта и приходом на другой в тот же день (только для проверки, часы не меняет)', en: 'Gap between leaving one site and arriving at another the same day (review only, does not change hours)', es: 'Brecha entre salir de una obra y llegar a otra el mismo día (solo revisión, no cambia las horas)' },
   no_gps: { ru: 'Без GPS', en: 'No GPS', es: 'Sin GPS' },
   adjusted: { ru: 'СКОРРЕКТИРОВАНО', en: 'ADJUSTED', es: 'AJUSTADO' },
   edit: { ru: 'Редактировать', en: 'Edit', es: 'Editar' },
