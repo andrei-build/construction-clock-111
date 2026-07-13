@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
 import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectNote, AccountRating } from './types'
 import { todayStartISO } from './time'
 
@@ -865,6 +865,42 @@ export async function getProjectRecentPhotos(projectId: string): Promise<Project
   return photos.filter((photo): photo is ProjectPhoto => photo !== null)
 }
 
+// Все фото ОДНОГО проекта для вкладки «Файлы и медиа» хаба — как getGalleryPhotos,
+// но со скоупом project_id. Подписанные URL берём пачкой, свежие — первыми.
+export async function getProjectPhotos(projectId: string): Promise<GalleryPhoto[]> {
+  const { data, error } = await supabase.from('media')
+    .select('id, storage_path, filename, created_at, project_id, category, project:projects(name)')
+    .eq('project_id', projectId)
+    .eq('media_type', 'photo')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(200)
+  if (error) return []
+
+  const photos = await Promise.all(((data ?? []) as unknown as Array<{
+    id: string
+    storage_path: string | null
+    filename?: string | null
+    created_at?: string | null
+    project_id?: string | null
+    category?: string | null
+    project?: { name: string | null } | null
+  }>).map(async (row) => {
+    if (!row.storage_path) return null
+    return {
+      id: row.id,
+      url: await mediaUrl(row.storage_path),
+      filename: row.filename ?? null,
+      created_at: row.created_at ?? null,
+      project_id: row.project_id ?? null,
+      project_name: row.project?.name ?? null,
+      category: row.category ?? null,
+    }
+  }))
+
+  return photos.filter((photo): photo is GalleryPhoto => photo !== null)
+}
+
 // «Галерея»: все фото объектов (media_type='photo', не удалённые) с именем проекта.
 // Подписанные URL берём пачкой, порядок — сначала свежие. Лимит держит галерею лёгкой.
 export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {
@@ -1484,6 +1520,76 @@ export async function softDeleteFile(p: Profile, id: string): Promise<void> {
     .eq('id', id)
   if (error) throw error
   await logEvent(p, 'file.deleted', 'file', id, {})
+}
+
+// === R2 (Cloudflare) файлы проекта — метаданные в files, содержимое в R2 через edge-функцию r2-sign. ===
+// Файлы одного проекта (scope='project'): те же поля, что getFiles, но со скоупом project_id.
+export async function getProjectFiles(projectId: string): Promise<FileRow[]> {
+  const { data, error } = await supabase.from('files')
+    .select(FILE_SELECT)
+    .eq('project_id', projectId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data as FileRow[]) ?? []
+}
+
+// Подписанный запрос к edge-функции r2-sign: возвращает { url, method, key, expires_in }.
+// Сервер сам добавляет org_id к ключу — возвращённый key и есть storage_path.
+async function r2Sign(op: 'upload' | 'download', key: string): Promise<{ url: string; method: string; key: string; expires_in: number }> {
+  const { data: { session } } = await supabase.auth.getSession()
+  const token = session?.access_token
+  if (!token) throw new Error('no session')
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/r2-sign`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: SUPABASE_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ op, key }),
+  })
+  if (!res.ok) throw new Error(`r2-sign ${op} failed: ${res.status}`)
+  return res.json()
+}
+
+// Загрузка произвольного файла проекта в R2: подпись → PUT в R2 → строка files.
+// RLS INSERT: org_id=app.org_id() и (менеджер ИЛИ uploaded_by=uid) — потому org_id=p.org_id, uploaded_by=p.id.
+export async function uploadProjectFileToR2(p: Profile, projectId: string, file: File): Promise<FileRow> {
+  const key = `files/${crypto.randomUUID()}-${safeFileName(file.name)}`
+  const signed = await r2Sign('upload', key)
+  const putRes = await fetch(signed.url, {
+    method: 'PUT',
+    body: file,
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+  })
+  if (!putRes.ok) throw new Error(`R2 upload failed: ${putRes.status}`)
+
+  const { data, error } = await supabase.from('files').insert({
+    org_id: p.org_id,
+    scope: 'project',
+    project_id: projectId,
+    folder: '',
+    name: file.name,
+    storage_path: signed.key,
+    mime: file.type || null,
+    size_bytes: file.size,
+    doc_kind: null,
+    expires_at: null,
+    is_private: false,
+    uploaded_by: p.id,
+    profile_id: null,
+    account_id: null,
+  }).select(FILE_SELECT).single()
+  if (error) throw error
+  await logEvent(p, 'file.uploaded', 'file', data.id, { project_id: projectId })
+  return data as unknown as FileRow
+}
+
+// Подписанная ссылка на скачивание/просмотр файла из R2 (действует 1 час) — открывать в новой вкладке.
+export async function getProjectFileDownloadUrl(file: FileRow): Promise<string> {
+  const signed = await r2Sign('download', file.storage_path)
+  return signed.url
 }
 
 // Один проект по id — для «Хаба проекта». Без фильтра по статусу (RLS держит org-скоуп).

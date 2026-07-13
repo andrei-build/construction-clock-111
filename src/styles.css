@@ -1788,6 +1788,48 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   gap: 4px;
 }
 
+/* Вкладка «Файлы и медиа» в хабе проекта — дополняет .gallery-* и .card */
+.hub-files {
+  display: grid;
+  gap: 12px;
+}
+.hub-files-heading {
+  margin: 4px 0;
+  font-size: 16px;
+}
+.hub-files-docs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.hub-files-upload {
+  cursor: pointer;
+}
+.hub-files-list {
+  display: grid;
+  gap: 8px;
+}
+.hub-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.hub-file-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.hub-file-info .item-title {
+  overflow-wrap: anywhere;
+}
+.hub-file-actions {
+  flex-shrink: 0;
+  gap: 6px;
+}
+
 /* Файлы и документы (/files) */
 .files-form input[type="file"] {
   padding: 8px 0;
