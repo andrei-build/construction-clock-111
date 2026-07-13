@@ -1911,3 +1911,80 @@ export async function revokeProjectGrant(p: Profile, grantId: string): Promise<v
   if (error) throw error
   await logEvent(p, 'grant.revoked', 'client_visibility_grant', grantId, {})
 }
+
+// «Детали дня работника» → фото. Снимки, загруженные этим работником в границах суток.
+// Фильтр: uploaded_by = workerId, media_type='photo', не удалённые, created_at ∈ [dayStart, dayEnd).
+// URL — через mediaUrl (подписанный), по образцу getGalleryPhotos. Только чтение.
+export interface WorkerDayPhoto {
+  id: string
+  url: string
+  created_at: string | null
+  filename?: string | null
+}
+export async function getWorkerDayPhotos(workerId: string, dayStartISO: string, dayEndISO: string): Promise<WorkerDayPhoto[]> {
+  const { data, error } = await supabase.from('media')
+    .select('id, storage_path, filename, created_at')
+    .eq('uploaded_by', workerId)
+    .eq('media_type', 'photo')
+    .is('deleted_at', null)
+    .gte('created_at', dayStartISO)
+    .lt('created_at', dayEndISO)
+    .order('created_at', { ascending: false })
+  if (error) return []
+
+  const photos = await Promise.all(((data ?? []) as unknown as Array<{
+    id: string
+    storage_path: string | null
+    filename?: string | null
+    created_at?: string | null
+  }>).map(async (row) => {
+    if (!row.storage_path) return null
+    return {
+      id: row.id,
+      url: await mediaUrl(row.storage_path),
+      created_at: row.created_at ?? null,
+      filename: row.filename ?? null,
+    }
+  }))
+
+  return photos.filter((photo) => photo !== null) as WorkerDayPhoto[]
+}
+
+// «Детали дня работника» → закрытые задачи. Задачи, которые этот работник закрыл в границах суток.
+// Фильтр: done_by = workerId, status='done', не удалённые, done_at ∈ [dayStart, dayEnd).
+// embed project:projects(name) — единственный FK tasks.project_id. Только чтение.
+export interface WorkerDayClosedTask {
+  id: string
+  title: string
+  status: string
+  done_at: string | null
+  project_id: string | null
+  project_name: string | null
+}
+export async function getWorkerDayClosedTasks(workerId: string, dayStartISO: string, dayEndISO: string): Promise<WorkerDayClosedTask[]> {
+  const { data, error } = await supabase.from('tasks')
+    .select('id, title, status, done_at, project_id, project:projects(name)')
+    .eq('done_by', workerId)
+    .eq('status', 'done')
+    .is('deleted_at', null)
+    .gte('done_at', dayStartISO)
+    .lt('done_at', dayEndISO)
+    .order('done_at', { ascending: false })
+  if (error) return []
+
+  return ((data ?? []) as unknown as Array<{
+    id: string
+    title: string | null
+    status: string | null
+    done_at?: string | null
+    project_id?: string | null
+    project?: { name: string | null } | null
+  }>).map((row) => ({
+    id: row.id,
+    title: row.title ?? '',
+    status: row.status ?? '',
+    done_at: row.done_at ?? null,
+    project_id: row.project_id ?? null,
+    project_name: row.project?.name ?? null,
+  }))
+}

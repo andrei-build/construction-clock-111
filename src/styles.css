@@ -2081,3 +2081,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .coord-row { align-items: flex-end; gap: 10px; }
 .coord-field { flex: 1; min-width: 0; }
 .coord-field input { width: 100%; }
+
+/* «Детали дня работника»: кликабельная строка дня + раскрытие (фото + закрытые задачи) */
+.worker-day-item { display: grid; gap: 8px; }
+.worker-day-toggle {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+  color: inherit;
+  font: inherit;
+}
+.worker-day-toggle:hover { border-color: var(--accent, #3b82f6); }
+.worker-day-caret { color: var(--muted, #64748b); font-size: 12px; }
+.worker-day-detail { display: grid; gap: 8px; }
+.worker-day-detail h3 { margin: 4px 0 0; font-size: 14px; }
+.worker-day-photos { margin-top: 2px; }
+.worker-day-tasks { display: grid; gap: 6px; }
+.worker-day-task {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
