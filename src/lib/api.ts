@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -895,6 +895,22 @@ export async function getStoreVisits(): Promise<StoreVisit[]> {
     .limit(50)
   if (error) return []
   return (data as unknown as StoreVisit[]) ?? []
+}
+
+// Гибкие права (user_capabilities): выдаёт только owner/admin. RLS включён. PK (user_id, capability).
+export async function getUserCapabilities(userId: string): Promise<UserCapability[]> {
+  const { data, error } = await supabase.from('user_capabilities')
+    .select('user_id, capability, granted, granted_by, granted_at, note')
+    .eq('user_id', userId)
+  if (error) return []
+  return (data as UserCapability[]) ?? []
+}
+
+export async function setUserCapability(p: Profile, userId: string, capability: string, granted: boolean): Promise<void> {
+  const { error } = await supabase.from('user_capabilities')
+    .upsert({ user_id: userId, capability, granted, granted_by: p.id }, { onConflict: 'user_id,capability' })
+  if (error) throw error
+  await logEvent(p, 'capability.updated', 'profile', userId, { capability, granted })
 }
 
 export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number) {

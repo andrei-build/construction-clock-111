@@ -255,5 +255,15 @@ export type ReportKind = 'hours' | 'payroll' | 'expenses'
 export type ReportCell = string | number | boolean | null
 export type ReportRow = Record<string, ReportCell>
 
+// Гибкие права (capabilities) поверх роли — напр. finance_access. PK (user_id, capability).
+export interface UserCapability {
+  user_id: string
+  capability: string
+  granted: boolean
+  granted_by: string | null
+  granted_at: string
+  note: string | null
+}
+
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)
 export const isManagerWrite = (r: Role) => ['manager', 'admin', 'owner'].includes(r)

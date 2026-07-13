@@ -7,22 +7,29 @@ import {
   createTimeAdjustment,
   getProjectAssignments,
   getProjects,
+  getUserCapabilities,
   getVisibleProfileRates,
   getWorkerIntervals,
   getWorkerPinAccess,
   getWorkerProfile,
+  setUserCapability,
   setWorkerPinEnabled,
   setWorkerRate,
   unassignWorkerFromProject,
   updateWorkerProfileSettings,
 } from '../lib/api'
 import { fmtClock, fmtHours } from '../lib/time'
-import { isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type Role, type WorkInterval } from '../lib/types'
+import { isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type Role, type UserCapability, type WorkInterval } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
 
 const ELEVEN_HOURS_MS = 11 * 60 * 60 * 1000
 
 const roleOptions: Role[] = ['worker', 'driver', 'supervisor', 'manager', 'subcontractor', 'sales', 'admin', 'owner']
+
+// Гибкие права (capabilities), которые владелец/админ выдаёт поверх роли. Пока только доступ к финансам.
+const CAPABILITIES: { key: string; labelKey: string; hintKey: string }[] = [
+  { key: 'finance_access', labelKey: 'cap_finance_access', hintKey: 'cap_finance_access_hint' },
+]
 
 type BusyKey = 'settings' | 'access' | 'adjustment' | string | null
 
@@ -133,6 +140,8 @@ export default function WorkerDetail() {
   const [pinEnabled, setPinEnabled] = useState(false)
   const [accessMode, setAccessMode] = useState<Profile['project_access_mode']>('assigned')
 
+  const [capabilities, setCapabilities] = useState<UserCapability[]>([])
+
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [adjustIn, setAdjustIn] = useState('')
   const [adjustOut, setAdjustOut] = useState('')
@@ -140,6 +149,8 @@ export default function WorkerDetail() {
 
   const canView = profile ? isManagerRole(profile.role) : false
   const canEditProfile = profile ? isManagerWrite(profile.role) : false
+  // ДНК §1: finance_access выдаёт ТОЛЬКО owner/admin — не manager. Проверяем роль явно.
+  const canManageCapabilities = profile ? (profile.role === 'owner' || profile.role === 'admin') : false
 
   const load = async () => {
     if (!id) return
@@ -177,6 +188,14 @@ export default function WorkerDetail() {
   }
 
   useEffect(() => { load() }, [id, profile?.id])
+
+  // Права грузим отдельно и только когда гейт пройден (owner/admin)
+  useEffect(() => {
+    if (!id || !canManageCapabilities) { setCapabilities([]); return }
+    let active = true
+    getUserCapabilities(id).then((rows) => { if (active) setCapabilities(rows) })
+    return () => { active = false }
+  }, [id, canManageCapabilities])
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000)
@@ -273,6 +292,21 @@ export default function WorkerDetail() {
       setMsg('project_access_saved')
     } catch {
       setMsg('project_access_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const toggleCapability = async (capability: string, next: boolean) => {
+    if (!profile || !worker || !canManageCapabilities || busy) return
+    setBusy(`cap:${capability}`)
+    setMsg(null)
+    try {
+      await setUserCapability(profile, worker.id, capability, next)
+      setCapabilities(await getUserCapabilities(worker.id))
+      setMsg('cap_saved')
+    } catch {
+      setMsg('cap_failed')
     } finally {
       setBusy(null)
     }
@@ -461,6 +495,37 @@ export default function WorkerDetail() {
               ))}
             </div>
           </section>
+
+          {canManageCapabilities && (
+            <section className="card worker-access-card">
+              <h2>{t('capabilities')}</h2>
+              <div className="project-toggle-list">
+                {CAPABILITIES.map((cap) => {
+                  const granted = capabilities.some((row) => row.capability === cap.key && row.granted)
+                  const capBusy = busy === `cap:${cap.key}`
+                  return (
+                    <div key={cap.key} className="worker-day-row">
+                      <label className="check-row worker-toggle">
+                        <input
+                          type="checkbox"
+                          checked={granted}
+                          disabled={busy !== null}
+                          onChange={(e) => toggleCapability(cap.key, e.target.checked)}
+                        />
+                        <span>
+                          {t(cap.labelKey)}
+                          <span className="muted"> — {t(cap.hintKey)}</span>
+                        </span>
+                      </label>
+                      <span className={`badge ${granted ? 'blue' : 'amber'}`}>
+                        {t(capBusy ? 'loading' : granted ? 'cap_granted' : 'cap_revoked')}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          )}
 
           <div className="worker-detail-grid">
             <section className="card worker-access-card">
