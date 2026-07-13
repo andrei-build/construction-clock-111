@@ -276,19 +276,34 @@ export default function Gallery() {
   const categoryLabel = (category: string | null) =>
     category === 'task_photo' ? t('gallery_category_task_photo') : null
 
+  // Перелистывание лайтбокса по текущему видимому списку фото (с учётом вкладки/фильтров), с закольцовкой.
+  const navigate = (delta: number) => {
+    if (visiblePhotos.length === 0) { setActive(null); return }
+    const idx = active ? visiblePhotos.findIndex((p) => p.id === active.id) : -1
+    // Если текущее фото отфильтровано/не найдено — прыгаем к краю в сторону движения (без падения).
+    const nextIdx = idx === -1
+      ? (delta > 0 ? 0 : visiblePhotos.length - 1)
+      : (idx + delta + visiblePhotos.length) % visiblePhotos.length
+    setActive(visiblePhotos[nextIdx])
+  }
+
   // Сброс формы флага при смене/закрытии просматриваемого фото.
   useEffect(() => {
     setFlagReason('')
     setFlagError(null)
   }, [active?.id])
 
-  // Закрытие просмотра по Escape — удобно на десктопе.
+  // Клавиатура в лайтбоксе: Escape закрывает, стрелки листают текущий видимый список.
   useEffect(() => {
     if (!active) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setActive(null) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setActive(null)
+      else if (e.key === 'ArrowLeft') navigate(-1)
+      else if (e.key === 'ArrowRight') navigate(1)
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active])
+  }, [active, visiblePhotos]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Общий ряд вкладок «объекты» — рендерим для каждого типа, если объекты есть.
   const projectTabsRow = projectTabs.length > 0 && (
@@ -501,6 +516,26 @@ export default function Gallery() {
           >
             ✕
           </button>
+          {visiblePhotos.length > 1 && (
+            <>
+              <button
+                type="button"
+                className="gallery-lightbox-nav prev"
+                aria-label={t('gallery_prev')}
+                onClick={(e) => { e.stopPropagation(); navigate(-1) }}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="gallery-lightbox-nav next"
+                aria-label={t('gallery_next')}
+                onClick={(e) => { e.stopPropagation(); navigate(1) }}
+              >
+                ›
+              </button>
+            </>
+          )}
           <img
             src={active.url}
             alt={active.filename ?? t('gallery_open')}
