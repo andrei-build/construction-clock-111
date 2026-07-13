@@ -42,6 +42,7 @@ export default function More() {
         <>
           <h2>{t('finance_clients')}</h2>
           {manager && <Link to="/reports" className="btn ghost small more-link">{t('reports')}</Link>}
+          {manager && <Link to="/clients" className="btn ghost small more-link">{t('clients')}</Link>}
           <Link to="/sales" className="btn ghost small more-link">{t('sales')}</Link>
         </>
       )}

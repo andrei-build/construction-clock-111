@@ -613,6 +613,144 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .profit-badge.red .profit-dot { background: var(--red); }
 
 .more-link { margin-bottom: 12px; text-decoration: none; }
+
+.clients-screen { max-width: 980px; }
+.clients-head {
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.clients-head h1 { margin-bottom: 4px; }
+.clients-head .btn { flex: 0 0 auto; }
+.clients-search { margin-bottom: 14px; }
+.client-list {
+  display: grid;
+  gap: 10px;
+}
+.client-list-row {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.client-list-row:hover {
+  border-color: rgba(200,169,59,.42);
+  background: var(--panel2);
+}
+.client-list-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.account-form {
+  display: grid;
+}
+.account-form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.account-form-actions .btn {
+  flex: 1;
+  min-width: 140px;
+}
+.client-drawer-hero {
+  align-items: flex-start;
+}
+.drawer-avatar.client {
+  color: var(--cyan);
+}
+.client-drawer-heading {
+  min-width: 0;
+  flex: 1;
+}
+.client-drawer-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.client-drawer-title-row h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.drawer-icon-action {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.drawer-icon-action:hover {
+  border-color: rgba(200,169,59,.45);
+  color: var(--accent);
+}
+.client-drawer-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.client-detail-lines {
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.client-detail-list {
+  display: grid;
+  gap: 8px;
+}
+.client-detail-card {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.client-detail-card.row {
+  display: flex;
+}
+.client-contact-form {
+  display: grid;
+  margin-top: 10px;
+}
+.client-primary-row {
+  margin-bottom: 10px;
+}
+.client-doc-number {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+.client-doc-totals {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 620px) {
+  .clients-head {
+    display: grid;
+  }
+  .clients-head .btn {
+    width: 100%;
+  }
+  .client-list-main {
+    display: grid;
+  }
+  .client-list-main .badge {
+    justify-self: start;
+  }
+}
+
 .payroll-screen { max-width: 980px; }
 .payroll-head {
   align-items: flex-start;
