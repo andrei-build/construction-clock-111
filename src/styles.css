@@ -1189,6 +1189,17 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .map-dot.project { background: var(--accent); }
 .map-dot.green { background: var(--green); }
 .map-dot.gray { background: var(--muted2); }
+/* F24 legend swatches matching the new worker-marker scheme: on-shift = neutral
+   disc with a green ring; no-GPS = hollow dashed dimmed disc. */
+.map-dot.on-shift {
+  background: var(--muted2);
+  box-shadow: 0 0 0 2px var(--green);
+}
+.map-dot.no-gps {
+  background: transparent;
+  border: 1px dashed var(--muted2);
+  opacity: .65;
+}
 .map-updated { margin: 0 2px 12px; }
 .map-marker {
   display: grid;
@@ -1203,12 +1214,67 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   box-shadow: 0 8px 20px rgba(0, 0, 0, .35);
 }
 .map-marker.project { background: var(--accent); }
+/* Legacy single-tone worker classes — kept for any non-map code path. Worker
+   markers on the Live Map now use the per-worker `.mm-body` scheme below. */
 .map-marker.green { background: var(--green); }
 .map-marker.gray {
   background: var(--muted2);
   color: var(--text);
 }
 .map-marker span { line-height: 1; }
+
+/* F24: per-worker coloured worker markers. The outer `.map-marker.worker` box is
+   just a positioning frame; the visible disc is `.mm-body`, whose background is
+   the deterministic per-worker colour set inline. On-shift vs no-GPS is encoded
+   by the ring / muted treatment below, NOT by the body colour. */
+.map-marker.worker {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.map-marker.worker .mm-body {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 34px;
+  height: 34px;
+  border: 2px solid var(--text);
+  border-radius: 50%;
+  color: #070b12;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .35);
+}
+/* On-shift = pulsing green halo ring around the per-worker disc. This replaces
+   the old solid-green body as the "green = on shift" signal (ДНК §6): the ring
+   is a distinct SHAPE cue, not just a colour, so it reads at a glance and is
+   robust for colour-vision-deficient users. */
+.map-marker.worker.green .mm-body {
+  animation: mm-pulse 2s ease-in-out infinite;
+}
+@keyframes mm-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 3px var(--green), 0 0 8px 2px rgba(48, 211, 154, .55), 0 8px 20px rgba(0, 0, 0, .35);
+  }
+  50% {
+    box-shadow: 0 0 0 4px var(--green), 0 0 16px 5px rgba(48, 211, 154, .75), 0 8px 20px rgba(0, 0, 0, .35);
+  }
+}
+/* No-GPS = stale: hollow dashed border, desaturated + dimmed so it visibly reads
+   as "position is old / not live". */
+.map-marker.worker.gray .mm-body {
+  border-style: dashed;
+  opacity: .5;
+  filter: grayscale(.55);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .28);
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-marker.worker.green .mm-body {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--green), 0 0 10px 3px rgba(48, 211, 154, .6), 0 8px 20px rgba(0, 0, 0, .35);
+  }
+}
 .map-canvas .leaflet-control-attribution {
   background: rgba(13, 21, 34, .86);
   color: var(--muted);
