@@ -505,9 +505,21 @@ export async function uploadTaskPhoto(p: Profile, task: Task, file: File): Promi
 
 const MEDIA_SIGN_TIMEOUT_MS = 9000
 
+// Паритет Check Time (normalizeStoragePath): в легаси-строках storage_path иногда лежит с
+// ведущим '/' или с префиксом bucket ('media/...'), из-за чего createSignedUrl падает с
+// "Bucket not found"/404 — ключ должен быть относительным к bucket и без ведущего слэша.
+// Для корректных путей (напр. 'videos/<org>/<id>.mp4') это чистый no-op.
+function normalizeStoragePath(path: string): string {
+  if (!path) return ''
+  let key = path.replace(/^\/+/, '')
+  if (key.startsWith(`${TASK_MEDIA_BUCKET}/`)) key = key.slice(TASK_MEDIA_BUCKET.length + 1)
+  return key
+}
+
 export async function mediaUrl(storagePath: string) {
+  const key = normalizeStoragePath(storagePath)
   let timer: ReturnType<typeof setTimeout> | undefined
-  const signPromise = supabase.storage.from(TASK_MEDIA_BUCKET).createSignedUrl(storagePath, 3600)
+  const signPromise = supabase.storage.from(TASK_MEDIA_BUCKET).createSignedUrl(key, 3600)
   const timeoutPromise = new Promise<null>((resolve) => {
     timer = setTimeout(() => resolve(null), MEDIA_SIGN_TIMEOUT_MS)
   })
@@ -517,7 +529,7 @@ export async function mediaUrl(storagePath: string) {
   } finally {
     if (timer !== undefined) clearTimeout(timer)
   }
-  return supabase.storage.from(TASK_MEDIA_BUCKET).getPublicUrl(storagePath).data.publicUrl
+  return supabase.storage.from(TASK_MEDIA_BUCKET).getPublicUrl(key).data.publicUrl
 }
 
 export async function uploadCheckoutVideo(p: Profile, eventId: string, file: File) {
