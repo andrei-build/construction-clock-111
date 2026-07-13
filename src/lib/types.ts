@@ -301,5 +301,86 @@ export interface UserCapability {
   note: string | null
 }
 
+export interface Account {
+  id: string
+  org_id: string
+  name: string
+}
+
+export interface DocumentProjectOption {
+  id: string
+  name: string
+  client_account_id: string | null
+}
+
+export type DocumentType = 'estimate' | 'invoice'
+export type DocumentStatus = 'draft' | 'sent' | 'approved' | 'paid' | 'void'
+
+export interface DocumentRow {
+  id: string
+  org_id: string
+  account_id: string | null
+  project_id: string | null
+  doc_type: DocumentType
+  status: DocumentStatus
+  number: string | null
+  title: string | null
+  source_document_id: string | null
+  issue_date: string | null
+  due_date: string | null
+  subtotal: number | null
+  tax_rate: number | null
+  tax_amount: number | null
+  total: number | null
+  amount_paid: number | null
+  balance: number | null
+  retainage_pct: number | null
+  margin_pct: number | null
+  client_visible: boolean | null
+  notes: string | null
+  metadata: Record<string, unknown> | null
+  created_by: string | null
+  updated_by: string | null
+  version: number | null
+  created_at: string
+  updated_at: string | null
+  deleted_at: string | null
+  account?: { name: string | null } | null
+  project?: { name: string | null } | null
+}
+
+export interface DocumentItem {
+  id: string
+  document_id: string
+  cost_code_id: string | null
+  description: string
+  qty: number | null
+  unit_id: string | null
+  unit_price: number | null
+  markup_pct: number | null
+  is_client_material: boolean | null
+  total: number | null
+  sort_order: number | null
+  metadata: Record<string, unknown> | null
+  unit?: { abbreviation: string | null; name: string | null } | null
+  cost_code?: { code: string | null; name: string | null } | null
+}
+
+export interface CostCode {
+  id: string
+  org_id: string
+  code: string
+  name: string
+  cost_type: string | null
+  is_active: boolean
+}
+
+export interface Unit {
+  id: string
+  org_id: string
+  name: string
+  abbreviation: string | null
+}
+
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)
 export const isManagerWrite = (r: Role) => ['manager', 'admin', 'owner'].includes(r)
