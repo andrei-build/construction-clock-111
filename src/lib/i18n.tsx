@@ -300,6 +300,15 @@ const dict: Record<string, Record<Lang, string>> = {
   consents_safety: { ru: 'Подпись ТБ', en: 'Safety signature', es: 'Firma de seguridad' },
   consents_none: { ru: 'Нет согласия', en: 'No consent', es: 'Sin consentimiento' },
   consents_empty: { ru: 'Работников нет', en: 'No workers', es: 'Sin trabajadores' },
+  archive: { ru: 'Архив и Корзина', en: 'Archive & Trash', es: 'Archivo y Papelera' },
+  archive_projects: { ru: 'Проекты', en: 'Projects', es: 'Proyectos' },
+  archive_tasks: { ru: 'Задачи', en: 'Tasks', es: 'Tareas' },
+  archive_media: { ru: 'Фото и видео', en: 'Photos & videos', es: 'Fotos y videos' },
+  archive_empty: { ru: 'Архив пуст', en: 'Archive is empty', es: 'El archivo está vacío' },
+  archive_deleted_on: { ru: 'Удалено', en: 'Deleted', es: 'Eliminado' },
+  restore: { ru: 'Восстановить', en: 'Restore', es: 'Restaurar' },
+  restored_ok: { ru: 'Восстановлено', en: 'Restored', es: 'Restaurado' },
+  restore_failed: { ru: 'Не удалось восстановить', en: 'Could not restore', es: 'No se pudo restaurar' },
 }
 
 interface I18n {

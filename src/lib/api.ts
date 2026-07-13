@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -811,6 +811,49 @@ export async function createWorker(name: string, pin: string, role: string): Pro
   }
   if (data?.error) return { ok: false, error: data.error === 'pin_taken' ? 'pin_taken' : 'error' }
   return { ok: true }
+}
+
+// «Архив и Корзина»: мягко удалённые сущности (deleted_at IS NOT NULL), org-скоуп через RLS.
+// Если RLS прячет удалённые строки, эти запросы вернут пусто — экран покажет пустые списки.
+export async function getArchivedProjects(): Promise<ArchivedProject[]> {
+  const { data, error } = await supabase.from('projects')
+    .select('id, name, status, deleted_at')
+    .not('deleted_at', 'is', null)
+    .order('deleted_at', { ascending: false })
+  if (error) return []
+  return (data as ArchivedProject[]) ?? []
+}
+
+export async function getArchivedTasks(): Promise<ArchivedTask[]> {
+  const { data, error } = await supabase.from('tasks')
+    .select('id, title, project_id, status, deleted_at, project:projects(name)')
+    .not('deleted_at', 'is', null)
+    .order('deleted_at', { ascending: false })
+  if (error) return []
+  return (data as unknown as ArchivedTask[]) ?? []
+}
+
+export async function getArchivedMedia(): Promise<ArchivedMedia[]> {
+  const { data, error } = await supabase.from('media')
+    .select('id, filename, project_id, media_type, category, deleted_at, project:projects(name)')
+    .not('deleted_at', 'is', null)
+    .order('deleted_at', { ascending: false })
+  if (error) return []
+  return (data as unknown as ArchivedMedia[]) ?? []
+}
+
+const RESTORE_ENTITY_TYPE: Record<ArchiveTable, string> = {
+  projects: 'project',
+  tasks: 'task',
+  media: 'media',
+}
+
+// Восстановление из корзины: очищаем deleted_at и пишем событие ${entity}.restored в журнал.
+export async function restoreEntity(p: Profile, table: ArchiveTable, id: string) {
+  const { error } = await supabase.from(table).update({ deleted_at: null }).eq('id', id)
+  if (error) throw error
+  const entityType = RESTORE_ENTITY_TYPE[table]
+  await logEvent(p, `${entityType}.restored`, entityType, id, {})
 }
 
 export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number) {

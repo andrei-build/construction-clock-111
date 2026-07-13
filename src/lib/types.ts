@@ -196,6 +196,35 @@ export interface SafetyAckRow {
   signed_at: string | null
 }
 
+// Мягко удалённые сущности для экрана «Архив и Корзина» (deleted_at IS NOT NULL)
+export type ArchiveTable = 'projects' | 'tasks' | 'media'
+
+export interface ArchivedProject {
+  id: string
+  name: string
+  status: string | null
+  deleted_at: string
+}
+
+export interface ArchivedTask {
+  id: string
+  title: string
+  project_id: string | null
+  status: string | null
+  deleted_at: string
+  project?: { name: string | null } | null
+}
+
+export interface ArchivedMedia {
+  id: string
+  filename: string | null
+  project_id: string | null
+  media_type: string | null
+  category: string | null
+  deleted_at: string
+  project?: { name: string | null } | null
+}
+
 export type ReportKind = 'hours' | 'payroll' | 'expenses'
 export type ReportCell = string | number | boolean | null
 export type ReportRow = Record<string, ReportCell>
