@@ -37,6 +37,10 @@ const roleOptions: Role[] = ['worker', 'driver', 'supervisor', 'manager', 'subco
 // Гибкие права (capabilities), которые владелец/админ выдаёт поверх роли. Пока только доступ к финансам.
 const CAPABILITIES: { key: string; labelKey: string; hintKey: string }[] = [
   { key: 'finance_access', labelKey: 'cap_finance_access', hintKey: 'cap_finance_access_hint' },
+  { key: 'upload_receipts', labelKey: 'cap_upload_receipts', hintKey: 'cap_upload_receipts_hint' },
+  { key: 'view_all_projects_map', labelKey: 'cap_view_all_projects_map', hintKey: 'cap_view_all_projects_map_hint' },
+  { key: 'view_supply_stores', labelKey: 'cap_view_supply_stores', hintKey: 'cap_view_supply_stores_hint' },
+  { key: 'flag_media', labelKey: 'cap_flag_media', hintKey: 'cap_flag_media_hint' },
 ]
 
 type BusyKey = 'settings' | 'access' | 'adjustment' | string | null
