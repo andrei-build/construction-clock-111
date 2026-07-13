@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, markTaskDone, uploadTaskPhoto, validateUpload, uploadErrorCode, captureGPS } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
+import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
 import MediaComments from '../components/MediaComments'
 import { deadlineStatus, statusDotClass } from './ProjectHub'
@@ -43,7 +44,7 @@ export default function Projects() {
     try {
       const latNum = lat.trim() === '' ? undefined : Number(lat)
       const lngNum = lng.trim() === '' ? undefined : Number(lng)
-      const radiusNum = gpsRadius.trim() === '' ? undefined : Number(gpsRadius)
+      const radiusNum = gpsRadius.trim() === '' ? undefined : clampGpsRadius(Number(gpsRadius), GPS_RADIUS_MIN)
       await createProject(profile, name.trim(), address.trim(), latNum, lngNum, radiusNum)
       setName(''); setAddress(''); setLat(''); setLng(''); setGpsRadius(''); setGeoError(false); setAdding(false)
       await load()
@@ -143,7 +144,16 @@ export default function Projects() {
             </div>
           </div>
           <label>{t('project_gps_radius')}</label>
-          <input inputMode="numeric" value={gpsRadius} onChange={(e) => setGpsRadius(e.target.value)} />
+          <input
+            type="number"
+            min={GPS_RADIUS_MIN}
+            max={GPS_RADIUS_MAX}
+            step={GPS_RADIUS_STEP}
+            inputMode="numeric"
+            value={gpsRadius}
+            onChange={(e) => setGpsRadius(e.target.value)}
+          />
+          <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('gps_radius_hint')}</p>
           <button type="button" className="btn ghost small" disabled={geoBusy} onClick={useMyLocation}>
             {geoBusy ? t('locating') : t('use_my_location')}
           </button>
