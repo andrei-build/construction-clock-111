@@ -390,9 +390,48 @@ export function uploadErrorCode(err: unknown): 'file_too_large' | 'file_type_not
   return m === 'file_too_large' || m === 'file_type_not_allowed' ? m : null
 }
 
-function safeFileName(name: string) {
+// iOS-паритет (Check Time media-extension.ts): фото/видео-пикеры iOS иногда отдают File
+// с пустым или бесрасширенным именем (HEIC/MOV). Выводим настоящее расширение из MIME,
+// чтобы storage_path нёс корректный суффикс. '' — если MIME неизвестен.
+function extensionFromMime(mime: string): string {
+  switch ((mime || '').toLowerCase()) {
+    // image
+    case 'image/jpeg': return 'jpg'
+    case 'image/png': return 'png'
+    case 'image/heic': return 'heic'
+    case 'image/heif': return 'heif'
+    case 'image/webp': return 'webp'
+    case 'image/gif': return 'gif'
+    // video
+    case 'video/mp4': return 'mp4'
+    case 'video/quicktime': return 'mov'
+    case 'video/webm': return 'webm'
+    case 'video/x-matroska': return 'mkv'
+    case 'video/3gpp': return '3gp'
+    // doc
+    case 'application/pdf': return 'pdf'
+    case 'application/msword': return 'doc'
+    case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': return 'docx'
+    case 'application/vnd.ms-excel': return 'xls'
+    case 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': return 'xlsx'
+    case 'text/csv':
+    case 'application/csv': return 'csv'
+    case 'text/plain': return 'txt'
+    default: return ''
+  }
+}
+
+// Слугификация имени файла. Если имя пустое ИЛИ без пригодного расширения — дописываем
+// расширение, выведенное из MIME (mime). Для имён с валидным расширением поведение
+// прежнее (байт-в-байт). mime необязателен: без него поведение как раньше.
+function safeFileName(name: string, mime?: string) {
   const fallback = 'photo.jpg'
-  return (name || fallback).replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || fallback
+  const slugged = (name || '').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '')
+  // Уже есть пригодное расширение → прежний результат без изменений.
+  if (slugged && /\.[a-z0-9]{1,5}$/i.test(slugged)) return slugged
+  const ext = extensionFromMime(mime ?? '')
+  if (slugged) return ext ? `${slugged}.${ext}` : slugged
+  return ext ? `photo.${ext}` : fallback
 }
 
 async function insertTaskMediaRow(p: Profile, task: Task, storagePath: string, file: File) {
@@ -404,7 +443,7 @@ async function insertTaskMediaRow(p: Profile, task: Task, storagePath: string, f
     media_type: 'photo',
     category: 'task_photo',
     storage_path: storagePath,
-    filename: safeFileName(file.name),
+    filename: safeFileName(file.name, file.type),
     mime: file.type || 'image/jpeg',
     size_bytes: file.size,
   }).select('id').single()
@@ -414,7 +453,7 @@ async function insertTaskMediaRow(p: Profile, task: Task, storagePath: string, f
 
 export async function uploadTaskPhoto(p: Profile, task: Task, file: File): Promise<TaskMedia> {
   validateUpload(file, 'photo')
-  const ext = safeFileName(file.name).split('.').pop() || 'jpg'
+  const ext = safeFileName(file.name, file.type).split('.').pop() || 'jpg'
   const storagePath = `tasks/${p.org_id}/${task.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
@@ -1609,7 +1648,7 @@ const DAILY_REPORT_SELECT = 'id, org_id, project_id, author_id, report_date, bod
 // Категория daily_photo; ссылка на рапорт живёт в daily_reports.media_ids, не на media.
 export async function uploadDailyReportPhoto(p: Profile, projectId: string, file: File): Promise<string> {
   validateUpload(file, 'photo')
-  const ext = safeFileName(file.name).split('.').pop() || 'jpg'
+  const ext = safeFileName(file.name, file.type).split('.').pop() || 'jpg'
   const storagePath = `daily/${p.org_id}/${Date.now()}-${crypto.randomUUID()}.${ext}`
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
@@ -1626,7 +1665,7 @@ export async function uploadDailyReportPhoto(p: Profile, projectId: string, file
     media_type: 'photo',
     category: 'daily_photo',
     storage_path: storagePath,
-    filename: safeFileName(file.name),
+    filename: safeFileName(file.name, file.type),
     mime: file.type || 'image/jpeg',
     size_bytes: file.size,
   }).select('id').single()
@@ -1712,7 +1751,7 @@ export async function uploadFile(p: Profile, input: {
   account_id?: string | null
 }): Promise<FileRow> {
   validateUpload({ size: input.file.size, type: input.file.type, name: input.name }, 'file')
-  const safeName = safeFileName(input.name)
+  const safeName = safeFileName(input.name, input.file.type)
   const storagePath = `files/${p.org_id}/${crypto.randomUUID()}-${safeName}`
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
@@ -1787,7 +1826,7 @@ async function r2Sign(op: 'upload' | 'download', key: string): Promise<{ url: st
 // RLS INSERT: org_id=app.org_id() и (менеджер ИЛИ uploaded_by=uid) — потому org_id=p.org_id, uploaded_by=p.id.
 export async function uploadProjectFileToR2(p: Profile, projectId: string, file: File): Promise<FileRow> {
   validateUpload(file, 'file')
-  const key = `files/${crypto.randomUUID()}-${safeFileName(file.name)}`
+  const key = `files/${crypto.randomUUID()}-${safeFileName(file.name, file.type)}`
   const signed = await r2Sign('upload', key)
   const putRes = await fetch(signed.url, {
     method: 'PUT',
