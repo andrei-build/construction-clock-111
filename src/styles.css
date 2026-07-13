@@ -1238,6 +1238,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: var(--elevated);
 }
 .message-thread-card h2 { margin-top: 0; }
+.thread-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
 .message-bubble {
   max-width: 92%;
   margin-bottom: 10px;
