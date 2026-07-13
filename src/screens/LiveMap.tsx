@@ -5,6 +5,7 @@ import { useEntityDrawer } from '../components/EntityDrawer'
 import { getMapProjects, getTeam, getTodayEvents, getWorkerLastLocations, type WorkerLocation } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { shiftState } from '../lib/time'
+import { keepStableListIfUnchanged } from '../lib/list-stability'
 import { buildWorkerDisambiguationMap } from '../lib/worker-utils'
 import type { Profile, Project, TimeEvent } from '../lib/types'
 
@@ -146,7 +147,9 @@ export default function LiveMap() {
       ])
       if (!mountedRef.current) return
       setProjects(projectRows)
-      setTeam(people)
+      // F87: keep the same roster array reference across polling refetches when the
+      // presence list is unchanged, so downstream marker memos don't needlessly recompute.
+      setTeam((prev) => keepStableListIfUnchanged(prev, people, (w) => w.id))
       setEvents(todayEvents)
       setLocations(locs)
       setLastUpdated(new Date())
