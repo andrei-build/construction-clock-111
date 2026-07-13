@@ -1744,6 +1744,18 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   object-fit: cover;
   background: #000;
 }
+/* Подсказка «скачать видео» под HEVC/.mov, которые браузер не декодирует (чёрный кадр). */
+.video-download-hint {
+  margin: 6px 0 0;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted, #6b7280);
+}
+.video-download-hint a {
+  font-weight: 600;
+  white-space: nowrap;
+}
 /* Карточка PDF в галерее — как строка файла на экране «Файлы» */
 .gallery-pdf-item {
   align-items: center;

@@ -29,6 +29,7 @@ import {
 } from '../lib/api'
 import { buildDirectionsUrl } from '../lib/project-navigation'
 import { isManagerWrite } from '../lib/types'
+import { isBrowserUnsafeVideo } from '../lib/media-playback'
 import type { Account, AccountRating, ClientGrant, Contact, DailyReport, DocumentRow, FileRow, GalleryPhoto, GalleryVideo, Project, ProjectNote, ProjectProfit, WorkInterval } from '../lib/types'
 
 // Светофор дедлайна по projects.end_date — считаем на клиенте (день в день):
@@ -645,6 +646,14 @@ export default function ProjectHub() {
                           {videos.map((video) => (
                             <div key={video.id} className="gallery-item gallery-video">
                               <video src={video.url} controls preload="metadata" />
+                              {isBrowserUnsafeVideo({ filename: video.filename }) && (
+                                <p className="video-download-hint">
+                                  {t('video_download_hint')}{' '}
+                                  <a href={video.url} download={video.filename ?? undefined}>
+                                    {t('video_download_link')}
+                                  </a>
+                                </p>
+                              )}
                             </div>
                           ))}
                         </div>
