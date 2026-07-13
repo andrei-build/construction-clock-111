@@ -64,16 +64,29 @@ function weekKey(ms: number) {
   return startOfWeek(new Date(ms)).toISOString()
 }
 
-// Часы по неделям из v_work_intervals (корректировки уже применены); неделя — по start_at интервала
+// Часы по неделям из v_work_intervals (корректировки уже применены); неделя — по start_at интервала.
+// Интервалы, пересекающие границу недели, разбиваются: каждая часть попадает в свою неделю.
 function weeklyHours(intervals: WorkInterval[], period: PeriodWindow, now = Date.now()) {
   const weeks = new Map<string, number>()
+  const periodStart = period.start.getTime()
+  const periodEnd = period.end.getTime()
   for (const interval of intervals) {
     const startMs = new Date(interval.start_at).getTime()
-    if (startMs < period.start.getTime() || startMs >= period.end.getTime()) continue
-    const endMs = interval.end_at ? new Date(interval.end_at).getTime() : Math.min(now, period.end.getTime())
-    const hours = Math.max(0, endMs - startMs) / 3600000
-    const key = weekKey(startMs)
-    weeks.set(key, (weeks.get(key) ?? 0) + hours)
+    if (startMs < periodStart || startMs >= periodEnd) continue
+    const rawEndMs = interval.end_at ? new Date(interval.end_at).getTime() : Math.min(now, periodEnd)
+    // Обрезаем вклад до окна периода, затем режем по границам недель.
+    const segStart = Math.max(startMs, periodStart)
+    const segEnd = Math.min(rawEndMs, periodEnd)
+    let cursor = segStart
+    while (cursor < segEnd) {
+      const nextWeek = startOfWeek(new Date(cursor))
+      nextWeek.setDate(nextWeek.getDate() + 7)
+      const portionEnd = Math.min(segEnd, nextWeek.getTime())
+      const hours = Math.max(0, portionEnd - cursor) / 3600000
+      const key = weekKey(cursor)
+      weeks.set(key, (weeks.get(key) ?? 0) + hours)
+      cursor = portionEnd
+    }
   }
   return weeks
 }
