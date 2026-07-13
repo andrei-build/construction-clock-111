@@ -339,6 +339,15 @@ const dict: Record<string, Record<Lang, string>> = {
   stores_unpaid: { ru: 'Не оплачено', en: 'Unpaid', es: 'No pagado' },
   stores_unknown_worker: { ru: 'Работник', en: 'Worker', es: 'Trabajador' },
   stores_unknown_store: { ru: 'Магазин', en: 'Store', es: 'Tienda' },
+  gallery: { ru: 'Галерея', en: 'Gallery', es: 'Galería' },
+  gallery_all_projects: { ru: 'Все объекты', en: 'All sites', es: 'Todas las obras' },
+  gallery_no_project: { ru: 'Без объекта', en: 'No site', es: 'Sin obra' },
+  gallery_empty: { ru: 'Фотографий пока нет', en: 'No photos yet', es: 'Aún no hay fotos' },
+  gallery_empty_filter: { ru: 'По этому объекту фото нет', en: 'No photos for this site', es: 'No hay fotos para esta obra' },
+  gallery_count: { ru: 'фото', en: 'photos', es: 'fotos' },
+  gallery_close: { ru: 'Закрыть просмотр', en: 'Close viewer', es: 'Cerrar visor' },
+  gallery_category_task_photo: { ru: 'Фото задачи', en: 'Task photo', es: 'Foto de tarea' },
+  gallery_open: { ru: 'Открыть фото', en: 'Open photo', es: 'Abrir foto' },
 }
 
 interface I18n {

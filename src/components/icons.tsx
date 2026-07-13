@@ -145,6 +145,16 @@ export function IconBriefcase(props: IconProps) {
   )
 }
 
+export function IconImage(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <circle cx="8.5" cy="10" r="1.5" />
+      <path d="m4 17 4.5-4.5 3 3L15 12l5 5" />
+    </Icon>
+  )
+}
+
 export function IconSettings(props: IconProps) {
   return (
     <Icon {...props}>
