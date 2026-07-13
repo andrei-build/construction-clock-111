@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, Account, DocumentProjectOption, DocumentRow, DocumentItem, Unit } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -491,6 +491,199 @@ export async function getVisibleProfileRates(): Promise<ProfileRate[]> {
     .select('profile_id, hourly_rate')
   if (error) return []
   return (data as ProfileRate[]) ?? []
+}
+
+const DOCUMENT_SELECT = 'id, org_id, account_id, project_id, doc_type, status, number, title, source_document_id, issue_date, due_date, subtotal, tax_rate, tax_amount, total, amount_paid, balance, retainage_pct, margin_pct, client_visible, notes, metadata, created_by, updated_by, version, created_at, updated_at, deleted_at, account:accounts(name), project:projects(name)'
+
+export interface DocumentLineInput {
+  description: string
+  qty: number
+  unit_id: string | null
+  unit_price: number
+  markup_pct: number
+  total: number
+}
+
+export async function getDocumentAccounts(): Promise<Account[]> {
+  const { data, error } = await supabase.from('accounts')
+    .select('id, org_id, name')
+    .order('name')
+  if (error) return []
+  return (data as Account[]) ?? []
+}
+
+export async function getDocumentProjects(): Promise<DocumentProjectOption[]> {
+  const { data, error } = await supabase.from('projects')
+    .select('id, name, client_account_id')
+    .order('name')
+  if (error) return []
+  return (data as DocumentProjectOption[]) ?? []
+}
+
+export async function getDocumentUnits(): Promise<Unit[]> {
+  const { data, error } = await supabase.from('units')
+    .select('id, org_id, name, abbreviation')
+    .order('name')
+  if (error) return []
+  return (data as Unit[]) ?? []
+}
+
+export async function getDocuments(): Promise<DocumentRow[]> {
+  const { data, error } = await supabase.from('documents')
+    .select(DOCUMENT_SELECT)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data as unknown as DocumentRow[]) ?? []
+}
+
+export async function getDocumentItems(documentId: string): Promise<DocumentItem[]> {
+  const { data, error } = await supabase.from('document_items')
+    .select('id, document_id, cost_code_id, description, qty, unit_id, unit_price, markup_pct, is_client_material, total, sort_order, metadata, unit:units(abbreviation, name), cost_code:cost_codes(code, name)')
+    .eq('document_id', documentId)
+    .order('sort_order')
+  if (error) return []
+  return (data as unknown as DocumentItem[]) ?? []
+}
+
+function documentItemRows(documentId: string, items: DocumentLineInput[]) {
+  return items.map((item, index) => ({
+    document_id: documentId,
+    description: item.description,
+    qty: item.qty,
+    unit_id: item.unit_id,
+    unit_price: item.unit_price,
+    markup_pct: item.markup_pct,
+    is_client_material: false,
+    total: item.total,
+    sort_order: index + 1,
+  }))
+}
+
+function numeric(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+export async function createEstimateDocument(p: Profile, input: {
+  number: string
+  title: string
+  accountId: string
+  projectId: string | null
+  issueDate: string
+  taxRate: number
+  notes: string | null
+  subtotal: number
+  taxAmount: number
+  total: number
+  items: DocumentLineInput[]
+}): Promise<string> {
+  const { data, error } = await supabase.from('documents')
+    .insert({
+      org_id: p.org_id,
+      account_id: input.accountId,
+      project_id: input.projectId,
+      doc_type: 'estimate',
+      status: 'draft',
+      number: input.number,
+      title: input.title,
+      issue_date: input.issueDate,
+      subtotal: input.subtotal,
+      tax_rate: input.taxRate,
+      tax_amount: input.taxAmount,
+      total: input.total,
+      amount_paid: 0,
+      balance: input.total,
+      notes: input.notes,
+      created_by: p.id,
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+
+  const documentId = String(data.id)
+  if (input.items.length > 0) {
+    const { error: itemError } = await supabase.from('document_items')
+      .insert(documentItemRows(documentId, input.items))
+      .select('id')
+    if (itemError) throw itemError
+  }
+
+  await logEvent(p, 'document.created', 'document', documentId, { doc_type: 'estimate', total: input.total })
+  return documentId
+}
+
+export async function convertEstimateToInvoice(p: Profile, estimate: DocumentRow, items: DocumentItem[], input: {
+  number: string
+  issueDate: string
+  dueDate: string
+}): Promise<string> {
+  const { data, error } = await supabase.from('documents')
+    .insert({
+      org_id: p.org_id,
+      account_id: estimate.account_id,
+      project_id: estimate.project_id,
+      doc_type: 'invoice',
+      status: 'draft',
+      number: input.number,
+      title: estimate.title,
+      source_document_id: estimate.id,
+      issue_date: input.issueDate,
+      due_date: input.dueDate,
+      subtotal: numeric(estimate.subtotal),
+      tax_rate: numeric(estimate.tax_rate),
+      tax_amount: numeric(estimate.tax_amount),
+      total: numeric(estimate.total),
+      amount_paid: 0,
+      balance: numeric(estimate.total),
+      notes: estimate.notes,
+      created_by: p.id,
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+
+  const invoiceId = String(data.id)
+  if (items.length > 0) {
+    const rows = items.map((item, index) => ({
+      document_id: invoiceId,
+      cost_code_id: item.cost_code_id,
+      description: item.description,
+      qty: numeric(item.qty),
+      unit_id: item.unit_id,
+      unit_price: numeric(item.unit_price),
+      markup_pct: numeric(item.markup_pct),
+      is_client_material: Boolean(item.is_client_material),
+      total: numeric(item.total),
+      sort_order: item.sort_order ?? index + 1,
+      metadata: item.metadata,
+    }))
+    const { error: itemError } = await supabase.from('document_items')
+      .insert(rows)
+      .select('id')
+    if (itemError) throw itemError
+  }
+
+  await logEvent(p, 'document.invoiced', 'document', invoiceId, {
+    source_document_id: estimate.id,
+    total: numeric(estimate.total),
+  })
+  return invoiceId
+}
+
+export async function markDocumentPaid(p: Profile, invoice: DocumentRow): Promise<void> {
+  const total = numeric(invoice.total)
+  const { error } = await supabase.from('documents')
+    .update({
+      status: 'paid',
+      amount_paid: total,
+      balance: 0,
+      updated_by: p.id,
+    })
+    .eq('id', invoice.id)
+    .select('id')
+    .single()
+  if (error) throw error
+  await logEvent(p, 'document.paid', 'document', invoice.id, { total })
 }
 
 export async function getProjectAssignments(projectIds: string[]): Promise<ProjectAssignment[]> {

@@ -55,6 +55,7 @@ export default function Nav({ manager }: { manager: boolean }) {
       items: [
         { to: '/time', Icon: IconClock, label: t('my_time') },
         { to: '/payroll', Icon: IconMoney, label: t('payroll') },
+        { to: '/documents', Icon: IconMoney, label: t('documents') },
         { to: '/reports', Icon: IconChart, label: t('reports') },
         { to: '/sales', Icon: IconBriefcase, label: t('sales') },
       ],

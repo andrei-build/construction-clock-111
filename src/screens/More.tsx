@@ -28,6 +28,7 @@ export default function More() {
           <h2>{t('office')}</h2>
           <Link to="/calendar" className="btn ghost small more-link">{t('calendar')}</Link>
           <Link to="/payroll" className="btn ghost small more-link">{t('payroll')}</Link>
+          <Link to="/documents" className="btn ghost small more-link">{t('documents')}</Link>
           <Link to="/stores" className="btn ghost small more-link">{t('stores')}</Link>
           <Link to="/gallery" className="btn ghost small more-link">{t('gallery')}</Link>
           <Link to="/settings" className="btn ghost small more-link">{t('settings')}</Link>
