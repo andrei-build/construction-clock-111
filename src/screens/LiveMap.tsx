@@ -8,6 +8,7 @@ import { shiftState } from '../lib/time'
 import { keepStableListIfUnchanged } from '../lib/list-stability'
 import { formatGpsAge } from '../lib/gps-freshness'
 import { buildWorkerDisambiguationMap } from '../lib/worker-utils'
+import { workerMarkerColor } from '../lib/marker-color'
 import type { Profile, Project, TimeEvent } from '../lib/types'
 
 type MapPoint = { lat: number; lng: number }
@@ -99,7 +100,19 @@ function latestGps(events: TimeEvent[]): { point: MapPoint | null; at: string | 
   return { point: null, at: null }
 }
 
-function markerIcon(kind: 'project' | 'worker', tone: 'project' | 'green' | 'gray') {
+function markerIcon(kind: 'project' | 'worker', tone: 'project' | 'green' | 'gray', color?: string) {
+  // F24: worker markers now render their own per-worker colour (passed in via
+  // `color`) on an inner `.mm-body` element, so the marker body colour encodes
+  // identity. On-shift (tone 'green') vs no-GPS (tone 'gray') is carried by the
+  // ring / muted treatment in styles.css — NOT by the body colour anymore.
+  if (kind === 'worker') {
+    return L.divIcon({
+      className: `map-marker worker ${tone}`,
+      html: `<span class="mm-body" style="background:${color ?? 'var(--green)'}">W</span>`,
+      iconSize: [34, 34],
+      iconAnchor: [17, 17],
+    })
+  }
   return L.divIcon({
     className: `map-marker ${kind} ${tone}`,
     html: `<span>${kind === 'project' ? 'P' : 'W'}</span>`,
@@ -269,7 +282,7 @@ export default function LiveMap() {
       const workerName = workerLabels.get(markerRow.worker.id) ?? markerRow.worker.name
       const title = markerRow.projectName ? `${workerName} · ${markerRow.projectName}` : workerName
       const marker = L.marker([markerRow.point.lat, markerRow.point.lng], {
-        icon: markerIcon('worker', markerRow.tone),
+        icon: markerIcon('worker', markerRow.tone, workerMarkerColor(markerRow.worker.id)),
         title,
       }).addTo(layer)
       // F21: append a "last seen 3m ago" age to the tooltip (text only — marker
@@ -356,8 +369,8 @@ export default function LiveMap() {
 
       <div className="map-legend">
         <span><i className="map-dot project" />{t('project_sites')}</span>
-        <span><i className="map-dot green" />{t('on_shift')}</span>
-        <span><i className="map-dot gray" />{t('no_gps_data')}</span>
+        <span><i className="map-dot on-shift" />{t('on_shift')}</span>
+        <span><i className="map-dot no-gps" />{t('no_gps_data')}</span>
       </div>
 
       {lastUpdated && (
