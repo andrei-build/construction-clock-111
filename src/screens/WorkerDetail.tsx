@@ -11,9 +11,13 @@ import {
   getProjects,
   getUserCapabilities,
   getVisibleProfileRates,
+  getWorkerDayClosedTasks,
+  getWorkerDayPhotos,
   getWorkerIntervals,
   getWorkerPinAccess,
   getWorkerProfile,
+  type WorkerDayClosedTask,
+  type WorkerDayPhoto,
   removeProjectExclusion,
   setProjectAccessMode,
   setUserCapability,
@@ -42,6 +46,13 @@ interface IntervalRow {
   interval: WorkInterval
   projectName: string
   hoursMs: number
+}
+
+// Ленивая подгрузка «деталей дня» (фото + закрытые задачи) — кэшируется по ключу дня.
+interface DayDetail {
+  state: 'loading' | 'ready' | 'error'
+  photos: WorkerDayPhoto[]
+  tasks: WorkerDayClosedTask[]
 }
 
 function startOfDay(date: Date) {
@@ -135,6 +146,11 @@ export default function WorkerDetail() {
   const [msg, setMsg] = useState<string | null>(null)
   const [busy, setBusy] = useState<BusyKey>(null)
   const [now, setNow] = useState(() => Date.now())
+
+  // «Детали дня»: раскрытая дата и кэш загруженных деталей по ключу дня.
+  const [expandedDay, setExpandedDay] = useState<string | null>(null)
+  const [dayDetails, setDayDetails] = useState<Record<string, DayDetail>>({})
+  const [activeDayPhotoUrl, setActiveDayPhotoUrl] = useState<string | null>(null)
 
   const [name, setName] = useState('')
   const [role, setRole] = useState<Role>('worker')
@@ -246,8 +262,27 @@ export default function WorkerDetail() {
     const start = addDays(today, -index)
     const end = addDays(start, 1)
     const hoursMs = rangeIntervalMs(intervals, start, end, now)
-    return { key: start.toISOString(), label: start.toLocaleDateString(), hoursMs }
+    // Границы суток в ISO (в локальной TZ экрана) — их передаём в детали дня.
+    return { key: start.toISOString(), label: start.toLocaleDateString(), hoursMs, startISO: start.toISOString(), endISO: end.toISOString() }
   })
+
+  // Раскрыть/свернуть день; при первом раскрытии — ленивая загрузка фото и закрытых задач (guard по кэшу).
+  const toggleDay = (day: { key: string; startISO: string; endISO: string }) => {
+    if (expandedDay === day.key) { setExpandedDay(null); return }
+    setExpandedDay(day.key)
+    if (!id || dayDetails[day.key]) return
+    setDayDetails((prev) => ({ ...prev, [day.key]: { state: 'loading', photos: [], tasks: [] } }))
+    Promise.all([
+      getWorkerDayPhotos(id, day.startISO, day.endISO),
+      getWorkerDayClosedTasks(id, day.startISO, day.endISO),
+    ])
+      .then(([photos, tasks]) => {
+        setDayDetails((prev) => ({ ...prev, [day.key]: { state: 'ready', photos, tasks } }))
+      })
+      .catch(() => {
+        setDayDetails((prev) => ({ ...prev, [day.key]: { state: 'error', photos: [], tasks: [] } }))
+      })
+  }
 
   const saveSettings = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -493,13 +528,71 @@ export default function WorkerDetail() {
           <section>
             <h2>{t('daily_totals_7')}</h2>
             <div className="worker-days-list">
-              {dailyRows.map((day) => (
-                <div className="card worker-day-row" key={day.key}>
-                  <span>{day.label}</span>
-                  <strong className="num-display">{fmtHours(day.hoursMs)} {t('h')}</strong>
-                  {day.hoursMs > ELEVEN_HOURS_MS && <span className="badge amber">{t('over_11h')}</span>}
-                </div>
-              ))}
+              {dailyRows.map((day) => {
+                const detail = dayDetails[day.key]
+                const isOpen = expandedDay === day.key
+                return (
+                  <div className="worker-day-item" key={day.key}>
+                    <button
+                      type="button"
+                      className="card worker-day-row worker-day-toggle"
+                      aria-expanded={isOpen}
+                      onClick={() => toggleDay(day)}
+                    >
+                      <span className="worker-day-caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
+                      <span>{day.label}</span>
+                      <strong className="num-display">{fmtHours(day.hoursMs)} {t('h')}</strong>
+                      {day.hoursMs > ELEVEN_HOURS_MS && <span className="badge amber">{t('over_11h')}</span>}
+                    </button>
+
+                    {isOpen && (
+                      <div className="card worker-day-detail">
+                        {(!detail || detail.state === 'loading') && <p className="muted">{t('day_details_loading')}</p>}
+                        {detail?.state === 'error' && <p className="error-msg">{t('load_error')}</p>}
+                        {detail?.state === 'ready' && (
+                          <>
+                            <h3>{t('day_photos')}</h3>
+                            {detail.photos.length === 0 ? (
+                              <p className="muted">{t('day_no_photos')}</p>
+                            ) : (
+                              <div className="gallery-grid worker-day-photos">
+                                {detail.photos.map((photo) => (
+                                  <button
+                                    key={photo.id}
+                                    type="button"
+                                    className="gallery-item"
+                                    onClick={() => setActiveDayPhotoUrl(photo.url)}
+                                    aria-label={photo.filename ?? t('day_photos')}
+                                  >
+                                    <img src={photo.url} alt={photo.filename ?? ''} loading="lazy" />
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            <h3>{t('day_closed_tasks')}</h3>
+                            {detail.tasks.length === 0 ? (
+                              <p className="muted">{t('day_no_closed_tasks')}</p>
+                            ) : (
+                              <div className="worker-day-tasks">
+                                {detail.tasks.map((task) => (
+                                  <div className="worker-day-task" key={task.id}>
+                                    <div>
+                                      <div className="item-title">{task.title}</div>
+                                      {task.project_name && <div className="muted">{task.project_name}</div>}
+                                    </div>
+                                    <span className="muted num-display">{task.done_at ? fmtClock(task.done_at) : '—'}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </section>
 
@@ -680,6 +773,20 @@ export default function WorkerDetail() {
             </section>
           </div>
         </>
+      )}
+
+      {activeDayPhotoUrl && (
+        <div className="gallery-lightbox" onClick={() => setActiveDayPhotoUrl(null)}>
+          <button
+            type="button"
+            className="gallery-lightbox-close"
+            aria-label={t('close')}
+            onClick={() => setActiveDayPhotoUrl(null)}
+          >
+            ✕
+          </button>
+          <img src={activeDayPhotoUrl} alt="" onClick={(e) => e.stopPropagation()} />
+        </div>
       )}
     </div>
   )
