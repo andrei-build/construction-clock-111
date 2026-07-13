@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
@@ -27,6 +27,7 @@ import {
   updateWorkerProfileSettings,
 } from '../lib/api'
 import { fmtClock, fmtHours } from '../lib/time'
+import { computeTransferGaps } from '../lib/shift-gaps'
 import { canAssignRole, isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type UserCapability, type WorkInterval } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
 
@@ -123,6 +124,14 @@ function fromDatetimeLocal(value: string) {
 
 function dateLabel(iso: string) {
   return new Date(iso).toLocaleDateString()
+}
+
+// F15: разрыв перехода как «Nh Mm» — только для показа, часы/оплату не трогает.
+function fmtGapDuration(ms: number) {
+  const totalMin = Math.round(ms / 60000)
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  return `${h}h ${m}m`
 }
 
 // Строки смен строятся из v_work_intervals (корректировки менеджера уже применены), новейшие сверху
@@ -243,6 +252,9 @@ export default function WorkerDetail() {
     const timer = setInterval(() => setNow(Date.now()), 30000)
     return () => clearInterval(timer)
   }, [])
+
+  // F15: обзорные чипы разрывов перехода между проектами в один день (только показ, не меняет часы).
+  const transferGaps = useMemo(() => computeTransferGaps(intervals), [intervals])
 
   if (!canView) return <Navigate to="/" />
 
@@ -614,6 +626,23 @@ export default function WorkerDetail() {
 
           <section>
             <h2>{t('latest_shifts')}</h2>
+            {transferGaps.length > 0 && (
+              <div className="transfer-gap-list">
+                {transferGaps.map((gap) => {
+                  const fromName = gap.fromProjectId ? projectNames.get(gap.fromProjectId) ?? gap.fromProjectId : '—'
+                  const toName = gap.toProjectId ? projectNames.get(gap.toProjectId) ?? gap.toProjectId : '—'
+                  return (
+                    <span
+                      key={gap.key}
+                      className={`transfer-gap-chip ${gap.tier === 'critical' ? 'transfer-gap-critical' : ''}`}
+                      title={t('transfer_gap_hint')}
+                    >
+                      {t('transfer_gap')} {fmtGapDuration(gap.gapMs)} · {fromName} → {toName}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
             {latestShifts.length === 0 && <div className="card muted">{t('no_shift_rows')}</div>}
             <div className="worker-shifts-list">
               {latestShifts.map((row) => (

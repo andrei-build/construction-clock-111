@@ -1364,6 +1364,26 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   display: grid;
   gap: 12px;
 }
+/* F15: обзорные чипы разрыва перехода между проектами (только показ). Amber = warning, red = critical. */
+.transfer-gap-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.transfer-gap-chip {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(200, 169, 59, .15);
+  color: var(--accent);
+}
+.transfer-gap-chip.transfer-gap-critical {
+  background: rgba(239, 102, 116, .15);
+  color: var(--red);
+}
 .worker-shift-main {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) auto auto auto auto;
