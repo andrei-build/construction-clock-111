@@ -1,19 +1,21 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getProjects, getOpenTasks, getProjectProfit, createProject, markTaskDone, uploadTaskPhoto } from '../lib/api'
+import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, markTaskDone, uploadTaskPhoto } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
-import { useEntityDrawer } from '../components/EntityDrawer'
 import MediaComments from '../components/MediaComments'
+import { deadlineStatus, statusDotClass } from './ProjectHub'
 
 export default function Projects() {
   const { profile } = useAuth()
   const { t } = useI18n()
-  const { openProject } = useEntityDrawer()
+  const navigate = useNavigate()
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [profits, setProfits] = useState<ProjectProfit[]>([])
+  const [clientRatings, setClientRatings] = useState<Map<string, string>>(new Map())
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
@@ -23,8 +25,8 @@ export default function Projects() {
   const [photoByTask, setPhotoByTask] = useState<Record<string, TaskMedia>>({})
   const [taskError, setTaskError] = useState<string | null>(null)
 
-  const load = () => Promise.all([getProjects(), getOpenTasks(), getProjectProfit()])
-    .then(([p, tk, pf]) => { setProjects(p); setTasks(tk); setProfits(pf) })
+  const load = () => Promise.all([getProjects(), getOpenTasks(), getProjectProfit(), getProjectClientRatings()])
+    .then(([p, tk, pf, cr]) => { setProjects(p); setTasks(tk); setProfits(pf); setClientRatings(cr) })
   useEffect(() => { load() }, [profile?.id])
 
   const canWrite = profile ? isManagerWrite(profile.role) : false
@@ -101,10 +103,16 @@ export default function Projects() {
         const ptasks = tasks.filter((tk) => tk.project_id === p.id)
         const profit = profitFor(p.id)
         const showProfit = profit?.margin_pct !== null && profit?.margin_pct !== undefined && profit.profit_status && profit.profit_status !== 'grey'
+        const dl = deadlineStatus(p.end_date)
+        const rating = (p.client_account_id ? clientRatings.get(p.client_account_id) : undefined) as 'green' | 'amber' | 'red' | undefined
         return (
           <div key={p.id} className="card">
             <div className="project-title-row">
-              <button className="inline-link project-name-link" onClick={() => openProject(p)}>{p.name}</button>
+              <span className="project-row-dots" aria-hidden="true">
+                <span className={statusDotClass(dl)} title={t('hub_deadline')} />
+                <span className={statusDotClass(rating ?? 'neutral')} title={t('hub_client_rating')} />
+              </span>
+              <button className="inline-link project-name-link" onClick={() => navigate(`/projects/${p.id}`)}>{p.name}</button>
               {showProfit && (
                 <span className={`profit-badge ${profit.profit_status}`}>
                   <span className="profit-dot" />
