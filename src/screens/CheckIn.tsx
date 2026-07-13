@@ -19,6 +19,8 @@ import {
   queueTimeEvent,
   type QueuedTimeEvent,
 } from '../lib/offlineTimeQueue'
+import { saveSnapshot, readSnapshot } from '../lib/offlineFieldCache'
+import OfflineCacheNotice from '../components/OfflineCacheNotice'
 import { shiftState, workedMs, fmtHours, fmtClock } from '../lib/time'
 import type { Project, TimeEvent } from '../lib/types'
 
@@ -70,6 +72,7 @@ export default function CheckIn() {
   const [travel, setTravel] = useState<TravelState | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [cachedAt, setCachedAt] = useState<string | null>(null)
   const [gpsWarnM, setGpsWarnM] = useState<number | null>(null)
   const [checkoutVideo, setCheckoutVideo] = useState<File | null>(null)
   const [confirmingCheckout, setConfirmingCheckout] = useState(false)
@@ -84,12 +87,24 @@ export default function CheckIn() {
 
   const load = useCallback(async () => {
     if (!profile) return
+    const cacheKey = `worker-projects:${profile.id}`
     try {
       const [ps, evs] = await Promise.all([getProjects(), getTodayEvents(profile.id)])
       setProjects(ps)
       setEvents(evs)
+      setCachedAt(null)
+      // F65: keep a last-known snapshot so an offline reload still has a list to show.
+      saveSnapshot(cacheKey, ps)
     } catch {
       // Offline check-in can continue with the last in-memory state and the durable queue.
+      // F65: when we're offline and have no fresh list, fall back to the cached one.
+      if (!isOnline()) {
+        const snapshot = readSnapshot<Project[]>(cacheKey)
+        if (snapshot) {
+          setProjects(snapshot.data)
+          setCachedAt(snapshot.cachedAt)
+        }
+      }
     }
     setQueued(await getQueuedTimeEvents(profile.id))
   }, [profile])
@@ -463,6 +478,8 @@ export default function CheckIn() {
           </>
         )}
       </div>
+
+      {cachedAt && <OfflineCacheNotice cachedAt={cachedAt} />}
 
       {queued.length > 0 && (
         <div className="offline-queue">
