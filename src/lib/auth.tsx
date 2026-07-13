@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
 import { clearAllSnapshots } from './offlineFieldCache'
 import { clearAllFieldActions } from './offlineFieldActions'
+import { clearAllMediaUploads } from './offlineMediaQueue'
 import type { Profile } from './types'
 
 interface AuthState {
@@ -64,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const logout = async () => { clearAllSnapshots(); clearAllFieldActions(); await supabase.auth.signOut(); setProfile(null) }
+  const logout = async () => { clearAllSnapshots(); clearAllFieldActions(); void clearAllMediaUploads(); await supabase.auth.signOut(); setProfile(null) }
 
   return <Ctx.Provider value={{ loading, profile, refresh, loginEmail, loginPin, logout }}>{children}</Ctx.Provider>
 }
