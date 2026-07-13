@@ -1,5 +1,5 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectNote, AccountRating } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectNote, AccountRating } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -1702,4 +1702,64 @@ export async function createProject(p: Profile, name: string, address: string, l
   const { data, error } = await supabase.from('projects').insert(row).select('id').single()
   if (error) throw error
   await logEvent(p, 'project.created', 'project', data.id, { name })
+}
+
+// ---- Вкладка «Клиент» Хаба: гранты видимости присутствия (client_visibility_grants) ----
+const CLIENT_GRANT_SELECT = 'id, org_id, account_id, project_id, can_see_presence, notify_travel, notify_checkin, notify_checkout, channel, note, created_by, created_at, revoked_at'
+
+// Один аккаунт по id (имя/контакты клиента). RLS держит org-скоуп. error→null.
+export async function getAccountById(accountId: string): Promise<Account | null> {
+  const { data, error } = await supabase.from('accounts')
+    .select(ACCOUNT_SELECT)
+    .eq('id', accountId)
+    .maybeSingle()
+  if (error) return null
+  return (data as Account | null) ?? null
+}
+
+// Активные гранты проекта (revoked_at IS NULL), новейшие сверху. error→[].
+export async function getProjectGrants(projectId: string): Promise<ClientGrant[]> {
+  const { data, error } = await supabase.from('client_visibility_grants')
+    .select(CLIENT_GRANT_SELECT)
+    .eq('project_id', projectId)
+    .is('revoked_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data as ClientGrant[]) ?? []
+}
+
+// Создать грант. org_id=p.org_id и created_by=p.id удовлетворяют RLS check (is_manager_write через роль).
+export async function createProjectGrant(
+  p: Profile,
+  projectId: string,
+  accountId: string,
+  input: { can_see_presence: boolean; notify_travel: boolean; notify_checkin: boolean; notify_checkout: boolean; channel?: string; note?: string | null },
+): Promise<ClientGrant> {
+  const { data, error } = await supabase.from('client_visibility_grants')
+    .insert({
+      org_id: p.org_id,
+      account_id: accountId,
+      project_id: projectId,
+      created_by: p.id,
+      channel: input.channel ?? 'portal',
+      note: input.note ?? null,
+      can_see_presence: input.can_see_presence,
+      notify_travel: input.notify_travel,
+      notify_checkin: input.notify_checkin,
+      notify_checkout: input.notify_checkout,
+    })
+    .select(CLIENT_GRANT_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'grant.created', 'client_visibility_grant', data.id, { project_id: projectId, account_id: accountId })
+  return data as ClientGrant
+}
+
+// Отозвать грант: UPDATE revoked_at = now() (единственный способ убрать — DELETE-политики нет).
+export async function revokeProjectGrant(p: Profile, grantId: string): Promise<void> {
+  const { error } = await supabase.from('client_visibility_grants')
+    .update({ revoked_at: new Date().toISOString() })
+    .eq('id', grantId)
+  if (error) throw error
+  await logEvent(p, 'grant.revoked', 'client_visibility_grant', grantId, {})
 }

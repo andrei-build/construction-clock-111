@@ -245,6 +245,24 @@ export interface ContactInput {
   notes: string | null
 }
 
+// Грант видимости присутствия клиента (client_visibility_grants) — вкладка «Клиент» Хаба.
+// «Активный» грант = revoked_at IS NULL; отзыв = UPDATE revoked_at = now() (DELETE-политики нет).
+export interface ClientGrant {
+  id: string
+  org_id: string
+  account_id: string
+  project_id: string | null
+  can_see_presence: boolean
+  notify_travel: boolean
+  notify_checkin: boolean
+  notify_checkout: boolean
+  channel: string
+  note: string | null
+  created_by: string | null
+  created_at: string
+  revoked_at: string | null
+}
+
 export interface ClientProjectSummary {
   id: string
   name: string
