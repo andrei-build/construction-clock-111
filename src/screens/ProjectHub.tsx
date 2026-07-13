@@ -3,25 +3,30 @@ import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import {
+  createProjectGrant,
   createProjectNote,
+  getAccountById,
+  getAccountContacts,
   getAccountRating,
   getProjectById,
   getProjectDailyReports,
   getProjectDocuments,
   getProjectFileDownloadUrl,
   getProjectFiles,
+  getProjectGrants,
   getProjectIntervals,
   getProjectNotes,
   getProjectPhotos,
   getProjectProfit,
   getTeam,
+  revokeProjectGrant,
   softDeleteFile,
   softDeleteProjectNote,
   toggleProjectNotePinned,
   uploadProjectFileToR2,
 } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
-import type { AccountRating, DailyReport, DocumentRow, FileRow, GalleryPhoto, Project, ProjectNote, ProjectProfit, WorkInterval } from '../lib/types'
+import type { Account, AccountRating, ClientGrant, Contact, DailyReport, DocumentRow, FileRow, GalleryPhoto, Project, ProjectNote, ProjectProfit, WorkInterval } from '../lib/types'
 
 // Светофор дедлайна по projects.end_date — считаем на клиенте (день в день):
 //   red — просрочен (сегодня > end_date), amber — до дедлайна ≤7 дней (включительно),
@@ -137,6 +142,21 @@ export default function ProjectHub() {
   const [reportsLoading, setReportsLoading] = useState(false)
   const [reportsError, setReportsError] = useState(false)
   const [reportsLoadedFor, setReportsLoadedFor] = useState<string | null>(null)
+
+  // Вкладка «Клиент»: аккаунт клиента + контакты + активные гранты видимости. Грузим лениво.
+  const [clientAccount, setClientAccount] = useState<Account | null>(null)
+  const [contacts, setContacts] = useState<Contact[]>([])
+  const [grants, setGrants] = useState<ClientGrant[]>([])
+  const [clientLoading, setClientLoading] = useState(false)
+  const [clientError, setClientError] = useState(false)
+  const [clientLoadedFor, setClientLoadedFor] = useState<string | null>(null)
+  const [grantSeePresence, setGrantSeePresence] = useState(false)
+  const [grantTravel, setGrantTravel] = useState(false)
+  const [grantCheckin, setGrantCheckin] = useState(false)
+  const [grantCheckout, setGrantCheckout] = useState(false)
+  const [grantNote, setGrantNote] = useState('')
+  const [grantBusy, setGrantBusy] = useState(false)
+  const [grantError, setGrantError] = useState<string | null>(null)
 
   const load = async () => {
     if (!id) return
@@ -295,6 +315,81 @@ export default function ProjectHub() {
     })()
     return () => { mounted = false }
   }, [tab, id, reportsLoadedFor])
+
+  // Ленивая загрузка вкладки «Клиент»: аккаунт + контакты + активные гранты. Один раз на проект.
+  useEffect(() => {
+    if (tab !== 'client' || !id || clientLoadedFor === id) return
+    const accountId = project?.client_account_id
+    let mounted = true
+    ;(async () => {
+      setClientLoading(true)
+      setClientError(false)
+      try {
+        if (accountId) {
+          const [acc, cts, grs] = await Promise.all([
+            getAccountById(accountId),
+            getAccountContacts(accountId),
+            getProjectGrants(id),
+          ])
+          if (mounted) {
+            setClientAccount(acc)
+            setContacts(cts)
+            setGrants(grs)
+          }
+        } else if (mounted) {
+          setClientAccount(null)
+          setContacts([])
+          setGrants([])
+        }
+        if (mounted) setClientLoadedFor(id)
+      } catch {
+        if (mounted) setClientError(true)
+      } finally {
+        if (mounted) setClientLoading(false)
+      }
+    })()
+    return () => { mounted = false }
+  }, [tab, id, clientLoadedFor, project?.client_account_id])
+
+  const addGrant = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!profile || !id || !project?.client_account_id || grantBusy) return
+    setGrantBusy(true)
+    setGrantError(null)
+    try {
+      const created = await createProjectGrant(profile, id, project.client_account_id, {
+        can_see_presence: grantSeePresence,
+        notify_travel: grantTravel,
+        notify_checkin: grantCheckin,
+        notify_checkout: grantCheckout,
+        note: grantNote.trim() || null,
+      })
+      setGrants((rows) => [created, ...rows])
+      setGrantSeePresence(false)
+      setGrantTravel(false)
+      setGrantCheckin(false)
+      setGrantCheckout(false)
+      setGrantNote('')
+    } catch {
+      setGrantError('hub_grant_add_failed')
+    } finally {
+      setGrantBusy(false)
+    }
+  }
+
+  const revokeGrant = async (grant: ClientGrant) => {
+    if (!profile || grantBusy) return
+    setGrantBusy(true)
+    setGrantError(null)
+    try {
+      await revokeProjectGrant(profile, grant.id)
+      setGrants((rows) => rows.filter((g) => g.id !== grant.id))
+    } catch {
+      setGrantError('hub_grant_revoke_failed')
+    } finally {
+      setGrantBusy(false)
+    }
+  }
 
   // Закрытие лайтбокса по Escape (как в «Галерее»).
   useEffect(() => {
@@ -638,11 +733,110 @@ export default function ProjectHub() {
             </section>
           )}
 
-          {/* Вкладка «Клиент» — заглушка под этап 4 (задача #13) */}
+          {/* Вкладка «Клиент»: карточка клиента + гранты видимости присутствия (задача #13). */}
           {tab === 'client' && (
-            <section className="hub-placeholder">
-              <h2>{t('hub_tab_client')}</h2>
-              <div className="card center muted">{t('hub_coming_soon')}</div>
+            <section className="hub-client">
+              {clientLoading && <div className="card center muted">{t('loading')}</div>}
+              {clientError && <p className="error-msg">{t('hub_client_load_error')}</p>}
+              {!clientLoading && !clientError && !project.client_account_id && (
+                <div className="card muted">{t('hub_client_none')}</div>
+              )}
+              {!clientLoading && !clientError && project.client_account_id && (
+                <>
+                  <div className="card hub-client-card">
+                    <div className="hub-client-head">
+                      <span className={statusDotClass(ratingStatus)} />
+                      <span className="item-title">{clientAccount?.name ?? t('hub_client_account')}</span>
+                    </div>
+                    <div className="muted">
+                      {t('hub_client_rating')}: {rating?.client_rating ? t(`hub_rating_${rating.client_rating}`) : t('hub_no_data')}
+                    </div>
+                    {rating?.rating_note && <div className="muted hub-rating-note">{rating.rating_note}</div>}
+                    {clientAccount?.email && <div className="muted">{clientAccount.email}</div>}
+                    {clientAccount?.phone && <div className="muted">{clientAccount.phone}</div>}
+                  </div>
+
+                  <h2 className="hub-client-heading">{t('hub_client_contacts')}</h2>
+                  {contacts.length === 0 && <div className="card muted">{t('hub_client_contacts_empty')}</div>}
+                  <div className="hub-client-contacts">
+                    {contacts.map((c) => (
+                      <div className="card hub-contact-row" key={c.id}>
+                        <div className="hub-contact-info">
+                          <span className="item-title">
+                            {c.name}
+                            {c.is_primary && <span className="badge amber hub-contact-badge">{t('hub_client_contact_primary')}</span>}
+                          </span>
+                          {c.title && <span className="muted">{c.title}</span>}
+                          <span className="muted">
+                            {[c.email, c.phone].filter(Boolean).join(' · ') || '—'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <h2 className="hub-client-heading">{t('hub_client_notifications')}</h2>
+                  {grantError && <p className="error-msg">{t(grantError)}</p>}
+                  {grants.length === 0 && <div className="card muted">{t('hub_client_grants_empty')}</div>}
+                  <div className="hub-grant-list">
+                    {grants.map((g) => {
+                      const flags = ([
+                        ['can_see_presence', g.can_see_presence],
+                        ['notify_travel', g.notify_travel],
+                        ['notify_checkin', g.notify_checkin],
+                        ['notify_checkout', g.notify_checkout],
+                      ] as const).filter(([, on]) => on)
+                      return (
+                        <div className="card hub-grant-row" key={g.id}>
+                          <div className="hub-grant-info">
+                            <div className="hub-grant-flags">
+                              {flags.length === 0
+                                ? <span className="muted">—</span>
+                                : flags.map(([key]) => (
+                                    <span className="badge hub-grant-flag" key={key}>{t(`hub_grant_${key}`)}</span>
+                                  ))}
+                            </div>
+                            <span className="muted">
+                              {t('hub_grant_channel')}: {g.channel}
+                              {g.note && ` · ${g.note}`}
+                            </span>
+                          </div>
+                          {canManage && (
+                            <button className="btn ghost small" type="button" disabled={grantBusy} onClick={() => revokeGrant(g)}>
+                              {t('hub_grant_revoke')}
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {canManage && (
+                    <form className="card hub-grant-form" onSubmit={addGrant}>
+                      <label className="item-title">{t('hub_grant_new')}</label>
+                      <label className="check-row">
+                        <input type="checkbox" checked={grantSeePresence} onChange={(e) => setGrantSeePresence(e.target.checked)} />
+                        <span>{t('hub_grant_can_see_presence')}</span>
+                      </label>
+                      <label className="check-row">
+                        <input type="checkbox" checked={grantTravel} onChange={(e) => setGrantTravel(e.target.checked)} />
+                        <span>{t('hub_grant_notify_travel')}</span>
+                      </label>
+                      <label className="check-row">
+                        <input type="checkbox" checked={grantCheckin} onChange={(e) => setGrantCheckin(e.target.checked)} />
+                        <span>{t('hub_grant_notify_checkin')}</span>
+                      </label>
+                      <label className="check-row">
+                        <input type="checkbox" checked={grantCheckout} onChange={(e) => setGrantCheckout(e.target.checked)} />
+                        <span>{t('hub_grant_notify_checkout')}</span>
+                      </label>
+                      <label>{t('hub_grant_note')}</label>
+                      <textarea value={grantNote} onChange={(e) => setGrantNote(e.target.value)} rows={2} placeholder={t('hub_grant_note_placeholder')} />
+                      <button className="btn small" disabled={grantBusy}>{t('hub_grant_add')}</button>
+                    </form>
+                  )}
+                </>
+              )}
             </section>
           )}
 

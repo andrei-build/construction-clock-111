@@ -1903,6 +1903,48 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   overflow-wrap: anywhere;
 }
 
+/* Project Hub — вкладка «Клиент» */
+.hub-client-heading {
+  margin: 12px 0 4px;
+  font-size: 16px;
+}
+.hub-client-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.hub-client-contacts,
+.hub-grant-list {
+  display: grid;
+  gap: 8px;
+}
+.hub-contact-info,
+.hub-grant-info {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.hub-contact-badge {
+  margin-left: 8px;
+}
+.hub-grant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.hub-grant-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hub-grant-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 /* Файлы и документы (/files) */
 .files-form input[type="file"] {
   padding: 8px 0;

@@ -585,6 +585,27 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_reports_empty: { ru: 'Рапортов по проекту пока нет', en: 'No reports for this project yet', es: 'Aún no hay reportes para este proyecto' },
   hub_reports_load_error: { ru: 'Не удалось загрузить рапорты', en: 'Could not load reports', es: 'No se pudieron cargar los reportes' },
   hub_report_author_unknown: { ru: 'Неизвестный автор', en: 'Unknown author', es: 'Autor desconocido' },
+  // Вкладка «Клиент»
+  hub_client_none: { ru: 'У проекта не указан клиент', en: 'No client assigned to this project', es: 'No hay cliente asignado a este proyecto' },
+  hub_client_load_error: { ru: 'Не удалось загрузить данные клиента', en: 'Could not load client data', es: 'No se pudieron cargar los datos del cliente' },
+  hub_client_account: { ru: 'Клиент', en: 'Client', es: 'Cliente' },
+  hub_client_contacts: { ru: 'Контакты', en: 'Contacts', es: 'Contactos' },
+  hub_client_contacts_empty: { ru: 'Контактов пока нет', en: 'No contacts yet', es: 'Aún no hay contactos' },
+  hub_client_contact_primary: { ru: 'Основной', en: 'Primary', es: 'Principal' },
+  hub_client_notifications: { ru: 'Уведомления клиента', en: 'Client notifications', es: 'Notificaciones del cliente' },
+  hub_client_grants_empty: { ru: 'Активных грантов нет', en: 'No active grants', es: 'Sin permisos activos' },
+  hub_grant_can_see_presence: { ru: 'Видит присутствие на объекте', en: 'Sees on-site presence', es: 'Ve la presencia en obra' },
+  hub_grant_notify_travel: { ru: 'Уведомлять о выезде', en: 'Notify on travel', es: 'Notificar en desplazamiento' },
+  hub_grant_notify_checkin: { ru: 'Уведомлять о приходе', en: 'Notify on check-in', es: 'Notificar en entrada' },
+  hub_grant_notify_checkout: { ru: 'Уведомлять об уходе', en: 'Notify on check-out', es: 'Notificar en salida' },
+  hub_grant_channel: { ru: 'Канал', en: 'Channel', es: 'Canal' },
+  hub_grant_note: { ru: 'Заметка', en: 'Note', es: 'Nota' },
+  hub_grant_note_placeholder: { ru: 'Необязательная заметка', en: 'Optional note', es: 'Nota opcional' },
+  hub_grant_add: { ru: 'Добавить грант', en: 'Add grant', es: 'Agregar permiso' },
+  hub_grant_revoke: { ru: 'Отозвать', en: 'Revoke', es: 'Revocar' },
+  hub_grant_add_failed: { ru: 'Не удалось создать грант', en: 'Could not create grant', es: 'No se pudo crear el permiso' },
+  hub_grant_revoke_failed: { ru: 'Не удалось отозвать грант', en: 'Could not revoke grant', es: 'No se pudo revocar el permiso' },
+  hub_grant_new: { ru: 'Новый грант', en: 'New grant', es: 'Nuevo permiso' },
 }
 
 interface I18n {
