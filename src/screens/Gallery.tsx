@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getGalleryPhotos, getOpenMediaFlags, flagMedia, resolveMediaFlag } from '../lib/api'
+import {
+  getGalleryPhotos,
+  getGalleryVideos,
+  getGalleryPdfs,
+  getGalleryPdfUrl,
+  getOpenMediaFlags,
+  flagMedia,
+  resolveMediaFlag,
+} from '../lib/api'
 import { isManagerWrite } from '../lib/types'
-import type { GalleryPhoto, MediaFlag } from '../lib/types'
+import type { GalleryPhoto, GalleryVideo, GalleryPdf, MediaFlag } from '../lib/types'
 import MediaComments from '../components/MediaComments'
 
 const localeByLang = {
@@ -12,16 +20,35 @@ const localeByLang = {
   es: 'es-ES',
 } as const
 
-// Ключ фильтра по объекту: реальный project_id либо '__none__' для фото без объекта.
+// Ключ фильтра по объекту: реальный project_id либо '__none__' для медиа без объекта.
 const NO_PROJECT = '__none__'
+
+// Активная вкладка типа медиа поверх фильтра по объекту.
+type MediaType = 'photos' | 'videos' | 'pdfs'
+// Состояние ленивой подгрузки видео/PDF (фото грузим сразу вместе с флагами).
+type LoadState = 'idle' | 'loading' | 'ready' | 'error'
+
+// Что-то, что можно сгруппировать по объекту (общий контракт фото/видео/PDF).
+type WithProject = { project_id: string | null; project_name: string | null }
 
 export default function Gallery() {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
+  const [mediaType, setMediaType] = useState<MediaType>('photos')
+
   const [photos, setPhotos] = useState<GalleryPhoto[]>([])
   const [flags, setFlags] = useState<MediaFlag[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+
+  // Видео и PDF грузятся лениво при первом переходе на вкладку.
+  const [videos, setVideos] = useState<GalleryVideo[]>([])
+  const [videosState, setVideosState] = useState<LoadState>('idle')
+  const [pdfs, setPdfs] = useState<GalleryPdf[]>([])
+  const [pdfsState, setPdfsState] = useState<LoadState>('idle')
+  const [pdfBusyId, setPdfBusyId] = useState<string | null>(null)
+  const [pdfError, setPdfError] = useState(false)
+
   const [projectFilter, setProjectFilter] = useState<string | null>(null)
   const [active, setActive] = useState<GalleryPhoto | null>(null)
   // Состояние формы флага в лайтбоксе.
@@ -65,6 +92,25 @@ export default function Gallery() {
     }
   }
 
+  // Переключение вкладки типа: сбрасываем фильтр по объекту (набор объектов у разных типов свой)
+  // и лениво подгружаем видео/PDF при первом открытии.
+  const selectType = (next: MediaType) => {
+    setMediaType(next)
+    setProjectFilter(null)
+    if (next === 'videos' && videosState === 'idle') {
+      setVideosState('loading')
+      getGalleryVideos()
+        .then((rows) => { setVideos(rows); setVideosState('ready') })
+        .catch(() => { setVideos([]); setVideosState('error') })
+    }
+    if (next === 'pdfs' && pdfsState === 'idle') {
+      setPdfsState('loading')
+      getGalleryPdfs()
+        .then((rows) => { setPdfs(rows); setPdfsState('ready') })
+        .catch(() => { setPdfs([]); setPdfsState('error') })
+    }
+  }
+
   // media_id → открытый флаг, для быстрого поиска по фото.
   const flagByMedia = useMemo(() => {
     const map = new Map<string, MediaFlag>()
@@ -103,13 +149,29 @@ export default function Gallery() {
     }
   }
 
-  // Список объектов для фильтра — из самих фото, по алфавиту; фото без объекта идут отдельной группой.
-  const projectTabs = useMemo(() => {
+  // Открыть PDF: ссылку резолвим по клику (R2 или media bucket — решает getGalleryPdfUrl по scope).
+  const openPdf = async (pdf: GalleryPdf) => {
+    if (pdfBusyId) return
+    setPdfBusyId(pdf.id)
+    setPdfError(false)
+    try {
+      const url = await getGalleryPdfUrl(pdf)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch {
+      setPdfError(true)
+    } finally {
+      setPdfBusyId(null)
+    }
+  }
+
+  // Список объектов для фильтра — из элементов активной вкладки, по алфавиту;
+  // элементы без объекта идут отдельной группой. Работает поверх любого типа медиа.
+  const buildProjectTabs = (items: WithProject[]) => {
     const byKey = new Map<string, string>()
     let hasNone = false
-    for (const photo of photos) {
-      if (photo.project_id) {
-        byKey.set(photo.project_id, photo.project_name ?? t('gallery_no_project'))
+    for (const item of items) {
+      if (item.project_id) {
+        byKey.set(item.project_id, item.project_name ?? t('gallery_no_project'))
       } else {
         hasNone = true
       }
@@ -119,13 +181,21 @@ export default function Gallery() {
       .sort((a, b) => a.name.localeCompare(b.name))
     if (hasNone) tabs.push({ key: NO_PROJECT, name: t('gallery_no_project') })
     return tabs
-  }, [photos, t])
+  }
 
-  const visible = useMemo(() => {
-    if (!projectFilter) return photos
-    if (projectFilter === NO_PROJECT) return photos.filter((p) => !p.project_id)
-    return photos.filter((p) => p.project_id === projectFilter)
-  }, [photos, projectFilter])
+  const filterByProject = <T extends WithProject>(items: T[]): T[] => {
+    if (!projectFilter) return items
+    if (projectFilter === NO_PROJECT) return items.filter((i) => !i.project_id)
+    return items.filter((i) => i.project_id === projectFilter)
+  }
+
+  // Элементы активной вкладки для построения фильтра по объекту.
+  const activeItems: WithProject[] = mediaType === 'photos' ? photos : mediaType === 'videos' ? videos : pdfs
+  const projectTabs = useMemo(() => buildProjectTabs(activeItems), [activeItems, t]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visiblePhotos = useMemo(() => filterByProject(photos), [photos, projectFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  const visibleVideos = useMemo(() => filterByProject(videos), [videos, projectFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  const visiblePdfs = useMemo(() => filterByProject(pdfs), [pdfs, projectFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const formatDate = (iso: string | null) => {
     if (!iso) return ''
@@ -151,57 +221,157 @@ export default function Gallery() {
     return () => window.removeEventListener('keydown', onKey)
   }, [active])
 
+  // Общий ряд вкладок «объекты» — рендерим для каждого типа, если объекты есть.
+  const projectTabsRow = projectTabs.length > 0 && (
+    <div className="tabs gallery-tabs">
+      <button
+        className={projectFilter === null ? 'active' : ''}
+        onClick={() => setProjectFilter(null)}
+      >
+        {t('gallery_all_projects')}
+      </button>
+      {projectTabs.map((tab) => (
+        <button
+          key={tab.key}
+          className={projectFilter === tab.key ? 'active' : ''}
+          onClick={() => setProjectFilter(tab.key)}
+        >
+          {tab.name}
+        </button>
+      ))}
+    </div>
+  )
+
   return (
     <div className="screen">
       <h1>🖼️ {t('gallery')}</h1>
 
-      {loading && <div className="card center muted">{t('loading')}</div>}
-      {error && <p className="error-msg">{t('load_error')}</p>}
+      <div className="tabs gallery-type-tabs">
+        <button className={mediaType === 'photos' ? 'active' : ''} onClick={() => selectType('photos')}>
+          {t('gallery_tab_photos')}
+        </button>
+        <button className={mediaType === 'videos' ? 'active' : ''} onClick={() => selectType('videos')}>
+          {t('gallery_tab_videos')}
+        </button>
+        <button className={mediaType === 'pdfs' ? 'active' : ''} onClick={() => selectType('pdfs')}>
+          {t('gallery_tab_pdfs')}
+        </button>
+      </div>
 
-      {!loading && !error && (
+      {mediaType === 'photos' && (
         <>
-          {photos.length === 0 && <div className="card muted">{t('gallery_empty')}</div>}
+          {loading && <div className="card center muted">{t('loading')}</div>}
+          {error && <p className="error-msg">{t('load_error')}</p>}
 
-          {photos.length > 0 && (
+          {!loading && !error && (
             <>
-              <div className="tabs gallery-tabs">
-                <button
-                  className={projectFilter === null ? 'active' : ''}
-                  onClick={() => setProjectFilter(null)}
-                >
-                  {t('gallery_all_projects')}
-                </button>
-                {projectTabs.map((tab) => (
-                  <button
-                    key={tab.key}
-                    className={projectFilter === tab.key ? 'active' : ''}
-                    onClick={() => setProjectFilter(tab.key)}
-                  >
-                    {tab.name}
-                  </button>
-                ))}
-              </div>
+              {photos.length === 0 && <div className="card muted">{t('gallery_empty')}</div>}
 
-              <p className="muted" style={{ fontSize: 13 }}>{visible.length} {t('gallery_count')}</p>
+              {photos.length > 0 && (
+                <>
+                  {projectTabsRow}
 
-              {visible.length === 0 && <div className="card muted">{t('gallery_empty_filter')}</div>}
+                  <p className="muted" style={{ fontSize: 13 }}>{visiblePhotos.length} {t('gallery_count')}</p>
 
-              <div className="gallery-grid">
-                {visible.map((photo) => (
-                  <button
-                    key={photo.id}
-                    type="button"
-                    className="gallery-item"
-                    onClick={() => setActive(photo)}
-                    aria-label={photo.filename ?? t('gallery_open')}
-                  >
-                    <img src={photo.url} alt={photo.filename ?? t('gallery_open')} loading="lazy" />
-                    {flagByMedia.has(photo.id) && (
-                      <span className="gallery-flag-badge" title={t('gallery_flagged')}>🚩</span>
-                    )}
-                  </button>
-                ))}
-              </div>
+                  {visiblePhotos.length === 0 && <div className="card muted">{t('gallery_empty_filter')}</div>}
+
+                  <div className="gallery-grid">
+                    {visiblePhotos.map((photo) => (
+                      <button
+                        key={photo.id}
+                        type="button"
+                        className="gallery-item"
+                        onClick={() => setActive(photo)}
+                        aria-label={photo.filename ?? t('gallery_open')}
+                      >
+                        <img src={photo.url} alt={photo.filename ?? t('gallery_open')} loading="lazy" />
+                        {flagByMedia.has(photo.id) && (
+                          <span className="gallery-flag-badge" title={t('gallery_flagged')}>🚩</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {mediaType === 'videos' && (
+        <>
+          {(videosState === 'idle' || videosState === 'loading') && (
+            <div className="card center muted">{t('loading')}</div>
+          )}
+          {videosState === 'error' && <p className="error-msg">{t('load_error')}</p>}
+
+          {videosState === 'ready' && (
+            <>
+              {videos.length === 0 && <div className="card muted">{t('gallery_empty_videos')}</div>}
+
+              {videos.length > 0 && (
+                <>
+                  {projectTabsRow}
+
+                  <p className="muted" style={{ fontSize: 13 }}>{visibleVideos.length} {t('gallery_count_videos')}</p>
+
+                  {visibleVideos.length === 0 && <div className="card muted">{t('gallery_empty_filter_videos')}</div>}
+
+                  <div className="gallery-grid">
+                    {visibleVideos.map((video) => (
+                      <div key={video.id} className="gallery-item gallery-video">
+                        <video src={video.url} controls preload="metadata" />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {mediaType === 'pdfs' && (
+        <>
+          {(pdfsState === 'idle' || pdfsState === 'loading') && (
+            <div className="card center muted">{t('loading')}</div>
+          )}
+          {pdfsState === 'error' && <p className="error-msg">{t('load_error')}</p>}
+
+          {pdfsState === 'ready' && (
+            <>
+              {pdfs.length === 0 && <div className="card muted">{t('gallery_empty_pdfs')}</div>}
+
+              {pdfs.length > 0 && (
+                <>
+                  {projectTabsRow}
+
+                  <p className="muted" style={{ fontSize: 13 }}>{visiblePdfs.length} {t('gallery_count_pdfs')}</p>
+                  {pdfError && <p className="error-msg" style={{ fontSize: 12 }}>{t('gallery_pdf_error')}</p>}
+
+                  {visiblePdfs.length === 0 && <div className="card muted">{t('gallery_empty_filter_pdfs')}</div>}
+
+                  {visiblePdfs.map((pdf) => (
+                    <div key={pdf.id} className="card row files-item gallery-pdf-item">
+                      <div>
+                        <span className="item-title">📄 {pdf.name}</span>
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          {pdf.project_name ?? t('gallery_no_project')}
+                          {pdf.created_at ? ` · ${formatDate(pdf.created_at)}` : ''}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn small"
+                        disabled={pdfBusyId === pdf.id}
+                        onClick={() => openPdf(pdf)}
+                      >
+                        {t('gallery_pdf_open')}
+                      </button>
+                    </div>
+                  ))}
+                </>
+              )}
             </>
           )}
         </>

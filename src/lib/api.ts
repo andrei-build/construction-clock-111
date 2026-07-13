@@ -1,5 +1,5 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectNote, AccountRating } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectNote, AccountRating, GalleryVideo, GalleryPdf } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -1020,6 +1020,82 @@ export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {
   }))
 
   return photos.filter((photo): photo is GalleryPhoto => photo !== null)
+}
+
+// «Галерея» → вкладка Видео: все видео объектов (media_type='video', не удалённые) с именем проекта.
+// Строго по образцу getGalleryPhotos, только media_type='video'. Подписанные URL берём пачкой.
+export async function getGalleryVideos(): Promise<GalleryVideo[]> {
+  const { data, error } = await supabase.from('media')
+    .select('id, storage_path, filename, created_at, project_id, category, project:projects(name)')
+    .eq('media_type', 'video')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(200)
+  if (error) return []
+
+  const videos = await Promise.all(((data ?? []) as unknown as Array<{
+    id: string
+    storage_path: string | null
+    filename?: string | null
+    created_at?: string | null
+    project_id?: string | null
+    category?: string | null
+    project?: { name: string | null } | null
+  }>).map(async (row) => {
+    if (!row.storage_path) return null
+    return {
+      id: row.id,
+      url: await mediaUrl(row.storage_path),
+      filename: row.filename ?? null,
+      created_at: row.created_at ?? null,
+      project_id: row.project_id ?? null,
+      project_name: row.project?.name ?? null,
+      category: row.category ?? null,
+    }
+  }))
+
+  return videos.filter((video): video is GalleryVideo => video !== null)
+}
+
+// «Галерея» → вкладка PDF: PDF-документы из таблицы files (mime pdf, не удалённые) с именем проекта.
+// URL не резолвим здесь (зависит от scope) — открываем по клику через getGalleryPdfUrl.
+// RLS files сама ограничивает org и видимость (менеджер видит всё, приватные — владелец/менеджер).
+export async function getGalleryPdfs(): Promise<GalleryPdf[]> {
+  const { data, error } = await supabase.from('files')
+    .select('id, name, storage_path, scope, created_at, project_id, project:projects(name)')
+    .ilike('mime', 'application/pdf')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(200)
+  if (error) return []
+
+  return ((data ?? []) as unknown as Array<{
+    id: string
+    name: string
+    storage_path: string
+    scope: string
+    created_at?: string | null
+    project_id?: string | null
+    project?: { name: string | null } | null
+  }>).map((row) => ({
+    id: row.id,
+    name: row.name,
+    storage_path: row.storage_path,
+    scope: row.scope,
+    created_at: row.created_at ?? null,
+    project_id: row.project_id ?? null,
+    project_name: row.project?.name ?? null,
+  }))
+}
+
+// Ссылка на PDF галереи: scope='project' — R2 (r2Sign download, как getProjectFileDownloadUrl),
+// иначе — media bucket (mediaUrl, как экран «Файлы»). Переиспользуем имеющуюся логику скачивания.
+export async function getGalleryPdfUrl(pdf: { scope: string; storage_path: string }): Promise<string> {
+  if (pdf.scope === 'project') {
+    const signed = await r2Sign('download', pdf.storage_path)
+    return signed.url
+  }
+  return mediaUrl(pdf.storage_path)
 }
 
 // Открытые флаги «на проверку» (resolved_at IS NULL) — для бейджа на фото в галерее.
