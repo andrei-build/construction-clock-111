@@ -323,6 +323,73 @@ export async function getTaskPhotoIds(taskIds: string[]): Promise<Set<string>> {
 
 const TASK_MEDIA_BUCKET = 'media'
 
+// ── Лимиты медиа и MIME-whitelist (паритет со старым STORAGE_LIMITS_MB) ─────────
+// Единый клиентский гейт: считаем перед КАЖДОЙ загрузкой, чтобы не жечь storage/R2.
+// Валидация только на клиенте — RLS/storage-политики не трогаем.
+export const STORAGE_LIMITS = {
+  photo: 20 * 1024 * 1024,   // 20 MB
+  video: 500 * 1024 * 1024,  // 500 MB
+  pdf: 50 * 1024 * 1024,     // 50 MB
+} as const
+
+const DEFAULT_FILE_LIMIT = 50 * 1024 * 1024 // дефолт для произвольных документов
+
+const MIME_WHITELIST: Record<'photo' | 'video' | 'pdf', readonly string[]> = {
+  photo: ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'],
+  video: ['video/mp4', 'video/quicktime', 'video/webm'],
+  pdf: ['application/pdf'],
+}
+
+// Расширенный whitelist для «Файлы и документы» (Files.tsx): pdf + любые image/* + офис-типы.
+const FILE_OFFICE_MIME: readonly string[] = [
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.ms-excel',
+  'text/csv',
+  'text/plain',
+]
+
+const FILE_IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'gif']
+
+// Бросает Error с message-кодом 'file_too_large' | 'file_type_not_allowed'.
+// Экраны показывают эти коды через t(...). Вызывать ПЕРВОЙ строкой (до сети).
+export function validateUpload(
+  file: { size: number; type?: string; name?: string },
+  kind: 'photo' | 'video' | 'pdf' | 'file',
+): void {
+  const type = (file.type || '').toLowerCase()
+
+  if (kind === 'file') {
+    // Лимит по факту типа: pdf→pdf, картинка→photo, иначе дефолт 50MB.
+    const name = file.name || ''
+    const ext = name.includes('.') ? (name.split('.').pop() || '').toLowerCase() : ''
+    let limit = DEFAULT_FILE_LIMIT
+    if (type === 'application/pdf' || ext === 'pdf') limit = STORAGE_LIMITS.pdf
+    else if (type.startsWith('image/') || FILE_IMAGE_EXTS.includes(ext)) limit = STORAGE_LIMITS.photo
+    if (file.size > limit) throw new Error('file_too_large')
+
+    // Пустой type (браузер не отдал mime) — по MIME не блокируем, размер уже проверен.
+    if (!type) return
+    const allowed = type.startsWith('image/') || type === 'application/pdf' || FILE_OFFICE_MIME.includes(type)
+    if (!allowed) throw new Error('file_type_not_allowed')
+    return
+  }
+
+  if (file.size > STORAGE_LIMITS[kind]) throw new Error('file_too_large')
+  // Пустой type — некоторые браузеры не отдают mime; лимит уже применён.
+  if (!type) return
+  if (!MIME_WHITELIST[kind].includes(type)) throw new Error('file_type_not_allowed')
+}
+
+// Если ошибка — это код валидации загрузки, вернуть его (экраны показывают через t()),
+// иначе null → экран применит своё прежнее поведение (сеть/доступ).
+export function uploadErrorCode(err: unknown): 'file_too_large' | 'file_type_not_allowed' | null {
+  const m = err instanceof Error ? err.message : ''
+  return m === 'file_too_large' || m === 'file_type_not_allowed' ? m : null
+}
+
 function safeFileName(name: string) {
   const fallback = 'photo.jpg'
   return (name || fallback).replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || fallback
@@ -346,6 +413,7 @@ async function insertTaskMediaRow(p: Profile, task: Task, storagePath: string, f
 }
 
 export async function uploadTaskPhoto(p: Profile, task: Task, file: File): Promise<TaskMedia> {
+  validateUpload(file, 'photo')
   const ext = safeFileName(file.name).split('.').pop() || 'jpg'
   const storagePath = `tasks/${p.org_id}/${task.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`
   const { error: uploadError } = await supabase.storage
@@ -367,6 +435,7 @@ export async function mediaUrl(storagePath: string) {
 }
 
 export async function uploadCheckoutVideo(p: Profile, eventId: string, file: File) {
+  validateUpload(file, 'video')
   const storagePath = `videos/${p.org_id}/${eventId}.mp4`
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
@@ -1406,6 +1475,7 @@ const DAILY_REPORT_SELECT = 'id, org_id, project_id, author_id, report_date, bod
 // Фото для дневного рапорта: тот же upload, что у задач (safeFileName + опции), но без task_id.
 // Категория daily_photo; ссылка на рапорт живёт в daily_reports.media_ids, не на media.
 export async function uploadDailyReportPhoto(p: Profile, projectId: string, file: File): Promise<string> {
+  validateUpload(file, 'photo')
   const ext = safeFileName(file.name).split('.').pop() || 'jpg'
   const storagePath = `daily/${p.org_id}/${Date.now()}-${crypto.randomUUID()}.${ext}`
   const { error: uploadError } = await supabase.storage
@@ -1508,6 +1578,7 @@ export async function uploadFile(p: Profile, input: {
   profile_id?: string | null
   account_id?: string | null
 }): Promise<FileRow> {
+  validateUpload({ size: input.file.size, type: input.file.type, name: input.name }, 'file')
   const safeName = safeFileName(input.name)
   const storagePath = `files/${p.org_id}/${crypto.randomUUID()}-${safeName}`
   const { error: uploadError } = await supabase.storage

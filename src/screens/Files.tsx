@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { isManagerRole } from '../lib/types'
-import { getFiles, uploadFile, softDeleteFile, mediaUrl } from '../lib/api'
+import { getFiles, uploadFile, softDeleteFile, mediaUrl, uploadErrorCode } from '../lib/api'
 import type { FileRow } from '../lib/types'
 
 const localeByLang = {
@@ -48,6 +48,7 @@ export default function Files() {
   const [isPrivate, setIsPrivate] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(false)
+  const [saveErrorCode, setSaveErrorCode] = useState<string | null>(null)
 
   useEffect(() => {
     if (!manager) { setLoading(false); return }
@@ -92,9 +93,10 @@ export default function Files() {
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault()
     if (!profile || saving) return
-    if (!file) { setSaveError(true); return }
+    if (!file) { setSaveError(true); setSaveErrorCode(null); return }
     setSaving(true)
     setSaveError(false)
+    setSaveErrorCode(null)
     try {
       const created = await uploadFile(profile, {
         file,
@@ -112,7 +114,8 @@ export default function Files() {
       setDocKind('')
       setExpiresAt('')
       setIsPrivate(false)
-    } catch {
+    } catch (err) {
+      setSaveErrorCode(uploadErrorCode(err))
       setSaveError(true)
     } finally {
       setSaving(false)
@@ -159,6 +162,7 @@ export default function Files() {
       <form className="card files-form" onSubmit={handleUpload}>
         <input
           type="file"
+          accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/csv,text/plain"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         />
         <input
@@ -199,7 +203,7 @@ export default function Files() {
           <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
           {t('files_is_private')}
         </label>
-        {saveError && <p className="error-msg">{file ? t('files_upload_failed') : t('files_file_required')}</p>}
+        {saveError && <p className="error-msg">{saveErrorCode ? t(saveErrorCode) : file ? t('files_upload_failed') : t('files_file_required')}</p>}
         <button type="submit" className="btn" disabled={saving}>
           {saving ? t('files_uploading') : t('files_upload')}
         </button>

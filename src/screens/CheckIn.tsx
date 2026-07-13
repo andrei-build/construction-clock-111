@@ -9,6 +9,8 @@ import {
   startProjectTravel,
   uploadCheckoutVideo,
   uploadSafetySignature,
+  validateUpload,
+  uploadErrorCode,
 } from '../lib/api'
 import {
   flushQueuedTimeEvents,
@@ -36,7 +38,7 @@ function isNetworkError(error: unknown) {
 
 function messageClass(msg: string) {
   if (msg === 'error') return 'error-msg'
-  if (['offline_saved', 'checkout_video_needed', 'checkout_video_online_required', 'safety_signature_required', 'safety_online_required'].includes(msg)) return 'warn-msg'
+  if (['offline_saved', 'checkout_video_needed', 'checkout_video_online_required', 'safety_signature_required', 'safety_online_required', 'file_too_large', 'file_type_not_allowed'].includes(msg)) return 'warn-msg'
   return 'ok-msg'
 }
 
@@ -297,6 +299,20 @@ export default function CheckIn() {
   }
 
   const projName = (id: string | null) => projects.find((p) => p.id === id)?.name ?? ''
+  // Валидируем видео при выборе (лимит/тип до сети); при отказе показываем код через существующий msg.
+  const pickCheckoutVideo = (file: File | null) => {
+    if (!file) { setCheckoutVideo(null); return }
+    try {
+      validateUpload(file, 'video')
+    } catch (err) {
+      setMsg(uploadErrorCode(err) ?? 'error')
+      setCheckoutVideo(null)
+      return
+    }
+    setMsg(null)
+    setCheckoutVideo(file)
+  }
+
   const checkoutVideoBlock = checkoutRequiresVideo ? (
     <div className="card checkout-video-card">
       <div className="item-title">{t('checkout_video_title')}</div>
@@ -308,7 +324,7 @@ export default function CheckIn() {
         accept="video/*"
         capture="environment"
         disabled={busy}
-        onChange={(event) => setCheckoutVideo(event.target.files?.[0] ?? null)}
+        onChange={(event) => pickCheckoutVideo(event.target.files?.[0] ?? null)}
       />
       <label className={`video-button ${busy ? 'disabled' : ''}`} htmlFor="checkout-video">
         <span className="camera-icon">🎥</span>

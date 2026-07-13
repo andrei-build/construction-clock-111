@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { isManagerRole } from '../lib/types'
-import { getDailyReports, createDailyReport, getProjects, uploadDailyReportPhoto, getDailyReportPhotos } from '../lib/api'
+import { getDailyReports, createDailyReport, getProjects, uploadDailyReportPhoto, getDailyReportPhotos, validateUpload, uploadErrorCode } from '../lib/api'
 import type { DailyReport, Project } from '../lib/types'
 
 const localeByLang = {
@@ -91,6 +91,7 @@ export default function DailyReports() {
   const [uploading, setUploading] = useState(false)
   const [saveError, setSaveError] = useState(false)
   const [photoError, setPhotoError] = useState(false)
+  const [photoErrorCode, setPhotoErrorCode] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [filterProject, setFilterProject] = useState('')
@@ -136,13 +137,25 @@ export default function DailyReports() {
     if (!profile || busy || !projectId || !body.trim()) return
     setSaveError(false)
     setPhotoError(false)
+    setPhotoErrorCode(null)
 
     let mediaIds: string[] = []
     if (files.length > 0) {
+      // Валидация лимитов/типов до сети: сразу показать понятный код, не начиная загрузку.
+      for (const file of files) {
+        try {
+          validateUpload(file, 'photo')
+        } catch (err) {
+          setPhotoErrorCode(uploadErrorCode(err))
+          setPhotoError(true)
+          return
+        }
+      }
       setUploading(true)
       try {
         mediaIds = await Promise.all(files.map((file) => uploadDailyReportPhoto(profile, projectId, file)))
-      } catch {
+      } catch (err) {
+        setPhotoErrorCode(uploadErrorCode(err))
         setPhotoError(true)
         setUploading(false)
         return
@@ -202,7 +215,7 @@ export default function DailyReports() {
         {files.length > 0 && (
           <p className="muted" style={{ fontSize: 12 }}>{files.length} {t('daily_photos_count')}</p>
         )}
-        {photoError && <p className="error-msg">{t('daily_photo_failed')}</p>}
+        {photoError && <p className="error-msg">{t(photoErrorCode ?? 'daily_photo_failed')}</p>}
         {saveError && <p className="error-msg">{t('daily_save_failed')}</p>}
         <button type="submit" className="btn" disabled={busy || !projectId || !body.trim()}>
           {uploading ? t('daily_photos_uploading') : saving ? t('daily_saving') : t('daily_submit')}
