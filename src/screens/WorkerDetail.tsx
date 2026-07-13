@@ -27,7 +27,7 @@ import {
   updateWorkerProfileSettings,
 } from '../lib/api'
 import { fmtClock, fmtHours } from '../lib/time'
-import { isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type UserCapability, type WorkInterval } from '../lib/types'
+import { canAssignRole, isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type UserCapability, type WorkInterval } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
 
 const ELEVEN_HOURS_MS = 11 * 60 * 60 * 1000
@@ -173,6 +173,14 @@ export default function WorkerDetail() {
   const canEditProfile = profile ? isManagerWrite(profile.role) : false
   // ДНК §1: finance_access выдаёт ТОЛЬКО owner/admin — не manager. Проверяем роль явно.
   const canManageCapabilities = profile ? (profile.role === 'owner' || profile.role === 'admin') : false
+
+  // F3: гейт назначения ролей. Показываем только роли, которые актёр вправе назначить,
+  // плюс всегда оставляем видимой ТЕКУЩУЮ роль работника (иначе <select> её не отрендерит),
+  // но такую неназначаемую опцию держим disabled. Так менеджер не может повысить до owner/admin/driver.
+  const actorRole = profile?.role
+  const roleSelectOptions = roleOptions.filter(
+    (option) => option === worker?.role || (actorRole ? canAssignRole(actorRole, option) : false),
+  )
 
   const load = async () => {
     if (!id) return
@@ -469,7 +477,11 @@ export default function WorkerDetail() {
 
                 <label>{t('role')}</label>
                 <select value={role} disabled={!canEditProfile || busy !== null} onChange={(e) => setRole(e.target.value as Role)}>
-                  {roleOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  {roleSelectOptions.map((option) => (
+                    <option key={option} value={option} disabled={!actorRole || !canAssignRole(actorRole, option)}>
+                      {option}
+                    </option>
+                  ))}
                 </select>
 
                 {ratesVisible && (
