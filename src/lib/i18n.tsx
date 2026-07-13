@@ -597,6 +597,7 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_project_not_found: { ru: 'Проект не найден', en: 'Project not found', es: 'Proyecto no encontrado' },
   hub_coming_soon: { ru: 'Скоро появится', en: 'Coming soon', es: 'Próximamente' },
   hub_no_data: { ru: 'Нет данных', en: 'No data', es: 'Sin datos' },
+  directions: { ru: 'Маршрут', en: 'Directions', es: 'Cómo llegar' },
   hub_tab_overview: { ru: 'Обзор', en: 'Overview', es: 'Resumen' },
   hub_tab_time: { ru: 'Время', en: 'Time', es: 'Tiempo' },
   hub_tab_finance: { ru: 'Финансы', en: 'Finance', es: 'Finanzas' },
