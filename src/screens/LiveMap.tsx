@@ -6,6 +6,7 @@ import { getMapProjects, getTeam, getTodayEvents, getWorkerLastLocations, type W
 import { useI18n } from '../lib/i18n'
 import { shiftState } from '../lib/time'
 import { keepStableListIfUnchanged } from '../lib/list-stability'
+import { formatGpsAge } from '../lib/gps-freshness'
 import { buildWorkerDisambiguationMap } from '../lib/worker-utils'
 import type { Profile, Project, TimeEvent } from '../lib/types'
 
@@ -271,8 +272,12 @@ export default function LiveMap() {
         icon: markerIcon('worker', markerRow.tone),
         title,
       }).addTo(layer)
+      // F21: append a "last seen 3m ago" age to the tooltip (text only — marker
+      // color/tone is untouched here). Sourced from the server timestamp already on
+      // the loaded location row; no new query.
+      const age = formatGpsAge(markerRow.lastAt)
       const detail = markerRow.lastAt
-        ? `${title}<br>${t('last_seen')}: ${new Date(markerRow.lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        ? `${title}<br>${t('last_seen')}: ${new Date(markerRow.lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${age ? ` (${age})` : ''}`
         : `${title}<br>${t('no_gps_data')}`
       marker.bindTooltip(detail)
       marker.on('click', () => {
