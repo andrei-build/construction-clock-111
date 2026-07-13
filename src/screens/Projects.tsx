@@ -9,6 +9,7 @@ import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
 import { isEffectiveOpenTask } from '../lib/task-status'
 import MediaComments from '../components/MediaComments'
 import { deadlineStatus, statusDotClass } from './ProjectHub'
+import { formatProjectCountdown } from '../lib/project-schedule'
 
 // F29: разбираем вставленную пару «широта, долгота» ("47.61, -122.33", "47.61 -122.33").
 // Терпим пробелы, знак градуса и ведущую метку до двоеточия; null, если это не чистая валидная пара.
@@ -196,6 +197,7 @@ export default function Projects() {
         const profit = profitFor(p.id)
         const showProfit = profit?.margin_pct !== null && profit?.margin_pct !== undefined && profit.profit_status && profit.profit_status !== 'grey'
         const dl = deadlineStatus(p.end_date)
+        const countdown = p.end_date ? formatProjectCountdown(p.end_date) : ''
         const rating = (p.client_account_id ? clientRatings.get(p.client_account_id) : undefined) as 'green' | 'amber' | 'red' | undefined
         return (
           <div key={p.id} className="card">
@@ -214,6 +216,7 @@ export default function Projects() {
                   {formatMargin(profit.margin_pct!)}
                 </span>
               )}
+              {countdown && <span className={`schedule-countdown-badge ${dl}`}>{countdown}</span>}
             </div>
             <div className="muted">{p.address}</div>
             {ptasks.length > 0 && <h2>{t('tasks')}</h2>}
