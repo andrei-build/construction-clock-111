@@ -2057,3 +2057,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   width: min(420px, 100%);
   margin: 0;
 }
+
+/* Координаты в форме проекта + «Моё текущее местоположение» */
+.coord-row { align-items: flex-end; gap: 10px; }
+.coord-field { flex: 1; min-width: 0; }
+.coord-field input { width: 100%; }
