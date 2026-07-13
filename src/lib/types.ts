@@ -20,6 +20,7 @@ export interface Project {
   name: string
   address: string | null
   status: 'planned' | 'active' | 'paused' | 'completed' | 'archived'
+  client_account_id?: string | null
   gps_radius_m: number
   lat?: number | string | null
   lng?: number | string | null
@@ -184,6 +185,69 @@ export interface ProjectExclusion {
   project?: { name: string | null } | null
 }
 
+export type AccountType = 'client' | 'gc' | 'supplier' | 'other'
+
+export interface Account {
+  id: string
+  org_id: string
+  name: string
+  account_type: AccountType | string | null
+  email: string | null
+  phone: string | null
+  address: string | null
+  notes: string | null
+  is_taxable: boolean | null
+  insurance_status: string | null
+  metadata: Record<string, unknown> | null
+  created_by: string | null
+  updated_by: string | null
+  version: number | null
+  created_at: string
+  updated_at: string | null
+  deleted_at: string | null
+  archived_at: string | null
+}
+
+export interface AccountInput {
+  name: string
+  account_type: AccountType
+  email: string | null
+  phone: string | null
+  address: string | null
+  notes: string | null
+}
+
+export interface Contact {
+  id: string
+  org_id: string
+  account_id: string
+  name: string
+  title: string | null
+  email: string | null
+  phone: string | null
+  is_primary: boolean | null
+  notes: string | null
+  created_at: string
+  updated_at: string | null
+  deleted_at: string | null
+}
+
+export interface ContactInput {
+  name: string
+  title: string | null
+  email: string | null
+  phone: string | null
+  is_primary: boolean
+  notes: string | null
+}
+
+export interface ClientProjectSummary {
+  id: string
+  name: string
+  status: string | null
+  client_account_id: string | null
+}
+
 export interface CalendarEvent {
   id: string
   org_id: string
@@ -199,10 +263,13 @@ export type DealStage = 'lead' | 'contacted' | 'measured' | 'quoted' | 'negotiat
 export interface Deal {
   id: string
   org_id: string
+  account_id?: string | null
+  contact_id?: string | null
   title: string
   stage: DealStage
   expected_amount: number | null
   next_action: string | null
+  next_action_at?: string | null
 }
 
 export interface SuspiciousShift {

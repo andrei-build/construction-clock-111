@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -1122,6 +1122,91 @@ export async function createCalendarEvent(p: Profile, input: {
     .single()
   if (error) throw error
   await logEvent(p, 'calendar.created', 'calendar_event', data.id, { title: input.title, event_type: input.event_type })
+}
+
+const ACCOUNT_SELECT = 'id, org_id, name, account_type, email, phone, address, notes, is_taxable, insurance_status, metadata, created_by, updated_by, version, created_at, updated_at, deleted_at, archived_at'
+const CONTACT_SELECT = 'id, org_id, account_id, name, title, email, phone, is_primary, notes, created_at, updated_at, deleted_at'
+const CLIENT_PROJECT_SELECT = 'id, name, status, client_account_id'
+const CLIENT_DOCUMENT_SELECT = 'id, org_id, account_id, project_id, doc_type, status, number, title, total, balance, issue_date'
+
+export async function getClientAccounts(): Promise<Account[]> {
+  const { data, error } = await supabase.from('accounts')
+    .select(ACCOUNT_SELECT)
+    .is('deleted_at', null)
+    .order('name')
+  if (error) return []
+  return (data as Account[]) ?? []
+}
+
+export async function createAccount(p: Profile, input: AccountInput): Promise<Account> {
+  const { data, error } = await supabase.from('accounts')
+    .insert({ org_id: p.org_id, created_by: p.id, ...input })
+    .select(ACCOUNT_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'account.created', 'account', data.id, {})
+  return data as Account
+}
+
+export async function updateAccount(p: Profile, accountId: string, input: AccountInput): Promise<Account> {
+  const { data, error } = await supabase.from('accounts')
+    .update({ ...input, updated_by: p.id })
+    .eq('id', accountId)
+    .select(ACCOUNT_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'account.updated', 'account', accountId, {})
+  return data as Account
+}
+
+export async function getAccountContacts(accountId: string): Promise<Contact[]> {
+  const { data, error } = await supabase.from('contacts')
+    .select(CONTACT_SELECT)
+    .eq('account_id', accountId)
+    .is('deleted_at', null)
+    .order('is_primary', { ascending: false })
+    .order('name')
+  if (error) return []
+  return (data as Contact[]) ?? []
+}
+
+export async function createContact(p: Profile, accountId: string, input: ContactInput): Promise<Contact> {
+  const { data, error } = await supabase.from('contacts')
+    .insert({ org_id: p.org_id, account_id: accountId, ...input })
+    .select(CONTACT_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'contact.created', 'contact', data.id, { account_id: accountId })
+  return data as Contact
+}
+
+export async function getClientProjectSummaries(accountId?: string): Promise<ClientProjectSummary[]> {
+  let query = supabase.from('projects')
+    .select(CLIENT_PROJECT_SELECT)
+    .is('deleted_at', null)
+  query = accountId ? query.eq('client_account_id', accountId) : query.not('client_account_id', 'is', null)
+  const { data, error } = await query.order('name')
+  if (error) return []
+  return (data as ClientProjectSummary[]) ?? []
+}
+
+export async function getClientDeals(accountId: string): Promise<Deal[]> {
+  const { data, error } = await supabase.from('deals')
+    .select('id, org_id, account_id, contact_id, title, stage, expected_amount, next_action, next_action_at')
+    .eq('account_id', accountId)
+    .order('next_action_at', { ascending: true, nullsFirst: false })
+  if (error) return []
+  return (data as Deal[]) ?? []
+}
+
+export async function getClientDocuments(accountId: string): Promise<DocumentRow[]> {
+  const { data, error } = await supabase.from('documents')
+    .select(CLIENT_DOCUMENT_SELECT)
+    .eq('account_id', accountId)
+    .is('deleted_at', null)
+    .order('issue_date', { ascending: false, nullsFirst: false })
+  if (error) return []
+  return (data as DocumentRow[]) ?? []
 }
 
 export async function getDeals(): Promise<Deal[]> {

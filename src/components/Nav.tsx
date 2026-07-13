@@ -58,6 +58,7 @@ export default function Nav({ manager }: { manager: boolean }) {
         { to: '/payroll', Icon: IconMoney, label: t('payroll') },
         { to: '/documents', Icon: IconMoney, label: t('documents') },
         { to: '/reports', Icon: IconChart, label: t('reports') },
+        { to: '/clients', Icon: IconUsers, label: t('clients') },
         { to: '/sales', Icon: IconBriefcase, label: t('sales') },
       ],
     },
