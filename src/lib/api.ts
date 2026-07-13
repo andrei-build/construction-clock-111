@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -668,6 +668,40 @@ export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {
   }))
 
   return photos.filter((photo): photo is GalleryPhoto => photo !== null)
+}
+
+// Открытые флаги «на проверку» (resolved_at IS NULL) — для бейджа на фото в галерее.
+// RLS сам ограничивает org и видимость (свои флаги видит любой, все — менеджер).
+export async function getOpenMediaFlags(): Promise<MediaFlag[]> {
+  const { data, error } = await supabase.from('media_flags')
+    .select('id, media_id, reason, flagged_by, created_at')
+    .is('resolved_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data ?? []) as unknown as MediaFlag[]
+}
+
+// Поставить флаг «на проверку» на фото — доступно любому пользователю (RLS: flagged_by = auth.uid()).
+export async function flagMedia(p: Profile, mediaId: string, reason: string): Promise<void> {
+  const { error } = await supabase.from('media_flags').insert({
+    org_id: p.org_id,
+    media_id: mediaId,
+    flagged_by: p.id,
+    reason,
+  })
+  if (error) throw error
+  await logEvent(p, 'media.flagged', 'media', mediaId, { reason })
+}
+
+// Снять флаг (проверено) — только менеджер (RLS: app.is_manager_write()).
+export async function resolveMediaFlag(p: Profile, flagId: string): Promise<void> {
+  const { data, error } = await supabase.from('media_flags')
+    .update({ resolved_by: p.id, resolved_at: new Date().toISOString() })
+    .eq('id', flagId)
+    .select('media_id')
+    .maybeSingle()
+  if (error) throw error
+  await logEvent(p, 'media.flag_resolved', 'media', (data as { media_id?: string } | null)?.media_id ?? null, {})
 }
 
 export async function getCurrentPayPeriod(): Promise<PayPeriod | null> {

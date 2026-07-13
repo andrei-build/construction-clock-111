@@ -1355,6 +1355,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   gap: 8px;
 }
 .gallery-item {
+  position: relative;
   display: block;
   padding: 0;
   border: none;
@@ -1363,6 +1364,29 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   overflow: hidden;
   cursor: pointer;
 }
+/* Бейдж «на проверку» поверх миниатюры */
+.gallery-flag-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 15px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 8px;
+  background: rgba(4, 7, 12, .6);
+}
+/* Блок флага в лайтбоксе (форма постановки или отображение причины) */
+.gallery-flag-box {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  margin-top: 6px;
+}
+.gallery-flag-box input {
+  width: 100%;
+  max-width: 320px;
+}
+.gallery-flag-title { font-weight: 600; }
 .gallery-item img {
   display: block;
   width: 100%;

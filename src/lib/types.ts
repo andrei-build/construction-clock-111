@@ -107,6 +107,15 @@ export interface GalleryPhoto {
   category: string | null
 }
 
+// Флаг «на проверку» для медиа (media_flags): любой может поставить, менеджер снимает (resolved_at).
+export interface MediaFlag {
+  id: string
+  media_id: string
+  reason: string | null
+  flagged_by: string
+  created_at: string
+}
+
 export interface EventRow {
   id: number
   event_type: string
