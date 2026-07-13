@@ -158,6 +158,13 @@ export interface ProjectAssignment {
   profile_id: string
 }
 
+// Исключение проекта (project_exclusions): при project_access_mode='all_active' скрывает
+// конкретный проект от работника. Имя проекта подтягиваем join-ом для показа в списке.
+export interface ProjectExclusion {
+  project_id: string
+  project?: { name: string | null } | null
+}
+
 export interface CalendarEvent {
   id: string
   org_id: string

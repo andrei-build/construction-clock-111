@@ -1031,6 +1031,22 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   gap: 8px;
   margin-bottom: 12px;
 }
+.excluded-projects {
+  display: grid;
+  gap: 8px;
+}
+.excluded-projects h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.exclude-add {
+  gap: 8px;
+  align-items: center;
+}
+.exclude-add select {
+  flex: 1;
+  min-width: 0;
+}
 
 .dispatch-screen { max-width: 1120px; }
 .dispatch-date { margin: -6px 0 14px; }
