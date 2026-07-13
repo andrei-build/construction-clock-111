@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, updateProject, markTaskDone, uploadTaskPhoto, validateUpload, uploadErrorCode, captureGPS } from '../lib/api'
 import { enqueueFieldAction } from '../lib/offlineFieldActions'
+import { enqueueMediaUpload } from '../lib/offlineMediaQueue'
 import { isManagerWrite } from '../lib/types'
 import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
@@ -182,11 +183,29 @@ export default function Projects() {
     }
     setPhotoBusy(task.id)
     setTaskError(null)
+    setTaskNotice(null)
+    // F51: offline / network drop — store the photo in the durable media queue and replay the
+    // real upload on reconnect instead of losing it. No mediaId exists until replay, so this
+    // deliberately does NOT populate photoByTask: a requires_photo task still cannot be marked
+    // done offline (that F64 coupling is untouched). The online path below stays byte-identical.
+    const queueOffline = () => {
+      void enqueueMediaUpload({
+        kind: 'task_photo',
+        dedupeKey: `task_photo:${task.id}:${crypto.randomUUID?.() ?? Date.now()}`,
+        file,
+        target: { task },
+      })
+      setTaskNotice('offline_photo_queued')
+    }
     try {
+      if (!isOnline()) { queueOffline(); return }
       const media = await uploadTaskPhoto(profile, task, file)
       setPhotoByTask((current) => ({ ...current, [task.id]: media }))
     } catch (err) {
-      setTaskError(uploadErrorCode(err) ?? 'photo_upload_failed')
+      const code = uploadErrorCode(err)
+      // A non-network error (validation / permission) still surfaces; never silently queue it.
+      if (!code && (!isOnline() || isNetworkError(err))) { queueOffline(); return }
+      setTaskError(code ?? 'photo_upload_failed')
     } finally {
       setPhotoBusy(null)
     }
