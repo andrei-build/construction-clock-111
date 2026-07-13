@@ -41,6 +41,7 @@ export default function Nav({ manager }: { manager: boolean }) {
       label: t('nav_group_work'),
       items: [
         { to: '/projects', Icon: IconFolder, label: t('projects') },
+        { to: '/daily', Icon: IconChart, label: t('daily_reports') },
         { to: '/team', Icon: IconUsers, label: t('team') },
         { to: '/consents', Icon: IconTarget, label: t('consents') },
         { to: '/dispatch', Icon: IconDispatch, label: t('dispatch') },

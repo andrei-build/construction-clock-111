@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -946,6 +946,35 @@ export async function setUserCapability(p: Profile, userId: string, capability: 
     .upsert({ user_id: userId, capability, granted, granted_by: p.id }, { onConflict: 'user_id,capability' })
   if (error) throw error
   await logEvent(p, 'capability.updated', 'profile', userId, { capability, granted })
+}
+
+// Дневные рапорты (daily_reports). RLS отдаёт менеджеру все рапорты, автору — только свои.
+// point/geometry тут нет; мягко удалённые (deleted_at) скрываем на клиенте.
+const DAILY_REPORT_SELECT = 'id, org_id, project_id, author_id, report_date, body, media_ids, created_at, project:projects(name), author:profiles(name)'
+
+export async function getDailyReports(): Promise<DailyReport[]> {
+  const { data, error } = await supabase.from('daily_reports')
+    .select(DAILY_REPORT_SELECT)
+    .is('deleted_at', null)
+    .order('report_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(100)
+  if (error) return []
+  return (data as unknown as DailyReport[]) ?? []
+}
+
+// Автор пишет свой рапорт: RLS требует author_id = auth.uid() (= profile.id). Возвращаем строку с проектом и автором.
+export async function createDailyReport(
+  p: Profile,
+  { projectId, reportDate, body }: { projectId: string; reportDate: string; body: string },
+): Promise<DailyReport | null> {
+  const { data, error } = await supabase.from('daily_reports')
+    .insert({ org_id: p.org_id, project_id: projectId, author_id: p.id, report_date: reportDate, body })
+    .select(DAILY_REPORT_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'daily_report.created', 'daily_report', data.id, { project_id: projectId, report_date: reportDate })
+  return data as unknown as DailyReport
 }
 
 export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number) {

@@ -17,6 +17,7 @@ import Consents from './screens/Consents'
 import Archive from './screens/Archive'
 import Stores from './screens/Stores'
 import Gallery from './screens/Gallery'
+import DailyReports from './screens/DailyReports'
 import MyTime from './screens/MyTime'
 import Payroll from './screens/Payroll'
 import Messages from './screens/Messages'
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="/archive" element={manager ? <Archive /> : <Navigate to="/" />} />
             <Route path="/stores" element={manager ? <Stores /> : <Navigate to="/" />} />
             <Route path="/gallery" element={manager ? <Gallery /> : <Navigate to="/" />} />
+            <Route path="/daily" element={<DailyReports />} />
             <Route path="/time" element={<MyTime />} />
             <Route path="/payroll" element={manager ? <Payroll /> : <Navigate to="/" />} />
             <Route path="/messages" element={<Messages />} />
