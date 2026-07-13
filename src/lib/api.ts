@@ -2010,6 +2010,31 @@ export async function createProject(p: Profile, name: string, address: string, l
   await logEvent(p, 'project.created', 'project', data.id, { name })
 }
 
+// Редактирование существующего проекта — зеркалит ТОЛЬКО писабельные колонки createProject:
+// name, address, site_point (условно), gps_radius_m (условно). Больше НИКАКИХ колонок.
+// site_point на клиенте нельзя надёжно прочитать (PostGIS hex EWKB), поэтому координаты в форме
+// НЕ префилятся из site_point: перезаписываем site_point ТОЛЬКО когда менеджер ввёл/захватил
+// новые lat/lng (тот же guard, что в createProject). Без новых координат ключ site_point опускаем
+// — старое значение не трогаем и НЕ очищаем. RLS projects UPDATE пускает только менеджера;
+// клиентский гейт — isManagerWrite в UI.
+export async function updateProject(
+  p: Profile,
+  projectId: string,
+  fields: { name: string; address: string; lat?: number; lng?: number; gpsRadiusM?: number },
+) {
+  const { name, address, lat, lng, gpsRadiusM } = fields
+  const row: Record<string, unknown> = { name, address }
+  if (lat !== undefined && lng !== undefined && Number.isFinite(lat) && Number.isFinite(lng)) {
+    row.site_point = `SRID=4326;POINT(${lng} ${lat})`
+  }
+  if (gpsRadiusM !== undefined && Number.isFinite(gpsRadiusM)) {
+    row.gps_radius_m = Math.round(gpsRadiusM)
+  }
+  const { error } = await supabase.from('projects').update(row).eq('id', projectId)
+  if (error) throw error
+  await logEvent(p, 'project.updated', 'project', projectId, { name })
+}
+
 // ---- Вкладка «Клиент» Хаба: гранты видимости присутствия (client_visibility_grants) ----
 const CLIENT_GRANT_SELECT = 'id, org_id, account_id, project_id, can_see_presence, notify_travel, notify_checkin, notify_checkout, channel, note, created_by, created_at, revoked_at'
 

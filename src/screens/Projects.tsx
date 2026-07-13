@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, markTaskDone, uploadTaskPhoto, validateUpload, uploadErrorCode, captureGPS } from '../lib/api'
+import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, updateProject, markTaskDone, uploadTaskPhoto, validateUpload, uploadErrorCode, captureGPS } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
 import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
@@ -36,6 +36,8 @@ export default function Projects() {
   const [profits, setProfits] = useState<ProjectProfit[]>([])
   const [clientRatings, setClientRatings] = useState<Map<string, string>>(new Map())
   const [adding, setAdding] = useState(false)
+  // F76: id редактируемого проекта (null — форма в режиме создания).
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
   const [lat, setLat] = useState('')
@@ -55,6 +57,11 @@ export default function Projects() {
 
   const canWrite = profile ? isManagerWrite(profile.role) : false
 
+  const resetForm = () => {
+    setName(''); setAddress(''); setLat(''); setLng(''); setGpsRadius(''); setGeoError(false)
+    setAdding(false); setEditingId(null)
+  }
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!profile || !name.trim()) return
@@ -63,11 +70,30 @@ export default function Projects() {
       const latNum = lat.trim() === '' ? undefined : Number(lat)
       const lngNum = lng.trim() === '' ? undefined : Number(lng)
       const radiusNum = gpsRadius.trim() === '' ? undefined : clampGpsRadius(Number(gpsRadius), GPS_RADIUS_MIN)
-      await createProject(profile, name.trim(), address.trim(), latNum, lngNum, radiusNum)
-      setName(''); setAddress(''); setLat(''); setLng(''); setGpsRadius(''); setGeoError(false); setAdding(false)
+      if (editingId) {
+        // F76: пишем ТОЛЬКО name/address/gps_radius_m + site_point (если введены новые координаты).
+        await updateProject(profile, editingId, { name: name.trim(), address: address.trim(), lat: latNum, lng: lngNum, gpsRadiusM: radiusNum })
+      } else {
+        await createProject(profile, name.trim(), address.trim(), latNum, lngNum, radiusNum)
+      }
+      resetForm()
       await load()
     } catch { /* показывается пустым — RLS не пустит не-менеджера */ }
     setBusy(false)
+  }
+
+  // F76: prefill формы из текущего проекта. Координаты НЕ префилятся: site_point на клиенте
+  // лежит как PostGIS hex EWKB и надёжно не парсится — оставляем lat/lng пустыми; site_point
+  // перезапишется ТОЛЬКО если менеджер введёт/захватит новые координаты (см. updateProject).
+  const startEdit = (src: Project) => {
+    setEditingId(src.id)
+    setAdding(false)
+    setName(src.name)
+    setAddress(src.address ?? '')
+    setLat(''); setLng('')
+    setGpsRadius(src.gps_radius_m != null ? String(src.gps_radius_m) : '')
+    setGeoError(false)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   // Копировать проект как шаблон: переносим name (+ « (copy)»), address, gps_radius_m.
@@ -78,6 +104,7 @@ export default function Projects() {
     setLat(''); setLng('')
     setGpsRadius(src.gps_radius_m != null ? String(src.gps_radius_m) : '')
     setGeoError(false)
+    setEditingId(null)
     setAdding(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -151,11 +178,12 @@ export default function Projects() {
       <h1>📁 {t('projects')}</h1>
       {taskError && <p className="error-msg">{t(taskError)}</p>}
 
-      {canWrite && !adding && (
+      {canWrite && !adding && !editingId && (
         <button className="btn ghost small" onClick={() => setAdding(true)}>+ {t('add_project')}</button>
       )}
-      {adding && (
+      {(adding || editingId) && (
         <form onSubmit={submit} className="card">
+          {editingId && <h2 style={{ marginTop: 0 }}>{t('edit_project')}</h2>}
           <label>{t('name')}</label>
           <input value={name} onChange={(e) => setName(e.target.value)} />
           <label>{t('address')}</label>
@@ -171,6 +199,7 @@ export default function Projects() {
             </div>
           </div>
           <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('coord_paste_hint')}</p>
+          {editingId && <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('edit_coords_hint')}</p>}
           <label>{t('project_gps_radius')}</label>
           <input
             type="number"
@@ -186,7 +215,10 @@ export default function Projects() {
             {geoBusy ? t('locating') : t('use_my_location')}
           </button>
           {geoError && <p className="error-msg">{t('location_unavailable')}</p>}
-          <button className="btn" disabled={busy || !name.trim()}>{t('create')}</button>
+          <div className="row">
+            <button className="btn" disabled={busy || !name.trim()}>{editingId ? t('save_changes') : t('create')}</button>
+            <button type="button" className="btn ghost small" disabled={busy} onClick={resetForm}>{t('cancel')}</button>
+          </div>
         </form>
       )}
 
@@ -209,6 +241,9 @@ export default function Projects() {
               <button className="inline-link project-name-link" onClick={() => navigate(`/projects/${p.id}`)}>{p.name}</button>
               {canWrite && (
                 <button className="btn ghost small project-copy-btn" title={t('copy_project')} aria-label={t('copy_project')} onClick={() => copyProject(p)}>📋</button>
+              )}
+              {canWrite && (
+                <button className="btn ghost small project-copy-btn" title={t('edit_project')} aria-label={t('edit_project')} onClick={() => startEdit(p)}>✏️</button>
               )}
               {showProfit && (
                 <span className={`profit-badge ${profit.profit_status}`}>
