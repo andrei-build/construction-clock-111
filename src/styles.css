@@ -1565,6 +1565,42 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   max-width: 320px;
 }
 .gallery-flag-title { font-weight: 600; }
+/* Комментарии к медиа (в лайтбоксе галереи и под фото задачи) */
+.media-comments {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  width: 100%;
+  max-width: 360px;
+  text-align: left;
+}
+.media-comments-title { font-weight: 600; font-size: 14px; }
+.media-comments-empty { font-size: 12px; }
+.media-comments-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.media-comments-item {
+  background: rgba(4, 7, 12, .4);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.media-comments-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.media-comments-author { font-weight: 600; }
+.media-comments-time { font-size: 11px; }
+.media-comments-body { font-size: 13px; word-break: break-word; white-space: pre-wrap; }
+.media-comments-form { display: flex; gap: 6px; }
+.media-comments-form input { flex: 1; min-width: 0; }
 .gallery-item img {
   display: block;
   width: 100%;

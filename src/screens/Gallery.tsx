@@ -4,6 +4,7 @@ import { useI18n } from '../lib/i18n'
 import { getGalleryPhotos, getOpenMediaFlags, flagMedia, resolveMediaFlag } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
 import type { GalleryPhoto, MediaFlag } from '../lib/types'
+import MediaComments from '../components/MediaComments'
 
 const localeByLang = {
   ru: 'ru-RU',
@@ -257,6 +258,8 @@ export default function Gallery() {
               </div>
             )}
             {flagError && <p className="error-msg" style={{ fontSize: 12 }}>{flagError}</p>}
+
+            <MediaComments mediaId={active.id} />
           </div>
         </div>
       )}

@@ -5,6 +5,7 @@ import { getProjects, getOpenTasks, getProjectProfit, createProject, markTaskDon
 import { isManagerWrite } from '../lib/types'
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
+import MediaComments from '../components/MediaComments'
 
 export default function Projects() {
   const { profile } = useAuth()
@@ -146,7 +147,10 @@ export default function Projects() {
                         <span>{uploading ? t('photo_uploading') : photo ? t('photo_replace') : t('photo_add')}</span>
                       </label>
                       {photo ? (
-                        <img className="task-photo-preview" src={photo.preview_url} alt={t('photo_preview')} />
+                        <>
+                          <img className="task-photo-preview" src={photo.preview_url} alt={t('photo_preview')} />
+                          <MediaComments mediaId={photo.id} />
+                        </>
                       ) : (
                         <p className="muted task-photo-hint">{t('photo_required_hint')}</p>
                       )}
