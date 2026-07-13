@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { getMessages, getTeam, markMessageRead } from '../lib/api'
-import type { MessageRow, Profile } from '../lib/types'
+import { isManagerRole, type MessageRow, type Profile } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
+import MessageOverlay from '../components/MessageOverlay'
 
 type Priority = MessageRow['priority']
 
@@ -106,6 +107,14 @@ export default function Messages() {
     }
   }
 
+  // Acknowledge path for the urgent-message overlay: same markMessageRead as the list,
+  // but rethrows so the overlay can surface an error state. Managers never see the overlay.
+  const acknowledgeUrgent = async (message: MessageRow) => {
+    if (!profile) return
+    await markMessageRead(profile, message.id)
+    await load()
+  }
+
   const markAllRead = async () => {
     if (!profile || busy || unreadIds.length === 0) return
     setBusy(true)
@@ -122,6 +131,14 @@ export default function Messages() {
 
   return (
     <div className="screen messages-screen">
+      {profile && !isManagerRole(profile.role) && (
+        <MessageOverlay
+          messages={messages}
+          profile={profile}
+          senderName={(id) => peopleById.get(id)?.name ?? t('unknown_user')}
+          onAcknowledge={acknowledgeUrgent}
+        />
+      )}
       <h1>💬 {t('messages')}</h1>
       {loading && <div className="card center muted">{t('loading')}</div>}
       {error && <p className="error-msg">{t('load_error')}</p>}
