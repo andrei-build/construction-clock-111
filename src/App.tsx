@@ -30,6 +30,7 @@ import Settings from './screens/Settings'
 import Nav from './components/Nav'
 import { EntityDrawerProvider } from './components/EntityDrawer'
 import LocationConsentGate from './components/LocationConsentGate'
+import OfflineStatusBanner from './components/OfflineStatusBanner'
 
 export default function App() {
   const { loading, profile } = useAuth()
@@ -43,6 +44,7 @@ export default function App() {
     <EntityDrawerProvider>
       <div className={`app ${manager ? 'manager-app' : ''}`}>
         <main className="app-content">
+          <OfflineStatusBanner />
           <Routes>
             <Route path="/" element={manager ? <Dashboard /> : <CheckIn />} />
             <Route path="/checkin" element={<CheckIn />} />
