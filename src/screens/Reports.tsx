@@ -11,10 +11,45 @@ function dateValue(date: Date) {
   return date.toISOString().slice(0, 10)
 }
 
-function defaultFrom() {
+function daysAgo(days: number) {
   const d = new Date()
-  d.setDate(d.getDate() - 13)
+  d.setDate(d.getDate() - days)
   return dateValue(d)
+}
+
+function startOfMonth() {
+  const d = new Date()
+  d.setDate(1)
+  return dateValue(d)
+}
+
+function defaultFrom() {
+  return daysAgo(13)
+}
+
+const rangePresets = ['current_period', '2w', 'month', '3m', 'year'] as const
+type RangePreset = typeof rangePresets[number]
+
+// Purely client-side ranges; end is always today. `current_period` uses the
+// start of the calendar month (no pay_periods dependency — DB untouched).
+function presetRange(preset: RangePreset) {
+  const to = dateValue(new Date())
+  switch (preset) {
+    case 'current_period': return { from: startOfMonth(), to }
+    case '2w': return { from: daysAgo(13), to }
+    case 'month': return { from: daysAgo(29), to }
+    case '3m': return { from: daysAgo(89), to }
+    case 'year': return { from: daysAgo(364), to }
+  }
+}
+
+const rangeLabelKey: Record<RangePreset | 'custom', string> = {
+  current_period: 'range_current_period',
+  '2w': 'range_2w',
+  month: 'range_month',
+  '3m': 'range_3m',
+  year: 'range_year',
+  custom: 'range_custom',
 }
 
 function csvCell(value: ReportCell | undefined) {
@@ -73,6 +108,20 @@ export default function Reports() {
     load()
     return () => { mounted = false }
   }, [from, kind, profile?.id, t, to])
+
+  const activePreset = useMemo<RangePreset | 'custom'>(() => {
+    for (const preset of rangePresets) {
+      const range = presetRange(preset)
+      if (range.from === from && range.to === to) return preset
+    }
+    return 'custom'
+  }, [from, to])
+
+  const applyPreset = (preset: RangePreset) => {
+    const range = presetRange(preset)
+    setFrom(range.from)
+    setTo(range.to)
+  }
 
   const columns = useMemo(() => {
     const keys: string[] = []
@@ -145,6 +194,21 @@ export default function Reports() {
         </div>
         <button className="btn ghost small" disabled={rows.length === 0} onClick={exportCsv}>
           {t('export_csv')}
+        </button>
+      </div>
+
+      <div className="tabs reports-range">
+        {rangePresets.map((preset) => (
+          <button
+            key={preset}
+            className={activePreset === preset ? 'active' : ''}
+            onClick={() => applyPreset(preset)}
+          >
+            {t(rangeLabelKey[preset])}
+          </button>
+        ))}
+        <button type="button" className={activePreset === 'custom' ? 'active' : ''} disabled>
+          {t(rangeLabelKey.custom)}
         </button>
       </div>
 
