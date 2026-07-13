@@ -1613,3 +1613,34 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   display: grid;
   gap: 4px;
 }
+
+/* Файлы и документы (/files) */
+.files-form input[type="file"] {
+  padding: 8px 0;
+}
+.files-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.files-check input {
+  width: auto;
+}
+.files-group {
+  margin-top: 8px;
+}
+.files-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.files-item.files-warn {
+  border-left: 3px solid var(--amber);
+}
+.badge.grey {
+  background: var(--panel2);
+  color: var(--muted);
+}
