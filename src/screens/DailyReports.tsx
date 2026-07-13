@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { isManagerRole } from '../lib/types'
-import { getDailyReports, createDailyReport, getProjects } from '../lib/api'
+import { getDailyReports, createDailyReport, getProjects, uploadDailyReportPhoto, getDailyReportPhotos } from '../lib/api'
 import type { DailyReport, Project } from '../lib/types'
 
 const localeByLang = {
@@ -15,6 +15,62 @@ const localeByLang = {
 function todayValue() {
   const d = new Date()
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+}
+
+// Полоса миниатюр фото рапорта: URL-ы тянем лениво по media_ids, клик открывает лайтбокс.
+function ReportPhotos({ mediaIds }: { mediaIds: string[] }) {
+  const { t } = useI18n()
+  const [photos, setPhotos] = useState<{ id: string; url: string }[]>([])
+  const [active, setActive] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    getDailyReportPhotos(mediaIds)
+      .then((rows) => { if (mounted) setPhotos(rows) })
+      .catch(() => { if (mounted) setPhotos([]) })
+    return () => { mounted = false }
+  }, [mediaIds])
+
+  useEffect(() => {
+    if (!active) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setActive(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [active])
+
+  if (photos.length === 0) return null
+
+  return (
+    <>
+      <div className="gallery-grid" style={{ marginTop: 8 }}>
+        {photos.map((photo) => (
+          <button
+            key={photo.id}
+            type="button"
+            className="gallery-item"
+            onClick={() => setActive(photo.url)}
+            aria-label={t('daily_photo_open')}
+          >
+            <img src={photo.url} alt={t('daily_photo_open')} loading="lazy" />
+          </button>
+        ))}
+      </div>
+
+      {active && (
+        <div className="gallery-lightbox" onClick={() => setActive(null)}>
+          <button
+            type="button"
+            className="gallery-lightbox-close"
+            aria-label={t('daily_photo_close')}
+            onClick={() => setActive(null)}
+          >
+            ✕
+          </button>
+          <img src={active} alt={t('daily_photo_open')} onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
+    </>
+  )
 }
 
 export default function DailyReports() {
@@ -30,8 +86,12 @@ export default function DailyReports() {
   const [projectId, setProjectId] = useState('')
   const [reportDate, setReportDate] = useState(todayValue)
   const [body, setBody] = useState('')
+  const [files, setFiles] = useState<File[]>([])
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [saveError, setSaveError] = useState(false)
+  const [photoError, setPhotoError] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [filterProject, setFilterProject] = useState('')
 
@@ -69,15 +129,34 @@ export default function DailyReports() {
     [reports, filterProject],
   )
 
+  const busy = saving || uploading
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!profile || saving || !projectId || !body.trim()) return
-    setSaving(true)
+    if (!profile || busy || !projectId || !body.trim()) return
     setSaveError(false)
+    setPhotoError(false)
+
+    let mediaIds: string[] = []
+    if (files.length > 0) {
+      setUploading(true)
+      try {
+        mediaIds = await Promise.all(files.map((file) => uploadDailyReportPhoto(profile, projectId, file)))
+      } catch {
+        setPhotoError(true)
+        setUploading(false)
+        return
+      }
+      setUploading(false)
+    }
+
+    setSaving(true)
     try {
-      const created = await createDailyReport(profile, { projectId, reportDate, body: body.trim() })
+      const created = await createDailyReport(profile, { projectId, reportDate, body: body.trim(), mediaIds })
       if (created) setReports((rows) => [created, ...rows])
       setBody('')
+      setFiles([])
+      if (fileInputRef.current) fileInputRef.current.value = ''
     } catch {
       setSaveError(true)
     } finally {
@@ -110,9 +189,23 @@ export default function DailyReports() {
           onChange={(e) => setBody(e.target.value)}
           required
         />
+        <label className="muted" style={{ fontSize: 13 }}>
+          {t('daily_add_photos')}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(e) => setFiles(e.target.files ? Array.from(e.target.files) : [])}
+          />
+        </label>
+        {files.length > 0 && (
+          <p className="muted" style={{ fontSize: 12 }}>{files.length} {t('daily_photos_count')}</p>
+        )}
+        {photoError && <p className="error-msg">{t('daily_photo_failed')}</p>}
         {saveError && <p className="error-msg">{t('daily_save_failed')}</p>}
-        <button type="submit" className="btn" disabled={saving || !projectId || !body.trim()}>
-          {saving ? t('daily_saving') : t('daily_submit')}
+        <button type="submit" className="btn" disabled={busy || !projectId || !body.trim()}>
+          {uploading ? t('daily_photos_uploading') : saving ? t('daily_saving') : t('daily_submit')}
         </button>
       </form>
 
@@ -152,6 +245,7 @@ export default function DailyReports() {
             {manager ? (r.author?.name ?? t('daily_unknown_author')) : t('daily_you')}
           </div>
           <p style={{ whiteSpace: 'pre-wrap', margin: '8px 0 0' }}>{r.body}</p>
+          {r.media_ids && r.media_ids.length > 0 && <ReportPhotos mediaIds={r.media_ids} />}
         </div>
       ))}
     </div>

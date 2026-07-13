@@ -952,6 +952,50 @@ export async function setUserCapability(p: Profile, userId: string, capability: 
 // point/geometry тут нет; мягко удалённые (deleted_at) скрываем на клиенте.
 const DAILY_REPORT_SELECT = 'id, org_id, project_id, author_id, report_date, body, media_ids, created_at, project:projects(name), author:profiles(name)'
 
+// Фото для дневного рапорта: тот же upload, что у задач (safeFileName + опции), но без task_id.
+// Категория daily_photo; ссылка на рапорт живёт в daily_reports.media_ids, не на media.
+export async function uploadDailyReportPhoto(p: Profile, projectId: string, file: File): Promise<string> {
+  const ext = safeFileName(file.name).split('.').pop() || 'jpg'
+  const storagePath = `daily/${p.org_id}/${Date.now()}-${crypto.randomUUID()}.${ext}`
+  const { error: uploadError } = await supabase.storage
+    .from(TASK_MEDIA_BUCKET)
+    .upload(storagePath, file, {
+      contentType: file.type || 'image/jpeg',
+      upsert: false,
+    })
+  if (uploadError) throw uploadError
+
+  const { data, error } = await supabase.from('media').insert({
+    org_id: p.org_id,
+    project_id: projectId,
+    uploaded_by: p.id,
+    media_type: 'photo',
+    category: 'daily_photo',
+    storage_path: storagePath,
+    filename: safeFileName(file.name),
+    mime: file.type || 'image/jpeg',
+    size_bytes: file.size,
+  }).select('id').single()
+  if (error) throw error
+  return String(data.id)
+}
+
+// URL-ы фото рапорта по его media_ids — подписанные ссылки пачкой, для показа в списке.
+export async function getDailyReportPhotos(mediaIds: string[]): Promise<{ id: string; url: string }[]> {
+  if (mediaIds.length === 0) return []
+  const { data, error } = await supabase.from('media')
+    .select('id, storage_path')
+    .in('id', mediaIds)
+    .is('deleted_at', null)
+  if (error) return []
+
+  const photos = await Promise.all(((data ?? []) as Array<{ id: string; storage_path: string | null }>).map(async (row) => {
+    if (!row.storage_path) return null
+    return { id: row.id, url: await mediaUrl(row.storage_path) }
+  }))
+  return photos.filter((photo): photo is { id: string; url: string } => photo !== null)
+}
+
 export async function getDailyReports(): Promise<DailyReport[]> {
   const { data, error } = await supabase.from('daily_reports')
     .select(DAILY_REPORT_SELECT)
@@ -966,10 +1010,10 @@ export async function getDailyReports(): Promise<DailyReport[]> {
 // Автор пишет свой рапорт: RLS требует author_id = auth.uid() (= profile.id). Возвращаем строку с проектом и автором.
 export async function createDailyReport(
   p: Profile,
-  { projectId, reportDate, body }: { projectId: string; reportDate: string; body: string },
+  { projectId, reportDate, body, mediaIds }: { projectId: string; reportDate: string; body: string; mediaIds?: string[] },
 ): Promise<DailyReport | null> {
   const { data, error } = await supabase.from('daily_reports')
-    .insert({ org_id: p.org_id, project_id: projectId, author_id: p.id, report_date: reportDate, body })
+    .insert({ org_id: p.org_id, project_id: projectId, author_id: p.id, report_date: reportDate, body, media_ids: mediaIds ?? [] })
     .select(DAILY_REPORT_SELECT)
     .single()
   if (error) throw error

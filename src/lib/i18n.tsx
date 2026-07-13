@@ -360,6 +360,12 @@ const dict: Record<string, Record<Lang, string>> = {
   daily_unknown_project: { ru: 'Без проекта', en: 'No project', es: 'Sin proyecto' },
   daily_unknown_author: { ru: 'Автор', en: 'Author', es: 'Autor' },
   daily_you: { ru: 'Вы', en: 'You', es: 'Usted' },
+  daily_add_photos: { ru: 'Добавить фото', en: 'Add photos', es: 'Añadir fotos' },
+  daily_photos_uploading: { ru: 'Загружаю фото…', en: 'Uploading photos…', es: 'Subiendo fotos…' },
+  daily_photo_failed: { ru: 'Не удалось загрузить фото', en: 'Could not upload photos', es: 'No se pudieron subir las fotos' },
+  daily_photos_count: { ru: 'фото', en: 'photos', es: 'fotos' },
+  daily_photo_open: { ru: 'Открыть фото', en: 'Open photo', es: 'Abrir foto' },
+  daily_photo_close: { ru: 'Закрыть', en: 'Close', es: 'Cerrar' },
 }
 
 interface I18n {
