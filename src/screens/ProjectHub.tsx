@@ -6,12 +6,18 @@ import {
   createProjectNote,
   getAccountRating,
   getProjectById,
+  getProjectFileDownloadUrl,
+  getProjectFiles,
   getProjectNotes,
+  getProjectPhotos,
   getProjectProfit,
+  softDeleteFile,
   softDeleteProjectNote,
   toggleProjectNotePinned,
+  uploadProjectFileToR2,
 } from '../lib/api'
-import type { AccountRating, Project, ProjectNote, ProjectProfit } from '../lib/types'
+import { isManagerWrite } from '../lib/types'
+import type { AccountRating, FileRow, GalleryPhoto, Project, ProjectNote, ProjectProfit } from '../lib/types'
 
 // Светофор дедлайна по projects.end_date — считаем на клиенте (день в день):
 //   red — просрочен (сегодня > end_date), amber — до дедлайна ≤7 дней (включительно),
@@ -56,6 +62,14 @@ function sortNotes(rows: ProjectNote[]) {
   return [...rows].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.created_at.localeCompare(a.created_at))
 }
 
+// Человекочитаемый размер файла: B / KB / MB.
+function formatBytes(bytes: number | null): string {
+  if (bytes === null || bytes === undefined) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`
+}
+
 export default function ProjectHub() {
   const { id } = useParams()
   const { profile } = useAuth()
@@ -72,6 +86,18 @@ export default function ProjectHub() {
   const [notePinned, setNotePinned] = useState(false)
   const [noteBusy, setNoteBusy] = useState(false)
   const [noteError, setNoteError] = useState<string | null>(null)
+
+  // Вкладка «Файлы и медиа»: фото объекта (Supabase Storage) + документы (R2). Грузим лениво по id.
+  const canManage = profile ? isManagerWrite(profile.role) : false
+  const [photos, setPhotos] = useState<GalleryPhoto[]>([])
+  const [files, setFiles] = useState<FileRow[]>([])
+  const [filesLoading, setFilesLoading] = useState(false)
+  const [filesError, setFilesError] = useState(false)
+  const [filesLoadedFor, setFilesLoadedFor] = useState<string | null>(null)
+  const [activePhoto, setActivePhoto] = useState<GalleryPhoto | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [fileBusy, setFileBusy] = useState(false)
+  const [fileError, setFileError] = useState<string | null>(null)
 
   const load = async () => {
     if (!id) return
@@ -138,6 +164,81 @@ export default function ProjectHub() {
       setNoteError('hub_note_delete_failed')
     } finally {
       setNoteBusy(false)
+    }
+  }
+
+  // Ленивая загрузка содержимого вкладки «Файлы»: только когда её открыли, и один раз на проект.
+  useEffect(() => {
+    if (tab !== 'files' || !id || filesLoadedFor === id) return
+    let mounted = true
+    ;(async () => {
+      setFilesLoading(true)
+      setFilesError(false)
+      try {
+        const [ph, fs] = await Promise.all([getProjectPhotos(id), getProjectFiles(id)])
+        if (mounted) {
+          setPhotos(ph)
+          setFiles(fs)
+          setFilesLoadedFor(id)
+        }
+      } catch {
+        if (mounted) setFilesError(true)
+      } finally {
+        if (mounted) setFilesLoading(false)
+      }
+    })()
+    return () => { mounted = false }
+  }, [tab, id, filesLoadedFor])
+
+  // Закрытие лайтбокса по Escape (как в «Галерее»).
+  useEffect(() => {
+    if (!activePhoto) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setActivePhoto(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [activePhoto])
+
+  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !profile || !id || uploading) return
+    setUploading(true)
+    setFileError(null)
+    try {
+      const row = await uploadProjectFileToR2(profile, id, file)
+      setFiles((rows) => [row, ...rows])
+    } catch {
+      setFileError('hub_file_upload_failed')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const viewFile = async (file: FileRow) => {
+    if (fileBusy) return
+    setFileBusy(true)
+    setFileError(null)
+    try {
+      const url = await getProjectFileDownloadUrl(file)
+      window.open(url, '_blank', 'noopener')
+    } catch {
+      setFileError('hub_file_open_failed')
+    } finally {
+      setFileBusy(false)
+    }
+  }
+
+  const removeFile = async (file: FileRow) => {
+    if (!profile || fileBusy) return
+    setFileBusy(true)
+    setFileError(null)
+    try {
+      await softDeleteFile(profile, file.id)
+      setFiles((rows) => rows.filter((f) => f.id !== file.id))
+    } catch {
+      setFileError('hub_file_delete_failed')
+    } finally {
+      setFileBusy(false)
     }
   }
 
@@ -248,12 +349,94 @@ export default function ProjectHub() {
             </section>
           )}
 
-          {/* Прочие вкладки — заглушки под будущие этапы (Time/Finance/Files/Reports/Client) */}
-          {tab !== 'overview' && tab !== 'notes' && (
+          {tab === 'files' && (
+            <section className="hub-files">
+              {filesLoading && <div className="card center muted">{t('loading')}</div>}
+              {filesError && <p className="error-msg">{t('hub_files_load_error')}</p>}
+              {fileError && <p className="error-msg">{t(fileError)}</p>}
+
+              {!filesLoading && !filesError && (
+                <>
+                  <h2 className="hub-files-heading">{t('hub_files_photos')}</h2>
+                  {photos.length === 0 && <div className="card muted">{t('hub_photos_empty')}</div>}
+                  {photos.length > 0 && (
+                    <div className="gallery-grid">
+                      {photos.map((photo) => (
+                        <button
+                          key={photo.id}
+                          type="button"
+                          className="gallery-item"
+                          onClick={() => setActivePhoto(photo)}
+                          aria-label={photo.filename ?? t('hub_file_view')}
+                        >
+                          <img src={photo.url} alt={photo.filename ?? ''} loading="lazy" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="hub-files-docs-head">
+                    <h2 className="hub-files-heading">{t('hub_files_documents')}</h2>
+                    {canManage && (
+                      <label className="btn small hub-files-upload">
+                        {uploading ? t('hub_files_uploading') : t('hub_files_upload')}
+                        <input type="file" hidden disabled={uploading} onChange={onUpload} />
+                      </label>
+                    )}
+                  </div>
+
+                  {files.length === 0 && <div className="card muted">{t('hub_files_empty')}</div>}
+                  <div className="hub-files-list">
+                    {files.map((file) => (
+                      <div className="card hub-file-row" key={file.id}>
+                        <div className="hub-file-info">
+                          <span className="item-title">{file.name}</span>
+                          <span className="muted">
+                            {formatBytes(file.size_bytes)} · {new Date(file.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div className="row hub-file-actions">
+                          <button className="btn ghost small" type="button" disabled={fileBusy} onClick={() => viewFile(file)}>
+                            {t('hub_file_view')}
+                          </button>
+                          {canManage && (
+                            <button className="btn ghost small" type="button" disabled={fileBusy} onClick={() => removeFile(file)}>
+                              {t('hub_file_delete')}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+
+          {/* Прочие вкладки — заглушки под будущие этапы (Time/Finance/Reports/Client) */}
+          {tab !== 'overview' && tab !== 'notes' && tab !== 'files' && (
             <section className="hub-placeholder">
               <h2>{t(HUB_TABS.find((tabDef) => tabDef.key === tab)!.labelKey)}</h2>
               <div className="card center muted">{t('hub_coming_soon')}</div>
             </section>
+          )}
+
+          {activePhoto && (
+            <div className="gallery-lightbox" onClick={() => setActivePhoto(null)}>
+              <button
+                type="button"
+                className="gallery-lightbox-close"
+                aria-label={t('gallery_close')}
+                onClick={() => setActivePhoto(null)}
+              >
+                ✕
+              </button>
+              <img
+                src={activePhoto.url}
+                alt={activePhoto.filename ?? ''}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
           )}
         </>
       )}

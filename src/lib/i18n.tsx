@@ -545,6 +545,18 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_note_author_unknown: { ru: 'Неизвестный', en: 'Unknown', es: 'Desconocido' },
   hub_note_save_failed: { ru: 'Не удалось сохранить заметку', en: 'Could not save note', es: 'No se pudo guardar la nota' },
   hub_note_delete_failed: { ru: 'Не удалось удалить заметку', en: 'Could not delete note', es: 'No se pudo eliminar la nota' },
+  hub_files_photos: { ru: 'Фото объекта', en: 'Project photos', es: 'Fotos del proyecto' },
+  hub_files_documents: { ru: 'Документы', en: 'Documents', es: 'Documentos' },
+  hub_files_upload: { ru: 'Загрузить файл', en: 'Upload file', es: 'Subir archivo' },
+  hub_files_uploading: { ru: 'Загрузка…', en: 'Uploading…', es: 'Subiendo…' },
+  hub_files_empty: { ru: 'Файлов пока нет', en: 'No files yet', es: 'Aún no hay archivos' },
+  hub_photos_empty: { ru: 'Фото пока нет', en: 'No photos yet', es: 'Aún no hay fotos' },
+  hub_file_view: { ru: 'Открыть', en: 'View', es: 'Ver' },
+  hub_file_delete: { ru: 'Удалить', en: 'Delete', es: 'Eliminar' },
+  hub_file_upload_failed: { ru: 'Не удалось загрузить файл', en: 'Could not upload file', es: 'No se pudo subir el archivo' },
+  hub_file_delete_failed: { ru: 'Не удалось удалить файл', en: 'Could not delete file', es: 'No se pudo eliminar el archivo' },
+  hub_file_open_failed: { ru: 'Не удалось открыть файл', en: 'Could not open file', es: 'No se pudo abrir el archivo' },
+  hub_files_load_error: { ru: 'Не удалось загрузить файлы', en: 'Could not load files', es: 'No se pudieron cargar los archivos' },
 }
 
 interface I18n {
