@@ -12,6 +12,7 @@ import {
   GALLERY_PAGE_SIZE,
 } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
+import { isBrowserUnsafeVideo } from '../lib/media-playback'
 import type { GalleryPhoto, GalleryVideo, GalleryPdf, MediaFlag } from '../lib/types'
 import MediaComments from '../components/MediaComments'
 
@@ -517,6 +518,14 @@ export default function Gallery() {
                     {visibleVideos.map((video) => (
                       <div key={video.id} className="gallery-item gallery-video">
                         <video src={video.url} controls preload="metadata" />
+                        {isBrowserUnsafeVideo({ filename: video.filename }) && (
+                          <p className="video-download-hint">
+                            {t('video_download_hint')}{' '}
+                            <a href={video.url} download={video.filename ?? undefined}>
+                              {t('video_download_link')}
+                            </a>
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>

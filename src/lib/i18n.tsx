@@ -519,6 +519,12 @@ const dict: Record<string, Record<Lang, string>> = {
   gallery_empty_filter_videos: { ru: 'По этому объекту видео нет', en: 'No videos for this site', es: 'No hay videos para esta obra' },
   gallery_empty_filter_pdfs: { ru: 'По этому объекту PDF нет', en: 'No PDFs for this site', es: 'No hay PDF para esta obra' },
   gallery_count_videos: { ru: 'видео', en: 'videos', es: 'videos' },
+  video_download_hint: {
+    ru: 'Если видео чёрное или не воспроизводится, скачайте его для просмотра',
+    en: "If the video looks black or won't play, download it to view",
+    es: 'Si el video se ve negro o no se reproduce, descárgalo para verlo',
+  },
+  video_download_link: { ru: 'Скачать видео', en: 'Download video', es: 'Descargar video' },
   gallery_count_pdfs: { ru: 'документов', en: 'documents', es: 'documentos' },
   gallery_pdf_open: { ru: 'Открыть PDF', en: 'Open PDF', es: 'Abrir PDF' },
   gallery_pdf_error: { ru: 'Не удалось открыть документ', en: 'Could not open document', es: 'No se pudo abrir el documento' },
