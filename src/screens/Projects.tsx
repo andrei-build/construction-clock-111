@@ -9,6 +9,22 @@ import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
 import MediaComments from '../components/MediaComments'
 import { deadlineStatus, statusDotClass } from './ProjectHub'
 
+// F29: разбираем вставленную пару «широта, долгота» ("47.61, -122.33", "47.61 -122.33").
+// Терпим пробелы, знак градуса и ведущую метку до двоеточия; null, если это не чистая валидная пара.
+export function parsePastedCoordinatePair(text: string): { lat: number; lng: number } | null {
+  if (!text) return null
+  let s = text.trim()
+  const colon = s.lastIndexOf(':')
+  if (colon !== -1) s = s.slice(colon + 1).trim()
+  const parts = s.replace(/°/g, ' ').split(/[\s,]+/).filter(Boolean)
+  if (parts.length !== 2) return null
+  const lat = Number(parts[0])
+  const lng = Number(parts[1])
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null
+  return { lat, lng }
+}
+
 export default function Projects() {
   const { profile } = useAuth()
   const { t } = useI18n()
@@ -62,6 +78,15 @@ export default function Projects() {
     setGeoError(false)
     setAdding(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // F29: если вставленный текст — валидная пара «широта, долгота», заполняем оба поля.
+  // Иначе не мешаем обычной вставке (можно вставить одно число в одно поле).
+  const onPasteCoords = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pair = parsePastedCoordinatePair(e.clipboardData.getData('text'))
+    if (!pair) return
+    e.preventDefault()
+    setLat(String(pair.lat)); setLng(String(pair.lng))
   }
 
   const useMyLocation = async () => {
@@ -136,13 +161,14 @@ export default function Projects() {
           <div className="row coord-row">
             <div className="coord-field">
               <label>{t('project_lat')}</label>
-              <input inputMode="decimal" value={lat} onChange={(e) => setLat(e.target.value)} />
+              <input inputMode="decimal" value={lat} onChange={(e) => setLat(e.target.value)} onPaste={onPasteCoords} />
             </div>
             <div className="coord-field">
               <label>{t('project_lng')}</label>
-              <input inputMode="decimal" value={lng} onChange={(e) => setLng(e.target.value)} />
+              <input inputMode="decimal" value={lng} onChange={(e) => setLng(e.target.value)} onPaste={onPasteCoords} />
             </div>
           </div>
+          <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('coord_paste_hint')}</p>
           <label>{t('project_gps_radius')}</label>
           <input
             type="number"

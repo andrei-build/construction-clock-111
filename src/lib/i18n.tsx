@@ -168,6 +168,7 @@ const dict: Record<string, Record<Lang, string>> = {
   project_lng: { ru: 'Долгота', en: 'Longitude', es: 'Longitud' },
   project_gps_radius: { ru: 'Радиус GPS (м)', en: 'GPS radius (m)', es: 'Radio GPS (m)' },
   gps_radius_hint: { ru: '25–300 м', en: '25–300 m', es: '25–300 m' },
+  coord_paste_hint: { ru: 'Вставьте «широта, долгота»', en: "Paste 'lat, lng'", es: "Pega 'lat, lng'" },
   copy_project: { ru: 'Копировать', en: 'Copy', es: 'Copiar' },
   use_my_location: { ru: '📍 Моё текущее местоположение', en: '📍 Use My Current Location', es: '📍 Usar mi ubicación actual' },
   locating: { ru: 'Определяю местоположение…', en: 'Getting location…', es: 'Obteniendo ubicación…' },
