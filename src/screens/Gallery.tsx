@@ -9,6 +9,7 @@ import {
   getOpenMediaFlags,
   flagMedia,
   resolveMediaFlag,
+  GALLERY_PAGE_SIZE,
 } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
 import type { GalleryPhoto, GalleryVideo, GalleryPdf, MediaFlag } from '../lib/types'
@@ -48,6 +49,15 @@ export default function Gallery() {
   const [videosState, setVideosState] = useState<LoadState>('idle')
   const [pdfs, setPdfs] = useState<GalleryPdf[]>([])
   const [pdfsState, setPdfsState] = useState<LoadState>('idle')
+
+  // Кумулятивная подгрузка «Показать ещё» по каждой вкладке: есть ли ещё страница (последняя страница
+  // вернула ровно GALLERY_PAGE_SIZE) и идёт ли догрузка следующей. Аккумулируем поверх текущего списка.
+  const [photosHasMore, setPhotosHasMore] = useState(false)
+  const [photosLoadingMore, setPhotosLoadingMore] = useState(false)
+  const [videosHasMore, setVideosHasMore] = useState(false)
+  const [videosLoadingMore, setVideosLoadingMore] = useState(false)
+  const [pdfsHasMore, setPdfsHasMore] = useState(false)
+  const [pdfsLoadingMore, setPdfsLoadingMore] = useState(false)
   const [pdfBusyId, setPdfBusyId] = useState<string | null>(null)
   const [pdfError, setPdfError] = useState(false)
 
@@ -73,6 +83,7 @@ export default function Gallery() {
         const [rows, openFlags] = await Promise.all([getGalleryPhotos(), getOpenMediaFlags()])
         if (mounted) {
           setPhotos(rows)
+          setPhotosHasMore(rows.length === GALLERY_PAGE_SIZE)
           setFlags(openFlags)
         }
       } catch {
@@ -110,14 +121,58 @@ export default function Gallery() {
     if (next === 'videos' && videosState === 'idle') {
       setVideosState('loading')
       getGalleryVideos()
-        .then((rows) => { setVideos(rows); setVideosState('ready') })
+        .then((rows) => { setVideos(rows); setVideosHasMore(rows.length === GALLERY_PAGE_SIZE); setVideosState('ready') })
         .catch(() => { setVideos([]); setVideosState('error') })
     }
     if (next === 'pdfs' && pdfsState === 'idle') {
       setPdfsState('loading')
       getGalleryPdfs()
-        .then((rows) => { setPdfs(rows); setPdfsState('ready') })
+        .then((rows) => { setPdfs(rows); setPdfsHasMore(rows.length === GALLERY_PAGE_SIZE); setPdfsState('ready') })
         .catch(() => { setPdfs([]); setPdfsState('error') })
+    }
+  }
+
+  // «Показать ещё»: догружаем следующую страницу от длины уже накопленного списка и дописываем в конец.
+  // Уже загруженное остаётся видимым при ошибке; кнопку скрываем, когда пришло меньше страницы.
+  const loadMorePhotos = async () => {
+    if (photosLoadingMore) return
+    setPhotosLoadingMore(true)
+    try {
+      const rows = await getGalleryPhotos(photos.length)
+      setPhotos((prev) => [...prev, ...rows])
+      setPhotosHasMore(rows.length === GALLERY_PAGE_SIZE)
+    } catch {
+      // тихо: накопленное остаётся, кнопку можно нажать повторно
+    } finally {
+      setPhotosLoadingMore(false)
+    }
+  }
+
+  const loadMoreVideos = async () => {
+    if (videosLoadingMore) return
+    setVideosLoadingMore(true)
+    try {
+      const rows = await getGalleryVideos(videos.length)
+      setVideos((prev) => [...prev, ...rows])
+      setVideosHasMore(rows.length === GALLERY_PAGE_SIZE)
+    } catch {
+      // тихо
+    } finally {
+      setVideosLoadingMore(false)
+    }
+  }
+
+  const loadMorePdfs = async () => {
+    if (pdfsLoadingMore) return
+    setPdfsLoadingMore(true)
+    try {
+      const rows = await getGalleryPdfs(pdfs.length)
+      setPdfs((prev) => [...prev, ...rows])
+      setPdfsHasMore(rows.length === GALLERY_PAGE_SIZE)
+    } catch {
+      // тихо
+    } finally {
+      setPdfsLoadingMore(false)
     }
   }
 
@@ -371,6 +426,16 @@ export default function Gallery() {
     </>
   )
 
+  // Кнопка «Показать ещё» — грузит следующую страницу всего набора вкладки (фильтры клиентские, поверх накопленного).
+  const loadMoreButton = (hasMore: boolean, busy: boolean, onClick: () => void) =>
+    hasMore && (
+      <div className="gallery-load-more">
+        <button type="button" className="btn" disabled={busy} onClick={onClick}>
+          {busy ? t('loading') : t('gallery_load_more')}
+        </button>
+      </div>
+    )
+
   return (
     <div className="screen">
       <h1>🖼️ {t('gallery')}</h1>
@@ -420,6 +485,8 @@ export default function Gallery() {
                       </button>
                     ))}
                   </div>
+
+                  {loadMoreButton(photosHasMore, photosLoadingMore, loadMorePhotos)}
                 </>
               )}
             </>
@@ -453,6 +520,8 @@ export default function Gallery() {
                       </div>
                     ))}
                   </div>
+
+                  {loadMoreButton(videosHasMore, videosLoadingMore, loadMoreVideos)}
                 </>
               )}
             </>
@@ -499,6 +568,8 @@ export default function Gallery() {
                       </button>
                     </div>
                   ))}
+
+                  {loadMoreButton(pdfsHasMore, pdfsLoadingMore, loadMorePdfs)}
                 </>
               )}
             </>
