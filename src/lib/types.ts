@@ -21,6 +21,8 @@ export interface Project {
   address: string | null
   status: 'planned' | 'active' | 'paused' | 'completed' | 'archived'
   client_account_id?: string | null
+  start_date?: string | null
+  end_date?: string | null
   gps_radius_m: number
   lat?: number | string | null
   lng?: number | string | null
@@ -198,6 +200,8 @@ export interface Account {
   notes: string | null
   is_taxable: boolean | null
   insurance_status: string | null
+  client_rating?: 'green' | 'amber' | 'red' | null
+  rating_note?: string | null
   metadata: Record<string, unknown> | null
   created_by: string | null
   updated_by: string | null
@@ -378,6 +382,26 @@ export interface DailyReport {
   created_at: string
   project?: { name: string | null } | null
   author?: { name: string | null } | null
+}
+
+// Заметка по проекту (project_notes): свободный текст, закреплённые сверху. Мягкое удаление deleted_at.
+// author тянем embed-ом author:profiles(name) — author_id единственный FK в profiles.
+export interface ProjectNote {
+  id: string
+  org_id: string
+  project_id: string
+  author_id: string
+  body: string
+  pinned: boolean
+  created_at: string
+  updated_at: string
+  author?: { name: string | null } | null
+}
+
+// Рейтинг клиента (accounts.client_rating/rating_note) для «Хаба проекта» — светофор + заметка.
+export interface AccountRating {
+  client_rating: 'green' | 'amber' | 'red' | null
+  rating_note: string | null
 }
 
 export type ReportKind = 'hours' | 'payroll' | 'expenses'

@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectNote, AccountRating } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -1484,6 +1484,82 @@ export async function softDeleteFile(p: Profile, id: string): Promise<void> {
     .eq('id', id)
   if (error) throw error
   await logEvent(p, 'file.deleted', 'file', id, {})
+}
+
+// Один проект по id — для «Хаба проекта». Без фильтра по статусу (RLS держит org-скоуп).
+export async function getProjectById(projectId: string): Promise<Project | null> {
+  const { data, error } = await supabase.from('projects')
+    .select('*')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (error) throw error
+  return (data as Project | null) ?? null
+}
+
+// Рейтинг клиента (accounts.client_rating/rating_note) для клиентского аккаунта проекта.
+export async function getAccountRating(accountId: string): Promise<AccountRating | null> {
+  const { data, error } = await supabase.from('accounts')
+    .select('client_rating, rating_note')
+    .eq('id', accountId)
+    .maybeSingle()
+  if (error) return null
+  return (data as AccountRating | null) ?? null
+}
+
+// Рейтинги клиентов пачкой (id аккаунта -> client_rating) — для кружка в списке проектов.
+export async function getProjectClientRatings(): Promise<Map<string, string>> {
+  const { data, error } = await supabase.from('accounts')
+    .select('id, client_rating')
+    .not('client_rating', 'is', null)
+  const out = new Map<string, string>()
+  if (error) return out
+  for (const row of (data ?? []) as Array<{ id: string; client_rating: string | null }>) {
+    if (row.client_rating) out.set(row.id, row.client_rating)
+  }
+  return out
+}
+
+// Заметки проекта (project_notes): закреплённые сверху, потом новейшие. Мягко удалённые прячем.
+// author тянем embed-ом author:profiles(name) — author_id единственный FK в profiles.
+const PROJECT_NOTE_SELECT = 'id, org_id, project_id, author_id, body, pinned, created_at, updated_at, author:profiles(name)'
+
+export async function getProjectNotes(projectId: string): Promise<ProjectNote[]> {
+  const { data, error } = await supabase.from('project_notes')
+    .select(PROJECT_NOTE_SELECT)
+    .eq('project_id', projectId)
+    .is('deleted_at', null)
+    .order('pinned', { ascending: false })
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data as unknown as ProjectNote[]) ?? []
+}
+
+// Автор пишет заметку: RLS требует org_id=app.org_id() и author_id=auth.uid() (= profile.id).
+// created_at/updated_at ставит БД (defaults), их не пишем. Возвращаем строку с именем автора.
+export async function createProjectNote(p: Profile, projectId: string, body: string, pinned = false): Promise<ProjectNote> {
+  const { data, error } = await supabase.from('project_notes')
+    .insert({ org_id: p.org_id, project_id: projectId, author_id: p.id, body: body.trim(), pinned })
+    .select(PROJECT_NOTE_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'project.note_added', 'project', projectId, { note_id: data.id, pinned })
+  return data as unknown as ProjectNote
+}
+
+// Закрепить/открепить заметку. RLS UPDATE: автор ИЛИ менеджер.
+export async function toggleProjectNotePinned(id: string, pinned: boolean): Promise<void> {
+  const { error } = await supabase.from('project_notes')
+    .update({ pinned })
+    .eq('id', id)
+  if (error) throw error
+}
+
+// Мягкое удаление заметки: deleted_at = now(). RLS UPDATE: автор ИЛИ менеджер.
+export async function softDeleteProjectNote(id: string): Promise<void> {
+  const { error } = await supabase.from('project_notes')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw error
 }
 
 export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number) {
