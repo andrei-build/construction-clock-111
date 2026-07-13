@@ -2130,6 +2130,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
 }
+.hub-directions { grid-column: 1 / -1; }
 .hub-indicator-head {
   display: flex;
   align-items: center;

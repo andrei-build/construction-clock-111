@@ -27,6 +27,7 @@ import {
   uploadErrorCode,
   uploadProjectFileToR2,
 } from '../lib/api'
+import { buildDirectionsUrl } from '../lib/project-navigation'
 import { isManagerWrite } from '../lib/types'
 import type { Account, AccountRating, ClientGrant, Contact, DailyReport, DocumentRow, FileRow, GalleryPhoto, GalleryVideo, Project, ProjectNote, ProjectProfit, WorkInterval } from '../lib/types'
 
@@ -450,6 +451,9 @@ export default function ProjectHub() {
     }
   }
 
+  // «Маршрут»: ссылка в карты по адресу проекта (или координатам, если заданы числами).
+  const directionsUrl = project ? buildDirectionsUrl({ address: project.address, lat: project.lat, lng: project.lng }) : ''
+
   const dl = deadlineStatus(project?.end_date)
   const profit = profits.find((row) => row.project_id === id)
   const profitKnown = profit?.profit_status && profit.profit_status !== 'grey'
@@ -508,6 +512,18 @@ export default function ProjectHub() {
 
           {tab === 'overview' && (
             <section className="hub-overview">
+              {directionsUrl && (
+                <div className="hub-directions">
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => window.open(directionsUrl, '_blank', 'noopener')}
+                  >
+                    {t('directions')}
+                  </button>
+                </div>
+              )}
+
               <div className="card hub-indicator">
                 <div className="hub-indicator-head">
                   <span className={statusDotClass(dl)} />
