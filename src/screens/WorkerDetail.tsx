@@ -3,15 +3,19 @@ import { Link, Navigate, useParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import {
+  addProjectExclusion,
   assignWorkerToProject,
   createTimeAdjustment,
   getProjectAssignments,
+  getProjectExclusions,
   getProjects,
   getUserCapabilities,
   getVisibleProfileRates,
   getWorkerIntervals,
   getWorkerPinAccess,
   getWorkerProfile,
+  removeProjectExclusion,
+  setProjectAccessMode,
   setUserCapability,
   setWorkerPinEnabled,
   setWorkerRate,
@@ -19,7 +23,7 @@ import {
   updateWorkerProfileSettings,
 } from '../lib/api'
 import { fmtClock, fmtHours } from '../lib/time'
-import { isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type Role, type UserCapability, type WorkInterval } from '../lib/types'
+import { isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type UserCapability, type WorkInterval } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
 
 const ELEVEN_HOURS_MS = 11 * 60 * 60 * 1000
@@ -139,6 +143,8 @@ export default function WorkerDetail() {
   const [pinSupported, setPinSupported] = useState(false)
   const [pinEnabled, setPinEnabled] = useState(false)
   const [accessMode, setAccessMode] = useState<Profile['project_access_mode']>('assigned')
+  const [exclusions, setExclusions] = useState<ProjectExclusion[]>([])
+  const [excludePick, setExcludePick] = useState('')
 
   const [capabilities, setCapabilities] = useState<UserCapability[]>([])
 
@@ -197,6 +203,14 @@ export default function WorkerDetail() {
     return () => { active = false }
   }, [id, canManageCapabilities])
 
+  // Исключения проектов нужны только в режиме 'all_active' — грузим отдельно по смене режима
+  useEffect(() => {
+    if (!id || accessMode !== 'all_active') { setExclusions([]); return }
+    let active = true
+    getProjectExclusions(id).then((rows) => { if (active) setExclusions(rows) })
+    return () => { active = false }
+  }, [id, accessMode])
+
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000)
     return () => clearInterval(timer)
@@ -214,6 +228,10 @@ export default function WorkerDetail() {
   const latestShifts = shifts.slice(0, 10)
   const ratesVisible = rates.length > 0
   const assignmentSet = new Set(assignments.filter((row) => row.profile_id === worker?.id).map((row) => row.project_id))
+  const projectNames = new Map(projects.map((project) => [project.id, project.name]))
+  const excludedSet = new Set(exclusions.map((row) => row.project_id))
+  // В пикер «Исключить» кладём только активные проекты, ещё не попавшие в исключения
+  const excludableProjects = projects.filter((project) => !excludedSet.has(project.id))
 
   const tiles = [
     { key: 'today', label: t('today'), value: rangeIntervalMs(intervals, today, tomorrow, now) },
@@ -264,16 +282,49 @@ export default function WorkerDetail() {
   }
 
   const changeAccessMode = async (next: Profile['project_access_mode']) => {
-    if (!profile || !worker || busy) return
+    if (!profile || !worker || !canEditProfile || busy) return
     const previous = accessMode
     setAccessMode(next)
     setBusy('access')
     setMsg(null)
     try {
-      await updateWorkerProfileSettings(profile, worker.id, { project_access_mode: next })
+      await setProjectAccessMode(profile, worker.id, next)
       setMsg('project_access_saved')
     } catch {
       setAccessMode(previous)
+      setMsg('project_access_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Исключить проект из доступа (режим 'all_active'). Обновляем список после записи.
+  const excludeProject = async (projectId: string) => {
+    if (!profile || !worker || !canEditProfile || busy || !projectId) return
+    setBusy(`excl:${projectId}`)
+    setMsg(null)
+    try {
+      await addProjectExclusion(profile, worker.id, projectId)
+      setExclusions(await getProjectExclusions(worker.id))
+      setExcludePick('')
+      setMsg('project_access_saved')
+    } catch {
+      setMsg('project_access_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Вернуть проект в доступ — удалить строку исключения.
+  const includeProject = async (projectId: string) => {
+    if (!profile || !worker || !canEditProfile || busy) return
+    setBusy(`incl:${projectId}`)
+    setMsg(null)
+    try {
+      await removeProjectExclusion(profile, worker.id, projectId)
+      setExclusions(await getProjectExclusions(worker.id))
+      setMsg('project_access_saved')
+    } catch {
       setMsg('project_access_failed')
     } finally {
       setBusy(null)
@@ -535,7 +586,7 @@ export default function WorkerDetail() {
                   <input
                     type="radio"
                     checked={accessMode === 'assigned'}
-                    disabled={busy !== null}
+                    disabled={!canEditProfile || busy !== null}
                     onChange={() => changeAccessMode('assigned')}
                   />
                   <span>{t('selected_projects_only')}</span>
@@ -544,26 +595,70 @@ export default function WorkerDetail() {
                   <input
                     type="radio"
                     checked={accessMode === 'all_active'}
-                    disabled={busy !== null}
+                    disabled={!canEditProfile || busy !== null}
                     onChange={() => changeAccessMode('all_active')}
                   />
                   <span>{t('all_active_projects_access')}</span>
                 </label>
               </div>
 
-              <div className="project-toggle-list">
-                {projects.map((project) => (
-                  <label className="check-row" key={project.id}>
-                    <input
-                      type="checkbox"
-                      checked={assignmentSet.has(project.id)}
-                      disabled={busy !== null || accessMode === 'all_active'}
-                      onChange={(e) => toggleProject(project.id, e.target.checked)}
-                    />
-                    <span>{project.name}</span>
-                  </label>
-                ))}
-              </div>
+              {accessMode === 'assigned' ? (
+                <div className="project-toggle-list">
+                  {projects.map((project) => (
+                    <label className="check-row" key={project.id}>
+                      <input
+                        type="checkbox"
+                        checked={assignmentSet.has(project.id)}
+                        disabled={!canEditProfile || busy !== null}
+                        onChange={(e) => toggleProject(project.id, e.target.checked)}
+                      />
+                      <span>{project.name}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                // В режиме «Все активные» проекты видны все, кроме перечисленных исключений
+                <div className="excluded-projects">
+                  <h3>{t('excluded_projects')}</h3>
+                  <p className="muted">{t('excluded_projects_hint')}</p>
+
+                  {exclusions.length === 0 && <p className="muted">{t('no_excluded_projects')}</p>}
+                  <div className="project-toggle-list">
+                    {exclusions.map((row) => (
+                      <div className="worker-day-row" key={row.project_id}>
+                        <span>{row.project?.name ?? projectNames.get(row.project_id) ?? row.project_id}</span>
+                        <button
+                          className="btn ghost small"
+                          type="button"
+                          disabled={!canEditProfile || busy !== null}
+                          onClick={() => includeProject(row.project_id)}
+                        >
+                          {t('include_project')}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {canEditProfile && (
+                    <div className="row exclude-add">
+                      <select value={excludePick} disabled={busy !== null} onChange={(e) => setExcludePick(e.target.value)}>
+                        <option value="">{t('select_project')}</option>
+                        {excludableProjects.map((project) => (
+                          <option key={project.id} value={project.id}>{project.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        className="btn small"
+                        type="button"
+                        disabled={busy !== null || !excludePick}
+                        onClick={() => excludeProject(excludePick)}
+                      >
+                        {t('exclude_project')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
 
             <section>

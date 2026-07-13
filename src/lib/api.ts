@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -516,6 +516,43 @@ export async function unassignWorkerFromProject(p: Profile, projectId: string, w
     .eq('profile_id', workerId)
   if (error) throw error
   await logEvent(p, 'dispatch.unassigned', 'project', projectId, { worker_id: workerId })
+}
+
+// Режим доступа к проектам живёт на профиле работника: 'assigned' — только назначенные,
+// 'all_active' — все активные (минус исключения). Менять пускают менеджеров (RLS profiles).
+export async function setProjectAccessMode(p: Profile, workerId: string, mode: 'assigned' | 'all_active') {
+  const { error } = await supabase.from('profiles')
+    .update({ project_access_mode: mode })
+    .eq('id', workerId)
+  if (error) throw error
+  await logEvent(p, 'worker.project_access_mode', 'profile', workerId, { mode })
+}
+
+// Исключения проектов (project_exclusions): в режиме 'all_active' скрывают конкретные проекты.
+// SELECT — org-скоуп; insert/delete — менеджер+ (RLS). Имя проекта тянем join-ом для списка.
+export async function getProjectExclusions(workerId: string): Promise<ProjectExclusion[]> {
+  const { data, error } = await supabase.from('project_exclusions')
+    .select('project_id, project:projects(name)')
+    .eq('profile_id', workerId)
+  if (error) return []
+  return (data as unknown as ProjectExclusion[]) ?? []
+}
+
+export async function addProjectExclusion(p: Profile, workerId: string, projectId: string) {
+  const { error } = await supabase.from('project_exclusions')
+    .insert({ org_id: p.org_id, profile_id: workerId, project_id: projectId })
+  if (error) throw error
+  await logEvent(p, 'worker.project_excluded', 'profile', workerId, { project_id: projectId })
+}
+
+export async function removeProjectExclusion(p: Profile, workerId: string, projectId: string) {
+  const { error } = await supabase.from('project_exclusions')
+    .delete()
+    .eq('profile_id', workerId)
+    .eq('project_id', projectId)
+    .eq('org_id', p.org_id)
+  if (error) throw error
+  await logEvent(p, 'worker.project_included', 'profile', workerId, { project_id: projectId })
 }
 
 type DispatchLang = 'ru' | 'en' | 'es'
