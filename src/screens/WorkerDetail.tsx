@@ -535,6 +535,19 @@ export default function WorkerDetail() {
                       <label>{t('new_check_out')}</label>
                       <input type="datetime-local" value={adjustOut} onChange={(e) => setAdjustOut(e.target.value)} />
                       <label>{t('adjust_reason')}</label>
+                      <div className="row adjust-reason-presets">
+                        {(['adjust_preset_forgot_checkout', 'adjust_preset_overtime', 'adjust_preset_correction', 'adjust_preset_worked_extra'] as const).map((presetKey) => (
+                          <button
+                            key={presetKey}
+                            className="btn ghost small"
+                            type="button"
+                            disabled={busy !== null}
+                            onClick={() => setAdjustReason(t(presetKey))}
+                          >
+                            {t(presetKey)}
+                          </button>
+                        ))}
+                      </div>
                       <textarea value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} rows={2} />
                       <div className="row adjustment-actions">
                         <button className="btn ghost small" type="button" disabled={busy !== null} onClick={() => setEditingKey(null)}>{t('cancel')}</button>
