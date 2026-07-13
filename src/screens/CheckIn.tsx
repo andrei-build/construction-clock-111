@@ -64,6 +64,7 @@ export default function CheckIn() {
   const [syncing, setSyncing] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [checkoutVideo, setCheckoutVideo] = useState<File | null>(null)
+  const [confirmingCheckout, setConfirmingCheckout] = useState(false)
   const [safetyProjectId, setSafetyProjectId] = useState<string | null>(null)
   const [signatureTouched, setSignatureTouched] = useState(false)
   const drawingRef = useRef(false)
@@ -194,6 +195,19 @@ export default function CheckIn() {
     } finally {
       setBusy(false)
     }
+  }
+
+  // Подтверждение перед чек-аутом: случайный тап не должен закрывать смену.
+  // Подтверждение предшествует act('check_out') (и, соответственно, видео-флоу),
+  // а «Cancel — stay checked in» просто закрывает панель, не трогая состояние смены.
+  const requestCheckout = () => {
+    if (busy) return
+    setConfirmingCheckout(true)
+  }
+  const cancelCheckout = () => setConfirmingCheckout(false)
+  const confirmCheckout = () => {
+    setConfirmingCheckout(false)
+    act('check_out')
   }
 
   const signaturePoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -433,7 +447,7 @@ export default function CheckIn() {
         <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
           <button className="btn ghost" disabled={busy} onClick={() => act('break_start')}>{t('break_start')}</button>
           {checkoutVideoBlock}
-          <button className="btn red" disabled={busy || (checkoutRequiresVideo && !checkoutVideo)} onClick={() => act('check_out')}>
+          <button className="btn red" disabled={busy || (checkoutRequiresVideo && !checkoutVideo)} onClick={requestCheckout}>
             {t('finish_shift')}
           </button>
         </div>
@@ -443,13 +457,30 @@ export default function CheckIn() {
         <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
           <button className="btn" disabled={busy} onClick={() => act('break_end')}>{t('break_end')}</button>
           {checkoutVideoBlock}
-          <button className="btn red" disabled={busy || (checkoutRequiresVideo && !checkoutVideo)} onClick={() => act('check_out')}>
+          <button className="btn red" disabled={busy || (checkoutRequiresVideo && !checkoutVideo)} onClick={requestCheckout}>
             {t('finish_shift')}
           </button>
         </div>
       )}
 
       {msg && <p className={messageClass(msg)}>{t(msg)}</p>}
+
+      {confirmingCheckout && (
+        <div className="confirm-backdrop" onClick={cancelCheckout}>
+          <div className="card confirm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="item-title">{t('confirm_checkout_title')}</div>
+            <p className="muted">{t('confirm_checkout_body')}</p>
+            <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+              <button className="btn red" type="button" disabled={busy} onClick={confirmCheckout}>
+                {t('confirm_checkout_do')}
+              </button>
+              <button className="btn ghost" type="button" disabled={busy} onClick={cancelCheckout}>
+                {t('confirm_checkout_stay')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
