@@ -76,8 +76,21 @@ export default function Messages() {
   }, [selected, threads])
 
   const activeThread = threads.find((thread) => thread.counterpartId === selected) ?? null
-  const activeMessages = activeThread ? [...activeThread.messages].reverse() : []
   const priorityTone = (p: Priority) => p === 'urgent' ? 'red' : p === 'good' ? 'green' : p === 'task' ? 'amber' : 'blue'
+  const priorityRank = (p: Priority) => p === 'urgent' ? 0 : p === 'task' ? 1 : p === 'info' ? 2 : 3
+  const isUnread = (m: MessageRow) => !!profile && m.sender_id !== profile.id && !m.read_at
+
+  // Stable sort of the displayed list: unread first, then priority (urgent>task>info>good), then time desc.
+  const activeMessages = useMemo(() => {
+    if (!activeThread) return []
+    return [...activeThread.messages].sort((a, b) => {
+      if (isUnread(a) !== isUnread(b)) return isUnread(a) ? -1 : 1
+      if (a.priority !== b.priority) return priorityRank(a.priority) - priorityRank(b.priority)
+      return b.created_at.localeCompare(a.created_at)
+    })
+  }, [activeThread, profile])
+
+  const unreadIds = useMemo(() => activeMessages.filter(isUnread).map((m) => m.id), [activeMessages, profile])
 
   const read = async (message: MessageRow) => {
     if (!profile || busy) return
@@ -85,6 +98,20 @@ export default function Messages() {
     setError(false)
     try {
       await markMessageRead(profile, message.id)
+      await load()
+    } catch {
+      setError(true)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const markAllRead = async () => {
+    if (!profile || busy || unreadIds.length === 0) return
+    setBusy(true)
+    setError(false)
+    try {
+      await Promise.all(unreadIds.map((id) => markMessageRead(profile, id)))
       await load()
     } catch {
       setError(true)
@@ -127,7 +154,14 @@ export default function Messages() {
           </section>
 
           <section className="message-thread-card card">
-            <h2>{activeThread?.name ?? t('threads')}</h2>
+            <div className="row thread-header">
+              <h2>{activeThread?.name ?? t('threads')}</h2>
+              {unreadIds.length > 0 && (
+                <button className="btn ghost small" disabled={busy} onClick={markAllRead}>
+                  {t('mark_all_read')} ({unreadIds.length})
+                </button>
+              )}
+            </div>
             {activeMessages.map((message) => {
               const mine = message.sender_id === profile?.id
               return (

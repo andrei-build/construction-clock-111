@@ -261,6 +261,7 @@ const dict: Record<string, Record<Lang, string>> = {
   no_messages: { ru: 'Сообщений пока нет', en: 'No messages yet', es: 'Aún no hay mensajes' },
   unknown_user: { ru: 'Неизвестный пользователь', en: 'Unknown user', es: 'Usuario desconocido' },
   mark_read: { ru: 'Прочитано', en: 'Mark read', es: 'Marcar leído' },
+  mark_all_read: { ru: 'Отметить все', en: 'Mark all read', es: 'Marcar todo leído' },
   priority_info: { ru: 'Инфо', en: 'Info', es: 'Info' },
   priority_task: { ru: 'Задача', en: 'Task', es: 'Tarea' },
   priority_good: { ru: 'Хорошо', en: 'Good', es: 'Bien' },
