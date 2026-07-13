@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -11,6 +11,28 @@ export async function logEvent(p: Profile, eventType: string, entityType: string
     actor_id: p.id, actor_name: p.name, actor_role: p.role, data,
     user_agent: navigator.userAgent,
   })
+}
+
+export type AppSettingsInput = Pick<AppSettings, 'default_language' | 'timezone' | 'overlong_shift_hours' | 'default_gps_radius_m'>
+
+const APP_SETTINGS_SELECT = 'org_id, default_language, timezone, overlong_shift_hours, default_gps_radius_m, settings, updated_by, updated_at'
+
+export async function getAppSettings(): Promise<AppSettings | null> {
+  const { data, error } = await supabase.from('app_settings')
+    .select(APP_SETTINGS_SELECT)
+    .maybeSingle()
+  if (error) return null
+  return (data as AppSettings | null) ?? null
+}
+
+export async function saveAppSettings(p: Profile, values: AppSettingsInput): Promise<AppSettings> {
+  const { data, error } = await supabase.from('app_settings')
+    .upsert({ org_id: p.org_id, ...values, updated_by: p.id }, { onConflict: 'org_id' })
+    .select(APP_SETTINGS_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'settings.updated', 'org', p.org_id, { ...values })
+  return data as AppSettings
 }
 
 export async function getProjects(): Promise<Project[]> {

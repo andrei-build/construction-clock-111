@@ -30,6 +30,7 @@ export default function More() {
           <Link to="/payroll" className="btn ghost small more-link">{t('payroll')}</Link>
           <Link to="/stores" className="btn ghost small more-link">{t('stores')}</Link>
           <Link to="/gallery" className="btn ghost small more-link">{t('gallery')}</Link>
+          <Link to="/settings" className="btn ghost small more-link">{t('settings')}</Link>
           <Link to="/archive" className="btn ghost small more-link">{t('archive')}</Link>
         </>
       )}
