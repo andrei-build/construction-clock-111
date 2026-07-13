@@ -954,6 +954,18 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin-bottom: 12px;
 }
 .reports-head h1 { margin-bottom: 4px; }
+.reports-range {
+  flex-wrap: wrap;
+}
+.reports-range button {
+  flex: 1 1 auto;
+  min-width: 96px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.reports-range button:disabled {
+  cursor: default;
+}
 .reports-filter {
   margin-bottom: 12px;
 }
