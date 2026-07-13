@@ -18,7 +18,12 @@ type WorkerMarker = {
   tone: 'green' | 'gray'
 }
 
-const DEFAULT_CENTER: L.LatLngExpression = [39.8283, -98.5795]
+// F24: default to Washington State (parity with Check Time) instead of the generic US center.
+const DEFAULT_CENTER: L.LatLngExpression = [47.4, -120.5]
+// Minimum zoom clamp so the map can't zoom out past a useful WA-region level.
+const MIN_ZOOM = 6
+// Default initial zoom for the empty/default state (bounds-fit still wins when markers exist).
+const DEFAULT_ZOOM = 6
 
 function toNumber(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value
@@ -166,7 +171,7 @@ export default function LiveMap() {
 
   useEffect(() => {
     if (!mapEl.current || mapRef.current) return
-    const map = L.map(mapEl.current, { zoomControl: true }).setView(DEFAULT_CENTER, 4)
+    const map = L.map(mapEl.current, { zoomControl: true, minZoom: MIN_ZOOM }).setView(DEFAULT_CENTER, DEFAULT_ZOOM)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19,
