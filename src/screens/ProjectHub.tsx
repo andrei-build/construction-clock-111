@@ -6,18 +6,22 @@ import {
   createProjectNote,
   getAccountRating,
   getProjectById,
+  getProjectDailyReports,
+  getProjectDocuments,
   getProjectFileDownloadUrl,
   getProjectFiles,
+  getProjectIntervals,
   getProjectNotes,
   getProjectPhotos,
   getProjectProfit,
+  getTeam,
   softDeleteFile,
   softDeleteProjectNote,
   toggleProjectNotePinned,
   uploadProjectFileToR2,
 } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
-import type { AccountRating, FileRow, GalleryPhoto, Project, ProjectNote, ProjectProfit } from '../lib/types'
+import type { AccountRating, DailyReport, DocumentRow, FileRow, GalleryPhoto, Project, ProjectNote, ProjectProfit, WorkInterval } from '../lib/types'
 
 // Светофор дедлайна по projects.end_date — считаем на клиенте (день в день):
 //   red — просрочен (сегодня > end_date), amber — до дедлайна ≤7 дней (включительно),
@@ -70,6 +74,22 @@ function formatBytes(bytes: number | null): string {
   return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`
 }
 
+// Длительность интервала в часах. Открытая смена (end_at null) — считаем до текущего момента.
+function intervalHours(interval: WorkInterval): number {
+  const end = interval.end_at ? new Date(interval.end_at).getTime() : Date.now()
+  const start = new Date(interval.start_at).getTime()
+  const hours = (end - start) / 3600000
+  return hours > 0 ? hours : 0
+}
+
+function formatHours(hours: number): string {
+  return `${Math.round(hours * 10) / 10}`
+}
+
+function formatMoney(value: number | null | undefined): string {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value ?? 0)
+}
+
 export default function ProjectHub() {
   const { id } = useParams()
   const { profile } = useAuth()
@@ -98,6 +118,25 @@ export default function ProjectHub() {
   const [uploading, setUploading] = useState(false)
   const [fileBusy, setFileBusy] = useState(false)
   const [fileError, setFileError] = useState<string | null>(null)
+
+  // Вкладка «Время»: интервалы v_work_intervals + карта имён работников (getTeam). Грузим лениво.
+  const [intervals, setIntervals] = useState<WorkInterval[]>([])
+  const [workerNames, setWorkerNames] = useState<Map<string, string>>(new Map())
+  const [timeLoading, setTimeLoading] = useState(false)
+  const [timeError, setTimeError] = useState(false)
+  const [timeLoadedFor, setTimeLoadedFor] = useState<string | null>(null)
+
+  // Вкладка «Финансы» (finance-gated): документы проекта. Грузим лениво.
+  const [documents, setDocuments] = useState<DocumentRow[]>([])
+  const [financeLoading, setFinanceLoading] = useState(false)
+  const [financeError, setFinanceError] = useState(false)
+  const [financeLoadedFor, setFinanceLoadedFor] = useState<string | null>(null)
+
+  // Вкладка «Рапорты»: дневные рапорты проекта. Грузим лениво.
+  const [reports, setReports] = useState<DailyReport[]>([])
+  const [reportsLoading, setReportsLoading] = useState(false)
+  const [reportsError, setReportsError] = useState(false)
+  const [reportsLoadedFor, setReportsLoadedFor] = useState<string | null>(null)
 
   const load = async () => {
     if (!id) return
@@ -190,6 +229,73 @@ export default function ProjectHub() {
     return () => { mounted = false }
   }, [tab, id, filesLoadedFor])
 
+  // Ленивая загрузка вкладки «Время»: интервалы по проекту + имена работников. Один раз на проект.
+  useEffect(() => {
+    if (tab !== 'time' || !id || timeLoadedFor === id) return
+    let mounted = true
+    ;(async () => {
+      setTimeLoading(true)
+      setTimeError(false)
+      try {
+        const [rows, team] = await Promise.all([getProjectIntervals(id), getTeam()])
+        if (mounted) {
+          setIntervals(rows)
+          setWorkerNames(new Map(team.map((p) => [p.id, p.name])))
+          setTimeLoadedFor(id)
+        }
+      } catch {
+        if (mounted) setTimeError(true)
+      } finally {
+        if (mounted) setTimeLoading(false)
+      }
+    })()
+    return () => { mounted = false }
+  }, [tab, id, timeLoadedFor])
+
+  // Ленивая загрузка вкладки «Финансы»: документы проекта. RLS сам скрывает от не-финансов.
+  useEffect(() => {
+    if (tab !== 'finance' || !id || financeLoadedFor === id) return
+    let mounted = true
+    ;(async () => {
+      setFinanceLoading(true)
+      setFinanceError(false)
+      try {
+        const rows = await getProjectDocuments(id)
+        if (mounted) {
+          setDocuments(rows)
+          setFinanceLoadedFor(id)
+        }
+      } catch {
+        if (mounted) setFinanceError(true)
+      } finally {
+        if (mounted) setFinanceLoading(false)
+      }
+    })()
+    return () => { mounted = false }
+  }, [tab, id, financeLoadedFor])
+
+  // Ленивая загрузка вкладки «Рапорты»: дневные рапорты проекта.
+  useEffect(() => {
+    if (tab !== 'reports' || !id || reportsLoadedFor === id) return
+    let mounted = true
+    ;(async () => {
+      setReportsLoading(true)
+      setReportsError(false)
+      try {
+        const rows = await getProjectDailyReports(id)
+        if (mounted) {
+          setReports(rows)
+          setReportsLoadedFor(id)
+        }
+      } catch {
+        if (mounted) setReportsError(true)
+      } finally {
+        if (mounted) setReportsLoading(false)
+      }
+    })()
+    return () => { mounted = false }
+  }, [tab, id, reportsLoadedFor])
+
   // Закрытие лайтбокса по Escape (как в «Галерее»).
   useEffect(() => {
     if (!activePhoto) return
@@ -248,6 +354,16 @@ export default function ProjectHub() {
   const marginStatus = profitKnown ? (profit!.profit_status as 'green' | 'amber' | 'red') : 'neutral'
   const marginLabel = profit?.margin_pct === null || profit?.margin_pct === undefined ? '—' : `${Math.round(profit.margin_pct * 10) / 10}%`
   const ratingStatus = rating?.client_rating ?? 'neutral'
+
+  // Вкладка «Время»: суммарные часы по проекту.
+  const totalHours = intervals.reduce((sum, iv) => sum + intervalHours(iv), 0)
+
+  // Вкладка «Финансы»: гейт (образец Documents.tsx) + суммы-итоги.
+  const ownerOrAdmin = profile?.role === 'owner' || profile?.role === 'admin'
+  const financeLocked = !financeLoading && !ownerOrAdmin && documents.length === 0
+  const estimatesTotal = documents.filter((d) => d.doc_type === 'estimate').reduce((s, d) => s + (d.total ?? 0), 0)
+  const invoicesTotal = documents.filter((d) => d.doc_type === 'invoice').reduce((s, d) => s + (d.total ?? 0), 0)
+  const paidTotal = documents.filter((d) => d.status === 'paid').reduce((s, d) => s + (d.total ?? 0), 0)
 
   return (
     <div className="screen project-hub-screen">
@@ -413,10 +529,119 @@ export default function ProjectHub() {
             </section>
           )}
 
-          {/* Прочие вкладки — заглушки под будущие этапы (Time/Finance/Reports/Client) */}
-          {tab !== 'overview' && tab !== 'notes' && tab !== 'files' && (
+          {tab === 'time' && (
+            <section className="hub-time">
+              {timeLoading && <div className="card center muted">{t('loading')}</div>}
+              {timeError && <p className="error-msg">{t('hub_time_load_error')}</p>}
+              {!timeLoading && !timeError && (
+                <>
+                  <div className="card hub-time-summary">
+                    <span className="item-title">{t('hub_time_total')}</span>
+                    <span className="big num-display">{formatHours(totalHours)} {t('hub_time_hours')}</span>
+                  </div>
+                  {intervals.length === 0 && <div className="card muted">{t('hub_time_empty')}</div>}
+                  <div className="hub-time-list">
+                    {intervals.map((iv) => (
+                      <div className="card hub-time-row" key={iv.start_event_id}>
+                        <div className="hub-time-info">
+                          <span className="item-title">{workerNames.get(iv.profile_id) ?? t('hub_worker_unknown')}</span>
+                          <span className="muted">
+                            {new Date(iv.start_at).toLocaleString()}
+                            {iv.end_at ? ` → ${new Date(iv.end_at).toLocaleTimeString()}` : ` · ${t('hub_time_ongoing')}`}
+                            {iv.was_adjusted && ` · ${t('hub_time_adjusted')}`}
+                          </span>
+                        </div>
+                        <span className="hub-time-hours">{formatHours(intervalHours(iv))} {t('hub_time_hours')}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+
+          {tab === 'finance' && (
+            <section className="hub-finance">
+              {financeLoading && <div className="card center muted">{t('loading')}</div>}
+              {financeError && <p className="error-msg">{t('hub_finance_load_error')}</p>}
+              {financeLocked && (
+                <div className="card payroll-lock">
+                  <div className="big">🔒</div>
+                  <div className="item-title">{t('hub_finance_locked')}</div>
+                </div>
+              )}
+              {!financeLoading && !financeError && !financeLocked && (
+                <>
+                  <div className="hub-finance-totals">
+                    <div className="card hub-finance-stat">
+                      <span className="muted">{t('hub_finance_estimates_total')}</span>
+                      <span className="big num-display">{formatMoney(estimatesTotal)}</span>
+                    </div>
+                    <div className="card hub-finance-stat">
+                      <span className="muted">{t('hub_finance_invoices_total')}</span>
+                      <span className="big num-display">{formatMoney(invoicesTotal)}</span>
+                    </div>
+                    <div className="card hub-finance-stat">
+                      <span className="muted">{t('hub_finance_paid_total')}</span>
+                      <span className="big num-display">{formatMoney(paidTotal)}</span>
+                    </div>
+                  </div>
+                  {documents.length === 0 && <div className="card muted">{t('hub_finance_empty')}</div>}
+                  {documents.length > 0 && (
+                    <div className="row hub-finance-link">
+                      <Link className="inline-link" to="/documents">{t('hub_finance_open_documents')} →</Link>
+                    </div>
+                  )}
+                  <div className="hub-finance-list">
+                    {documents.map((doc) => (
+                      <div className="card hub-finance-row" key={doc.id}>
+                        <div className="hub-finance-info">
+                          <span className="item-title">
+                            {doc.number ? `${doc.number} · ` : ''}{doc.title ?? t(`hub_doc_type_${doc.doc_type}`)}
+                          </span>
+                          <span className="muted">
+                            {t(`hub_doc_type_${doc.doc_type}`)} · {t(`hub_doc_status_${doc.status}`)}
+                            {doc.issue_date && ` · ${new Date(`${doc.issue_date}T00:00:00`).toLocaleDateString()}`}
+                          </span>
+                        </div>
+                        <span className="hub-finance-total num-display">{formatMoney(doc.total)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+
+          {tab === 'reports' && (
+            <section className="hub-reports">
+              {reportsLoading && <div className="card center muted">{t('loading')}</div>}
+              {reportsError && <p className="error-msg">{t('hub_reports_load_error')}</p>}
+              {!reportsLoading && !reportsError && (
+                <>
+                  {reports.length === 0 && <div className="card muted">{t('hub_reports_empty')}</div>}
+                  <div className="hub-reports-list">
+                    {reports.map((report) => (
+                      <div className="card hub-report" key={report.id}>
+                        <div className="hub-report-head">
+                          <span className="item-title">
+                            {new Date(`${report.report_date}T00:00:00`).toLocaleDateString()}
+                          </span>
+                          <span className="muted"> · {report.author?.name ?? t('hub_report_author_unknown')}</span>
+                        </div>
+                        <div className="hub-report-body">{report.body}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+
+          {/* Вкладка «Клиент» — заглушка под этап 4 (задача #13) */}
+          {tab === 'client' && (
             <section className="hub-placeholder">
-              <h2>{t(HUB_TABS.find((tabDef) => tabDef.key === tab)!.labelKey)}</h2>
+              <h2>{t('hub_tab_client')}</h2>
               <div className="card center muted">{t('hub_coming_soon')}</div>
             </section>
           )}

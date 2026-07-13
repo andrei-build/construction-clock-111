@@ -557,6 +557,34 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_file_delete_failed: { ru: 'Не удалось удалить файл', en: 'Could not delete file', es: 'No se pudo eliminar el archivo' },
   hub_file_open_failed: { ru: 'Не удалось открыть файл', en: 'Could not open file', es: 'No se pudo abrir el archivo' },
   hub_files_load_error: { ru: 'Не удалось загрузить файлы', en: 'Could not load files', es: 'No se pudieron cargar los archivos' },
+  // Вкладка «Время»
+  hub_time_worker: { ru: 'Работник', en: 'Worker', es: 'Trabajador' },
+  hub_time_hours: { ru: 'ч', en: 'h', es: 'h' },
+  hub_time_ongoing: { ru: 'В смене', en: 'On shift', es: 'En turno' },
+  hub_time_adjusted: { ru: 'скорр.', en: 'adj.', es: 'ajust.' },
+  hub_time_total: { ru: 'Всего часов', en: 'Total hours', es: 'Horas totales' },
+  hub_time_empty: { ru: 'Смен по проекту пока нет', en: 'No shifts for this project yet', es: 'Aún no hay turnos para este proyecto' },
+  hub_time_load_error: { ru: 'Не удалось загрузить смены', en: 'Could not load shifts', es: 'No se pudieron cargar los turnos' },
+  hub_worker_unknown: { ru: 'Неизвестный работник', en: 'Unknown worker', es: 'Trabajador desconocido' },
+  // Вкладка «Финансы»
+  hub_finance_locked: { ru: 'Финансы доступны только пользователям с финансовым доступом.', en: 'Finance is only available to finance users.', es: 'Las finanzas solo están disponibles para usuarios con acceso financiero.' },
+  hub_finance_estimates_total: { ru: 'Сумма смет', en: 'Estimates total', es: 'Total de presupuestos' },
+  hub_finance_invoices_total: { ru: 'Сумма инвойсов', en: 'Invoices total', es: 'Total de facturas' },
+  hub_finance_paid_total: { ru: 'Оплачено', en: 'Paid', es: 'Pagado' },
+  hub_finance_empty: { ru: 'Документов по проекту пока нет', en: 'No documents for this project yet', es: 'Aún no hay documentos para este proyecto' },
+  hub_finance_load_error: { ru: 'Не удалось загрузить документы', en: 'Could not load documents', es: 'No se pudieron cargar los documentos' },
+  hub_finance_open_documents: { ru: 'Открыть в «Документах»', en: 'Open in Documents', es: 'Abrir en Documentos' },
+  hub_doc_type_estimate: { ru: 'Смета', en: 'Estimate', es: 'Presupuesto' },
+  hub_doc_type_invoice: { ru: 'Инвойс', en: 'Invoice', es: 'Factura' },
+  hub_doc_status_draft: { ru: 'Черновик', en: 'Draft', es: 'Borrador' },
+  hub_doc_status_sent: { ru: 'Отправлен', en: 'Sent', es: 'Enviado' },
+  hub_doc_status_approved: { ru: 'Утверждён', en: 'Approved', es: 'Aprobado' },
+  hub_doc_status_paid: { ru: 'Оплачен', en: 'Paid', es: 'Pagado' },
+  hub_doc_status_void: { ru: 'Аннулирован', en: 'Void', es: 'Anulado' },
+  // Вкладка «Рапорты»
+  hub_reports_empty: { ru: 'Рапортов по проекту пока нет', en: 'No reports for this project yet', es: 'Aún no hay reportes para este proyecto' },
+  hub_reports_load_error: { ru: 'Не удалось загрузить рапорты', en: 'Could not load reports', es: 'No se pudieron cargar los reportes' },
+  hub_report_author_unknown: { ru: 'Неизвестный автор', en: 'Unknown author', es: 'Autor desconocido' },
 }
 
 interface I18n {

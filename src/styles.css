@@ -1830,6 +1830,79 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   gap: 6px;
 }
 
+/* Project Hub — вкладка «Время» */
+.hub-time-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.hub-time-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.hub-time-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.hub-time-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.hub-time-hours {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Project Hub — вкладка «Финансы» */
+.hub-finance-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+.hub-finance-stat {
+  display: grid;
+  gap: 4px;
+}
+.hub-finance-link {
+  margin-top: 12px;
+}
+.hub-finance-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.hub-finance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.hub-finance-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.hub-finance-total {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Project Hub — вкладка «Рапорты» */
+.hub-reports-list {
+  display: grid;
+  gap: 10px;
+}
+.hub-report-body {
+  margin-top: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Файлы и документы (/files) */
 .files-form input[type="file"] {
   padding: 8px 0;

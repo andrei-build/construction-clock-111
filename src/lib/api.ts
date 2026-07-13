@@ -117,6 +117,14 @@ export async function getIntervalsBetween(fromISO: string, toISO: string): Promi
   return (data as WorkInterval[]) ?? []
 }
 
+// Отработанные интервалы по проекту — вкладка «Время» в Project Hub (v_work_intervals, без денег)
+export async function getProjectIntervals(projectId: string): Promise<WorkInterval[]> {
+  const { data, error } = await supabase.from('v_work_intervals')
+    .select('*').eq('project_id', projectId).order('start_at', { ascending: false }).limit(300)
+  if (error) return []
+  return (data as WorkInterval[]) ?? []
+}
+
 export async function getProjectShiftEvents(projectId: string, sinceISO: string): Promise<TimeEvent[]> {
   const { data, error } = await supabase.from('time_events')
     .select(TIME_EVENT_SELECT)
@@ -532,6 +540,15 @@ export async function getDocuments(): Promise<DocumentRow[]> {
   const { data, error } = await supabase.from('documents')
     .select(DOCUMENT_SELECT)
     .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data as unknown as DocumentRow[]) ?? []
+}
+
+// Документы одного проекта — вкладка «Финансы» в Project Hub (RLS скоупит финансовую видимость)
+export async function getProjectDocuments(projectId: string): Promise<DocumentRow[]> {
+  const { data, error } = await supabase.from('documents')
+    .select(DOCUMENT_SELECT).eq('project_id', projectId).is('deleted_at', null)
     .order('created_at', { ascending: false })
   if (error) return []
   return (data as unknown as DocumentRow[]) ?? []
@@ -1437,6 +1454,15 @@ export async function getDailyReports(): Promise<DailyReport[]> {
     .order('report_date', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(100)
+  if (error) return []
+  return (data as unknown as DailyReport[]) ?? []
+}
+
+// Дневные рапорты одного проекта — вкладка «Рапорты» в Project Hub (RLS скоупит видимость: автор/менеджер)
+export async function getProjectDailyReports(projectId: string): Promise<DailyReport[]> {
+  const { data, error } = await supabase.from('daily_reports')
+    .select(DAILY_REPORT_SELECT).eq('project_id', projectId).is('deleted_at', null)
+    .order('report_date', { ascending: false }).order('created_at', { ascending: false }).limit(100)
   if (error) return []
   return (data as unknown as DailyReport[]) ?? []
 }
