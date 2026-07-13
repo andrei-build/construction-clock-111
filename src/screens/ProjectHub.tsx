@@ -18,6 +18,7 @@ import {
   getProjectNotes,
   getProjectPhotos,
   getProjectProfit,
+  getProjectVideos,
   getTeam,
   revokeProjectGrant,
   softDeleteFile,
@@ -27,7 +28,7 @@ import {
   uploadProjectFileToR2,
 } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
-import type { Account, AccountRating, ClientGrant, Contact, DailyReport, DocumentRow, FileRow, GalleryPhoto, Project, ProjectNote, ProjectProfit, WorkInterval } from '../lib/types'
+import type { Account, AccountRating, ClientGrant, Contact, DailyReport, DocumentRow, FileRow, GalleryPhoto, GalleryVideo, Project, ProjectNote, ProjectProfit, WorkInterval } from '../lib/types'
 
 // Светофор дедлайна по projects.end_date — считаем на клиенте (день в день):
 //   red — просрочен (сегодня > end_date), amber — до дедлайна ≤7 дней (включительно),
@@ -58,6 +59,7 @@ const DEADLINE_LABEL: Record<DeadlineStatus, string> = {
 }
 
 type HubTab = 'overview' | 'time' | 'finance' | 'files' | 'reports' | 'notes' | 'client'
+type MediaBucket = 'all' | 'photos' | 'videos' | 'documents'
 const HUB_TABS: { key: HubTab; labelKey: string }[] = [
   { key: 'overview', labelKey: 'hub_tab_overview' },
   { key: 'time', labelKey: 'hub_tab_time' },
@@ -116,7 +118,10 @@ export default function ProjectHub() {
   // Вкладка «Файлы и медиа»: фото объекта (Supabase Storage) + документы (R2). Грузим лениво по id.
   const canManage = profile ? isManagerWrite(profile.role) : false
   const [photos, setPhotos] = useState<GalleryPhoto[]>([])
+  const [videos, setVideos] = useState<GalleryVideo[]>([])
   const [files, setFiles] = useState<FileRow[]>([])
+  // Подвкладки внутри «Файлы и медиа»: все / фото / видео / документы (паритет со старым CT).
+  const [mediaBucket, setMediaBucket] = useState<MediaBucket>('all')
   const [filesLoading, setFilesLoading] = useState(false)
   const [filesError, setFilesError] = useState(false)
   const [filesLoadedFor, setFilesLoadedFor] = useState<string | null>(null)
@@ -235,9 +240,10 @@ export default function ProjectHub() {
       setFilesLoading(true)
       setFilesError(false)
       try {
-        const [ph, fs] = await Promise.all([getProjectPhotos(id), getProjectFiles(id)])
+        const [ph, vd, fs] = await Promise.all([getProjectPhotos(id), getProjectVideos(id), getProjectFiles(id)])
         if (mounted) {
           setPhotos(ph)
+          setVideos(vd)
           setFiles(fs)
           setFilesLoadedFor(id)
         }
@@ -454,6 +460,17 @@ export default function ProjectHub() {
   // Вкладка «Время»: суммарные часы по проекту.
   const totalHours = intervals.reduce((sum, iv) => sum + intervalHours(iv), 0)
 
+  // Подвкладки «Файлы и медиа»: счётчики = длины загруженных списков (паритет countProjectMediaCategories).
+  const mediaBuckets: { key: MediaBucket; labelKey: string; count: number }[] = [
+    { key: 'all', labelKey: 'hub_files_all', count: photos.length + videos.length + files.length },
+    { key: 'photos', labelKey: 'hub_files_photos', count: photos.length },
+    { key: 'videos', labelKey: 'hub_files_videos', count: videos.length },
+    { key: 'documents', labelKey: 'hub_files_documents', count: files.length },
+  ]
+  const showPhotos = mediaBucket === 'all' || mediaBucket === 'photos'
+  const showVideos = mediaBucket === 'all' || mediaBucket === 'videos'
+  const showDocuments = mediaBucket === 'all' || mediaBucket === 'documents'
+
   // Вкладка «Финансы»: гейт (образец Documents.tsx) + суммы-итоги.
   const ownerOrAdmin = profile?.role === 'owner' || profile?.role === 'admin'
   const financeLocked = !financeLoading && !ownerOrAdmin && documents.length === 0
@@ -569,57 +586,93 @@ export default function ProjectHub() {
 
               {!filesLoading && !filesError && (
                 <>
-                  <h2 className="hub-files-heading">{t('hub_files_photos')}</h2>
-                  {photos.length === 0 && <div className="card muted">{t('hub_photos_empty')}</div>}
-                  {photos.length > 0 && (
-                    <div className="gallery-grid">
-                      {photos.map((photo) => (
-                        <button
-                          key={photo.id}
-                          type="button"
-                          className="gallery-item"
-                          onClick={() => setActivePhoto(photo)}
-                          aria-label={photo.filename ?? t('hub_file_view')}
-                        >
-                          <img src={photo.url} alt={photo.filename ?? ''} loading="lazy" />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="hub-files-docs-head">
-                    <h2 className="hub-files-heading">{t('hub_files_documents')}</h2>
-                    {canManage && (
-                      <label className="btn small hub-files-upload">
-                        {uploading ? t('hub_files_uploading') : t('hub_files_upload')}
-                        <input type="file" accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/csv,text/plain" hidden disabled={uploading} onChange={onUpload} />
-                      </label>
-                    )}
-                  </div>
-
-                  {files.length === 0 && <div className="card muted">{t('hub_files_empty')}</div>}
-                  <div className="hub-files-list">
-                    {files.map((file) => (
-                      <div className="card hub-file-row" key={file.id}>
-                        <div className="hub-file-info">
-                          <span className="item-title">{file.name}</span>
-                          <span className="muted">
-                            {formatBytes(file.size_bytes)} · {new Date(file.created_at).toLocaleDateString()}
-                          </span>
-                        </div>
-                        <div className="row hub-file-actions">
-                          <button className="btn ghost small" type="button" disabled={fileBusy} onClick={() => viewFile(file)}>
-                            {t('hub_file_view')}
-                          </button>
-                          {canManage && (
-                            <button className="btn ghost small" type="button" disabled={fileBusy} onClick={() => removeFile(file)}>
-                              {t('hub_file_delete')}
-                            </button>
-                          )}
-                        </div>
-                      </div>
+                  <div className="tabs hub-media-tabs">
+                    {mediaBuckets.map((b) => (
+                      <button
+                        key={b.key}
+                        className={mediaBucket === b.key ? 'active' : ''}
+                        onClick={() => setMediaBucket(b.key)}
+                      >
+                        {t(b.labelKey)} <span className="hub-media-count">{b.count}</span>
+                      </button>
                     ))}
                   </div>
+
+                  {showPhotos && (
+                    <>
+                      <h2 className="hub-files-heading">{t('hub_files_photos')}</h2>
+                      {photos.length === 0 && <div className="card muted">{t('hub_photos_empty')}</div>}
+                      {photos.length > 0 && (
+                        <div className="gallery-grid">
+                          {photos.map((photo) => (
+                            <button
+                              key={photo.id}
+                              type="button"
+                              className="gallery-item"
+                              onClick={() => setActivePhoto(photo)}
+                              aria-label={photo.filename ?? t('hub_file_view')}
+                            >
+                              <img src={photo.url} alt={photo.filename ?? ''} loading="lazy" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {showVideos && (
+                    <>
+                      <h2 className="hub-files-heading">{t('hub_files_videos')}</h2>
+                      {videos.length === 0 && <div className="card muted">{t('hub_videos_empty')}</div>}
+                      {videos.length > 0 && (
+                        <div className="gallery-grid">
+                          {videos.map((video) => (
+                            <div key={video.id} className="gallery-item gallery-video">
+                              <video src={video.url} controls preload="metadata" />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {showDocuments && (
+                    <>
+                      <div className="hub-files-docs-head">
+                        <h2 className="hub-files-heading">{t('hub_files_documents')}</h2>
+                        {canManage && (
+                          <label className="btn small hub-files-upload">
+                            {uploading ? t('hub_files_uploading') : t('hub_files_upload')}
+                            <input type="file" accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/csv,text/plain" hidden disabled={uploading} onChange={onUpload} />
+                          </label>
+                        )}
+                      </div>
+
+                      {files.length === 0 && <div className="card muted">{t('hub_files_empty')}</div>}
+                      <div className="hub-files-list">
+                        {files.map((file) => (
+                          <div className="card hub-file-row" key={file.id}>
+                            <div className="hub-file-info">
+                              <span className="item-title">{file.name}</span>
+                              <span className="muted">
+                                {formatBytes(file.size_bytes)} · {new Date(file.created_at).toLocaleDateString()}
+                              </span>
+                            </div>
+                            <div className="row hub-file-actions">
+                              <button className="btn ghost small" type="button" disabled={fileBusy} onClick={() => viewFile(file)}>
+                                {t('hub_file_view')}
+                              </button>
+                              {canManage && (
+                                <button className="btn ghost small" type="button" disabled={fileBusy} onClick={() => removeFile(file)}>
+                                  {t('hub_file_delete')}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </>
               )}
             </section>

@@ -990,6 +990,45 @@ export async function getProjectPhotos(projectId: string): Promise<GalleryPhoto[
   return photos.filter((photo): photo is GalleryPhoto => photo !== null)
 }
 
+// Все видео ОДНОГО проекта для вкладки «Файлы и медиа» хаба — как getProjectPhotos,
+// но media_type='video'. Тот же select и контракт GalleryVideo, что и getGalleryVideos.
+export async function getProjectVideos(projectId: string): Promise<GalleryVideo[]> {
+  const { data, error } = await supabase.from('media')
+    .select('id, storage_path, filename, created_at, project_id, category, project:projects(name)')
+    .eq('project_id', projectId)
+    .eq('media_type', 'video')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(200)
+  if (error) return []
+
+  const videos = await Promise.all(((data ?? []) as unknown as Array<{
+    id: string
+    storage_path: string | null
+    filename?: string | null
+    created_at?: string | null
+    project_id?: string | null
+    category?: string | null
+    project?: { name: string | null } | null
+  }>).map(async (row) => {
+    if (!row.storage_path) return null
+    return {
+      id: row.id,
+      url: await mediaUrl(row.storage_path),
+      filename: row.filename ?? null,
+      created_at: row.created_at ?? null,
+      project_id: row.project_id ?? null,
+      project_name: row.project?.name ?? null,
+      category: row.category ?? null,
+      // Автор загрузки для этого экрана не нужен — держим поля контракта заполненными.
+      uploaded_by: null as string | null,
+      uploader_name: null as string | null,
+    }
+  }))
+
+  return videos.filter((video): video is GalleryVideo => video !== null)
+}
+
 // «Галерея»: все фото объектов (media_type='photo', не удалённые) с именем проекта.
 // Подписанные URL берём пачкой, порядок — сначала свежие. Лимит держит галерею лёгкой.
 export async function getGalleryPhotos(): Promise<GalleryPhoto[]> {

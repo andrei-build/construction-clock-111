@@ -2080,6 +2080,23 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: var(--accent);
   color: #10151f;
 }
+/* Подвкладки медиа (все/фото/видео/документы) со счётчиком — переносим при нехватке места. */
+.hub-media-tabs {
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.hub-media-tabs button {
+  flex: 0 1 auto;
+}
+.hub-media-count {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  font-weight: 800;
+}
 .hub-overview {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
