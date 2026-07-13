@@ -3,6 +3,7 @@ import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { getAppSettings, saveAppSettings, type AppSettingsInput } from '../lib/api'
 import type { AppSettings } from '../lib/types'
+import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
 
 type OrgLanguage = 'ru' | 'en' | 'es'
 
@@ -80,11 +81,14 @@ export default function Settings() {
     if (!profile || !canEdit || saving) return
 
     const hours = Number(overlongShiftHours)
-    const radius = Number(defaultGpsRadius)
-    if (!timezone.trim() || !Number.isFinite(hours) || hours <= 0 || !Number.isFinite(radius) || radius <= 0 || !Number.isInteger(radius)) {
+    if (!timezone.trim() || !Number.isFinite(hours) || hours <= 0) {
       setMsg('settings_invalid')
       return
     }
+    // Clamp to the sane [25, 300] m geofence range; empty/NaN falls back to the default.
+    const radius = defaultGpsRadius.trim() === ''
+      ? DEFAULT_SETTINGS.default_gps_radius_m
+      : clampGpsRadius(Number(defaultGpsRadius), DEFAULT_SETTINGS.default_gps_radius_m)
 
     const values: AppSettingsInput = {
       default_language: defaultLanguage,
@@ -170,13 +174,15 @@ export default function Settings() {
           <input
             id="settings-radius"
             type="number"
-            min="1"
-            step="1"
+            min={GPS_RADIUS_MIN}
+            max={GPS_RADIUS_MAX}
+            step={GPS_RADIUS_STEP}
             inputMode="numeric"
             value={defaultGpsRadius}
             disabled={saving}
             onChange={(e) => setDefaultGpsRadius(e.target.value)}
           />
+          <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('gps_radius_hint')}</p>
 
           <button className="btn" disabled={saving}>{saving ? t('settings_saving') : t('save')}</button>
         </form>
