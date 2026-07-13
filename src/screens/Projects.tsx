@@ -6,6 +6,7 @@ import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, c
 import { isManagerWrite } from '../lib/types'
 import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
+import { isEffectiveOpenTask } from '../lib/task-status'
 import MediaComments from '../components/MediaComments'
 import { deadlineStatus, statusDotClass } from './ProjectHub'
 
@@ -189,7 +190,9 @@ export default function Projects() {
       )}
 
       {projects.map((p) => {
-        const ptasks = tasks.filter((tk) => tk.project_id === p.id)
+        // done_at авторитетнее status: строку с проставленным done_at, но отставшим
+        // status в список открытых не пускаем (паритет с Check Time, F81).
+        const ptasks = tasks.filter((tk) => tk.project_id === p.id && isEffectiveOpenTask(tk))
         const profit = profitFor(p.id)
         const showProfit = profit?.margin_pct !== null && profit?.margin_pct !== undefined && profit.profit_status && profit.profit_status !== 'grey'
         const dl = deadlineStatus(p.end_date)
