@@ -146,6 +146,8 @@ export async function removeQueuedTimeEvent(id: string) {
 }
 
 export function queuedTimeEventToTimeEvent(row: QueuedTimeEvent): TimeEvent {
+  // F13: geo уже несёт errorKind (доп. поле Geo); пробрасываем причину и needs_review в локальный слепок.
+  const unverified = row.geo.status !== 'good'
   return {
     id: `offline-${row.id}`,
     org_id: row.orgId,
@@ -158,6 +160,9 @@ export function queuedTimeEventToTimeEvent(row: QueuedTimeEvent): TimeEvent {
       lat: row.geo.lat,
       lng: row.geo.lng,
       offline: true,
+      offline_pending_sync: true,
+      ...(row.geo.errorKind ? { gps_error_kind: row.geo.errorKind } : {}),
+      ...(unverified ? { location_unverified: true, needs_review: true } : {}),
     },
   }
 }
@@ -174,7 +179,9 @@ export async function flushQueuedTimeEvents(
   for (const row of rows) {
     if (typeof navigator !== 'undefined' && !navigator.onLine) break
     try {
-      await addTimeEvent(profile, row.type, row.projectId, row.geo, row.queuedAt, { offline_queued: true, client_id: row.id })
+      // F13: offline_pending_sync — контекст, что событие пришло из очереди; gps_error_kind/needs_review
+      // проставит addTimeEvent из row.geo (errorKind сохранился в очереди как поле Geo).
+      await addTimeEvent(profile, row.type, row.projectId, row.geo, row.queuedAt, { offline_queued: true, offline_pending_sync: true, client_id: row.id })
     } catch (err) {
       const code = (err as { code?: string } | null)?.code
       if (code !== '23505') throw err

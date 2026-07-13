@@ -2333,6 +2333,16 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .worker-day-caret { color: var(--muted, #64748b); font-size: 12px; }
 .worker-day-detail { display: grid; gap: 8px; }
 .worker-day-detail h3 { margin: 4px 0 0; font-size: 14px; }
+/* F13: непроверенная локация — мягкий бейдж триажа менеджера (только показ). */
+.gps-review-note {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #92400e;
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
 .worker-day-photos { margin-top: 2px; }
 .worker-day-tasks { display: grid; gap: 6px; }
 .worker-day-task {
