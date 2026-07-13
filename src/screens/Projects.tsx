@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, updateProject, markTaskDone, uploadTaskPhoto, validateUpload, uploadErrorCode, captureGPS } from '../lib/api'
+import { enqueueFieldAction } from '../lib/offlineFieldActions'
 import { isManagerWrite } from '../lib/types'
 import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
@@ -13,6 +14,15 @@ import { formatProjectCountdown } from '../lib/project-schedule'
 
 // F29: разбираем вставленную пару «широта, долгота» ("47.61, -122.33", "47.61 -122.33").
 // Терпим пробелы, знак градуса и ведущую метку до двоеточия; null, если это не чистая валидная пара.
+function isOnline() {
+  return typeof navigator === 'undefined' || navigator.onLine
+}
+
+function isNetworkError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return /failed to fetch|networkerror|network|fetch|load failed/i.test(message)
+}
+
 export function parsePastedCoordinatePair(text: string): { lat: number; lng: number } | null {
   if (!text) return null
   let s = text.trim()
@@ -50,6 +60,8 @@ export default function Projects() {
   const [photoBusy, setPhotoBusy] = useState<string | null>(null)
   const [photoByTask, setPhotoByTask] = useState<Record<string, TaskMedia>>({})
   const [taskError, setTaskError] = useState<string | null>(null)
+  // F64: non-error notice for an action queued while offline (shown with a warn tone).
+  const [taskNotice, setTaskNotice] = useState<string | null>(null)
 
   const load = () => Promise.all([getProjects(), getOpenTasks(), getProjectProfit(), getProjectClientRatings()])
     .then(([p, tk, pf, cr]) => { setProjects(p); setTasks(tk); setProfits(pf); setClientRatings(cr) })
@@ -139,10 +151,21 @@ export default function Projects() {
     if (task.requires_photo && !mediaId) return
     setTaskBusy(task.id)
     setTaskError(null)
+    setTaskNotice(null)
+    // F64: offline / network drop — queue the status change and reflect it optimistically
+    // so the task leaves the open list; it replays on reconnect. done_at is authoritative
+    // for isEffectiveOpenTask, so setting it locally hides the task without a refetch.
+    const queueOffline = () => {
+      enqueueFieldAction({ kind: 'task_status', dedupeKey: `task_status:${task.id}`, payload: { task, mediaId } })
+      setTasks((rows) => rows.map((r) => (r.id === task.id ? { ...r, status: 'done', done_at: new Date().toISOString() } : r)))
+      setTaskNotice('offline_action_queued')
+    }
     try {
+      if (!isOnline()) { queueOffline(); return }
       await markTaskDone(profile, task, mediaId)
       await load()
-    } catch {
+    } catch (err) {
+      if (!isOnline() || isNetworkError(err)) { queueOffline(); return }
       setTaskError('error')
     } finally {
       setTaskBusy(null)
@@ -177,6 +200,7 @@ export default function Projects() {
     <div className="screen">
       <h1>📁 {t('projects')}</h1>
       {taskError && <p className="error-msg">{t(taskError)}</p>}
+      {taskNotice && <p className="warn-msg">{t(taskNotice)}</p>}
 
       {canWrite && !adding && !editingId && (
         <button className="btn ghost small" onClick={() => setAdding(true)}>+ {t('add_project')}</button>
