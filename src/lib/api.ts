@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, Account, DocumentProjectOption, DocumentRow, DocumentItem, Unit } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, DocumentProjectOption, DocumentRow, DocumentItem, Unit } from './types'
 import { todayStartISO } from './time'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -932,6 +932,33 @@ export async function resolveMediaFlag(p: Profile, flagId: string): Promise<void
     .maybeSingle()
   if (error) throw error
   await logEvent(p, 'media.flag_resolved', 'media', (data as { media_id?: string } | null)?.media_id ?? null, {})
+}
+
+// Комментарии к медиа (media_comments): текст под фото, по возрастанию времени.
+// Имя автора тянем embed-ом author:profiles(name) — FK author_id -> profiles единственный.
+// RLS отдаёт комментарии, если строка media видна; на ошибке возвращаем [].
+export async function getMediaComments(mediaId: string): Promise<MediaComment[]> {
+  const { data, error } = await supabase.from('media_comments')
+    .select('id, media_id, author_id, body, created_at, author:profiles(name)')
+    .eq('media_id', mediaId)
+    .order('created_at', { ascending: true })
+  if (error) return []
+  return (data as unknown as MediaComment[]) ?? []
+}
+
+// Добавить текстовый комментарий к медиа. RLS: author_id = auth.uid() (= profile.id),
+// media_id должен указывать на существующую строку media. voice_path в v1 не пишем.
+// Пустой текст игнорируем; возвращаем вставленную строку с именем автора для дозаписи в UI.
+export async function addMediaComment(p: Profile, mediaId: string, body: string): Promise<MediaComment | null> {
+  const text = body.trim()
+  if (!text) return null
+  const { data, error } = await supabase.from('media_comments')
+    .insert({ media_id: mediaId, author_id: p.id, body: text })
+    .select('id, media_id, author_id, body, created_at, author:profiles(name)')
+    .single()
+  if (error) throw error
+  await logEvent(p, 'media.commented', 'media', mediaId, {})
+  return (data as unknown as MediaComment) ?? null
 }
 
 export async function getCurrentPayPeriod(): Promise<PayPeriod | null> {

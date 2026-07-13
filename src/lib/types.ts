@@ -107,6 +107,16 @@ export interface GalleryPhoto {
   category: string | null
 }
 
+// Комментарий к медиа (media_comments): текст под фото. author тянем embed-ом из profiles(name).
+export interface MediaComment {
+  id: string
+  media_id: string
+  author_id: string
+  body: string | null
+  created_at: string
+  author?: { name: string | null } | null
+}
+
 // Флаг «на проверку» для медиа (media_flags): любой может поставить, менеджер снимает (resolved_at).
 export interface MediaFlag {
   id: string
