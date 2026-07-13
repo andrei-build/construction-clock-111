@@ -110,6 +110,21 @@ export interface GalleryPhoto {
   category: string | null
 }
 
+// Видео галереи: те же поля, что у GalleryPhoto (media_type='video'), url — подписанная ссылка на media bucket.
+export type GalleryVideo = GalleryPhoto
+
+// PDF-документ галереи (из таблицы files, mime pdf). URL резолвим по клику через getGalleryPdfUrl:
+// scope='project' — R2 (r2Sign download), иначе — media bucket (mediaUrl).
+export interface GalleryPdf {
+  id: string
+  name: string
+  storage_path: string
+  scope: string
+  created_at: string | null
+  project_id: string | null
+  project_name: string | null
+}
+
 // Комментарий к медиа (media_comments): текст под фото. author тянем embed-ом из profiles(name).
 export interface MediaComment {
   id: string

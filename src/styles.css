@@ -1674,9 +1674,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   }
 }
 
-/* Галерея — сетка миниатюр + фильтр по объектам + лайтбокс */
+/* Галерея — вкладки типа медиа (Фото/Видео/PDF) + фильтр по объектам + лайтбокс */
+.gallery-type-tabs {
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
 .gallery-tabs {
   flex-wrap: wrap;
+}
+/* Видео в сетке галереи — по образцу миниатюр, но с квадратным контейнером */
+.gallery-video {
+  cursor: default;
+}
+.gallery-video video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: #000;
+}
+/* Карточка PDF в галерее — как строка файла на экране «Файлы» */
+.gallery-pdf-item {
+  align-items: center;
 }
 .gallery-tabs button {
   flex: 0 0 auto;
