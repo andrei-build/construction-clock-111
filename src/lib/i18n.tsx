@@ -118,6 +118,7 @@ const dict: Record<string, Record<Lang, string>> = {
   gps_wait: { ru: 'Получаю GPS…', en: 'Getting GPS…', es: 'Obteniendo GPS…' },
   gps_ok: { ru: 'GPS получен', en: 'GPS captured', es: 'GPS capturado' },
   gps_fail: { ru: 'GPS не взялся — отметка всё равно пройдёт', en: 'No GPS — check-in still counts', es: 'Sin GPS — la marca cuenta igual' },
+  gps_low_accuracy: { ru: 'Низкая точность GPS (~{n} м). Выйдите на открытое место для лучшей геопозиции.', en: 'Low GPS accuracy (~{n} m). Move to open sky for a better location.', es: 'Precisión GPS baja (~{n} m). Ve a un lugar despejado para mejorar la ubicación.' },
   saved: { ru: 'Записано', en: 'Saved', es: 'Guardado' },
   offline_saved: { ru: 'Отметка сохранена, уйдёт при появлении связи', en: 'Mark saved. It will send when connection returns.', es: 'Marca guardada. Se enviará cuando vuelva la conexión.' },
   offline_queue_sending: { ru: 'Отправляю сохранённые отметки…', en: 'Sending saved marks…', es: 'Enviando marcas guardadas…' },
