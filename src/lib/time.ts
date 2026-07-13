@@ -53,3 +53,14 @@ export function weekStartISO(): string {
   const d = new Date(); const day = (d.getDay() + 6) % 7
   d.setDate(d.getDate() - day); d.setHours(0, 0, 0, 0); return d.toISOString()
 }
+
+// Начало вчерашних суток (устройство-локально), тот же приём что и todayStartISO
+export function yesterdayStartISO(): string {
+  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - 1); return d.toISOString()
+}
+
+// Начало прошлой недели (пн, устройство-локально), та же логика что и weekStartISO
+export function lastWeekStartISO(): string {
+  const d = new Date(); const day = (d.getDay() + 6) % 7
+  d.setDate(d.getDate() - day - 7); d.setHours(0, 0, 0, 0); return d.toISOString()
+}
