@@ -196,6 +196,17 @@ export interface SafetyAckRow {
   signed_at: string | null
 }
 
+export interface AppSettings {
+  org_id: string
+  default_language: string
+  timezone: string
+  overlong_shift_hours: number
+  default_gps_radius_m: number
+  settings: Record<string, unknown>
+  updated_by: string | null
+  updated_at: string
+}
+
 // Мягко удалённые сущности для экрана «Архив и Корзина» (deleted_at IS NOT NULL)
 export type ArchiveTable = 'projects' | 'tasks' | 'media'
 
