@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
+import { armUrgentChimeUnlock, playUrgentChime } from '../lib/notification-sound'
 import type { MessageRow, Profile } from '../lib/types'
 
 interface Props {
@@ -18,6 +19,45 @@ export default function MessageOverlay({ messages, profile, senderName, onAcknow
   const [error, setError] = useState(false)
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set())
   const vibratedFor = useRef<string | null>(null)
+  const seenUrgent = useRef<Set<string>>(new Set())
+  const hydrated = useRef(false)
+
+  // Same "new urgent for me" notion the overlay queue uses, so the chime and the overlay
+  // always agree on what counts as urgent. Kept independent of `dismissed` (dismissal is an
+  // ack-error escape hatch, not a reason to re-chime).
+  const urgentIds = useMemo(
+    () =>
+      messages
+        .filter((m) => m.priority === 'urgent' && m.sender_id !== profile.id && !m.read_at)
+        .map((m) => m.id),
+    [messages, profile.id],
+  )
+
+  // Arm autoplay unlock once — mobile browsers block audio until the first user gesture.
+  useEffect(() => {
+    armUrgentChimeUnlock()
+  }, [])
+
+  // Chime once per genuinely-new urgent message. The first populated load is treated as
+  // hydration (seed as seen, no chime) so opening Messages with pre-existing urgents stays
+  // silent; any urgent that appears on a later reload chimes exactly once. This matches
+  // Check Time's "chime on arrival, not on initial hydration" behaviour.
+  useEffect(() => {
+    if (!hydrated.current) {
+      if (messages.length === 0) return
+      hydrated.current = true
+      for (const id of urgentIds) seenUrgent.current.add(id)
+      return
+    }
+    let fresh = false
+    for (const id of urgentIds) {
+      if (!seenUrgent.current.has(id)) {
+        seenUrgent.current.add(id)
+        fresh = true
+      }
+    }
+    if (fresh) playUrgentChime()
+  }, [messages.length, urgentIds])
 
   const queue = useMemo(
     () =>
