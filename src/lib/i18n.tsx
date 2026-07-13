@@ -282,6 +282,8 @@ const dict: Record<string, Record<Lang, string>> = {
   shift_pulse_title: { ru: 'Пульс смен', en: 'Shift pulse', es: 'Pulso de turnos' },
   shift_pulse_empty: { ru: 'Сейчас никто не на смене.', en: 'Nobody is on shift right now.', es: 'Nadie está en turno ahora.' },
   pulse_since: { ru: 'с', en: 'since', es: 'desde' },
+  team_pulse_label: { ru: 'Пульс', en: 'Pulse', es: 'Pulso' },
+  team_pulse_of: { ru: 'из', en: 'of', es: 'de' },
   yes: { ru: 'Да', en: 'Yes', es: 'Sí' },
   no: { ru: 'Нет', en: 'No', es: 'No' },
   org: { ru: 'Организация', en: 'Organization', es: 'Organización' },

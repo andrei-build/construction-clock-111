@@ -33,6 +33,11 @@ export default function Team() {
     return m
   }, [events])
 
+  const onShiftCount = useMemo(
+    () => team.filter((w) => shiftState(byWorker.get(w.id) ?? []).status !== 'off').length,
+    [team, byWorker],
+  )
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setBusy(true); setMsg(null)
@@ -63,6 +68,11 @@ export default function Team() {
   return (
     <div className="screen">
       <h1>👷 {t('team')}</h1>
+
+      <div className="card pulse-summary" style={{ fontWeight: 700 }}>
+        <span className={`badge ${onShiftCount > 0 ? 'green' : 'grey'}`}>●</span>{' '}
+        {t('team_pulse_label')}: {t('on_shift')} {onShiftCount} {t('team_pulse_of')} {team.length}
+      </div>
 
       {!adding && <button className="btn ghost small" onClick={() => setAdding(true)}>+ {t('add_worker')}</button>}
       {adding && (
