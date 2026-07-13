@@ -42,6 +42,13 @@ function messageClass(msg: string) {
   return 'ok-msg'
 }
 
+// Low-accuracy warning threshold (metres), matching old Check Time behavior.
+// Advisory only — the fix is still recorded with its accuracy; check-in is never blocked.
+function lowGpsAccuracy(geo: Awaited<ReturnType<typeof captureGPS>>): number | null {
+  if (geo.status !== 'good' || geo.accuracy == null || geo.accuracy <= 100) return null
+  return Math.round(geo.accuracy)
+}
+
 function canvasToBlob(canvas: HTMLCanvasElement) {
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => {
@@ -63,6 +70,7 @@ export default function CheckIn() {
   const [travel, setTravel] = useState<TravelState | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [gpsWarnM, setGpsWarnM] = useState<number | null>(null)
   const [checkoutVideo, setCheckoutVideo] = useState<File | null>(null)
   const [confirmingCheckout, setConfirmingCheckout] = useState(false)
   const [safetyProjectId, setSafetyProjectId] = useState<string | null>(null)
@@ -163,8 +171,10 @@ export default function CheckIn() {
     }
     setBusy(true)
     setMsg('gps_wait')
+    setGpsWarnM(null)
     const geo = await captureGPS()
     setMsg(geo.status === 'good' ? 'gps_ok' : 'gps_fail')
+    setGpsWarnM(lowGpsAccuracy(geo))
     const projectId = type === 'check_in' ? selected : state.projectId
     const saveOffline = async () => {
       const row = await queueTimeEvent(profile, type, projectId, geo)
@@ -279,8 +289,10 @@ export default function CheckIn() {
     try {
       const signatureBlob = await canvasToBlob(canvas)
       setMsg('gps_wait')
+      setGpsWarnM(null)
       const geo = await captureGPS()
       setMsg(geo.status === 'good' ? 'gps_ok' : 'gps_fail')
+      setGpsWarnM(lowGpsAccuracy(geo))
       await completeOnlineTimeEvent('check_in', safetyProjectId, geo, { signatureBlob })
       await load()
       setTravel(null)
@@ -381,6 +393,7 @@ export default function CheckIn() {
           {busy ? t('loading') : t('safety_accept_checkin')}
         </button>
         {msg && <p className={messageClass(msg)}>{t(msg)}</p>}
+        {gpsWarnM != null && <p className="warn-msg">{t('gps_low_accuracy').replace('{n}', String(gpsWarnM))}</p>}
       </div>
     )
   }
@@ -464,6 +477,7 @@ export default function CheckIn() {
       )}
 
       {msg && <p className={messageClass(msg)}>{t(msg)}</p>}
+      {gpsWarnM != null && <p className="warn-msg">{t('gps_low_accuracy').replace('{n}', String(gpsWarnM))}</p>}
 
       {confirmingCheckout && (
         <div className="confirm-backdrop" onClick={cancelCheckout}>
