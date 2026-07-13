@@ -2109,3 +2109,31 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   gap: 10px;
   align-items: center;
 }
+
+/* Ряд дополнительных фильтров галереи (автор + диапазон дат) — компактный, поверх вкладок объектов */
+.gallery-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+  margin-bottom: 12px;
+}
+.gallery-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gallery-filter-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.gallery-filters input,
+.gallery-filters select {
+  width: auto;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.gallery-filter-reset {
+  align-self: flex-end;
+}
