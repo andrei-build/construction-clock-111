@@ -2,6 +2,7 @@ import type { ComponentType, SVGProps } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import ManagerWorkAlertBell from './ManagerWorkAlertBell'
 import {
   IconBriefcase,
   IconCalendar,
@@ -116,6 +117,8 @@ export default function Nav({ manager }: { manager: boolean }) {
             <div className="side-profile-name">{profile?.name}</div>
             <span className="side-role">{profile?.role}</span>
           </div>
+
+          <ManagerWorkAlertBell />
 
           <div className="side-groups">
             {groups.map((group) => (
