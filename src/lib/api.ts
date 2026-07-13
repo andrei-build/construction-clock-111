@@ -1653,6 +1653,7 @@ async function r2Sign(op: 'upload' | 'download', key: string): Promise<{ url: st
 // Загрузка произвольного файла проекта в R2: подпись → PUT в R2 → строка files.
 // RLS INSERT: org_id=app.org_id() и (менеджер ИЛИ uploaded_by=uid) — потому org_id=p.org_id, uploaded_by=p.id.
 export async function uploadProjectFileToR2(p: Profile, projectId: string, file: File): Promise<FileRow> {
+  validateUpload(file, 'file')
   const key = `files/${crypto.randomUUID()}-${safeFileName(file.name)}`
   const signed = await r2Sign('upload', key)
   const putRes = await fetch(signed.url, {
