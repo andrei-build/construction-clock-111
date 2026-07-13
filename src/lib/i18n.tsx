@@ -691,6 +691,11 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_grant_add_failed: { ru: 'Не удалось создать грант', en: 'Could not create grant', es: 'No se pudo crear el permiso' },
   hub_grant_revoke_failed: { ru: 'Не удалось отозвать грант', en: 'Could not revoke grant', es: 'No se pudo revocar el permiso' },
   hub_grant_new: { ru: 'Новый грант', en: 'New grant', es: 'Nuevo permiso' },
+  // About / Release diagnostics panel (owner-only)
+  about_release: { ru: 'О приложении / Релиз', en: 'About / Release', es: 'Acerca de / Versión' },
+  about_version: { ru: 'Версия', en: 'Version', es: 'Versión' },
+  about_env: { ru: 'Окружение', en: 'Environment', es: 'Entorno' },
+  about_base_url: { ru: 'Базовый URL', en: 'Base URL', es: 'URL base' },
 }
 
 interface I18n {

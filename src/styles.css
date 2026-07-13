@@ -2243,3 +2243,22 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .gallery-filter-reset {
   align-self: flex-end;
 }
+
+/* Owner-only About / Release diagnostics panel (read-only, presentational) */
+.about-panel { margin-top: 24px; }
+.about-panel-title { margin: 0 0 10px; font-size: 14px; }
+.about-panel-rows { display: grid; gap: 6px; margin: 0; }
+.about-panel-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+.about-panel-row dt { color: var(--muted); font-size: 13px; }
+.about-panel-row dd {
+  margin: 0;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+  text-align: right;
+}

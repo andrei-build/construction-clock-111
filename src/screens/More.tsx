@@ -2,12 +2,14 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { isManagerRole } from '../lib/types'
+import AboutPanel from '../components/AboutPanel'
 
 export default function More() {
   const { profile, logout } = useAuth()
   const { t, lang, setLang } = useI18n()
   const manager = profile ? isManagerRole(profile.role) : false
   const salesAccess = profile ? manager || profile.role === 'sales' : false
+  const isOwner = profile?.role === 'owner'
 
   return (
     <div className="screen">
@@ -58,6 +60,8 @@ export default function More() {
       </div>
 
       <button className="btn red" style={{ marginTop: 24 }} onClick={logout}>{t('logout')}</button>
+
+      {isOwner && <AboutPanel />}
 
       <p className="muted center" style={{ marginTop: 24 }}>
         Construction Clock v0.1 · Foundation
