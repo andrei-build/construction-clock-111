@@ -66,6 +66,15 @@ export function remainingPercent(project: ProjectSchedule, now: Date = new Date(
   return clampPercent(100 - elapsedPercent(project, now))
 }
 
+// PROJ-2: даты заданы задом-наперёд — end_date раньше start_date (обычно опечатка в годе,
+// напр. дедлайн 2006 → «просрочен 7291д»). Показываем красное предупреждение на карточке и в
+// хабе; НЕ автоправим — Андрей исправляет вручную. Обе даты в формате YYYY-MM-DD, строковое
+// сравнение корректно. Если одна из дат пуста — не считаем диапазон битым.
+export function isDateRangeInvalid(project: ProjectSchedule): boolean {
+  if (!project.start_date || !project.end_date) return false
+  return project.end_date < project.start_date
+}
+
 // Машина состояний графика проекта.
 export function projectScheduleState(project: ProjectSchedule, now: Date = new Date()): ProjectScheduleState {
   if (!project.end_date) return 'unscheduled'
