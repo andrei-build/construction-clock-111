@@ -10,7 +10,7 @@ import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from 
 import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
 import { isEffectiveOpenTask } from '../lib/task-status'
 import MediaComments from '../components/MediaComments'
-import { deadlineStatus, statusDotClass } from './ProjectHub'
+import { getDeadlineInfo, statusDotClass } from './project-hub/status'
 import { formatProjectCountdown } from '../lib/project-schedule'
 
 // F29: разбираем вставленную пару «широта, долгота» ("47.61, -122.33", "47.61 -122.33").
@@ -64,8 +64,12 @@ export default function Projects() {
   // F64: non-error notice for an action queued while offline (shown with a warn tone).
   const [taskNotice, setTaskNotice] = useState<string | null>(null)
 
-  const load = () => Promise.all([getProjects(), getOpenTasks(), getProjectProfit(), getProjectClientRatings()])
-    .then(([p, tk, pf, cr]) => { setProjects(p); setTasks(tk); setProfits(pf); setClientRatings(cr) })
+  const load = async () => {
+    const [p, tk, pf] = await Promise.all([getProjects(), getOpenTasks(), getProjectProfit()])
+    const accountIds = p.map((project) => project.client_account_id).filter(Boolean) as string[]
+    const cr = await getProjectClientRatings(accountIds)
+    setProjects(p); setTasks(tk); setProfits(pf); setClientRatings(cr)
+  }
   useEffect(() => { load() }, [profile?.id])
 
   const canWrite = profile ? isManagerWrite(profile.role) : false
@@ -271,16 +275,12 @@ export default function Projects() {
         const ptasks = tasks.filter((tk) => tk.project_id === p.id && isEffectiveOpenTask(tk))
         const profit = profitFor(p.id)
         const showProfit = profit?.margin_pct !== null && profit?.margin_pct !== undefined && profit.profit_status && profit.profit_status !== 'grey'
-        const dl = deadlineStatus(p.end_date)
+        const dl = getDeadlineInfo(p).status
         const countdown = p.end_date ? formatProjectCountdown(p.end_date) : ''
         const rating = (p.client_account_id ? clientRatings.get(p.client_account_id) : undefined) as 'green' | 'amber' | 'red' | undefined
         return (
           <div key={p.id} className="card">
             <div className="project-title-row">
-              <span className="project-row-dots" aria-hidden="true">
-                <span className={statusDotClass(dl)} title={t('hub_deadline')} />
-                <span className={statusDotClass(rating ?? 'neutral')} title={t('hub_client_rating')} />
-              </span>
               <button className="inline-link project-name-link" onClick={() => navigate(`/projects/${p.id}`)}>{p.name}</button>
               {canWrite && (
                 <button className="btn ghost small project-copy-btn" title={t('copy_project')} aria-label={t('copy_project')} onClick={() => copyProject(p)}>📋</button>
@@ -294,6 +294,10 @@ export default function Projects() {
                   {formatMargin(profit.margin_pct!)}
                 </span>
               )}
+              <span className="project-row-dots" aria-hidden="true">
+                <span className={statusDotClass(dl)} title={t('hub_deadline')} />
+                <span className={statusDotClass(rating ?? 'neutral')} title={t('hub_client_rating')} />
+              </span>
               {countdown && <span className={`schedule-countdown-badge ${dl}`}>{countdown}</span>}
             </div>
             <div className="muted">{p.address}</div>

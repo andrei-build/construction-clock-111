@@ -1,5 +1,5 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectNote, AccountRating, GalleryVideo, GalleryPdf } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectNote, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
 import { todayStartISO } from './time'
 import { notifyMessagePush } from './push'
 
@@ -67,7 +67,7 @@ export async function getMapProjects(): Promise<Project[]> {
 
 export async function getProjectProfit(): Promise<ProjectProfit[]> {
   const { data, error } = await supabase.from('v_project_profit')
-    .select('project_id, margin_pct, profit_status')
+    .select('project_id, name, budget_amount, labor_hours, labor_cost, expenses_cost, total_cost, margin_pct, profit_status')
   if (error) return []
   return (data as ProjectProfit[]) ?? []
 }
@@ -1505,7 +1505,7 @@ export async function createCalendarEvent(p: Profile, input: {
   await logEvent(p, 'calendar.created', 'calendar_event', data.id, { title: input.title, event_type: input.event_type })
 }
 
-const ACCOUNT_SELECT = 'id, org_id, name, account_type, email, phone, address, notes, is_taxable, insurance_status, metadata, created_by, updated_by, version, created_at, updated_at, deleted_at, archived_at'
+const ACCOUNT_SELECT = 'id, org_id, name, account_type, email, phone, address, notes, is_taxable, insurance_status, client_rating, rating_note, metadata, created_by, updated_by, version, created_at, updated_at, deleted_at, archived_at'
 const CONTACT_SELECT = 'id, org_id, account_id, name, title, email, phone, is_primary, notes, created_at, updated_at, deleted_at'
 const CLIENT_PROJECT_SELECT = 'id, name, status, client_account_id'
 const CLIENT_DOCUMENT_SELECT = 'id, org_id, account_id, project_id, doc_type, status, number, title, total, balance, issue_date'
@@ -1949,6 +1949,9 @@ export async function getProjectFileDownloadUrl(file: FileRow): Promise<string> 
   return signed.url
 }
 
+const PROJECT_HUB_PROJECT_SELECT = 'id, org_id, name, address, notes, status, gps_radius_m, start_date, end_date, client_account_id, budget_amount, lat, lng, archived_at, deleted_at'
+const PROJECT_HUB_ACCOUNT_SELECT = 'id, name, account_type, phone, email, client_rating, rating_note'
+
 // Один проект по id — для «Хаба проекта». Без фильтра по статусу (RLS держит org-скоуп).
 export async function getProjectById(projectId: string): Promise<Project | null> {
   const { data, error } = await supabase.from('projects')
@@ -1957,6 +1960,38 @@ export async function getProjectById(projectId: string): Promise<Project | null>
     .maybeSingle()
   if (error) throw error
   return (data as Project | null) ?? null
+}
+
+// Основной пакет данных Project Hub: проект + строка прибыли + клиентский аккаунт.
+export async function getProjectHub(projectId: string): Promise<ProjectHubData> {
+  const { data: projectRow, error: projectError } = await supabase.from('projects')
+    .select(PROJECT_HUB_PROJECT_SELECT)
+    .eq('id', projectId)
+    .maybeSingle()
+  if (projectError) throw projectError
+
+  const project = (projectRow as Project | null) ?? null
+  if (!project) return { project: null, profit: null, account: null }
+
+  const profitPromise = supabase.from('v_project_profit')
+    .select('project_id, name, budget_amount, labor_hours, labor_cost, expenses_cost, total_cost, margin_pct, profit_status')
+    .eq('project_id', projectId)
+    .maybeSingle()
+
+  const accountPromise = project.client_account_id
+    ? supabase.from('accounts')
+      .select(PROJECT_HUB_ACCOUNT_SELECT)
+      .eq('id', project.client_account_id)
+      .maybeSingle()
+    : Promise.resolve({ data: null, error: null })
+
+  const [profitResult, accountResult] = await Promise.all([profitPromise, accountPromise])
+
+  return {
+    project,
+    profit: profitResult.error ? null : ((profitResult.data as ProjectProfit | null) ?? null),
+    account: accountResult.error ? null : ((accountResult.data as Account | null) ?? null),
+  }
 }
 
 // Рейтинг клиента (accounts.client_rating/rating_note) для клиентского аккаунта проекта.
@@ -1970,11 +2005,15 @@ export async function getAccountRating(accountId: string): Promise<AccountRating
 }
 
 // Рейтинги клиентов пачкой (id аккаунта -> client_rating) — для кружка в списке проектов.
-export async function getProjectClientRatings(): Promise<Map<string, string>> {
-  const { data, error } = await supabase.from('accounts')
+export async function getProjectClientRatings(accountIds?: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const ids = [...new Set((accountIds ?? []).filter(Boolean))]
+  if (accountIds && ids.length === 0) return out
+  let query = supabase.from('accounts')
     .select('id, client_rating')
     .not('client_rating', 'is', null)
-  const out = new Map<string, string>()
+  if (ids.length > 0) query = query.in('id', ids)
+  const { data, error } = await query
   if (error) return out
   for (const row of (data ?? []) as Array<{ id: string; client_rating: string | null }>) {
     if (row.client_rating) out.set(row.id, row.client_rating)
@@ -1983,34 +2022,54 @@ export async function getProjectClientRatings(): Promise<Map<string, string>> {
 }
 
 // Заметки проекта (project_notes): закреплённые сверху, потом новейшие. Мягко удалённые прячем.
-// author тянем embed-ом author:profiles(name) — author_id единственный FK в profiles.
-const PROJECT_NOTE_SELECT = 'id, org_id, project_id, author_id, body, pinned, created_at, updated_at, author:profiles(name)'
+// author тянем embed-ом author:profiles(name); если схема требует явный FK, падаем на fallback.
+const PROJECT_NOTE_SELECT = 'id, org_id, project_id, author_id, body, pinned, created_at, updated_at, deleted_at, author:profiles(name)'
+const PROJECT_NOTE_SELECT_FK = 'id, org_id, project_id, author_id, body, pinned, created_at, updated_at, deleted_at, author:profiles!project_notes_author_id_fkey(name)'
 
 export async function getProjectNotes(projectId: string): Promise<ProjectNote[]> {
-  const { data, error } = await supabase.from('project_notes')
-    .select(PROJECT_NOTE_SELECT)
-    .eq('project_id', projectId)
-    .is('deleted_at', null)
-    .order('pinned', { ascending: false })
-    .order('created_at', { ascending: false })
+  const run = (select: string) => supabase.from('project_notes')
+      .select(select)
+      .eq('project_id', projectId)
+      .is('deleted_at', null)
+      .order('pinned', { ascending: false })
+      .order('created_at', { ascending: false })
+  let { data, error } = await run(PROJECT_NOTE_SELECT)
+  if (error) {
+    const fallback = await run(PROJECT_NOTE_SELECT_FK)
+    data = fallback.data
+    error = fallback.error
+  }
   if (error) return []
   return (data as unknown as ProjectNote[]) ?? []
 }
 
 // Автор пишет заметку: RLS требует org_id=app.org_id() и author_id=auth.uid() (= profile.id).
 // created_at/updated_at ставит БД (defaults), их не пишем. Возвращаем строку с именем автора.
-export async function createProjectNote(p: Profile, projectId: string, body: string, pinned = false): Promise<ProjectNote> {
+export async function createProjectNote(p: Profile, projectId: string, body: string): Promise<ProjectNote> {
   const { data, error } = await supabase.from('project_notes')
-    .insert({ org_id: p.org_id, project_id: projectId, author_id: p.id, body: body.trim(), pinned })
-    .select(PROJECT_NOTE_SELECT)
+    .insert({ org_id: p.org_id, project_id: projectId, author_id: p.id, body: body.trim() })
+    .select('id')
     .single()
   if (error) throw error
-  await logEvent(p, 'project.note_added', 'project', projectId, { note_id: data.id, pinned })
-  return data as unknown as ProjectNote
+  await logEvent(p, 'project_note.created', 'project', projectId, {})
+  const rows = await getProjectNotes(projectId)
+  const created = rows.find((row) => row.id === String(data.id))
+  if (created) return created
+  return {
+    id: String(data.id),
+    org_id: p.org_id,
+    project_id: projectId,
+    author_id: p.id,
+    body: body.trim(),
+    pinned: false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    author: { name: p.name },
+  }
 }
 
 // Закрепить/открепить заметку. RLS UPDATE: автор ИЛИ менеджер.
-export async function toggleProjectNotePinned(id: string, pinned: boolean): Promise<void> {
+export async function setNotePinned(id: string, pinned: boolean): Promise<void> {
   const { error } = await supabase.from('project_notes')
     .update({ pinned })
     .eq('id', id)
@@ -2018,12 +2077,15 @@ export async function toggleProjectNotePinned(id: string, pinned: boolean): Prom
 }
 
 // Мягкое удаление заметки: deleted_at = now(). RLS UPDATE: автор ИЛИ менеджер.
-export async function softDeleteProjectNote(id: string): Promise<void> {
+export async function softDeleteNote(id: string): Promise<void> {
   const { error } = await supabase.from('project_notes')
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', id)
   if (error) throw error
 }
+
+export const toggleProjectNotePinned = setNotePinned
+export const softDeleteProjectNote = softDeleteNote
 
 export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number, gpsRadiusM?: number) {
   const row: Record<string, unknown> = { org_id: p.org_id, name, address, created_by: p.id }

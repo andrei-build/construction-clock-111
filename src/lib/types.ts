@@ -19,11 +19,15 @@ export interface Project {
   org_id: string
   name: string
   address: string | null
+  notes?: string | null
   status: 'planned' | 'active' | 'paused' | 'completed' | 'archived'
   client_account_id?: string | null
   start_date?: string | null
   end_date?: string | null
+  budget_amount?: number | null
   gps_radius_m: number
+  archived_at?: string | null
+  deleted_at?: string | null
   lat?: number | string | null
   lng?: number | string | null
   latitude?: number | string | null
@@ -38,6 +42,12 @@ export interface Project {
 
 export interface ProjectProfit {
   project_id: string
+  name?: string | null
+  budget_amount?: number | null
+  labor_hours?: number | null
+  labor_cost?: number | null
+  expenses_cost?: number | null
+  total_cost?: number | null
   margin_pct: number | null
   profit_status: 'green' | 'amber' | 'red' | 'grey' | null
 }
@@ -434,6 +444,7 @@ export interface ProjectNote {
   pinned: boolean
   created_at: string
   updated_at: string
+  deleted_at?: string | null
   author?: { name: string | null } | null
 }
 
@@ -441,6 +452,12 @@ export interface ProjectNote {
 export interface AccountRating {
   client_rating: 'green' | 'amber' | 'red' | null
   rating_note: string | null
+}
+
+export interface ProjectHubData {
+  project: Project | null
+  profit: ProjectProfit | null
+  account: Account | null
 }
 
 export type ReportKind = 'hours' | 'payroll' | 'expenses'

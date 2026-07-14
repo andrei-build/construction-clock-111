@@ -2300,13 +2300,29 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 
 /* «Хаб проекта»: горизонтальные вкладки, индикаторы обзора, заметки */
+.project-hub-screen {
+  max-width: 1120px;
+}
+.project-hub-head {
+  gap: 12px;
+}
+.project-hub-head > div {
+  min-width: 0;
+}
+.project-hub-head .badge {
+  flex: 0 0 auto;
+}
 .hub-tabs {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   margin-bottom: 12px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
 }
 .hub-tabs button {
+  flex: 0 0 auto;
   min-height: 40px;
   padding: 0 14px;
   border: 0;
@@ -2338,12 +2354,22 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-size: 12px;
   font-weight: 800;
 }
-.hub-overview {
+.hub-tab-panel {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
 }
-.hub-directions { grid-column: 1 / -1; }
+.hub-overview-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+.hub-indicator {
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
 .hub-indicator-head {
   display: flex;
   align-items: center;
@@ -2351,7 +2377,45 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin-bottom: 8px;
 }
 .hub-indicator-head .status-dot { margin-top: 0; }
+.hub-indicator-value {
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.hub-dates-row,
+.hub-breakdown {
+  margin-top: 8px;
+}
+.hub-tile-explain {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+}
 .hub-rating-note { margin-top: 6px; font-style: italic; }
+.hub-quick-facts h2 {
+  margin-top: 0;
+}
+.hub-fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.hub-fact {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.hub-fact-wide {
+  grid-column: 1 / -1;
+}
+.hub-project-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 /* График проекта: прогресс-бар прошедшего срока + обратный отсчёт (F75). */
 .schedule-progress-block { margin-top: 8px; }
 .schedule-progress {
@@ -2380,6 +2444,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .schedule-countdown-badge.amber { color: var(--accent); }
 .schedule-countdown-badge.red { color: var(--red); }
 .hub-note-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.hub-note-form {
+  display: grid;
+  gap: 6px;
+}
 .hub-note.pinned { border-left: 3px solid var(--accent); }
 .hub-note-head {
   display: flex;
@@ -2389,9 +2457,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-note-body { margin: 8px 0; white-space: pre-wrap; }
 .hub-note-actions { gap: 8px; }
+.hub-confirm-inline {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.hub-confirm-actions {
+  justify-content: flex-start;
+}
+.hub-task-card {
+  margin-bottom: 0;
+}
 .hub-placeholder h2 { margin-bottom: 8px; }
-.project-row-dots { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; }
+.project-row-dots { display: inline-flex; align-items: center; gap: 6px; margin: 0; flex: 0 0 auto; }
 .project-row-dots .status-dot { margin-top: 0; }
+
+@media (min-width: 900px) {
+  .hub-overview-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
 
 /* Check-out confirmation (Cancel — stay checked in) */
 .confirm-backdrop {

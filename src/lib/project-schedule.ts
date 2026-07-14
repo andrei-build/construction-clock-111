@@ -11,10 +11,10 @@
 //   almost_due   — осталось ≤ 10% срока (red);
 //   overdue      — сегодня позже конца дня end_date (red).
 //
-// CC's traffic-light deadlineStatus() (ProjectHub.tsx) остаётся как есть; здесь —
+// CC's traffic-light helper lives in screens/project-hub/status; здесь —
 // более богатый статус поверх тех же двух полей, плюс проценты и обратный отсчёт.
 
-import type { DeadlineStatus } from '../screens/ProjectHub'
+import type { TrafficStatus } from '../screens/project-hub/status'
 
 export type ProjectScheduleState =
   | 'unscheduled'
@@ -85,8 +85,8 @@ export function projectScheduleState(project: ProjectSchedule, now: Date = new D
 }
 
 // Проекция богатого состояния на существующий светофор (red/amber/green/neutral),
-// чтобы не ломать вызовы deadlineStatus() и statusDotClass().
-const STATE_TO_DEADLINE: Record<ProjectScheduleState, DeadlineStatus> = {
+// чтобы не ломать вызовы statusDotClass().
+const STATE_TO_DEADLINE: Record<ProjectScheduleState, TrafficStatus> = {
   unscheduled: 'neutral',
   not_started: 'green',
   on_track: 'green',
@@ -95,7 +95,7 @@ const STATE_TO_DEADLINE: Record<ProjectScheduleState, DeadlineStatus> = {
   overdue: 'red',
 }
 
-export function scheduleStateToDeadline(state: ProjectScheduleState): DeadlineStatus {
+export function scheduleStateToDeadline(state: ProjectScheduleState): TrafficStatus {
   return STATE_TO_DEADLINE[state]
 }
 
