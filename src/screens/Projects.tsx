@@ -8,6 +8,7 @@ import {
   getProjectProfit,
   getProjectClientRatings,
   getTeam,
+  getTodayEvents,
   createProject,
   updateProject,
   markMaterialStatus,
@@ -64,6 +65,9 @@ export default function Projects() {
   const [team, setTeam] = useState<Profile[]>([])
   const [profits, setProfits] = useState<ProjectProfit[]>([])
   const [clientRatings, setClientRatings] = useState<Map<string, string>>(new Map())
+  // PROJ-1: сколько человек сегодня отметилось на объекте (check_in за сегодня), по проекту.
+  // Один общий запрос getTodayEvents() на весь список — НЕ N+1.
+  const [peopleTodayByProject, setPeopleTodayByProject] = useState<Map<string, number>>(new Map())
   const [adding, setAdding] = useState(false)
   // F76: id редактируемого проекта (null — форма в режиме создания).
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -83,10 +87,23 @@ export default function Projects() {
   const [taskNotice, setTaskNotice] = useState<string | null>(null)
 
   const load = async () => {
-    const [p, tk, pf, people] = await Promise.all([getProjects(), getOpenTasks(), getProjectProfit(), getTeam()])
+    const [p, tk, pf, people, todayEv] = await Promise.all([
+      getProjects(), getOpenTasks(), getProjectProfit(), getTeam(), getTodayEvents(),
+    ])
     const accountIds = p.map((project) => project.client_account_id).filter(Boolean) as string[]
     const cr = await getProjectClientRatings(accountIds)
+    // Уникальные работники, отметившиеся сегодня (check_in) на каждом объекте.
+    const byProject = new Map<string, Set<string>>()
+    for (const ev of todayEv) {
+      if (ev.event_type !== 'check_in' || !ev.project_id) continue
+      const set = byProject.get(ev.project_id) ?? new Set<string>()
+      set.add(ev.profile_id)
+      byProject.set(ev.project_id, set)
+    }
+    const peopleToday = new Map<string, number>()
+    for (const [projectId, set] of byProject) peopleToday.set(projectId, set.size)
     setProjects(p); setTasks(tk); setProfits(pf); setTeam(people); setClientRatings(cr)
+    setPeopleTodayByProject(peopleToday)
   }
   useEffect(() => { load() }, [profile?.id])
   useEffect(() => {
@@ -316,6 +333,7 @@ export default function Projects() {
         const dl = getDeadlineInfo(p).status
         const countdown = p.end_date ? formatProjectCountdown(p.end_date) : ''
         const rating = (p.client_account_id ? clientRatings.get(p.client_account_id) : undefined) as 'green' | 'amber' | 'red' | undefined
+        const peopleToday = peopleTodayByProject.get(p.id) ?? 0
         return (
           <div key={p.id} className="card">
             <div className="project-title-row">
@@ -338,7 +356,23 @@ export default function Projects() {
               </span>
               {countdown && <span className={`schedule-countdown-badge ${dl}`}>{countdown}</span>}
             </div>
-            <div className="muted">{p.address}</div>
+            <div className="project-card-meta">
+              {p.address && <span className="muted project-card-address">📍 {p.address}</span>}
+              <span
+                className="project-card-chip"
+                title={t('projects_card_open_tasks').replace('{n}', String(ptasks.length))}
+              >
+                🔨 {ptasks.length}
+              </span>
+              {peopleToday > 0 && (
+                <span
+                  className="project-card-chip on-site"
+                  title={t('projects_card_people_today').replace('{n}', String(peopleToday))}
+                >
+                  👷 {peopleToday}
+                </span>
+              )}
+            </div>
             {ptasks.length > 0 && <h2>{t('tasks')}</h2>}
             {ptasks.map((tk) => {
               const photo = photoByTask[tk.id]

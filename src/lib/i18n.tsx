@@ -785,6 +785,18 @@ const dict: Record<string, Record<Lang, string>> = {
   unit_meters: { ru: 'м', en: 'm', es: 'm' },
   hub_project_notes: { ru: 'Заметки проекта', en: 'Project notes', es: 'Notas del proyecto' },
   hub_project_notes_empty: { ru: 'Заметок в карточке проекта нет', en: 'No notes on the project record', es: 'No hay notas en el registro del proyecto' },
+  // PROJ-1: сводка «Обзор» — команда проекта, счётчики с переходом по вкладкам.
+  hub_overview_team: { ru: 'Команда проекта', en: 'Project team', es: 'Equipo del proyecto' },
+  hub_overview_on_shift_now: { ru: 'Сейчас в смене: {n}', en: '{n} on shift now', es: '{n} en turno ahora' },
+  hub_overview_on_shift_badge: { ru: 'В смене', en: 'On shift', es: 'En turno' },
+  hub_overview_view_time: { ru: 'Открыть вкладку «Время»', en: 'Open time tab', es: 'Abrir pestaña de tiempo' },
+  hub_overview_team_empty: { ru: 'На проекте пока никто не работал', en: 'Nobody has worked on this project yet', es: 'Nadie ha trabajado en este proyecto aún' },
+  hub_overview_open_tasks: { ru: 'Открытые задачи', en: 'Open tasks', es: 'Tareas abiertas' },
+  hub_overview_counts_hint: { ru: 'Нажмите, чтобы открыть вкладку', en: 'Tap to open the tab', es: 'Toque para abrir la pestaña' },
+  // PROJ-1: карточки списка проектов — счётчики «сегодня на объекте» и «открытые задачи».
+  projects_card_people_today: { ru: 'Сегодня на объекте: {n}', en: '{n} on site today', es: '{n} en obra hoy' },
+  projects_card_open_tasks: { ru: 'Открытых задач: {n}', en: '{n} open tasks', es: '{n} tareas abiertas' },
+  projects_card_open_hub: { ru: 'Открыть проект', en: 'Open project', es: 'Abrir proyecto' },
   hub_note_new: { ru: 'Новая заметка', en: 'New note', es: 'Nueva nota' },
   hub_note_placeholder: { ru: 'Напишите заметку по проекту…', en: 'Write a project note…', es: 'Escriba una nota del proyecto…' },
   hub_note_pin: { ru: 'Закрепить', en: 'Pin', es: 'Fijar' },
