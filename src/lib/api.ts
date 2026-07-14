@@ -1984,6 +1984,9 @@ export interface PayPeriodItemInput {
   profile_id: string
   regular_hours: number
   overtime_hours: number
+  // REP-1: часы проезда за период (pay_period_items.travel_hours, миграция 0032). ТОЛЬКО разбивка —
+  // оплата проезда уже входит в total (см. closePayPeriod: total пишется без изменений).
+  travel_hours: number
   hourly_rate: number | null
   total: number
 }
@@ -2033,6 +2036,10 @@ export async function closePayPeriod(p: Profile, input: {
       profile_id: item.profile_id,
       regular_hours: item.regular_hours,
       overtime_hours: item.overtime_hours,
+      // REP-1: travel_hours — ТОЛЬКО разбивка. Оплата проезда уже сидит в item.total
+      // (buildPayrollRows: total = reg*rate + ot*rate*1.5 + travel*rate). НЕ прибавляем
+      // проезд к total повторно, деньги (total) не трогаем.
+      travel_hours: item.travel_hours,
       overtime_multiplier: 1.5,
       hourly_rate: item.hourly_rate,
       bonus: 0,
@@ -2103,10 +2110,12 @@ export async function getYearlyPayrollReport(fromDate: string, toDate: string): 
   if (periods.length === 0) return []
 
   const periodIds = periods.map((p) => p.id)
+  // REP-1: travel_hours (миграция 0032) — разбивка часов проезда. Деньги (total) читаем как есть,
+  // travel уже входит в total, поэтому суммы $ не меняются — добавляется только колонка часов.
   const { data: itemRows } = await supabase.from('pay_period_items')
-    .select('pay_period_id, profile_id, regular_hours, overtime_hours, total')
+    .select('pay_period_id, profile_id, regular_hours, overtime_hours, travel_hours, total')
     .in('pay_period_id', periodIds)
-  const items = (itemRows ?? []) as Array<{ pay_period_id: string; profile_id: string; regular_hours: number | null; overtime_hours: number | null; total: number | null }>
+  const items = (itemRows ?? []) as Array<{ pay_period_id: string; profile_id: string; regular_hours: number | null; overtime_hours: number | null; travel_hours: number | null; total: number | null }>
   if (items.length === 0) return []
 
   const workerIds = [...new Set(items.map((i) => i.profile_id))]
@@ -2128,15 +2137,19 @@ export async function getYearlyPayrollReport(fromDate: string, toDate: string): 
       worker_role: prof?.role ?? null,
       regular_hours: 0,
       overtime_hours: 0,
+      travel_hours: 0,
       total_hours: 0,
       paid: 0,
       periods: 0,
     }
     const reg = Number(it.regular_hours) || 0
     const ot = Number(it.overtime_hours) || 0
+    const travel = Number(it.travel_hours) || 0
     row.regular_hours += reg
     row.overtime_hours += ot
-    row.total_hours += reg + ot
+    row.travel_hours += travel
+    // total_hours = обычные + сверхурочные + проезд (только часы). paid ($) не трогаем.
+    row.total_hours += reg + ot + travel
     row.paid += Number(it.total) || 0
     byWorker.set(it.profile_id, row)
     const set = periodsByWorker.get(it.profile_id) ?? new Set<string>()
@@ -2190,6 +2203,18 @@ export async function getCalendarEvents(startISO: string, endISO: string): Promi
     .select('id, org_id, title, event_type, starts_at, permit_number, inspection_status')
     .gte('starts_at', startISO)
     .lt('starts_at', endISO)
+    .order('starts_at')
+  if (error) return []
+  return (data as CalendarEvent[]) ?? []
+}
+
+// REP-1: события календаря ОДНОГО проекта (calendar_events.project_id существует) — секция
+// «События проекта» на вкладке «Обзор» хаба. Узкий select + фильтр по project_id; org-wide
+// /calendar и getCalendarEvents не трогаем. error → [] (мягкая деградация). Порядок по дате.
+export async function getProjectCalendarEvents(projectId: string): Promise<CalendarEvent[]> {
+  const { data, error } = await supabase.from('calendar_events')
+    .select('id, org_id, title, event_type, starts_at, ends_at, location, project_id, permit_number, inspection_status, notes')
+    .eq('project_id', projectId)
     .order('starts_at')
   if (error) return []
   return (data as CalendarEvent[]) ?? []
@@ -2332,10 +2357,14 @@ export async function updateDealStage(p: Profile, deal: Deal, stage: DealStage) 
   await logEvent(p, 'sales.stage_changed', 'deal', deal.id, { from: deal.stage, to: stage, title: deal.title })
 }
 
+// REP-1: report_payroll пересоздан аддитивно (доп. колонки regular/overtime/travel_hours, total_pay
+// уже включает проезд) — generic-обёртка отдаёт все колонки RPC как есть, менять её не нужно.
+// report_travel — новый RPC report_travel_hours(worker_name, travel_hours) для отдельной разбивки проезда.
 const reportRpc: Record<ReportKind, string> = {
   hours: 'report_hours',
   payroll: 'report_payroll',
   expenses: 'report_expenses',
+  travel: 'report_travel_hours',
 }
 
 export async function getReportRows(kind: ReportKind, from: string, to: string): Promise<ReportRow[]> {

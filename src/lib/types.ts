@@ -514,14 +514,16 @@ export interface ArchivePayItem {
 }
 
 // PAY-1: строка годового отчёта по работнику (часы + оплачено $) для бухгалтерии / L&I.
-// hours = regular + overtime из pay_period_items (время в пути не разбито отдельной колонкой —
-// оно уже входит в paid $ через item.total, см. BACKEND-примечание PAY-1).
+// REP-1: travel_hours теперь пишется в pay_period_items (миграция 0032) — разбиваем его
+// отдельной колонкой. total_hours = regular + overtime + travel. Деньги (paid) НЕ меняются:
+// item.total уже включает оплату проезда, travel_hours — только разбивка часов.
 export interface YearlyPayReportRow {
   profile_id: string
   worker_name: string | null
   worker_role: string | null
   regular_hours: number
   overtime_hours: number
+  travel_hours: number
   total_hours: number
   paid: number
   periods: number
@@ -648,7 +650,7 @@ export interface ProjectHubData {
   account: Account | null
 }
 
-export type ReportKind = 'hours' | 'payroll' | 'expenses'
+export type ReportKind = 'hours' | 'payroll' | 'expenses' | 'travel'
 export type ReportCell = string | number | boolean | null
 export type ReportRow = Record<string, ReportCell>
 

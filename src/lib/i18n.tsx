@@ -459,6 +459,17 @@ const dict: Record<string, Record<Lang, string>> = {
   report_hours: { ru: 'Часы', en: 'Hours', es: 'Horas' },
   report_payroll: { ru: 'Зарплата', en: 'Payroll', es: 'Nómina' },
   report_expenses: { ru: 'Расходы', en: 'Expenses', es: 'Gastos' },
+  // REP-1: отдельная вкладка отчёта «Проезд» (RPC report_travel_hours).
+  report_travel: { ru: 'Проезд', en: 'Travel', es: 'Viaje' },
+  // REP-1: заголовки колонок отчётов (Reports.tsx columnLabel → report_col_<column>).
+  report_col_worker_name: { ru: 'Работник', en: 'Worker', es: 'Trabajador' },
+  report_col_role: { ru: 'Роль', en: 'Role', es: 'Rol' },
+  report_col_hourly_rate: { ru: 'Ставка', en: 'Rate', es: 'Tarifa' },
+  report_col_regular_hours: { ru: 'Обычные часы', en: 'Regular hours', es: 'Horas regulares' },
+  report_col_overtime_hours: { ru: 'Сверхурочные', en: 'Overtime', es: 'Horas extra' },
+  report_col_travel_hours: { ru: 'Проезд', en: 'Travel', es: 'Viaje' },
+  report_col_total_hours: { ru: 'Всего часов', en: 'Total hours', es: 'Horas totales' },
+  report_col_total_pay: { ru: 'К оплате', en: 'Total pay', es: 'Pago total' },
   range_current_period: { ru: 'Текущий период', en: 'Current period', es: 'Periodo actual' },
   range_2w: { ru: '2 недели', en: '2 Weeks', es: '2 semanas' },
   range_month: { ru: 'Месяц', en: 'Month', es: 'Mes' },
@@ -775,6 +786,8 @@ const dict: Record<string, Record<Lang, string>> = {
   stores_empty: { ru: 'Магазинов пока нет', en: 'No stores yet', es: 'Aún no hay tiendas' },
   stores_visits: { ru: 'Заезды', en: 'Store visits', es: 'Visitas' },
   stores_no_visits: { ru: 'Заездов пока нет', en: 'No visits yet', es: 'Aún no hay visitas' },
+  // REP-1/0033: открытый заезд (exited_at IS NULL) — работник сейчас в магазине.
+  stores_visit_open: { ru: 'Сейчас в магазине', en: 'In store now', es: 'En tienda ahora' },
   stores_paid: { ru: 'Оплачено', en: 'Paid', es: 'Pagado' },
   stores_unpaid: { ru: 'Не оплачено', en: 'Unpaid', es: 'No pagado' },
   stores_unknown_worker: { ru: 'Работник', en: 'Worker', es: 'Trabajador' },
@@ -1077,6 +1090,10 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_overview_schedule_empty: { ru: 'Назначений по проекту пока нет', en: 'No project assignments yet', es: 'Aún no hay asignaciones del proyecto' },
   hub_schedule_undated: { ru: 'Без даты', en: 'Undated', es: 'Sin fecha' },
   hub_overview_schedule_calendar_pending: { ru: 'События календаря проекта появятся, когда бэкенд начнёт отдавать их по проекту.', en: 'Project calendar events will appear once the backend returns them per project.', es: 'Los eventos del calendario del proyecto aparecerán cuando el backend los devuelva por proyecto.' },
+  // REP-1: секция «События проекта» на вкладке «Обзор» хаба (calendar_events.project_id).
+  hub_overview_project_events: { ru: 'СОБЫТИЯ ПРОЕКТА', en: 'PROJECT EVENTS', es: 'EVENTOS DEL PROYECTO' },
+  hub_overview_events_empty: { ru: 'Предстоящих событий нет', en: 'No upcoming events', es: 'No hay eventos próximos' },
+  hub_overview_open_calendar: { ru: 'Открыть календарь', en: 'Open calendar', es: 'Abrir calendario' },
   hub_note_new: { ru: 'Новая заметка', en: 'New note', es: 'Nueva nota' },
   hub_note_placeholder: { ru: 'Напишите заметку по проекту…', en: 'Write a project note…', es: 'Escriba una nota del proyecto…' },
   hub_note_pin: { ru: 'Закрепить', en: 'Pin', es: 'Fijar' },

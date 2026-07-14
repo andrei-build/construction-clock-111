@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useI18n } from '../../lib/i18n'
-import { getOpenTasks, getProjectHubFiles, getProjectNotes, getProjectTimeEvents, getScheduleAssignments, getTeam } from '../../lib/api'
+import { getOpenTasks, getProjectCalendarEvents, getProjectHubFiles, getProjectNotes, getProjectTimeEvents, getScheduleAssignments, getTeam } from '../../lib/api'
 import { isEffectiveOpenTask } from '../../lib/task-status'
-import type { Account, Profile, Project, ProjectProfit, ProjectTimeEvent, ScheduleAssignment } from '../../lib/types'
+import type { Account, CalendarEvent, Profile, Project, ProjectProfit, ProjectTimeEvent, ScheduleAssignment } from '../../lib/types'
 import { getDeadlineInfo, statusDotClass, type TrafficStatus } from './status'
 
 type TileKey = 'deadline' | 'profit' | 'client'
@@ -123,6 +124,13 @@ function formatDate(value: string | null | undefined) {
   return date.toLocaleDateString()
 }
 
+// REP-1: дата+время события календаря (starts_at — полный ISO-таймстамп, не YYYY-MM-DD).
+function formatDateTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
 function formatMoney(value: number | null | undefined) {
   if (value === null || value === undefined) return null
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value)
@@ -140,10 +148,13 @@ function normalizedProfitStatus(profit: ProjectProfit | null): TrafficStatus {
 
 export default function OverviewTab({ project, profit, account, managerView, onOpenTab }: OverviewTabProps) {
   const { t } = useI18n()
+  const navigate = useNavigate()
   const [expanded, setExpanded] = useState<TileKey | null>(null)
   const [team, setTeam] = useState<TeamAggregate | null>(null)
   const [counts, setCounts] = useState<OverviewCounts | null>(null)
   const [aggLoading, setAggLoading] = useState(true)
+  // REP-1: события календаря проекта (calendar_events.project_id) — секция «События проекта».
+  const [projectEvents, setProjectEvents] = useState<CalendarEvent[]>([])
   // PROJ-1b STEP 3: расписание проекта (назначения) + имена команды; секция сворачиваемая.
   const [scheduleAssignments, setScheduleAssignments] = useState<ScheduleAssignment[]>([])
   const [scheduleNames, setScheduleNames] = useState<Map<string, string>>(new Map())
@@ -156,7 +167,7 @@ export default function OverviewTab({ project, profit, account, managerView, onO
     ;(async () => {
       setAggLoading(true)
       try {
-        const [openTasks, notes, events, files, scheduleRows, teamRows] = await Promise.all([
+        const [openTasks, notes, events, files, scheduleRows, teamRows, calendarEvents] = await Promise.all([
           getOpenTasks(),
           getProjectNotes(project.id),
           managerView ? getProjectTimeEvents(project.id) : Promise.resolve([] as ProjectTimeEvent[]),
@@ -165,6 +176,8 @@ export default function OverviewTab({ project, profit, account, managerView, onO
           // org-wide; фильтруем по проекту ниже. Имена — из getTeam (назначенный мог ещё не отмечаться).
           managerView ? getScheduleAssignments() : Promise.resolve([] as ScheduleAssignment[]),
           managerView ? getTeam() : Promise.resolve([] as Profile[]),
+          // REP-1: события календаря проекта — только менеджеру (секция и маршрут /calendar manager-only).
+          managerView ? getProjectCalendarEvents(project.id) : Promise.resolve([] as CalendarEvent[]),
         ])
         if (!mounted) return
         const openForProject = openTasks.filter(
@@ -174,12 +187,14 @@ export default function OverviewTab({ project, profit, account, managerView, onO
         setTeam(managerView ? aggregateTeam(events) : null)
         setScheduleAssignments(scheduleRows.filter((a) => a.project_id === project.id))
         setScheduleNames(new Map(teamRows.map((m) => [m.id, m.name])))
+        setProjectEvents(calendarEvents)
       } catch {
         if (mounted) {
           setCounts(null)
           setTeam(null)
           setScheduleAssignments([])
           setScheduleNames(new Map())
+          setProjectEvents([])
         }
       } finally {
         if (mounted) setAggLoading(false)
@@ -232,6 +247,17 @@ export default function OverviewTab({ project, profit, account, managerView, onO
     }),
     [scheduleAssignments, scheduleNames, t],
   )
+
+  // REP-1: предстоящие события проекта (starts_at ≥ начало сегодняшнего дня), ближайшие сверху.
+  // Счётчик в заголовке — по предстоящим; прошедшие в секции не показываем (они уже в /calendar).
+  const upcomingEvents = useMemo(() => {
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+    const from = todayStart.getTime()
+    return projectEvents
+      .filter((e) => new Date(e.starts_at).getTime() >= from)
+      .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+  }, [projectEvents])
 
   const toggle = (key: TileKey) => setExpanded((current) => (current === key ? null : key))
 
@@ -376,12 +402,41 @@ export default function OverviewTab({ project, profit, account, managerView, onO
                   ))}
                 </ul>
               )}
-              {/* BACKEND REQUEST: getProjectCalendarEvents(projectId) — getCalendarEvents org-wide и
-                  его select НЕ содержит project_id, поэтому события календаря нельзя отфильтровать по
-                  проекту. Нужен хелпер getProjectCalendarEvents(projectId) ИЛИ project_id в select
-                  getCalendarEvents, чтобы показать «события календаря проекта» рядом с назначениями. */}
-              <p className="muted hub-schedule-note">{t('hub_overview_schedule_calendar_pending')}</p>
             </>
+          )}
+        </div>
+      )}
+
+      {/* REP-1: «События проекта» — календарные события, привязанные к проекту (calendar_events.project_id).
+          Счётчик предстоящих в заголовке; клик по событию → org-wide /calendar (его не трогаем).
+          Только менеджеру: /calendar — manager-only маршрут, как и соседние секции обзора. */}
+      {managerView && (
+        <div className="card hub-overview-events">
+          <div className="hub-overview-team-head">
+            <h2>
+              {t('hub_overview_project_events')}
+              {upcomingEvents.length > 0 && <span className="badge hub-events-count">{upcomingEvents.length}</span>}
+            </h2>
+            <button type="button" className="inline-link" onClick={() => navigate('/calendar')}>{t('hub_overview_open_calendar')}</button>
+          </div>
+          {aggLoading && <div className="muted">{t('loading')}</div>}
+          {!aggLoading && upcomingEvents.length === 0 && (
+            <div className="muted">{t('hub_overview_events_empty')}</div>
+          )}
+          {!aggLoading && upcomingEvents.length > 0 && (
+            <ul className="hub-overview-events-list">
+              {upcomingEvents.slice(0, 5).map((event) => (
+                <li key={event.id}>
+                  <button type="button" className="hub-event-row" onClick={() => navigate('/calendar')}>
+                    <span className="hub-event-name">
+                      <span className={`badge ${event.event_type === 'inspection' ? 'amber' : 'blue'}`}>{t(`event_${event.event_type}`)}</span>
+                      {event.title}
+                    </span>
+                    <span className="muted hub-event-date">{formatDateTime(event.starts_at)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}
