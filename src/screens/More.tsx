@@ -3,6 +3,7 @@ import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { isManagerRole } from '../lib/types'
 import AboutPanel from '../components/AboutPanel'
+import PushToggle from '../components/PushToggle'
 
 export default function More() {
   const { profile, logout } = useAuth()
@@ -41,6 +42,9 @@ export default function More() {
 
       <h2>{t('communication')}</h2>
       <Link to="/messages" className="btn ghost small more-link">{t('messages')}</Link>
+
+      <h2>{t('push_section')}</h2>
+      <PushToggle />
 
       {salesAccess && (
         <>
