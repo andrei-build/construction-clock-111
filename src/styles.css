@@ -2853,6 +2853,102 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .project-row-dots { display: inline-flex; align-items: center; gap: 6px; margin: 0; flex: 0 0 auto; }
 .project-row-dots .status-dot { margin-top: 0; }
 
+/* PROJ-1b: контролы над списком /projects — фильтр статуса / поиск / сортировка / счётчик. */
+.projects-controls { display: grid; gap: 8px; margin-bottom: 12px; }
+.projects-filter-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.projects-filter-tabs button {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.28));
+  background: transparent;
+  color: var(--text-secondary, inherit);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.projects-filter-tabs button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(191, 162, 52, 0.12);
+}
+.projects-controls-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.projects-search { flex: 1 1 200px; min-width: 0; }
+.projects-sort { flex: 0 0 auto; }
+.projects-count { margin: 0; }
+
+/* PROJ-1b: статус-строка карточки — бейдж статуса + график/просрочка + даты. */
+.project-status-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-top: 8px; }
+.project-status-badge { flex: 0 0 auto; }
+.project-status-health { font-size: 13px; font-weight: 700; }
+.project-status-line.red .project-status-health { color: var(--red); }
+.project-status-line.amber .project-status-health { color: var(--accent); }
+.project-status-dates { font-size: 12px; }
+
+/* PROJ-1b: строка адреса — адрес + копирование + GPS-бейдж. */
+.project-address-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.project-address-copy { padding: 2px 8px; }
+.project-gps-badge { flex: 0 0 auto; }
+
+/* PROJ-1b: кнопки навигации карточки. */
+.project-nav-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.project-nav-actions .btn { padding: 4px 10px; }
+.project-nav-go { font-weight: 700; }
+
+/* PROJ-1b: плитки статистики карточки. */
+.project-stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.project-stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--chip, rgba(127, 127, 127, 0.10));
+  text-align: left;
+}
+.project-stat-tile .muted { font-size: 10px; letter-spacing: 0.12em; }
+.project-stat-tile.as-button { border: none; cursor: pointer; color: inherit; font: inherit; }
+
+/* PROJ-1b: превью заметок карточки. */
+.project-notes-preview { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-top: 10px; }
+.project-notes-count { font-size: 12px; font-weight: 700; flex: 0 0 auto; }
+.project-notes-first { font-size: 13px; overflow-wrap: anywhere; }
+
+/* PROJ-1b: действия карточки. */
+.project-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.project-remove-btn { color: var(--red); }
+
+/* PROJ-1b STEP 3: сворачиваемая секция «Расписание проекта» на вкладке «Обзор». */
+.hub-overview-schedule { margin-top: 12px; }
+.hub-schedule-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.hub-schedule-toggle h2 { margin: 0; }
+.hub-schedule-caret { font-size: 14px; opacity: 0.7; }
+.hub-schedule-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.hub-schedule-day { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hub-schedule-date { flex: 0 0 auto; }
+.hub-schedule-workers { display: flex; flex-wrap: wrap; gap: 6px; }
+.hub-schedule-chip { font-weight: 600; }
+.hub-schedule-note { margin: 12px 0 0; font-size: 12px; }
+
+@media (min-width: 640px) {
+  .project-stat-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 @media (min-width: 900px) {
   .hub-overview-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
