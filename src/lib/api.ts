@@ -1,5 +1,5 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
 import { todayStartISO } from './time'
 import { notifyMessagePush } from './push'
 
@@ -14,9 +14,9 @@ export async function logEvent(p: Profile, eventType: string, entityType: string
   })
 }
 
-export type AppSettingsInput = Pick<AppSettings, 'default_language' | 'timezone' | 'overlong_shift_hours' | 'default_gps_radius_m' | 'paid_gap_alert_hours'>
+export type AppSettingsInput = Pick<AppSettings, 'default_language' | 'timezone' | 'overlong_shift_hours' | 'default_gps_radius_m' | 'geo_no_signal_minutes' | 'paid_gap_alert_hours'>
 
-const APP_SETTINGS_SELECT = 'org_id, default_language, timezone, overlong_shift_hours, default_gps_radius_m, paid_gap_alert_hours, settings, updated_by, updated_at'
+const APP_SETTINGS_SELECT = 'org_id, default_language, timezone, overlong_shift_hours, default_gps_radius_m, geo_no_signal_minutes, paid_gap_alert_hours, settings, updated_by, updated_at'
 
 export async function getAppSettings(): Promise<AppSettings | null> {
   const { data, error } = await supabase.from('app_settings')
@@ -553,6 +553,70 @@ export function subscribeToOrgEvents(orgId: string, onChange: () => void, channe
     .on(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'events', filter: `org_id=eq.${orgId}` },
+      () => onChange(),
+    )
+    .subscribe()
+  return () => { void supabase.removeChannel(channel) }
+}
+
+// ── GEO-1: live geolocation ───────────────────────────────────────────────────
+// Ping из открытой смены (worker/driver с активным GPS-согласием). Пишем свою строку в
+// live_locations (RLS ll_insert пускает свой worker_id). ВНИМАНИЕ: WKT-порядок координат —
+// сначала долгота, потом широта: POINT(lng lat). recorded_at ставит БД (default now());
+// ретенция ленты 48ч — чистит бэкенд, мы только вставляем.
+export async function insertLiveLocation(p: Profile, lat: number, lng: number, accuracyM: number | null) {
+  const { error } = await supabase.from('live_locations').insert({
+    org_id: p.org_id,
+    worker_id: p.id,
+    gps_point: `POINT(${lng} ${lat})`,
+    accuracy_m: accuracyM,
+  })
+  if (error) throw error
+}
+
+// Последние live-точки (view v_live_last_location, security_invoker, окно 12ч). Менеджер видит
+// всю орг., работник — только себя (RLS у базовой таблицы). Порядок — свежие сверху.
+export async function getLiveLastLocations(): Promise<LiveLastLocation[]> {
+  const { data, error } = await supabase.from('v_live_last_location')
+    .select('worker_id, name, role, lat, lng, accuracy_m, recorded_at, minutes_ago')
+    .order('recorded_at', { ascending: false })
+  if (error) return []
+  return ((data ?? []) as LiveLastLocation[]).filter(
+    (row) => row.worker_id && Number.isFinite(row.lat) && Number.isFinite(row.lng),
+  )
+}
+
+// Realtime: новые точки live_locations по орг. → обновляем «Сейчас на объектах» вживую.
+// Тот же контракт канала/очистки, что и subscribeToOrgEvents/subscribeToTaskChanges.
+export function subscribeToLiveLocations(orgId: string, onChange: () => void, channelName = 'live-locations') {
+  const channel = supabase
+    .channel(`${channelName}:${orgId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'live_locations', filter: `org_id=eq.${orgId}` },
+      () => onChange(),
+    )
+    .subscribe()
+  return () => { void supabase.removeChannel(channel) }
+}
+
+// Неразрешённые гео-риски смен (shift_geo_events, resolved_at IS NULL). Менеджер+ (RLS sge_select).
+// Колонки берём '*' — набор фиксирован миграцией 0028, но имена в select не хардкодим.
+export async function getOpenGeoEvents(): Promise<ShiftGeoEvent[]> {
+  const { data, error } = await supabase.from('shift_geo_events')
+    .select('*')
+    .is('resolved_at', null)
+  if (error) return []
+  return (data as ShiftGeoEvent[]) ?? []
+}
+
+// Realtime: INSERT (новый риск) + UPDATE (разрешение — проставлен resolved_at) держат список рисков свежим.
+export function subscribeToGeoEvents(orgId: string, onChange: () => void, channelName = 'geo-events') {
+  const channel = supabase
+    .channel(`${channelName}:${orgId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'shift_geo_events', filter: `org_id=eq.${orgId}` },
       () => onChange(),
     )
     .subscribe()

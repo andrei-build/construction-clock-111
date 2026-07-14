@@ -34,6 +34,7 @@ import Nav from './components/Nav'
 import BackButton from './components/BackButton'
 import { EntityDrawerProvider } from './components/EntityDrawer'
 import LocationConsentGate from './components/LocationConsentGate'
+import LiveLocationPinger from './components/LiveLocationPinger'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
 import OfflineFieldSync from './components/OfflineFieldSync'
 
@@ -49,6 +50,7 @@ export default function App() {
     <LocationConsentGate profile={profile}>
     <EntityDrawerProvider>
       <div className={`app ${manager ? 'manager-app' : ''}`}>
+        <LiveLocationPinger profile={profile} />
         <main className="app-content">
           <OfflineStatusBanner />
           <OfflineFieldSync />
