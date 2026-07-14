@@ -12,10 +12,11 @@ import {
   getVisibleProfileRates,
   getSuspiciousShifts,
   approveShiftReview,
+  getAppSettings,
   subscribeToTaskChanges,
   subscribeToOrgEvents,
 } from '../lib/api'
-import { shiftState, workedMs, fmtHours, fmtClock } from '../lib/time'
+import { shiftState, workedMs, fmtHours, fmtClock, computeTravelGaps, eventsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 import { isManagerWrite } from '../lib/types'
 import type { Profile, Project, TimeEvent, Task, EventRow, ProfileRate, SuspiciousShift } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
@@ -43,6 +44,8 @@ export default function Dashboard() {
   const [rates, setRates] = useState<ProfileRate[]>([])
   const [activity, setActivity] = useState<EventRow[]>([])
   const [suspicious, setSuspicious] = useState<SuspiciousShift[]>([])
+  const [timezone, setTimezone] = useState<string | null>(null)
+  const [alertHours, setAlertHours] = useState(DEFAULT_PAID_GAP_ALERT_HOURS)
   const [approvingId, setApprovingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -58,7 +61,7 @@ export default function Dashboard() {
       setLoading(true)
       setError(false)
       try {
-        const [e, tm, p, tk, a, doneTk, visibleRates] = await Promise.all([
+        const [e, tm, p, tk, a, doneTk, visibleRates, settings] = await Promise.all([
           getTodayEvents(),
           getTeam(),
           getProjects(),
@@ -66,10 +69,16 @@ export default function Dashboard() {
           getRecentActivity(),
           getDonePhotoTasks(),
           getVisibleProfileRates(),
+          getAppSettings(),
         ])
         const photoIds = await getTaskPhotoIds(doneTk.map((task) => task.id))
         const susp = canReviewShifts ? await getSuspiciousShifts() : []
         if (!mounted) return
+        // G1: часовой пояс организации + порог оповещения о разрыве (для подсветки время-в-пути).
+        const tz = settings?.timezone?.trim()
+        setTimezone(tz ? tz : null)
+        const gapAlert = Number(settings?.paid_gap_alert_hours)
+        setAlertHours(Number.isFinite(gapAlert) && gapAlert > 0 ? gapAlert : DEFAULT_PAID_GAP_ALERT_HOURS)
         setEvents(e)
         setTeam(tm)
         setProjects(p)
@@ -196,6 +205,19 @@ export default function Dashboard() {
           detail: `${worker.name} · ${last.gps_status}`,
         })
       }
+
+      // G1: оплачиваемый разрыв между сменами в один день сверх порога — всё равно оплачивается,
+      // но требует внимания. Строим смены из событий дня той же логикой пар, что и часы.
+      const travelGaps = computeTravelGaps(eventsToTravelShifts(sorted), timezone, alertHours)
+      for (const gap of travelGaps) {
+        if (!gap.overAlert) continue
+        items.push({
+          id: `gap-${worker.id}-${gap.startMs}`,
+          tone: 'amber',
+          title: t('risk_paid_gap'),
+          detail: `${worker.name} · ${fmtHm(gap.durationHours)} · ${t('payroll_travel_alert')}`,
+        })
+      }
     }
 
     for (const task of donePhotoTasks) {
@@ -210,7 +232,7 @@ export default function Dashboard() {
     }
 
     return items
-  }, [byWorker, donePhotoTasks, photoTaskIds, team, now, projects])
+  }, [byWorker, donePhotoTasks, photoTaskIds, team, now, projects, timezone, alertHours])
 
   const nextTask = useMemo(() => {
     const score = { urgent: 4, high: 3, medium: 2, low: 1 }

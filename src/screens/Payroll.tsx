@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { closePayPeriod, getAppSettings, getCurrentPayPeriod, getIntervalsBetween, getTeam, getVisibleProfileRates, logEvent, markPayPeriodPaid } from '../lib/api'
-import { orgWeekGrouping } from '../lib/time'
+import { orgWeekGrouping, computeTravelGaps, intervalsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 import type { PayPeriod, Profile, ProfileRate, WorkInterval } from '../lib/types'
 
 interface PeriodWindow {
@@ -16,6 +16,9 @@ interface PayrollRow {
   worker: Profile
   regularHours: number
   overtimeHours: number
+  // G1: оплачиваемое время в пути — отдельно от work-часов, но входит в total.
+  travelHours: number
+  overAlertGapMs: number // самый длинный разрыв сверх порога (0 — таких нет)
   rate: number | null
   total: number
 }
@@ -122,6 +125,7 @@ export default function Payroll() {
   const [intervals, setIntervals] = useState<WorkInterval[]>([])
   const [rates, setRates] = useState<ProfileRate[]>([])
   const [timezone, setTimezone] = useState<string | null>(null)
+  const [alertHours, setAlertHours] = useState(DEFAULT_PAID_GAP_ALERT_HOURS)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [working, setWorking] = useState(false)
@@ -149,6 +153,9 @@ export default function Payroll() {
         // Часовой пояс организации для границ суток/недель. Пусто → как раньше (пояс устройства).
         const tz = settings?.timezone?.trim()
         setTimezone(tz ? tz : null)
+        // G1: порог оповещения о разрыве; null/пусто/≤0 → дефолт.
+        const gapAlert = Number(settings?.paid_gap_alert_hours)
+        setAlertHours(Number.isFinite(gapAlert) && gapAlert > 0 ? gapAlert : DEFAULT_PAID_GAP_ALERT_HOURS)
       } catch {
         if (mounted) setError(true)
       } finally {
@@ -171,44 +178,61 @@ export default function Payroll() {
     return team
       .filter((worker) => byWorker.has(worker.id) || rateByWorker.has(worker.id))
       .map((worker) => {
-        const weeks = weeklyHours(byWorker.get(worker.id) ?? [], period, timezone)
+        const workerIntervals = byWorker.get(worker.id) ?? []
+        const weeks = weeklyHours(workerIntervals, period, timezone)
         let regularHours = 0
         let overtimeHours = 0
         for (const hours of weeks.values()) {
           regularHours += Math.min(hours, 40)
           overtimeHours += Math.max(0, hours - 40)
         }
+        // G1: время в пути — разрывы между сменами в один org-local день. Считается ОТДЕЛЬНО
+        // и НЕ участвует в разбивке regular/OT (оплачивается прямой ставкой поверх work-часов).
+        const travelGaps = computeTravelGaps(intervalsToTravelShifts(workerIntervals), timezone, alertHours)
+        let travelHours = 0
+        let overAlertGapMs = 0
+        for (const gap of travelGaps) {
+          travelHours += gap.durationHours
+          if (gap.overAlert) overAlertGapMs = Math.max(overAlertGapMs, gap.endMs - gap.startMs)
+        }
         const rate = rateByWorker.get(worker.id) ?? null
-        const total = rate === null ? 0 : (regularHours * rate) + (overtimeHours * rate * 1.5)
-        return { worker, regularHours, overtimeHours, rate, total }
+        const total = rate === null ? 0 : (regularHours * rate) + (overtimeHours * rate * 1.5) + (travelHours * rate)
+        return { worker, regularHours, overtimeHours, travelHours, overAlertGapMs, rate, total }
       })
       .sort((a, b) => a.worker.name.localeCompare(b.worker.name))
-  }, [intervals, period, rates, team, timezone])
+  }, [intervals, period, rates, team, timezone, alertHours])
 
   const totals = rows.reduce((acc, row) => ({
     regular: acc.regular + row.regularHours,
     overtime: acc.overtime + row.overtimeHours,
+    travel: acc.travel + row.travelHours,
     pay: acc.pay + row.total,
-  }), { regular: 0, overtime: 0, pay: 0 })
+  }), { regular: 0, overtime: 0, travel: 0, pay: 0 })
 
   const locked = !loading && rates.length === 0
   const money = (value: number) =>
     new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value)
   const dateLabel = (d: Date) => d.toLocaleDateString()
+  // G1: длительность разрыва как «1ч47м» (для метки внимания в строке зарплаты).
+  const fmtGap = (ms: number) => {
+    const totalMin = Math.round(ms / 60000)
+    return `${Math.floor(totalMin / 60)}${t('h')}${totalMin % 60}${t('min_short')}`
+  }
   const endInclusive = new Date(period.end.getTime() - DAY_MS)
 
   const exportCsv = async () => {
     if (!profile || locked) return
     const lines = [
-      ['worker', 'regular_hours', 'ot_hours', 'rate', 'total'].map(csvCell).join(','),
+      ['worker', 'regular_hours', 'ot_hours', 'travel_hours', 'rate', 'total'].map(csvCell).join(','),
       ...rows.map((row) => [
         row.worker.name,
         formatHours(row.regularHours),
         formatHours(row.overtimeHours),
+        formatHours(row.travelHours),
         row.rate === null ? '' : row.rate,
         row.total.toFixed(2),
       ].map(csvCell).join(',')),
-      ['TOTAL', formatHours(totals.regular), formatHours(totals.overtime), '', totals.pay.toFixed(2)].map(csvCell).join(','),
+      ['TOTAL', formatHours(totals.regular), formatHours(totals.overtime), formatHours(totals.travel), '', totals.pay.toFixed(2)].map(csvCell).join(','),
     ]
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
@@ -329,6 +353,10 @@ export default function Payroll() {
               <div className="muted">{t('ot_hours')}</div>
             </div>
             <div className="card center">
+              <div className="big">{formatHours(totals.travel)}</div>
+              <div className="muted">{t('travel_hours')}</div>
+            </div>
+            <div className="card center">
               <div className="big">{money(totals.pay)}</div>
               <div className="muted">{t('total')}</div>
             </div>
@@ -343,6 +371,7 @@ export default function Payroll() {
                     <th>{t('worker')}</th>
                     <th>{t('regular_hours')}</th>
                     <th>{t('ot_hours')}</th>
+                    <th>{t('travel_hours')}</th>
                     <th>{t('rate')}</th>
                     <th>{t('total')}</th>
                   </tr>
@@ -350,9 +379,17 @@ export default function Payroll() {
                 <tbody>
                   {rows.map((row) => (
                     <tr key={row.worker.id}>
-                      <td>{row.worker.name}</td>
+                      <td>
+                        {row.worker.name}
+                        {row.overAlertGapMs > 0 && (
+                          <span className="badge amber payroll-gap-mark" title={t('payroll_gap_alert_hint')}>
+                            ⚠ {fmtGap(row.overAlertGapMs)} — {t('payroll_travel_alert')}
+                          </span>
+                        )}
+                      </td>
                       <td>{formatHours(row.regularHours)}</td>
                       <td>{formatHours(row.overtimeHours)}</td>
+                      <td>{formatHours(row.travelHours)}</td>
                       <td>{row.rate === null ? '—' : money(row.rate)}</td>
                       <td>{money(row.total)}</td>
                     </tr>

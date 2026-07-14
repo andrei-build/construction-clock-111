@@ -1691,6 +1691,15 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: rgba(239, 102, 116, .15);
   color: var(--red);
 }
+/* G1: метка «внимание, оплачивается как переезд» рядом с работником в зарплате */
+.payroll-gap-mark {
+  margin-left: 8px;
+  white-space: nowrap;
+}
+/* G1: строка суммарного времени в пути на странице работника */
+.worker-travel-total {
+  margin-top: 10px;
+}
 .worker-shift-main {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) auto auto auto auto;

@@ -1,4 +1,4 @@
-import type { TimeEvent } from './types'
+import type { TimeEvent, WorkInterval } from './types'
 
 // Состояние смены из событий дня (ДНК §2: история неизменна, состояние выводится)
 export type ShiftState = { status: 'off' | 'on' | 'break'; since: string | null; projectId: string | null }
@@ -63,6 +63,93 @@ export function yesterdayStartISO(): string {
 export function lastWeekStartISO(): string {
   const d = new Date(); const day = (d.getDay() + 6) % 7
   d.setDate(d.getDate() - day - 7); d.setHours(0, 0, 0, 0); return d.toISOString()
+}
+
+// ── G1: Paid travel time between job sites ────────────────────────────────────
+// The gap between a worker's CHECK-OUT and the NEXT CHECK-IN, when BOTH fall on the
+// SAME org-local calendar day, is PAID working time ("время в пути" / travel). It is
+// tracked separately from work hours but added to the worker's total paid hours.
+// Pure, side-effect free. Gap semantics (per Andrei's spec):
+//   (c) never paid across an org-local day boundary (night is not travel);
+//   (d) only gaps strictly BETWEEN two shifts — never before the first check-in or
+//       after the last check-out of a day (that falls out naturally: we only look at
+//       gaps between consecutive shifts, and rule (c) drops cross-day pairs).
+// A gap "over alert" (durationHours > alertHours) is still paid, just highlighted.
+
+// Default for app_settings.paid_gap_alert_hours when the column is null/blank.
+export const DEFAULT_PAID_GAP_ALERT_HOURS = 1
+
+// A worker shift as epoch ms. endMs null = still open (no check-out yet): such a shift
+// can be the NEXT side of a gap (its start is a real check-in) but never the PREV side.
+export interface TravelShift {
+  startMs: number
+  endMs: number | null
+}
+
+export interface TravelGap {
+  startMs: number        // preceding check-out (epoch ms)
+  endMs: number          // following check-in (epoch ms)
+  durationHours: number
+  overAlert: boolean     // durationHours > alertHours
+}
+
+// Org-local calendar day of an instant. With a timezone → F2's org-local ymd; when
+// null/blank → device-local day key, EXACTLY mirroring the F15 fallback (unpadded
+// YYYY-M-D). Keys are only ever compared within one computeTravelGaps call, so the
+// two branches never mix.
+function travelDayKey(ms: number, timeZone: string | null): string {
+  if (timeZone) return orgWeekGrouping(ms, timeZone).ymd
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
+
+// Travel gaps between consecutive shifts within the same org-local day. Shifts may be
+// unsorted; we sort by start. A gap is emitted only when the preceding shift is closed
+// (has a check-out) and the following check-in is strictly later AND on the same org-local
+// day. `alertHours` marks (not cuts) gaps that exceed the alert threshold.
+export function computeTravelGaps(shifts: TravelShift[], timeZone: string | null, alertHours: number): TravelGap[] {
+  const sorted = [...shifts].sort((a, b) => a.startMs - b.startMs)
+  const gaps: TravelGap[] = []
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const prevEnd = sorted[i].endMs
+    if (prevEnd === null) continue // open shift has no check-out → no gap after it yet
+    const nextStart = sorted[i + 1].startMs
+    const gapMs = nextStart - prevEnd
+    if (gapMs <= 0) continue // overlap or zero → not a gap
+    // Rule (c): both check-out and next check-in must be the same org-local day.
+    if (travelDayKey(prevEnd, timeZone) !== travelDayKey(nextStart, timeZone)) continue
+    const durationHours = gapMs / 3600000
+    gaps.push({ startMs: prevEnd, endMs: nextStart, durationHours, overAlert: durationHours > alertHours })
+  }
+  return gaps
+}
+
+// WorkInterval[] (v_work_intervals) → TravelShift[]. Reuses the app's canonical pairing
+// (each interval is one check-in→check-out); open intervals carry endMs=null.
+export function intervalsToTravelShifts(intervals: WorkInterval[]): TravelShift[] {
+  return intervals.map((i) => ({
+    startMs: new Date(i.start_at).getTime(),
+    endMs: i.end_at ? new Date(i.end_at).getTime() : null,
+  }))
+}
+
+// Raw time_events → TravelShift[]. Mirrors workedMs pairing at the shift level:
+// check_in opens a shift, check_out closes it; breaks are internal and do NOT split a
+// shift; a trailing unclosed check_in yields an open shift (endMs=null). For screens
+// (Dashboard) that hold time_events rather than v_work_intervals.
+export function eventsToTravelShifts(events: TimeEvent[]): TravelShift[] {
+  const sorted = [...events].sort((a, b) => a.event_time.localeCompare(b.event_time))
+  const shifts: TravelShift[] = []
+  let inAt: number | null = null
+  for (const e of sorted) {
+    if (e.event_type === 'check_in') inAt = new Date(e.event_time).getTime()
+    else if (e.event_type === 'check_out' && inAt !== null) {
+      shifts.push({ startMs: inAt, endMs: new Date(e.event_time).getTime() })
+      inAt = null
+    }
+  }
+  if (inAt !== null) shifts.push({ startMs: inAt, endMs: null })
+  return shifts
 }
 
 // ── Org-timezone day/week boundaries (F2) ─────────────────────────────────────

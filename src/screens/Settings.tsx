@@ -4,6 +4,7 @@ import { useI18n } from '../lib/i18n'
 import { getAppSettings, saveAppSettings, type AppSettingsInput } from '../lib/api'
 import type { AppSettings } from '../lib/types'
 import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
+import { DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 
 type OrgLanguage = 'ru' | 'en' | 'es'
 
@@ -12,10 +13,17 @@ const DEFAULT_SETTINGS: AppSettingsInput = {
   timezone: 'America/Los_Angeles',
   overlong_shift_hours: 11,
   default_gps_radius_m: 150,
+  paid_gap_alert_hours: DEFAULT_PAID_GAP_ALERT_HOURS,
 }
 
 function supportedLanguage(value: string | null | undefined): OrgLanguage {
   return value === 'en' || value === 'es' ? value : 'ru'
+}
+
+// paid_gap_alert_hours: положительное число → оно; иначе (null/пусто/≤0) → дефолт.
+function gapAlertOrDefault(value: number | null | undefined): number {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_PAID_GAP_ALERT_HOURS
 }
 
 export default function Settings() {
@@ -31,6 +39,7 @@ export default function Settings() {
   const [timezone, setTimezone] = useState(DEFAULT_SETTINGS.timezone)
   const [overlongShiftHours, setOverlongShiftHours] = useState(String(DEFAULT_SETTINGS.overlong_shift_hours))
   const [defaultGpsRadius, setDefaultGpsRadius] = useState(String(DEFAULT_SETTINGS.default_gps_radius_m))
+  const [paidGapAlertHours, setPaidGapAlertHours] = useState(String(DEFAULT_SETTINGS.paid_gap_alert_hours))
 
   const canEdit = profile?.role === 'owner'
 
@@ -49,6 +58,8 @@ export default function Settings() {
         setTimezone(source.timezone)
         setOverlongShiftHours(String(Number(source.overlong_shift_hours)))
         setDefaultGpsRadius(String(source.default_gps_radius_m))
+        // paid_gap_alert_hours может быть null в старых строках → дефолт.
+        setPaidGapAlertHours(String(gapAlertOrDefault(source.paid_gap_alert_hours)))
       } catch {
         if (mounted) {
           setSettings(null)
@@ -74,6 +85,7 @@ export default function Settings() {
     timezone,
     overlong_shift_hours: overlongShiftHours,
     default_gps_radius_m: defaultGpsRadius,
+    paid_gap_alert_hours: paidGapAlertHours,
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -85,6 +97,10 @@ export default function Settings() {
       setMsg('settings_invalid')
       return
     }
+    // Порог оповещения о разрыве: положительное число; пусто/некорректно → дефолт (не блокируем сохранение).
+    const gapAlert = paidGapAlertHours.trim() === ''
+      ? DEFAULT_PAID_GAP_ALERT_HOURS
+      : gapAlertOrDefault(Number(paidGapAlertHours))
     // Clamp to the sane [25, 300] m geofence range; empty/NaN falls back to the default.
     const radius = defaultGpsRadius.trim() === ''
       ? DEFAULT_SETTINGS.default_gps_radius_m
@@ -95,6 +111,7 @@ export default function Settings() {
       timezone: timezone.trim(),
       overlong_shift_hours: hours,
       default_gps_radius_m: radius,
+      paid_gap_alert_hours: gapAlert,
     }
 
     setSaving(true)
@@ -105,6 +122,7 @@ export default function Settings() {
       setTimezone(saved.timezone)
       setOverlongShiftHours(String(Number(saved.overlong_shift_hours)))
       setDefaultGpsRadius(String(saved.default_gps_radius_m))
+      setPaidGapAlertHours(String(gapAlertOrDefault(saved.paid_gap_alert_hours)))
       setDefaultLanguage(supportedLanguage(saved.default_language))
       setMsg('settings_saved')
     } catch {
@@ -119,6 +137,7 @@ export default function Settings() {
     { key: 'timezone', label: t('settings_timezone'), value: currentValues.timezone },
     { key: 'overlong', label: t('settings_overlong_shift'), value: `${currentValues.overlong_shift_hours} ${t('h')}` },
     { key: 'radius', label: t('settings_default_gps_radius'), value: currentValues.default_gps_radius_m },
+    { key: 'paid_gap', label: t('settings_paid_gap_alert'), value: `${currentValues.paid_gap_alert_hours} ${t('h')}` },
   ]
   const msgClass = msg === 'settings_saved' ? 'ok-msg' : 'error-msg'
 
@@ -183,6 +202,19 @@ export default function Settings() {
             onChange={(e) => setDefaultGpsRadius(e.target.value)}
           />
           <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('gps_radius_hint')}</p>
+
+          <label htmlFor="settings-paid-gap">{t('settings_paid_gap_alert')}</label>
+          <input
+            id="settings-paid-gap"
+            type="number"
+            min="0.25"
+            step="0.25"
+            inputMode="decimal"
+            value={paidGapAlertHours}
+            disabled={saving}
+            onChange={(e) => setPaidGapAlertHours(e.target.value)}
+          />
+          <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('settings_paid_gap_alert_hint')}</p>
 
           <button className="btn" disabled={saving}>{saving ? t('settings_saving') : t('save')}</button>
         </form>
