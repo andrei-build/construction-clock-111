@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useI18n } from '../../lib/i18n'
-import { getOpenTasks, getProjectHubFiles, getProjectNotes, getProjectTimeEvents } from '../../lib/api'
+import { getOpenTasks, getProjectHubFiles, getProjectNotes, getProjectTimeEvents, getScheduleAssignments, getTeam } from '../../lib/api'
 import { isEffectiveOpenTask } from '../../lib/task-status'
-import type { Account, Project, ProjectProfit, ProjectTimeEvent } from '../../lib/types'
+import type { Account, Profile, Project, ProjectProfit, ProjectTimeEvent, ScheduleAssignment } from '../../lib/types'
 import { getDeadlineInfo, statusDotClass, type TrafficStatus } from './status'
 
 type TileKey = 'deadline' | 'profit' | 'client'
@@ -33,6 +33,41 @@ interface OverviewCounts {
   tasks: number
   files: number | null
   notes: number
+}
+
+// PROJ-1b STEP 3: назначения проекта, сгруппированные по дню (project_assignments не датируется
+// по дням — группируем по assigned_at, паритет с допущением Schedule.tsx). Имена резолвим из team.
+interface ScheduleDay {
+  key: string
+  label: string
+  workers: string[]
+}
+
+const UNDATED_KEY = '__undated'
+
+function groupScheduleByDay(
+  assignments: ScheduleAssignment[],
+  namesById: Map<string, string>,
+  labels: { undated: string; unknown: string },
+): ScheduleDay[] {
+  const byDay = new Map<string, ScheduleDay>()
+  for (const a of assignments) {
+    const day = a.assigned_at ? a.assigned_at.slice(0, 10) : ''
+    const key = day || UNDATED_KEY
+    let entry = byDay.get(key)
+    if (!entry) {
+      entry = { key, label: day ? (formatDate(day) ?? day) : labels.undated, workers: [] }
+      byDay.set(key, entry)
+    }
+    const name = namesById.get(a.profile_id) || labels.unknown
+    if (!entry.workers.includes(name)) entry.workers.push(name)
+  }
+  // Датированные дни — по убыванию (свежие сверху); «без даты» — в конце.
+  return [...byDay.values()].sort((x, y) => {
+    if (x.key === UNDATED_KEY) return 1
+    if (y.key === UNDATED_KEY) return -1
+    return y.key.localeCompare(x.key)
+  })
 }
 
 // Пары check_in→check_out по работнику (события уже отсортированы по event_time ↑).
@@ -109,6 +144,10 @@ export default function OverviewTab({ project, profit, account, managerView, onO
   const [team, setTeam] = useState<TeamAggregate | null>(null)
   const [counts, setCounts] = useState<OverviewCounts | null>(null)
   const [aggLoading, setAggLoading] = useState(true)
+  // PROJ-1b STEP 3: расписание проекта (назначения) + имена команды; секция сворачиваемая.
+  const [scheduleAssignments, setScheduleAssignments] = useState<ScheduleAssignment[]>([])
+  const [scheduleNames, setScheduleNames] = useState<Map<string, string>>(new Map())
+  const [scheduleOpen, setScheduleOpen] = useState(false)
 
   // Сводка «всего по проекту»: команда/часы (только менеджеру — вкладка «Время» тоже manager-only),
   // счётчики задач/файлов/заметок. Файлы тянем только менеджеру (вкладка «Файлы» скрыта работнику).
@@ -117,11 +156,15 @@ export default function OverviewTab({ project, profit, account, managerView, onO
     ;(async () => {
       setAggLoading(true)
       try {
-        const [openTasks, notes, events, files] = await Promise.all([
+        const [openTasks, notes, events, files, scheduleRows, teamRows] = await Promise.all([
           getOpenTasks(),
           getProjectNotes(project.id),
           managerView ? getProjectTimeEvents(project.id) : Promise.resolve([] as ProjectTimeEvent[]),
           managerView ? getProjectHubFiles(project.id) : Promise.resolve(null),
+          // PROJ-1b STEP 3: расписание — только менеджеру (как вкладка «Расписание»). getScheduleAssignments
+          // org-wide; фильтруем по проекту ниже. Имена — из getTeam (назначенный мог ещё не отмечаться).
+          managerView ? getScheduleAssignments() : Promise.resolve([] as ScheduleAssignment[]),
+          managerView ? getTeam() : Promise.resolve([] as Profile[]),
         ])
         if (!mounted) return
         const openForProject = openTasks.filter(
@@ -129,10 +172,14 @@ export default function OverviewTab({ project, profit, account, managerView, onO
         ).length
         setCounts({ tasks: openForProject, files: files ? files.length : null, notes: notes.length })
         setTeam(managerView ? aggregateTeam(events) : null)
+        setScheduleAssignments(scheduleRows.filter((a) => a.project_id === project.id))
+        setScheduleNames(new Map(teamRows.map((m) => [m.id, m.name])))
       } catch {
         if (mounted) {
           setCounts(null)
           setTeam(null)
+          setScheduleAssignments([])
+          setScheduleNames(new Map())
         }
       } finally {
         if (mounted) setAggLoading(false)
@@ -176,6 +223,15 @@ export default function OverviewTab({ project, profit, account, managerView, onO
     : account?.client_rating
       ? `hub_rating_${account.client_rating}_explain`
       : 'hub_client_no_rating_explain'
+
+  // PROJ-1b STEP 3: пересобираем группы по смене языка (метки дней/«без даты» через t).
+  const scheduleDays = useMemo(
+    () => groupScheduleByDay(scheduleAssignments, scheduleNames, {
+      undated: t('hub_schedule_undated'),
+      unknown: t('hub_worker_unknown'),
+    }),
+    [scheduleAssignments, scheduleNames, t],
+  )
 
   const toggle = (key: TileKey) => setExpanded((current) => (current === key ? null : key))
 
@@ -284,6 +340,47 @@ export default function OverviewTab({ project, profit, account, managerView, onO
                   </li>
                 ))}
               </ul>
+            </>
+          )}
+        </div>
+      )}
+
+      {managerView && (
+        <div className="card hub-overview-schedule">
+          <button
+            type="button"
+            className="hub-schedule-toggle"
+            aria-expanded={scheduleOpen}
+            onClick={() => setScheduleOpen((open) => !open)}
+          >
+            <h2>{t('hub_overview_schedule')}</h2>
+            <span className="hub-schedule-caret" aria-hidden="true">{scheduleOpen ? '▾' : '▸'}</span>
+          </button>
+          {scheduleOpen && (
+            <>
+              {aggLoading && <div className="muted">{t('loading')}</div>}
+              {!aggLoading && scheduleDays.length === 0 && (
+                <div className="muted">{t('hub_overview_schedule_empty')}</div>
+              )}
+              {!aggLoading && scheduleDays.length > 0 && (
+                <ul className="hub-schedule-list">
+                  {scheduleDays.map((day) => (
+                    <li className="hub-schedule-day" key={day.key}>
+                      <span className="hub-schedule-date item-title">{day.label}</span>
+                      <span className="hub-schedule-workers">
+                        {day.workers.map((worker, i) => (
+                          <span className="badge hub-schedule-chip" key={`${day.key}-${i}`}>{worker}</span>
+                        ))}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {/* BACKEND REQUEST: getProjectCalendarEvents(projectId) — getCalendarEvents org-wide и
+                  его select НЕ содержит project_id, поэтому события календаря нельзя отфильтровать по
+                  проекту. Нужен хелпер getProjectCalendarEvents(projectId) ИЛИ project_id в select
+                  getCalendarEvents, чтобы показать «события календаря проекта» рядом с назначениями. */}
+              <p className="muted hub-schedule-note">{t('hub_overview_schedule_calendar_pending')}</p>
             </>
           )}
         </div>

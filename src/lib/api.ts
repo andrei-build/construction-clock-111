@@ -1,6 +1,6 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
 import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
-import { todayStartISO } from './time'
+import { todayStartISO, weekStartISO, workedMs } from './time'
 import { notifyMessagePush } from './push'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
@@ -40,6 +40,20 @@ export async function getProjects(): Promise<Project[]> {
   const { data } = await supabase.from('projects')
     .select('*')
     .eq('status', 'active').order('name')
+  return (data as Project[]) ?? []
+}
+
+// PROJ-1b: доска /projects — проекты ВСЕХ рабочих статусов (planned/active/paused/completed),
+// кроме архива/удаления, ОДНИМ запросом. Экран сам фильтрует вкладками (дефолт «активные»),
+// поэтому вид по умолчанию не меняется, но появляются вкладки Все/Приостановлен/Завершён.
+export async function getBoardProjects(): Promise<Project[]> {
+  const { data, error } = await supabase.from('projects')
+    .select('*')
+    .is('archived_at', null)
+    .is('deleted_at', null)
+    .neq('status', 'archived')
+    .order('name')
+  if (error) return []
   return (data as Project[]) ?? []
 }
 
@@ -1288,6 +1302,47 @@ export async function getProjectAssignments(projectIds: string[]): Promise<Proje
   return (data as ProjectAssignment[]) ?? []
 }
 
+// PROJ-1b: БРИГАДА на карточках /projects — число назначенных работников по проектам ОДНИМ
+// запросом (reuse getProjectAssignments). Считаем уникальных работников на проект (Set), без N+1.
+export async function getProjectCrewCounts(projectIds: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  const rows = await getProjectAssignments(projectIds)
+  const byProject = new Map<string, Set<string>>()
+  for (const row of rows) {
+    const set = byProject.get(row.project_id) ?? new Set<string>()
+    set.add(row.profile_id)
+    byProject.set(row.project_id, set)
+  }
+  for (const [projectId, set] of byProject) out.set(projectId, set.size)
+  return out
+}
+
+// PROJ-1b: НЕДЕЛЯ на карточках /projects — отработанные мс за текущую неделю по проектам ОДНИМ
+// запросом (без N+1). Пары check_in→check_out считаем на клиенте по (проект, работник); открытая
+// смена — до «сейчас» (workedMs). Ставок/денег не касаемся, паритет с TimeTab/Schedule.
+export async function getProjectWeekHours(): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  const { data, error } = await supabase.from('time_events')
+    .select('project_id, profile_id, event_type, event_time')
+    .gte('event_time', weekStartISO())
+    .in('event_type', ['check_in', 'check_out', 'break_start', 'break_end'])
+    .order('event_time')
+  if (error) return out
+  const byKey = new Map<string, TimeEvent[]>()
+  for (const r of (data ?? []) as Array<Pick<TimeEvent, 'project_id' | 'profile_id' | 'event_type' | 'event_time'>>) {
+    if (!r.project_id) continue
+    const key = `${r.project_id} ${r.profile_id}`
+    const list = byKey.get(key)
+    if (list) list.push(r as TimeEvent)
+    else byKey.set(key, [r as TimeEvent])
+  }
+  for (const [key, events] of byKey) {
+    const projectId = key.slice(0, key.indexOf(' '))
+    out.set(projectId, (out.get(projectId) ?? 0) + workedMs(events))
+  }
+  return out
+}
+
 // Назначения для экрана «Расписание»: имя проекта тянем embed-ом project:projects(name)
 // (единственный FK project_assignments.project_id). RLS держит org-скоуп; работнику видны
 // только свои строки, поэтому при необходимости сужаем по profile_id.
@@ -2461,6 +2516,31 @@ export async function getProjectNotes(projectId: string): Promise<ProjectNote[]>
   return (data as unknown as ProjectNote[]) ?? []
 }
 
+// PROJ-1b: превью заметок для карточек /projects — ОДНИМ запросом счётчик + первая непустая
+// строка верхней заметки по каждому проекту (закреплённые выше, потом новейшие). Без N+1;
+// author не нужен, поэтому лёгкий select без embed. Тихо возвращает пустую карту при ошибке.
+export async function getProjectsNotesPreview(
+  projectIds: string[],
+): Promise<Map<string, { count: number; firstLine: string }>> {
+  const out = new Map<string, { count: number; firstLine: string }>()
+  const ids = [...new Set(projectIds.filter(Boolean))]
+  if (ids.length === 0) return out
+  const { data, error } = await supabase.from('project_notes')
+    .select('project_id, body, pinned, created_at')
+    .in('project_id', ids)
+    .is('deleted_at', null)
+    .order('pinned', { ascending: false })
+    .order('created_at', { ascending: false })
+  if (error) return out
+  for (const row of (data ?? []) as Array<{ project_id: string; body: string | null }>) {
+    const cur = out.get(row.project_id)
+    if (cur) { cur.count += 1; continue }
+    const firstLine = (row.body ?? '').split('\n').map((s) => s.trim()).find(Boolean) ?? ''
+    out.set(row.project_id, { count: 1, firstLine })
+  }
+  return out
+}
+
 // Автор пишет заметку: RLS требует org_id=app.org_id() и author_id=auth.uid() (= profile.id).
 // created_at/updated_at ставит БД (defaults), их не пишем. Возвращаем строку с именем автора.
 export async function createProjectNote(p: Profile, projectId: string, body: string): Promise<ProjectNote> {
@@ -2677,6 +2757,48 @@ export async function updateProject(
   const { error } = await supabase.from('projects').update(row).eq('id', projectId)
   if (error) throw error
   await logEvent(p, 'project.updated', 'project', projectId, { name })
+}
+
+// PROJ-1b «Убрать» проект с доски /projects — мягкая архивация (archived_at=now(), status='archived'),
+// НЕ жёсткое удаление. Проект исчезает и с доски (getBoardProjects), и из active-списков (getProjects).
+// RLS projects UPDATE пускает только менеджера; клиентский гейт — isManagerWrite в UI.
+export async function archiveProject(p: Profile, projectId: string): Promise<void> {
+  const { error } = await supabase.from('projects')
+    .update({ archived_at: new Date().toISOString(), status: 'archived' })
+    .eq('id', projectId)
+  if (error) throw error
+  await logEvent(p, 'project.archived', 'project', projectId, {})
+}
+
+// PROJ-1b STEP 4: авто-геокодирование адреса → lat/lng при создании/правке проекта. Паритет с
+// Check Time, который использует Google Geocoding API (maps.googleapis.com). Google требует ключ,
+// поэтому на чистом фронте читаем его из окружения Vite (VITE_GOOGLE_GEOCODING_API_KEY). Ключа в
+// проекте пока нет — код готов и заработает без изменений UI, как только ключ появится.
+// BACKEND REQUEST: geocoding API key needed (Google Geocoding API) — задать VITE_GOOGLE_GEOCODING_API_KEY.
+export type GeocodeResult = { lat: number; lng: number; formattedAddress: string | null }
+
+export async function geocodeAddress(address: string): Promise<GeocodeResult> {
+  const query = address.trim()
+  if (!query) throw new Error('geocode_missing_address')
+  const env = import.meta.env as unknown as Record<string, string | undefined>
+  const key = env.VITE_GOOGLE_GEOCODING_API_KEY ?? ''
+  if (!key) throw new Error('geocode_no_key')
+  const url = new URL('https://maps.googleapis.com/maps/api/geocode/json')
+  url.searchParams.set('address', query)
+  url.searchParams.set('key', key)
+  const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } })
+  if (!res.ok) throw new Error('geocode_failed')
+  const payload = (await res.json()) as {
+    status?: string
+    results?: Array<{ formatted_address?: string; geometry?: { location?: { lat?: number; lng?: number } } }>
+  }
+  const first = payload.results?.[0]
+  const lat = first?.geometry?.location?.lat
+  const lng = first?.geometry?.location?.lng
+  if (payload.status !== 'OK' || typeof lat !== 'number' || typeof lng !== 'number') {
+    throw new Error(payload.status === 'ZERO_RESULTS' ? 'geocode_zero_results' : 'geocode_failed')
+  }
+  return { lat, lng, formattedAddress: first?.formatted_address ?? null }
 }
 
 // ---- Вкладка «Клиент» Хаба: гранты видимости присутствия (client_visibility_grants) ----

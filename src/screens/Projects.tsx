@@ -3,14 +3,19 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import {
-  getProjects,
+  getBoardProjects,
   getOpenTasks,
   getProjectProfit,
   getProjectClientRatings,
+  getProjectCrewCounts,
+  getProjectWeekHours,
+  getProjectsNotesPreview,
   getTeam,
   getTodayEvents,
   createProject,
   updateProject,
+  archiveProject,
+  geocodeAddress,
   markMaterialStatus,
   markTaskDone,
   subscribeToTaskChanges,
@@ -28,8 +33,10 @@ import type { Profile, Project, ProjectProfit, Task, TaskMedia } from '../lib/ty
 import { isEffectiveOpenTask } from '../lib/task-status'
 import MediaComments from '../components/MediaComments'
 import MaterialStatusChain, { isMaterialFlowTask } from '../components/MaterialStatusChain'
+import ProjectNavActions, { CopyAddressButton } from '../components/ProjectNavActions'
 import { getDeadlineInfo, statusDotClass } from './project-hub/status'
-import { formatProjectCountdown } from '../lib/project-schedule'
+import { formatProjectCountdown, projectScheduleState } from '../lib/project-schedule'
+import { fmtHours } from '../lib/time'
 
 // F29: разбираем вставленную пару «широта, долгота» ("47.61, -122.33", "47.61 -122.33").
 // Терпим пробелы, знак градуса и ведущую метку до двоеточия; null, если это не чистая валидная пара.
@@ -56,6 +63,46 @@ export function parsePastedCoordinatePair(text: string): { lat: number; lng: num
   return { lat, lng }
 }
 
+// PROJ-1b: числовые координаты объекта из проекта (поля бывают number | string | null).
+// site_point (PostGIS EWKB) на клиенте не парсится — берём только lat/lng колонки.
+function projectCoords(p: Project): { lat: number; lng: number } | null {
+  const lat = typeof p.lat === 'string' ? Number(p.lat) : p.lat
+  const lng = typeof p.lng === 'string' ? Number(p.lng) : p.lng
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  return { lat, lng }
+}
+
+// $ для плитки МАТЕРИАЛЫ и т.п. — целые доллары (компактно на карточке). null → ничего не показываем.
+function formatMoney0(value: number | null | undefined): string | null {
+  if (value === null || value === undefined) return null
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
+}
+
+// Дата проекта (start_date/end_date хранятся как YYYY-MM-DD) в локальном формате; null если пусто/битая.
+function formatCardDate(value: string | null | undefined): string | null {
+  if (!value) return null
+  const d = new Date(`${value}T00:00:00`)
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString()
+}
+
+// Тон бейджа статуса проекта (паритет ProjectHub.statusBadgeClass): активен→зелёный,
+// пауза→жёлтый, завершён→синий, иначе серый.
+function statusBadgeTone(status: Project['status']): string {
+  if (status === 'active') return 'green'
+  if (status === 'paused') return 'amber'
+  if (status === 'completed') return 'blue'
+  return 'grey'
+}
+
+// Ранг для сортировки по дедлайну: красные раньше жёлтых раньше зелёных раньше «без дат».
+function deadlineRank(p: Project): number {
+  const s = getDeadlineInfo(p).status
+  return s === 'red' ? 0 : s === 'amber' ? 1 : s === 'green' ? 2 : 3
+}
+
+type StatusFilter = 'all' | 'active' | 'paused' | 'completed'
+type ProjectSort = 'name' | 'week' | 'deadline'
+
 export default function Projects() {
   const { profile } = useAuth()
   const { t } = useI18n()
@@ -68,6 +115,19 @@ export default function Projects() {
   // PROJ-1: сколько человек сегодня отметилось на объекте (check_in за сегодня), по проекту.
   // Один общий запрос getTodayEvents() на весь список — НЕ N+1.
   const [peopleTodayByProject, setPeopleTodayByProject] = useState<Map<string, number>>(new Map())
+  // PROJ-1b: плитки карточки — БРИГАДА / НЕДЕЛЯ / МАТЕРИАЛЫ / ЗАДАЧИ + превью заметок.
+  // Каждая карта — ОДИН общий запрос на весь список (свёрнут в Promise.all), НЕ N+1.
+  const [crewByProject, setCrewByProject] = useState<Map<string, number>>(new Map())
+  const [weekHoursByProject, setWeekHoursByProject] = useState<Map<string, number>>(new Map())
+  const [notesByProject, setNotesByProject] = useState<Map<string, { count: number; firstLine: string }>>(new Map())
+  // PROJ-1b: контролы над списком — фильтр статуса / сортировка / поиск.
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active')
+  const [sortBy, setSortBy] = useState<ProjectSort>('name')
+  const [search, setSearch] = useState('')
+  const [removeBusyId, setRemoveBusyId] = useState<string | null>(null)
+  // PROJ-1b STEP 4: геокодирование адреса в форме (ручная кнопка + автопопытка при сохранении).
+  const [geocodeBusy, setGeocodeBusy] = useState(false)
+  const [geocodeMsg, setGeocodeMsg] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   // F76: id редактируемого проекта (null — форма в режиме создания).
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -88,10 +148,18 @@ export default function Projects() {
 
   const load = async () => {
     const [p, tk, pf, people, todayEv] = await Promise.all([
-      getProjects(), getOpenTasks(), getProjectProfit(), getTeam(), getTodayEvents(),
+      getBoardProjects(), getOpenTasks(), getProjectProfit(), getTeam(), getTodayEvents(),
     ])
+    const projectIds = p.map((project) => project.id)
     const accountIds = p.map((project) => project.client_account_id).filter(Boolean) as string[]
-    const cr = await getProjectClientRatings(accountIds)
+    // PROJ-1b: клиентские рейтинги + плитки карточек — по ОДНОМУ общему запросу на весь список
+    // (свёрнуты в Promise.all, как PROJ-1 свернул getTodayEvents()), без per-card round-trips.
+    const [cr, crew, weekHours, notesPrev] = await Promise.all([
+      getProjectClientRatings(accountIds),
+      getProjectCrewCounts(projectIds),
+      getProjectWeekHours(),
+      getProjectsNotesPreview(projectIds),
+    ])
     // Уникальные работники, отметившиеся сегодня (check_in) на каждом объекте.
     const byProject = new Map<string, Set<string>>()
     for (const ev of todayEv) {
@@ -104,6 +172,7 @@ export default function Projects() {
     for (const [projectId, set] of byProject) peopleToday.set(projectId, set.size)
     setProjects(p); setTasks(tk); setProfits(pf); setTeam(people); setClientRatings(cr)
     setPeopleTodayByProject(peopleToday)
+    setCrewByProject(crew); setWeekHoursByProject(weekHours); setNotesByProject(notesPrev)
   }
   useEffect(() => { load() }, [profile?.id])
   useEffect(() => {
@@ -112,11 +181,44 @@ export default function Projects() {
   }, [profile?.org_id])
 
   const canWrite = profile ? isManagerWrite(profile.role) : false
+  // PROJ-1b: финансовый гейт для плитки МАТЕРИАЛЫ ($) — только owner/admin (ДНК §1), как в
+  // FinanceTab/Documents. Цена/финансы НЕ показываются остальным ролям.
+  const financeAllowed = profile ? (profile.role === 'owner' || profile.role === 'admin') : false
   const peopleById = useMemo(() => new Map(team.map((person) => [person.id, person.name])), [team])
+
+  // PROJ-1b: применяем фильтр статуса + поиск + сортировку. Дефолт «active» сохраняет прежний вид
+  // (getBoardProjects тянет все статусы, но по умолчанию показываем активные).
+  const visibleProjects = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    let list = projects
+    if (statusFilter !== 'all') list = list.filter((p) => p.status === statusFilter)
+    if (q) list = list.filter((p) => p.name.toLowerCase().includes(q) || (p.address ?? '').toLowerCase().includes(q))
+    const sorted = [...list]
+    if (sortBy === 'name') sorted.sort((a, b) => a.name.localeCompare(b.name))
+    else if (sortBy === 'week') sorted.sort((a, b) => (weekHoursByProject.get(b.id) ?? 0) - (weekHoursByProject.get(a.id) ?? 0))
+    else if (sortBy === 'deadline') sorted.sort((a, b) => deadlineRank(a) - deadlineRank(b) || a.name.localeCompare(b.name))
+    return sorted
+  }, [projects, statusFilter, search, sortBy, weekHoursByProject])
 
   const resetForm = () => {
     setName(''); setAddress(''); setLat(''); setLng(''); setGpsRadius(''); setGeoError(false)
+    setGeocodeMsg(null)
     setAdding(false); setEditingId(null)
+  }
+
+  // PROJ-1b STEP 4: ручное «Определить по адресу». Заполняет lat/lng из Google Geocoding.
+  // Без ключа (VITE_GOOGLE_GEOCODING_API_KEY) выдаёт понятное сообщение — код готов под ключ.
+  const geocodeFromAddress = async () => {
+    if (!address.trim()) { setGeocodeMsg('geocode_missing_address'); return }
+    setGeocodeBusy(true); setGeocodeMsg(null)
+    try {
+      const r = await geocodeAddress(address)
+      setLat(String(r.lat)); setLng(String(r.lng)); setGeocodeMsg('geocode_ok')
+    } catch (err) {
+      setGeocodeMsg(err instanceof Error ? err.message : 'geocode_failed')
+    } finally {
+      setGeocodeBusy(false)
+    }
   }
 
   const submit = async (e: React.FormEvent) => {
@@ -124,8 +226,16 @@ export default function Projects() {
     if (!profile || !name.trim()) return
     setBusy(true)
     try {
-      const latNum = lat.trim() === '' ? undefined : Number(lat)
-      const lngNum = lng.trim() === '' ? undefined : Number(lng)
+      let latNum = lat.trim() === '' ? undefined : Number(lat)
+      let lngNum = lng.trim() === '' ? undefined : Number(lng)
+      // PROJ-1b STEP 4: авто-геокодирование — координат не ввели, но есть адрес → пробуем получить их.
+      // Без ключа тихо продолжаем без координат (см. BACKEND REQUEST: geocoding API key).
+      if ((latNum === undefined || lngNum === undefined) && address.trim()) {
+        try {
+          const r = await geocodeAddress(address)
+          latNum = r.lat; lngNum = r.lng
+        } catch { /* нет ключа/результата — создаём без координат */ }
+      }
       const radiusNum = gpsRadius.trim() === '' ? undefined : clampGpsRadius(Number(gpsRadius), GPS_RADIUS_MIN)
       if (editingId) {
         // F76: пишем ТОЛЬКО name/address/gps_radius_m + site_point (если введены новые координаты).
@@ -187,6 +297,20 @@ export default function Projects() {
       setLat(String(geo.lat)); setLng(String(geo.lng))
     } finally {
       setGeoBusy(false)
+    }
+  }
+
+  // PROJ-1b: «Убрать» проект — мягкая архивация (archiveProject). Спрашиваем подтверждение,
+  // затем перезагружаем список. RLS не пустит не-менеджера, поэтому ошибку глотаем тихо.
+  const removeProject = async (p: Project) => {
+    if (!profile) return
+    if (typeof window !== 'undefined' && !window.confirm(t('proj_remove_confirm').replace('{name}', p.name))) return
+    setRemoveBusyId(p.id)
+    try {
+      await archiveProject(profile, p.id)
+      await load()
+    } catch { /* RLS/permission — тихо */ } finally {
+      setRemoveBusyId(null)
     }
   }
 
@@ -313,9 +437,15 @@ export default function Projects() {
             onChange={(e) => setGpsRadius(e.target.value)}
           />
           <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('gps_radius_hint')}</p>
-          <button type="button" className="btn ghost small" disabled={geoBusy} onClick={useMyLocation}>
-            {geoBusy ? t('locating') : t('use_my_location')}
-          </button>
+          <div className="row">
+            <button type="button" className="btn ghost small" disabled={geoBusy} onClick={useMyLocation}>
+              {geoBusy ? t('locating') : t('use_my_location')}
+            </button>
+            <button type="button" className="btn ghost small" disabled={geocodeBusy || !address.trim()} onClick={geocodeFromAddress}>
+              {geocodeBusy ? t('geocode_locating') : t('geocode_from_address')}
+            </button>
+          </div>
+          {geocodeMsg && <p className={geocodeMsg === 'geocode_ok' ? 'muted' : 'warn-msg'}>{t(geocodeMsg)}</p>}
           {geoError && <p className="error-msg">{t('location_unavailable')}</p>}
           <div className="row">
             <button className="btn" disabled={busy || !name.trim()}>{editingId ? t('save_changes') : t('create')}</button>
@@ -324,16 +454,72 @@ export default function Projects() {
         </form>
       )}
 
-      {projects.map((p) => {
+      {projects.length > 0 && (
+        <div className="projects-controls">
+          <div className="projects-filter-tabs">
+            {(['all', 'active', 'paused', 'completed'] as StatusFilter[]).map((key) => (
+              <button
+                key={key}
+                type="button"
+                className={statusFilter === key ? 'active' : ''}
+                onClick={() => setStatusFilter(key)}
+              >
+                {t(`projects_filter_${key}`)}
+              </button>
+            ))}
+          </div>
+          <div className="projects-controls-row">
+            <input
+              className="projects-search"
+              type="search"
+              placeholder={t('projects_search_placeholder')}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <select
+              className="projects-sort"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as ProjectSort)}
+              aria-label={t('projects_sort_label')}
+            >
+              <option value="name">{t('projects_sort_name')}</option>
+              <option value="week">{t('projects_sort_week')}</option>
+              <option value="deadline">{t('projects_sort_deadline')}</option>
+            </select>
+          </div>
+          <p className="muted projects-count">
+            {t('projects_shown_count').replace('{n}', String(visibleProjects.length)).replace('{m}', String(projects.length))}
+          </p>
+        </div>
+      )}
+
+      {visibleProjects.map((p) => {
         // done_at авторитетнее status: строку с проставленным done_at, но отставшим
         // status в список открытых не пускаем (паритет с Check Time, F81).
         const ptasks = tasks.filter((tk) => tk.project_id === p.id && isEffectiveOpenTask(tk))
         const profit = profitFor(p.id)
         const showProfit = profit?.margin_pct !== null && profit?.margin_pct !== undefined && profit.profit_status && profit.profit_status !== 'grey'
-        const dl = getDeadlineInfo(p).status
+        const dlInfo = getDeadlineInfo(p)
+        const dl = dlInfo.status
         const countdown = p.end_date ? formatProjectCountdown(p.end_date) : ''
         const rating = (p.client_account_id ? clientRatings.get(p.client_account_id) : undefined) as 'green' | 'amber' | 'red' | undefined
         const peopleToday = peopleTodayByProject.get(p.id) ?? 0
+        // PROJ-1b: координаты/геозона, плитки, статус-график, превью заметок.
+        const coords = projectCoords(p)
+        const hasGeofence = Boolean(p.site_point) || coords != null
+        const crew = crewByProject.get(p.id) ?? 0
+        const weekMs = weekHoursByProject.get(p.id) ?? 0
+        const materials = profit?.expenses_cost
+        const schedState = projectScheduleState(p)
+        const statusLabel = t(`project_status_${p.status}`)
+        const startLabel = formatCardDate(p.start_date) ?? '—'
+        const endLabel = formatCardDate(p.end_date) ?? '—'
+        const healthText = dlInfo.daysOverdue != null
+          ? t('proj_overdue_days').replace('{n}', String(dlInfo.daysOverdue))
+          : `${t(`proj_sched_${schedState}`)}${countdown && countdown !== 'overdue' ? ` · ${countdown}` : ''}`
+        const notePrev = notesByProject.get(p.id)
+        const noteFirst = notePrev?.firstLine || (p.notes ? (p.notes.split('\n').map((s) => s.trim()).find(Boolean) ?? '') : '')
+        const noteCount = notePrev?.count ?? 0
         return (
           <div key={p.id} className="card">
             <div className="project-title-row">
@@ -356,23 +542,83 @@ export default function Projects() {
               </span>
               {countdown && <span className={`schedule-countdown-badge ${dl}`}>{countdown}</span>}
             </div>
-            <div className="project-card-meta">
-              {p.address && <span className="muted project-card-address">📍 {p.address}</span>}
-              <span
-                className="project-card-chip"
+
+            {/* PROJ-1b: статус-строка «СТАТУС · график/просрочка · старт…до» (паритет Check Time). */}
+            <div className={`project-status-line ${dl}`}>
+              <span className={`badge ${statusBadgeTone(p.status)} project-status-badge`}>{statusLabel}</span>
+              <span className="project-status-health">{healthText}</span>
+              <span className="muted project-status-dates">{t('proj_card_start')} {startLabel} · {t('proj_card_due')} {endLabel}</span>
+            </div>
+
+            {/* PROJ-1b: адрес + копирование + GPS-бейдж + кнопки навигации. */}
+            {(p.address || coords) && (
+              <div className="project-address-line">
+                {p.address
+                  ? <span className="muted project-card-address">📍 {p.address}</span>
+                  : <span className="muted project-card-address">📍 {coords!.lat}, {coords!.lng}</span>}
+                {p.address && <CopyAddressButton address={p.address} />}
+                <span className={`badge ${hasGeofence ? 'green' : 'amber'} project-gps-badge`}>
+                  {hasGeofence ? t('proj_gps_ok') : t('proj_gps_none')}
+                </span>
+              </div>
+            )}
+            <ProjectNavActions projectName={p.name} address={p.address} lat={coords?.lat ?? null} lng={coords?.lng ?? null} />
+
+            {/* PROJ-1b: плитки БРИГАДА / НЕДЕЛЯ / МАТЕРИАЛЫ ($, finance) / ЗАДАЧИ. */}
+            <div className="project-stat-tiles">
+              <div className="project-stat-tile">
+                <span className="muted">{t('proj_tile_crew')}</span>
+                <span className="item-title num-display">{crew}</span>
+              </div>
+              <div className="project-stat-tile">
+                <span className="muted">{t('proj_tile_week')}</span>
+                <span className="item-title num-display">{fmtHours(weekMs)} {t('h')}</span>
+              </div>
+              <div className="project-stat-tile" title={financeAllowed ? undefined : t('finance_locked')}>
+                <span className="muted">{t('proj_tile_materials')}</span>
+                <span className="item-title num-display">{financeAllowed ? (formatMoney0(materials) ?? '—') : '—'}</span>
+              </div>
+              <button
+                type="button"
+                className="project-stat-tile as-button"
                 title={t('projects_card_open_tasks').replace('{n}', String(ptasks.length))}
+                onClick={() => navigate(`/projects/${p.id}`)}
               >
-                🔨 {ptasks.length}
-              </span>
-              {peopleToday > 0 && (
+                <span className="muted">{t('proj_tile_tasks')}</span>
+                <span className="item-title num-display">{ptasks.length}</span>
+              </button>
+            </div>
+
+            {peopleToday > 0 && (
+              <div className="project-card-meta">
                 <span
                   className="project-card-chip on-site"
                   title={t('projects_card_people_today').replace('{n}', String(peopleToday))}
                 >
                   👷 {peopleToday}
                 </span>
+              </div>
+            )}
+
+            {/* PROJ-1b: превью заметок — первая строка + счётчик. */}
+            {(noteFirst || noteCount > 0) && (
+              <div className="project-notes-preview">
+                <span className="muted project-notes-count">📝 {t('proj_notes_count').replace('{n}', String(noteCount))}</span>
+                {noteFirst && <span className="project-notes-first">{noteFirst}</span>}
+              </div>
+            )}
+
+            {/* PROJ-1b: действия карточки — Подробности / Редактировать / Убрать. */}
+            <div className="project-card-actions">
+              <button type="button" className="btn small" onClick={() => navigate(`/projects/${p.id}`)}>{t('proj_action_details')}</button>
+              {canWrite && <button type="button" className="btn ghost small" onClick={() => startEdit(p)}>{t('proj_action_edit')}</button>}
+              {canWrite && (
+                <button type="button" className="btn ghost small project-remove-btn" disabled={removeBusyId === p.id} onClick={() => removeProject(p)}>
+                  {t('proj_action_remove')}
+                </button>
               )}
             </div>
+
             {ptasks.length > 0 && <h2>{t('tasks')}</h2>}
             {ptasks.map((tk) => {
               const photo = photoByTask[tk.id]
