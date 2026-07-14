@@ -708,6 +708,134 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-weight: 700;
   line-height: 1.3;
 }
+.task-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.material-request-card {
+  display: grid;
+  gap: 10px;
+}
+.material-request-form h2 {
+  margin-top: 0;
+}
+.material-request-actions {
+  justify-content: flex-start;
+}
+.material-status-chain {
+  display: grid;
+  gap: 10px;
+}
+.material-steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: stretch;
+}
+.material-step {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel2);
+}
+.material-step.complete {
+  border-color: rgba(48, 211, 154, .45);
+  background: rgba(48, 211, 154, .08);
+}
+.material-step.pending {
+  color: var(--muted);
+}
+.material-step-label {
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+.material-step-meta {
+  color: var(--muted2);
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.material-step-arrow {
+  align-self: center;
+  color: var(--muted2);
+  font-weight: 800;
+}
+.material-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.material-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 58px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel2);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 850;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, transform .05s, opacity .15s;
+}
+.material-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--elevated);
+}
+.material-action:active:not(:disabled) {
+  transform: scale(.98);
+}
+.material-action:disabled {
+  cursor: default;
+  opacity: .48;
+}
+.material-action.complete {
+  border-color: rgba(48, 211, 154, .5);
+  background: rgba(48, 211, 154, .12);
+  color: var(--green);
+}
+.material-action-check {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.material-status-chain.compact .material-steps {
+  grid-template-columns: 1fr;
+}
+.material-status-chain.compact .material-step-arrow {
+  display: none;
+}
+.material-status-chain.compact .material-actions {
+  grid-template-columns: 1fr 1fr;
+}
+.material-status-chain.compact .material-action {
+  min-height: 44px;
+  padding: 9px;
+  font-size: 13px;
+}
+@media (max-width: 480px) {
+  .material-steps {
+    grid-template-columns: 1fr;
+  }
+  .material-step-arrow {
+    display: none;
+  }
+}
 .photo-input {
   position: absolute;
   width: 1px;
@@ -2584,6 +2712,19 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 
 /* Кнопка «Копировать проект как шаблон» в строке заголовка проекта */
 .project-copy-btn { margin-left: auto; padding: 4px 8px; line-height: 1; flex: 0 0 auto; }
+
+.dispatch-task {
+  display: grid;
+  gap: 6px;
+}
+.drawer-task {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+.drawer-task .material-status-chain {
+  grid-column: 1 / -1;
+}
 
 /* «Детали дня работника»: кликабельная строка дня + раскрытие (фото + закрытые задачи) */
 .worker-day-item { display: grid; gap: 8px; }

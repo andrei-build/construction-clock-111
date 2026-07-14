@@ -1,11 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useI18n } from '../../lib/i18n'
-import { getOpenTasks, markTaskDone, uploadErrorCode, uploadTaskPhoto, validateUpload } from '../../lib/api'
+import {
+  createMaterialRequest,
+  getOpenTasks,
+  getTeam,
+  markMaterialStatus,
+  markTaskDone,
+  subscribeToTaskChanges,
+  uploadErrorCode,
+  uploadTaskPhoto,
+  validateUpload,
+  type MaterialStatusAction,
+} from '../../lib/api'
 import { enqueueFieldAction } from '../../lib/offlineFieldActions'
 import { enqueueMediaUpload } from '../../lib/offlineMediaQueue'
 import { isEffectiveOpenTask } from '../../lib/task-status'
 import type { Profile, Project, Task, TaskMedia } from '../../lib/types'
 import MediaComments from '../../components/MediaComments'
+import MaterialStatusChain, { isMaterialFlowTask } from '../../components/MaterialStatusChain'
 
 interface TasksTabProps {
   project: Project
@@ -39,26 +51,38 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
   const [taskBusy, setTaskBusy] = useState<string | null>(null)
   const [photoBusy, setPhotoBusy] = useState<string | null>(null)
   const [photoByTask, setPhotoByTask] = useState<Record<string, TaskMedia>>({})
+  const [team, setTeam] = useState<Profile[]>([])
   const [taskError, setTaskError] = useState<string | null>(null)
   const [taskNotice, setTaskNotice] = useState<string | null>(null)
+  const [materialFormOpen, setMaterialFormOpen] = useState(false)
+  const [materialTitle, setMaterialTitle] = useState('')
+  const [materialDetails, setMaterialDetails] = useState('')
+  const [materialBusy, setMaterialBusy] = useState(false)
 
-  const load = async () => {
-    setLoading(true)
+  const load = async (showLoading = true) => {
+    if (showLoading) setLoading(true)
     setLoadError(false)
     try {
-      const rows = await getOpenTasks()
+      const [rows, people] = await Promise.all([getOpenTasks(), getTeam()])
       setTasks(rows.filter((task) => task.project_id === project.id && isEffectiveOpenTask(task)))
+      setTeam(people)
     } catch {
       setLoadError(true)
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }
 
   useEffect(() => { load() }, [project.id])
+  useEffect(() => {
+    if (!profile?.org_id) return
+    return subscribeToTaskChanges(profile.org_id, () => { void load(false) }, `tasks:project-hub:${project.id}`)
+  }, [profile?.org_id, project.id])
+
+  const peopleById = useMemo(() => new Map(team.map((person) => [person.id, person.name])), [team])
 
   const done = async (task: Task) => {
-    if (!profile) return
+    if (!profile || isMaterialFlowTask(task)) return
     const mediaId = photoByTask[task.id]?.id ?? null
     if (task.requires_photo && !mediaId) return
     setTaskBusy(task.id)
@@ -78,6 +102,45 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
       setTaskError('error')
     } finally {
       setTaskBusy(null)
+    }
+  }
+
+  const updateMaterialStatus = async (task: Task, action: MaterialStatusAction) => {
+    if (!profile) return
+    setTaskBusy(task.id)
+    setTaskError(null)
+    setTaskNotice(null)
+    try {
+      await markMaterialStatus(task.id, action)
+      await load(false)
+    } catch {
+      setTaskError('material_status_failed')
+    } finally {
+      setTaskBusy(null)
+    }
+  }
+
+  const createMaterial = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!profile || materialBusy || !materialTitle.trim()) return
+    setMaterialBusy(true)
+    setTaskError(null)
+    setTaskNotice(null)
+    try {
+      await createMaterialRequest(profile, {
+        projectId: project.id,
+        title: materialTitle.trim(),
+        description: materialDetails.trim() || null,
+      })
+      setMaterialTitle('')
+      setMaterialDetails('')
+      setMaterialFormOpen(false)
+      setTaskNotice('material_request_created')
+      await load(false)
+    } catch {
+      setTaskError('material_request_save_failed')
+    } finally {
+      setMaterialBusy(false)
     }
   }
 
@@ -118,6 +181,44 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
     <section className="hub-tab-panel hub-tasks">
       {taskError && <p className="error-msg">{t(taskError)}</p>}
       {taskNotice && <p className="warn-msg">{t(taskNotice)}</p>}
+      {profile && (
+        <div className="card material-request-card">
+          {!materialFormOpen ? (
+            <button type="button" className="btn ghost small" onClick={() => setMaterialFormOpen(true)}>
+              + {t('material_request_quick')}
+            </button>
+          ) : (
+            <form className="material-request-form" onSubmit={createMaterial}>
+              <h2>{t('material_request_title')}</h2>
+              <label>{t('material_request_item')}</label>
+              <input
+                value={materialTitle}
+                placeholder={t('material_request_item_placeholder')}
+                onChange={(e) => setMaterialTitle(e.target.value)}
+              />
+              <label>{t('material_request_details')}</label>
+              <textarea
+                value={materialDetails}
+                placeholder={t('material_request_details_placeholder')}
+                onChange={(e) => setMaterialDetails(e.target.value)}
+              />
+              <div className="row material-request-actions">
+                <button className="btn small" disabled={materialBusy || !materialTitle.trim()}>
+                  {materialBusy ? t('saving') : t('material_request_create')}
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  disabled={materialBusy}
+                  onClick={() => setMaterialFormOpen(false)}
+                >
+                  {t('cancel')}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
       {loading && <div className="card center muted">{t('loading')}</div>}
       {loadError && <p className="error-msg">{t('hub_tasks_load_error')}</p>}
       {!loading && !loadError && tasks.length === 0 && <div className="card muted">{t('no_tasks')}</div>}
@@ -135,6 +236,7 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
               </div>
               {task.requires_photo && <span className="badge amber">{t('photo_required')}</span>}
             </div>
+            {task.description && <p className="muted task-description">{task.description}</p>}
 
             {task.requires_photo && (
               <>
@@ -165,14 +267,23 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
               </>
             )}
 
-            <button
-              className="btn ghost small"
-              disabled={taskBusy !== null || uploading || needsPhoto}
-              title={needsPhoto ? t('photo_required_hint') : undefined}
-              onClick={() => done(task)}
-            >
-              {t('done')}
-            </button>
+            {isMaterialFlowTask(task) ? (
+              <MaterialStatusChain
+                task={task}
+                peopleById={peopleById}
+                busy={taskBusy !== null}
+                onStatusChange={updateMaterialStatus}
+              />
+            ) : (
+              <button
+                className="btn ghost small"
+                disabled={taskBusy !== null || uploading || needsPhoto}
+                title={needsPhoto ? t('photo_required_hint') : undefined}
+                onClick={() => done(task)}
+              >
+                {t('done')}
+              </button>
+            )}
           </div>
         )
       })}

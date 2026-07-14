@@ -89,16 +89,22 @@ export interface Task {
   project_id: string | null
   task_type: 'work' | 'material' | 'delivery'
   title: string
+  description?: string | null
   status: 'open' | 'in_progress' | 'done' | 'cancelled'
   priority: 'low' | 'medium' | 'high' | 'urgent'
   assigned_to: string | null
+  urgent_flag?: boolean | null
   requires_photo?: boolean
   done_at?: string | null
   // Дополнительные (необязательные) колонки для глобального экрана «Задачи» (/tasks).
   // Опциональны, чтобы не ломать существующие узкие select'ы (getOpenTasks и т.п.).
-  description?: string | null
   due_date?: string | null
   created_at?: string | null
+  // Материальные заявки (MAT-1): двойная отметка забора/доставки.
+  picked_up_at?: string | null
+  picked_up_by?: string | null
+  delivered_at?: string | null
+  delivered_by?: string | null
 }
 
 export interface TaskMedia {

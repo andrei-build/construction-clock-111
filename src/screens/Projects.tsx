@@ -1,15 +1,32 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getProjects, getOpenTasks, getProjectProfit, getProjectClientRatings, createProject, updateProject, markTaskDone, uploadTaskPhoto, validateUpload, uploadErrorCode, captureGPS } from '../lib/api'
+import {
+  getProjects,
+  getOpenTasks,
+  getProjectProfit,
+  getProjectClientRatings,
+  getTeam,
+  createProject,
+  updateProject,
+  markMaterialStatus,
+  markTaskDone,
+  subscribeToTaskChanges,
+  uploadTaskPhoto,
+  validateUpload,
+  uploadErrorCode,
+  captureGPS,
+  type MaterialStatusAction,
+} from '../lib/api'
 import { enqueueFieldAction } from '../lib/offlineFieldActions'
 import { enqueueMediaUpload } from '../lib/offlineMediaQueue'
 import { isManagerWrite } from '../lib/types'
 import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
-import type { Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
+import type { Profile, Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
 import { isEffectiveOpenTask } from '../lib/task-status'
 import MediaComments from '../components/MediaComments'
+import MaterialStatusChain, { isMaterialFlowTask } from '../components/MaterialStatusChain'
 import { getDeadlineInfo, statusDotClass } from './project-hub/status'
 import { formatProjectCountdown } from '../lib/project-schedule'
 
@@ -44,6 +61,7 @@ export default function Projects() {
   const navigate = useNavigate()
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [team, setTeam] = useState<Profile[]>([])
   const [profits, setProfits] = useState<ProjectProfit[]>([])
   const [clientRatings, setClientRatings] = useState<Map<string, string>>(new Map())
   const [adding, setAdding] = useState(false)
@@ -65,14 +83,19 @@ export default function Projects() {
   const [taskNotice, setTaskNotice] = useState<string | null>(null)
 
   const load = async () => {
-    const [p, tk, pf] = await Promise.all([getProjects(), getOpenTasks(), getProjectProfit()])
+    const [p, tk, pf, people] = await Promise.all([getProjects(), getOpenTasks(), getProjectProfit(), getTeam()])
     const accountIds = p.map((project) => project.client_account_id).filter(Boolean) as string[]
     const cr = await getProjectClientRatings(accountIds)
-    setProjects(p); setTasks(tk); setProfits(pf); setClientRatings(cr)
+    setProjects(p); setTasks(tk); setProfits(pf); setTeam(people); setClientRatings(cr)
   }
   useEffect(() => { load() }, [profile?.id])
+  useEffect(() => {
+    if (!profile?.org_id) return
+    return subscribeToTaskChanges(profile.org_id, () => { void load() }, 'tasks:projects')
+  }, [profile?.org_id])
 
   const canWrite = profile ? isManagerWrite(profile.role) : false
+  const peopleById = useMemo(() => new Map(team.map((person) => [person.id, person.name])), [team])
 
   const resetForm = () => {
     setName(''); setAddress(''); setLat(''); setLng(''); setGpsRadius(''); setGeoError(false)
@@ -151,7 +174,7 @@ export default function Projects() {
   }
 
   const done = async (task: Task) => {
-    if (!profile) return
+    if (!profile || isMaterialFlowTask(task)) return
     const mediaId = photoByTask[task.id]?.id ?? null
     if (task.requires_photo && !mediaId) return
     setTaskBusy(task.id)
@@ -172,6 +195,21 @@ export default function Projects() {
     } catch (err) {
       if (!isOnline() || isNetworkError(err)) { queueOffline(); return }
       setTaskError('error')
+    } finally {
+      setTaskBusy(null)
+    }
+  }
+
+  const updateMaterialStatus = async (task: Task, action: MaterialStatusAction) => {
+    if (!profile) return
+    setTaskBusy(task.id)
+    setTaskError(null)
+    setTaskNotice(null)
+    try {
+      await markMaterialStatus(task.id, action)
+      await load()
+    } catch {
+      setTaskError('material_status_failed')
     } finally {
       setTaskBusy(null)
     }
@@ -315,6 +353,7 @@ export default function Projects() {
                     </div>
                     {tk.requires_photo && <span className="badge amber">{t('photo_required')}</span>}
                   </div>
+                  {tk.description && <p className="muted task-description">{tk.description}</p>}
 
                   {tk.requires_photo && (
                     <>
@@ -345,14 +384,23 @@ export default function Projects() {
                     </>
                   )}
 
-                  <button
-                    className="btn ghost small"
-                    disabled={taskBusy !== null || uploading || needsPhoto}
-                    title={needsPhoto ? t('photo_required_hint') : undefined}
-                    onClick={() => done(tk)}
-                  >
-                    {t('done')}
-                  </button>
+                  {isMaterialFlowTask(tk) ? (
+                    <MaterialStatusChain
+                      task={tk}
+                      peopleById={peopleById}
+                      busy={taskBusy !== null}
+                      onStatusChange={updateMaterialStatus}
+                    />
+                  ) : (
+                    <button
+                      className="btn ghost small"
+                      disabled={taskBusy !== null || uploading || needsPhoto}
+                      title={needsPhoto ? t('photo_required_hint') : undefined}
+                      onClick={() => done(tk)}
+                    >
+                      {t('done')}
+                    </button>
+                  )}
                 </div>
               )
             })}

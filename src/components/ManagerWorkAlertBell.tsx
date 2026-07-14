@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getMessages, getOpenTasks } from '../lib/api'
+import { getMessages, getOpenTasks, subscribeToTaskChanges } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { armUrgentChimeUnlock, playUrgentChime } from '../lib/notification-sound'
@@ -13,8 +13,8 @@ import type { MessageRow, Task } from '../lib/types'
 // tasks — and opens a priority-first dropdown listing them. A mute toggle (persisted in
 // localStorage) silences the optional arrival chime.
 //
-// Deliberately poll-only: a ~30s setInterval re-reads counts through the SAME read-only
-// api.ts functions the rest of the app uses. No realtime subscriptions, no BroadcastChannel.
+// Keeps the existing ~30s read fallback, and also refreshes immediately on task changes
+// through the same org-scoped tasks realtime subscription used by task lists.
 
 const MUTE_KEY = 'cclock_manager_alert_muted'
 const POLL_MS = 30_000
@@ -102,6 +102,11 @@ export default function ManagerWorkAlertBell() {
     const id = window.setInterval(() => void load(), POLL_MS)
     return () => window.clearInterval(id)
   }, [manager, load])
+
+  useEffect(() => {
+    if (!manager || !profile?.org_id) return
+    return subscribeToTaskChanges(profile.org_id, () => { void load() }, `tasks:manager-alert:${profile.id}`)
+  }, [manager, profile?.org_id, profile?.id, load])
 
   // Chime once per genuinely-new alert. The first populated load is treated as hydration
   // (seed as seen, no chime) so mounting with pre-existing work stays silent; anything that
