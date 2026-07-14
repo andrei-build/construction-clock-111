@@ -17,6 +17,10 @@ const dict: Record<string, Record<Lang, string>> = {
   nav_group_work: { ru: 'РАБОТА', en: 'WORK', es: 'TRABAJO' },
   nav_group_finance_clients: { ru: 'ФИНАНСЫ И КЛИЕНТЫ', en: 'FINANCE & CLIENTS', es: 'FINANZAS Y CLIENTES' },
   nav_group_admin: { ru: 'АДМИН', en: 'ADMIN', es: 'ADMIN' },
+  // Заголовки групп экрана «Ещё / More» (NAV-1).
+  more_group_work: { ru: 'РАБОТА', en: 'WORK', es: 'TRABAJO' },
+  more_group_finance: { ru: 'ФИНАНСЫ', en: 'FINANCE', es: 'FINANZAS' },
+  more_group_admin: { ru: 'АДМИН', en: 'ADMIN', es: 'ADMIN' },
   login_office: { ru: 'Офис / Владелец', en: 'Office / Owner', es: 'Oficina / Dueño' },
   login_worker: { ru: 'Работник (PIN)', en: 'Worker (PIN)', es: 'Trabajador (PIN)' },
   email: { ru: 'Почта', en: 'Email', es: 'Correo' },
