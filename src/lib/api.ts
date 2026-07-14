@@ -502,6 +502,30 @@ export function subscribeToTaskChanges(orgId: string, onChange: () => void, chan
   return () => { void supabase.removeChannel(channel) }
 }
 
+export function subscribeToMyMessages(profileId: string, onChange: () => void, channelName = 'messages') {
+  const channel = supabase
+    .channel(`${channelName}:${profileId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: `recipient_id=eq.${profileId}` },
+      () => onChange(),
+    )
+    .subscribe()
+  return () => { void supabase.removeChannel(channel) }
+}
+
+export function subscribeToOrgEvents(orgId: string, onChange: () => void, channelName = 'events') {
+  const channel = supabase
+    .channel(`${channelName}:${orgId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'events', filter: `org_id=eq.${orgId}` },
+      () => onChange(),
+    )
+    .subscribe()
+  return () => { void supabase.removeChannel(channel) }
+}
+
 export async function getTaskPhotoIds(taskIds: string[]): Promise<Set<string>> {
   if (taskIds.length === 0) return new Set()
   const { data, error } = await supabase.from('media')

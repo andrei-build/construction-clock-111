@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getMessages, getOpenTasks, subscribeToTaskChanges } from '../lib/api'
+import { getMessages, getOpenTasks, subscribeToMyMessages, subscribeToTaskChanges } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { armUrgentChimeUnlock, playUrgentChime } from '../lib/notification-sound'
@@ -105,7 +105,9 @@ export default function ManagerWorkAlertBell() {
 
   useEffect(() => {
     if (!manager || !profile?.org_id) return
-    return subscribeToTaskChanges(profile.org_id, () => { void load() }, `tasks:manager-alert:${profile.id}`)
+    const offTasks = subscribeToTaskChanges(profile.org_id, () => { void load() }, `tasks:manager-alert:${profile.id}`)
+    const offMessages = subscribeToMyMessages(profile.id, () => { void load() }, `messages:bell:${profile.id}`)
+    return () => { offTasks(); offMessages() }
   }, [manager, profile?.org_id, profile?.id, load])
 
   // Chime once per genuinely-new alert. The first populated load is treated as hydration

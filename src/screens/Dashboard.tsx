@@ -13,6 +13,7 @@ import {
   getSuspiciousShifts,
   approveShiftReview,
   subscribeToTaskChanges,
+  subscribeToOrgEvents,
 } from '../lib/api'
 import { shiftState, workedMs, fmtHours, fmtClock } from '../lib/time'
 import { isManagerWrite } from '../lib/types'
@@ -98,6 +99,13 @@ export default function Dashboard() {
     return subscribeToTaskChanges(profile.org_id, () => {
       getOpenTasks().then(setTasks).catch(() => setError(true))
     }, 'tasks:dashboard')
+  }, [profile?.org_id])
+
+  useEffect(() => {
+    if (!profile?.org_id) return
+    return subscribeToOrgEvents(profile.org_id, () => {
+      getRecentActivity().then(setActivity).catch(() => setError(true))
+    }, `events:dashboard:${profile.org_id}`)
   }, [profile?.org_id])
 
   const byWorker = useMemo(() => {
