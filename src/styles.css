@@ -2887,3 +2887,26 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   white-space: nowrap;
   font-size: 13px;
 }
+
+/* Расписание (SCHED-1) — недельная сетка люди × дни */
+.sched-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.sched-week-label { font-weight: 600; min-width: 150px; text-align: center; }
+.sched-legend { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; font-size: 12px; }
+.sched-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sched-swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); display: inline-block; }
+.sched-table-wrap { overflow-x: auto; padding: 0; }
+.sched-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sched-table th, .sched-table td { border: 1px solid var(--line); padding: 6px 8px; vertical-align: top; text-align: left; min-width: 104px; }
+.sched-table thead th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+.sched-dow { text-transform: capitalize; }
+.sched-date { color: var(--muted2); font-size: 11px; }
+.sched-person { position: sticky; left: 0; z-index: 1; background: var(--panel); font-weight: 600; white-space: nowrap; }
+.sched-table thead .sched-person { z-index: 2; }
+.sched-cell { position: relative; }
+.sched-cell.sched-hole { background: rgba(126, 160, 190, .1); cursor: pointer; }
+.sched-cell.sched-overload { background: rgba(200, 169, 59, .18); }
+.sched-today { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sched-chip { display: inline-block; background: var(--elevated); color: var(--text); border-radius: 6px; padding: 1px 6px; margin: 0 3px 3px 0; font-size: 11px; }
+.sched-hours { display: block; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; margin-top: 2px; }
+.sched-add { position: absolute; top: 3px; right: 5px; color: var(--muted2); font-size: 12px; }
+.sched-cell select { width: 100%; font-size: 12px; }

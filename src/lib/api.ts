@@ -1,5 +1,5 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectHubFile, ProjectNote, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectHubFile, ProjectNote, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
 import { todayStartISO } from './time'
 import { notifyMessagePush } from './push'
 
@@ -993,6 +993,18 @@ export async function getProjectAssignments(projectIds: string[]): Promise<Proje
     .in('project_id', projectIds)
   if (error) return []
   return (data as ProjectAssignment[]) ?? []
+}
+
+// Назначения для экрана «Расписание»: имя проекта тянем embed-ом project:projects(name)
+// (единственный FK project_assignments.project_id). RLS держит org-скоуп; работнику видны
+// только свои строки, поэтому при необходимости сужаем по profile_id.
+export async function getScheduleAssignments(profileId?: string): Promise<ScheduleAssignment[]> {
+  let q = supabase.from('project_assignments')
+    .select('id, project_id, profile_id, assigned_at, project:projects(name)')
+  if (profileId) q = q.eq('profile_id', profileId)
+  const { data, error } = await q
+  if (error) return []
+  return (data as unknown as ScheduleAssignment[]) ?? []
 }
 
 export async function assignWorkerToProject(p: Profile, projectId: string, workerId: string) {
