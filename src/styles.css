@@ -3595,3 +3595,22 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .plan-task-controls { display: flex; flex-wrap: wrap; gap: 8px; }
 .plan-task-controls select { width: auto; margin: 0; flex: 1; min-width: 120px; }
 .plan-task-actions { display: flex; gap: 8px; }
+
+/* TEAM-1: role-grouped /team list + worker-card additions (skills, stat tiles, pay period). */
+.team-group { margin-top: 18px; }
+.team-group-title { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 8px; color: var(--muted); }
+.worker-name-row { display: flex; align-items: center; gap: 8px; }
+.worker-name-row input { flex: 1; margin: 0; }
+.worker-danger-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.worker-danger-actions p { margin: 0; flex: 1 1 100%; font-size: 12px; }
+.worker-skills-card label { margin-top: 12px; }
+.skills-chip-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 28px; }
+.skills-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 14px; background: var(--panel2); border: 1px solid var(--border); font-size: 13px; }
+.skills-chip-remove { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; font-size: 12px; line-height: 1; }
+.skills-chip-remove:hover:not(:disabled) { color: var(--red); }
+.skills-add-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.skills-add-row input { flex: 1; margin: 0; }
+.add-shift-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.add-shift-row p { margin: 0; font-size: 12px; flex: 1 1 100%; }
+.worker-pay-period-card .pay-period-window { font-weight: 700; margin-bottom: 10px; }
+.message-body-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

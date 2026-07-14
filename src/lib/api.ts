@@ -278,11 +278,36 @@ export async function getTeam(): Promise<Profile[]> {
 
 export async function getWorkerProfile(workerId: string): Promise<Profile | null> {
   const { data, error } = await supabase.from('profiles')
-    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video')
+    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, skills, skills_note')
     .eq('id', workerId)
     .maybeSingle()
   if (error) throw error
   return (data as Profile | null) ?? null
+}
+
+// TEAM-1: пишем ТОЛЬКО навыки для ИИ-распределения (profiles.skills — text) и заметку
+// (profiles.skills_note — text). Аддитивно, чтобы не задевать остальные поля профиля.
+export async function updateWorkerSkills(p: Profile, workerId: string, input: {
+  skills?: string | null
+  skills_note?: string | null
+}) {
+  const payload = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined))
+  if (Object.keys(payload).length === 0) return
+  const { error } = await supabase.from('profiles')
+    .update(payload)
+    .eq('id', workerId)
+  if (error) throw error
+  await logEvent(p, 'team.skills_updated', 'profile', workerId, payload)
+}
+
+// TEAM-1: активация/деактивация работника (profiles.is_active). Деактивированный
+// перестаёт появляться в getTeam (там фильтр is_active=true), но карточка по id открывается.
+export async function setWorkerActive(p: Profile, workerId: string, active: boolean) {
+  const { error } = await supabase.from('profiles')
+    .update({ is_active: active })
+    .eq('id', workerId)
+  if (error) throw error
+  await logEvent(p, 'team.active_toggled', 'profile', workerId, { is_active: active })
 }
 
 export async function getWorkerTimeEvents(workerId: string): Promise<TimeEvent[]> {
