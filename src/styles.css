@@ -2600,6 +2600,93 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-placeholder h2 { margin-bottom: 8px; }
 
+/* Вкладка «Клиент» хаба (ХАБ-4). */
+.hub-client-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hub-client-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.hub-client-contacts {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.hub-client-rating {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hub-client-rating-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.hub-client-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+}
+.hub-client-dot-green { background: #22c55e; }
+.hub-client-dot-amber { background: #f59e0b; }
+.hub-client-dot-red { background: #ef4444; }
+.hub-client-rating-note {
+  margin: 0;
+}
+.hub-client-grant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+.hub-client-grant {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+}
+.hub-client-grant-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.hub-client-grant-flags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.hub-client-grant-meta {
+  display: flex;
+  flex-wrap: wrap;
+}
+.hub-client-grant-note {
+  white-space: pre-wrap;
+}
+.hub-client-grant-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hub-client-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hub-client-note-label {
+  margin: 0;
+}
+
 /* Вкладка «Файлы и медиа» хаба (ХАБ-2). */
 .hub-file-upload {
   display: flex;

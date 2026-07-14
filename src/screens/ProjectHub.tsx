@@ -115,7 +115,7 @@ export default function ProjectHub() {
           {tab === 'files' && <FilesTab project={project} profile={profile} />}
           {tab === 'reports' && <ReportsTab project={project} />}
           {tab === 'notes' && <NotesTab project={project} profile={profile} />}
-          {tab === 'client' && <ClientTab />}
+          {tab === 'client' && <ClientTab project={project} profile={profile} />}
         </>
       )}
     </div>
