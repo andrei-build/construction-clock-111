@@ -2046,6 +2046,55 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .calendar-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* CAL-1a: полноэкранный «Календарь команды» — сетка месяца заполняет ширину, без узкого контейнера. */
+.team-calendar-screen { max-width: none; }
+.team-cal-tabs { max-width: 480px; }
+.team-cal-toolbar { flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.team-cal-monthnav { gap: 8px; justify-content: flex-start; }
+.team-cal-month { font-weight: 700; font-size: 16px; min-width: 150px; text-align: center; text-transform: capitalize; }
+.team-cal-filter { display: flex; gap: 12px; flex-wrap: wrap; }
+.team-cal-filter label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.team-cal-filter input { width: auto; }
+.team-cal-stub { padding: 40px 16px; }
+.team-cal-hint { text-align: center; margin-top: 12px; }
+
+.team-cal-layout { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+.team-cal-weekdays,
+.team-cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.team-cal-weekday { padding: 6px 4px; text-align: center; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: capitalize; }
+.team-cal-grid { margin-top: 6px; }
+.team-cal-cell {
+  min-height: 104px; display: flex; flex-direction: column; gap: 6px; align-items: stretch;
+  padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  cursor: pointer; text-align: left; color: var(--text);
+}
+.team-cal-cell:hover { background: var(--elevated); }
+.team-cal-cell.other-month { opacity: .45; }
+.team-cal-cell.today { border-color: var(--accent); }
+.team-cal-cell.selected { outline: 2px solid var(--accent); }
+.team-cal-daynum { font-size: 13px; font-weight: 700; }
+.team-cal-plashki { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.team-cal-plashka {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; padding: 2px 7px;
+}
+
+.team-cal-panel { position: sticky; top: 12px; align-self: start; }
+.team-cal-panel-head h2 { margin: 0; text-transform: capitalize; }
+.team-cal-panel-markers { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.team-cal-panel-marker { gap: 10px; }
+.team-cal-editor-title { margin: 14px 0 8px; }
+.team-cal-editor { display: flex; flex-direction: column; gap: 6px; }
+.team-cal-editor-quick { gap: 8px; justify-content: flex-start; flex-wrap: wrap; }
+.team-cal-save-ok { color: var(--green); }
+
+@media (min-width: 960px) {
+  .team-cal-layout:has(.team-cal-panel) { grid-template-columns: minmax(0, 1fr) 340px; }
+}
+@media (max-width: 620px) {
+  .team-cal-cell { min-height: 78px; }
+}
+
 .sales-screen { max-width: 1180px; }
 .sales-board {
   display: grid;

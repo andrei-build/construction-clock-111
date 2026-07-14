@@ -13,6 +13,7 @@ import Schedule from './screens/Schedule'
 import WorkerDetail from './screens/WorkerDetail'
 import Dispatch from './screens/Dispatch'
 import Calendar from './screens/Calendar'
+import TeamCalendar from './screens/TeamCalendar'
 import LiveMap from './screens/LiveMap'
 import Sales from './screens/Sales'
 import Reports from './screens/Reports'
@@ -71,6 +72,7 @@ export default function App() {
             <Route path="/schedule" element={<Schedule />} />
             <Route path="/dispatch" element={manager ? <Dispatch /> : <Navigate to="/" />} />
             <Route path="/calendar" element={manager ? <Calendar /> : <Navigate to="/" />} />
+            <Route path="/team-calendar" element={manager ? <TeamCalendar /> : <Navigate to="/" />} />
             <Route path="/map" element={manager ? <LiveMap /> : <Navigate to="/" />} />
             <Route path="/sales" element={salesAccess ? <Sales /> : <Navigate to="/" />} />
             <Route path="/reports" element={manager ? <Reports /> : <Navigate to="/" />} />

@@ -57,6 +57,7 @@ export default function More() {
       <div className="more-group">
         {manager && <MoreLink to="/dispatch" Icon={IconDispatch} label={t('dispatch')} />}
         {manager && <MoreLink to="/calendar" Icon={IconCalendar} label={t('calendar')} />}
+        {manager && <MoreLink to="/team-calendar" Icon={IconCalendar} label={t('team_calendar')} />}
         {manager && <MoreLink to="/stores" Icon={IconBriefcase} label={t('stores')} />}
         {manager && <MoreLink to="/map" Icon={IconMap} label={t('map')} />}
         {manager && <MoreLink to="/timeline" Icon={IconChart} label={t('timeline')} />}

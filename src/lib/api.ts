@@ -2815,6 +2815,21 @@ export async function geocodeAddress(address: string): Promise<GeocodeResult> {
   return { lat, lng, formattedAddress: first?.formatted_address ?? null }
 }
 
+// Обновление ТОЛЬКО дат графика проекта (start_date/end_date) — точка входа для
+// «Календаря команды» (CAL-1a). Не трогает name/address/site_point. RLS projects UPDATE
+// пускает только менеджера; клиентский гейт — isManagerWrite в UI. Пустая строка → null,
+// чтобы дату можно было очистить.
+export async function updateProjectDates(
+  p: Profile,
+  projectId: string,
+  dates: { start_date: string | null; end_date: string | null },
+) {
+  const row = { start_date: dates.start_date || null, end_date: dates.end_date || null }
+  const { error } = await supabase.from('projects').update(row).eq('id', projectId)
+  if (error) throw error
+  await logEvent(p, 'project.updated', 'project', projectId, { ...row })
+}
+
 // ---- Вкладка «Клиент» Хаба: гранты видимости присутствия (client_visibility_grants) ----
 const CLIENT_GRANT_SELECT = 'id, org_id, account_id, project_id, can_see_presence, notify_travel, notify_checkin, notify_checkout, channel, note, created_by, created_at, revoked_at'
 
