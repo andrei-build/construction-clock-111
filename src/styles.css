@@ -1079,6 +1079,55 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .payroll-table tr:last-child td { border-bottom: 0; }
 
+/* PAY-1: черновик зарплаты (пресеты + выбор работника), история, годовой отчёт. */
+.payroll-draft-badge { margin-left: 8px; }
+.payroll-draft-builder { display: grid; gap: 10px; margin-bottom: 12px; }
+.payroll-draft-head { align-items: center; }
+.payroll-draft-head h2 { margin: 0; }
+.payroll-preset-row,
+.payroll-custom-row,
+.payroll-worker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.payroll-custom-row label,
+.payroll-worker-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.payroll-custom-row input[type="date"],
+.payroll-worker-row select {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+}
+.payroll-report,
+.payroll-history { display: grid; gap: 8px; margin-bottom: 12px; }
+.payroll-report-head,
+.payroll-report-years { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.payroll-report-head h2,
+.payroll-history h2 { margin: 0; }
+.payroll-report-total td { font-weight: 700; border-top: 2px solid var(--line); }
+.payroll-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.payroll-history-row:last-child { border-bottom: 0; }
+.payroll-history-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
 .documents-screen { max-width: 1180px; }
 .documents-head {
   align-items: flex-start;

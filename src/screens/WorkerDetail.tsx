@@ -1186,7 +1186,8 @@ export default function WorkerDetail() {
                   </div>
                 </>
               )}
-              <button type="button" className="btn ghost small" onClick={() => navigate('/payroll')}>
+              {/* PAY-1: передаём работника в /payroll (?worker=<id>) — экран зарплаты преселектит его. */}
+              <button type="button" className="btn ghost small" onClick={() => navigate(`/payroll?worker=${encodeURIComponent(worker.id)}`)}>
                 {t('close_pay_here')} →
               </button>
             </section>
