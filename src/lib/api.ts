@@ -309,9 +309,11 @@ export async function createTimeAdjustment(p: Profile, input: {
   return String(data.id)
 }
 
+const TASK_SELECT = 'id, org_id, project_id, task_type, title, description, status, priority, assigned_to, urgent_flag, requires_photo, done_at, picked_up_at, picked_up_by, delivered_at, delivered_by'
+
 export async function getOpenTasks(): Promise<Task[]> {
   const { data } = await supabase.from('tasks')
-    .select('id, org_id, project_id, task_type, title, status, priority, assigned_to, requires_photo')
+    .select(TASK_SELECT)
     .in('status', ['open', 'in_progress']).order('priority', { ascending: false })
   return (data as Task[]) ?? []
 }
@@ -325,6 +327,51 @@ export async function getDonePhotoTasks(): Promise<Task[]> {
     .limit(20)
   if (error) return []
   return (data as Task[]) ?? []
+}
+
+export type MaterialStatusAction = 'picked_up' | 'undo_picked_up' | 'delivered'
+
+export async function markMaterialStatus(taskId: string, action: MaterialStatusAction): Promise<void> {
+  const { error } = await supabase.rpc('mark_material_status', { p_task_id: taskId, p_action: action })
+  if (error) throw error
+}
+
+export async function createMaterialRequest(p: Profile, input: {
+  projectId: string
+  title: string
+  description: string | null
+}): Promise<Task> {
+  const { data, error } = await supabase.from('tasks')
+    .insert({
+      org_id: p.org_id,
+      project_id: input.projectId,
+      task_type: 'material',
+      title: input.title,
+      description: input.description,
+      status: 'open',
+      priority: 'urgent',
+      urgent_flag: true,
+    })
+    .select(TASK_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'task.material_requested', 'task', (data as Task).id, {
+    project_id: input.projectId,
+    title: input.title,
+  })
+  return data as Task
+}
+
+export function subscribeToTaskChanges(orgId: string, onChange: () => void, channelName = 'tasks') {
+  const channel = supabase
+    .channel(`${channelName}:${orgId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'tasks', filter: `org_id=eq.${orgId}` },
+      () => onChange(),
+    )
+    .subscribe()
+  return () => { void supabase.removeChannel(channel) }
 }
 
 export async function getTaskPhotoIds(taskIds: string[]): Promise<Set<string>> {
@@ -1005,6 +1052,9 @@ export async function sendDispatchPlan(p: Profile, project: Project, workers: Pr
 }
 
 export async function markTaskDone(p: Profile, task: Task, mediaId: string | null = null) {
+  if (task.task_type === 'material' || task.task_type === 'delivery') {
+    throw new Error('material_status_rpc_required')
+  }
   await supabase.from('tasks').update({ status: 'done', done_at: new Date().toISOString(), done_by: p.id }).eq('id', task.id)
   await logEvent(p, 'task.completed', 'task', task.id, { title: task.title, media_id: mediaId })
 }

@@ -89,11 +89,17 @@ export interface Task {
   project_id: string | null
   task_type: 'work' | 'material' | 'delivery'
   title: string
+  description?: string | null
   status: 'open' | 'in_progress' | 'done' | 'cancelled'
   priority: 'low' | 'medium' | 'high' | 'urgent'
   assigned_to: string | null
+  urgent_flag?: boolean | null
   requires_photo?: boolean
   done_at?: string | null
+  picked_up_at?: string | null
+  picked_up_by?: string | null
+  delivered_at?: string | null
+  delivered_by?: string | null
 }
 
 export interface TaskMedia {

@@ -18,10 +18,14 @@ import {
   getRecentActivityForActor,
   getTeam,
   getTodayEvents,
+  markMaterialStatus,
+  subscribeToTaskChanges,
   updateAccount,
+  type MaterialStatusAction,
 } from '../lib/api'
 import { fmtHours, shiftState, weekStartISO, workedMs } from '../lib/time'
 import { isManagerRole, type Account, type AccountInput, type ClientProjectSummary, type Contact, type ContactInput, type Deal, type DocumentRow, type EventRow, type Profile, type Project, type ProjectPhoto, type ProjectProfit, type Task, type TimeEvent } from '../lib/types'
+import MaterialStatusChain, { isMaterialFlowTask } from './MaterialStatusChain'
 
 type DrawerState =
   | { type: 'worker'; worker: Profile }
@@ -569,7 +573,14 @@ function ProjectPanel({ project, close, openWorker }: {
   const [tab, setTab] = useState<ProjectDrawerTab>('overview')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [taskBusy, setTaskBusy] = useState<string | null>(null)
+  const [taskError, setTaskError] = useState(false)
   const manager = profile ? isManagerRole(profile.role) : false
+
+  const refreshTasks = async () => {
+    const taskRows = await getOpenTasks()
+    setTasks(taskRows.filter((task) => task.project_id === project.id))
+  }
 
   useEffect(() => {
     let mounted = true
@@ -606,6 +617,11 @@ function ProjectPanel({ project, close, openWorker }: {
     setTab('overview')
   }, [project.id])
 
+  useEffect(() => {
+    if (!profile?.org_id) return
+    return subscribeToTaskChanges(profile.org_id, () => { void refreshTasks() }, `tasks:drawer:${project.id}`)
+  }, [profile?.org_id, project.id])
+
   const byWorker = useMemo(() => {
     const map = new Map<string, TimeEvent[]>()
     for (const event of events) {
@@ -622,6 +638,21 @@ function ProjectPanel({ project, close, openWorker }: {
   const profit = profits.find((row) => row.project_id === project.id)
   const margin = profit?.margin_pct === null || profit?.margin_pct === undefined ? '—' : `${Math.round(profit.margin_pct * 10) / 10}%`
   const shiftRows = useMemo(() => projectShiftRows(shiftEvents, team), [shiftEvents, team])
+  const peopleById = useMemo(() => new Map(team.map((person) => [person.id, person.name])), [team])
+
+  async function updateMaterialStatus(task: Task, action: MaterialStatusAction) {
+    if (!profile || taskBusy) return
+    setTaskBusy(task.id)
+    setTaskError(false)
+    try {
+      await markMaterialStatus(task.id, action)
+      await refreshTasks()
+    } catch {
+      setTaskError(true)
+    } finally {
+      setTaskBusy(null)
+    }
+  }
 
   return (
     <>
@@ -671,11 +702,24 @@ function ProjectPanel({ project, close, openWorker }: {
 
               <section className="drawer-section">
                 <h2>{t('tasks')}</h2>
+                {taskError && <p className="error-msg">{t('material_status_failed')}</p>}
                 {tasks.length === 0 && <div className="card muted">{t('no_tasks')}</div>}
                 {tasks.slice(0, 5).map((task) => (
                   <div className="drawer-task" key={task.id}>
                     <span className={`badge ${task.priority === 'urgent' ? 'red' : task.priority === 'high' ? 'amber' : 'blue'}`}>{task.priority}</span>
-                    <span>{task.title}</span>
+                    <div>
+                      <div>{task.title}</div>
+                      {task.description && <div className="muted task-description">{task.description}</div>}
+                    </div>
+                    {isMaterialFlowTask(task) && (
+                      <MaterialStatusChain
+                        task={task}
+                        peopleById={peopleById}
+                        busy={taskBusy !== null}
+                        compact
+                        onStatusChange={updateMaterialStatus}
+                      />
+                    )}
                   </div>
                 ))}
               </section>

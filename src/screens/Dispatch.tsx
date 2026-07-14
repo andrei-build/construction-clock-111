@@ -7,13 +7,17 @@ import {
   getProjectAssignments,
   getProjects,
   getTeam,
+  markMaterialStatus,
   sendDispatchPlan,
+  subscribeToTaskChanges,
   unassignWorkerFromProject,
+  type MaterialStatusAction,
 } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import { isManagerRole } from '../lib/types'
 import type { Profile, Project, ProjectAssignment, Task, WorkInterval } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
+import MaterialStatusChain, { isMaterialFlowTask } from '../components/MaterialStatusChain'
 
 type DispatchConflict = {
   id: string
@@ -62,7 +66,9 @@ export default function Dispatch() {
   const [workIntervals, setWorkIntervals] = useState<WorkInterval[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
+  const [taskBusy, setTaskBusy] = useState<string | null>(null)
   const [error, setError] = useState(false)
+  const [taskError, setTaskError] = useState(false)
   const [sentProject, setSentProject] = useState<string | null>(null)
   const manager = profile ? isManagerRole(profile.role) : false
 
@@ -99,10 +105,15 @@ export default function Dispatch() {
   }
 
   useEffect(() => { load() }, [profile?.id])
+  useEffect(() => {
+    if (!profile?.org_id) return
+    return subscribeToTaskChanges(profile.org_id, () => { void load() }, 'tasks:dispatch')
+  }, [profile?.org_id])
 
   const assignedIds = (projectId: string) =>
     new Set(assignments.filter((a) => a.project_id === projectId).map((a) => a.profile_id))
   const projectTasks = (projectId: string) => tasks.filter((task) => task.project_id === projectId)
+  const peopleById = useMemo(() => new Map(team.map((person) => [person.id, person.name])), [team])
   const assignedWorkers = (projectId: string) => {
     const ids = assignedIds(projectId)
     return team.filter((worker) => ids.has(worker.id))
@@ -216,6 +227,20 @@ export default function Dispatch() {
     }
   }
 
+  const updateMaterialStatus = async (task: Task, action: MaterialStatusAction) => {
+    if (!profile || taskBusy) return
+    setTaskBusy(task.id)
+    setTaskError(false)
+    try {
+      await markMaterialStatus(task.id, action)
+      await load()
+    } catch {
+      setTaskError(true)
+    } finally {
+      setTaskBusy(null)
+    }
+  }
+
   return (
     <div className="screen dispatch-screen">
       <h1>🧭 {t('dispatch')}</h1>
@@ -223,6 +248,7 @@ export default function Dispatch() {
 
       {loading && <div className="card center muted">{t('loading')}</div>}
       {error && <p className="error-msg">{t('load_error')}</p>}
+      {taskError && <p className="error-msg">{t('material_status_failed')}</p>}
       {manager && !loading && !error && (
         <section className="card dispatch-conflicts-card">
           <h2>{t('conflicts_title')}</h2>
@@ -288,7 +314,19 @@ export default function Dispatch() {
               <h2>{t('tasks')}</h2>
               {ptasks.length === 0 && <p className="muted">{t('no_tasks')}</p>}
               {ptasks.slice(0, 4).map((task) => (
-                <div className="dispatch-task" key={task.id}>{task.title}</div>
+                <div className="dispatch-task" key={task.id}>
+                  <div className="item-title">{task.title}</div>
+                  {task.description && <div className="muted task-description">{task.description}</div>}
+                  {isMaterialFlowTask(task) && (
+                    <MaterialStatusChain
+                      task={task}
+                      peopleById={peopleById}
+                      busy={taskBusy !== null}
+                      compact
+                      onStatusChange={updateMaterialStatus}
+                    />
+                  )}
+                </div>
               ))}
 
               <button className="btn" disabled={busy !== null || workers.length === 0} onClick={() => sendPlan(project)}>
