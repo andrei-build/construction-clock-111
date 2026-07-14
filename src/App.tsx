@@ -3,6 +3,7 @@ import { useAuth } from './lib/auth'
 import { isManagerRole } from './lib/types'
 import Login from './screens/Login'
 import Dashboard from './screens/Dashboard'
+import Overview from './screens/Overview'
 import CheckIn from './screens/CheckIn'
 import Projects from './screens/Projects'
 import ProjectHub from './screens/ProjectHub'
@@ -45,7 +46,8 @@ export default function App() {
 
   const manager = isManagerRole(profile.role)
   const driver = profile.role === 'driver'
-  const salesAccess = manager || profile.role === 'sales'
+  const salesOnly = profile.role === 'sales'
+  const salesAccess = manager || salesOnly
   return (
     <LocationConsentGate profile={profile}>
     <EntityDrawerProvider>
@@ -56,7 +58,9 @@ export default function App() {
           <OfflineFieldSync />
           <BackButton />
           <Routes>
-            <Route path="/" element={manager ? <Dashboard /> : driver ? <DriverRoute /> : <CheckIn />} />
+            {/* NAV-2 (д): продажи приземляются в свою зону, а не на полевую «Отметку». */}
+            <Route path="/" element={manager ? <Dashboard /> : driver ? <DriverRoute /> : salesOnly ? <Sales /> : <CheckIn />} />
+            <Route path="/overview" element={manager ? <Overview /> : <Navigate to="/" />} />
             <Route path="/route" element={manager || driver ? <DriverRoute /> : <Navigate to="/" />} />
             <Route path="/checkin" element={<CheckIn />} />
             <Route path="/projects" element={<Projects />} />

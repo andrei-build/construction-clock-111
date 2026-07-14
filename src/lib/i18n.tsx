@@ -31,6 +31,10 @@ const dict: Record<string, Record<Lang, string>> = {
   locked: { ru: 'Слишком много попыток. Подождите 15 минут', en: 'Too many attempts. Wait 15 minutes', es: 'Demasiados intentos. Espere 15 minutos' },
   dashboard: { ru: 'Командный центр', en: 'Command Center', es: 'Centro de mando' },
   command_center: { ru: 'Командный центр', en: 'Command center', es: 'Centro de mando' },
+  // NAV-2: «Обзор» — лёгкий экран дневных чисел; кнопка ведёт в командный центр (ключ `overview` ниже).
+  overview_subtitle: { ru: 'Сводка дня', en: 'Day at a glance', es: 'Resumen del día' },
+  open_command_center: { ru: 'Открыть командный центр', en: 'Open command center', es: 'Abrir centro de mando' },
+  materials_cost: { ru: 'Материалы $', en: 'Materials $', es: 'Materiales $' },
   back: { ru: 'Назад', en: 'Back', es: 'Atrás' },
   timeline: { ru: 'Хронология', en: 'Timeline', es: 'Cronología' },
   timeline_latest: { ru: 'Последние события', en: 'Latest events', es: 'Últimos eventos' },

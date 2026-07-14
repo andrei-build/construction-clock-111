@@ -1144,6 +1144,20 @@ export async function getProjectExpenses(projectId: string): Promise<ProjectExpe
   return (data as ProjectExpense[]) ?? []
 }
 
+// NAV-2: лёгкая сумма расходов на материалы по всей орге — тайл «Материалы $» на «Обзоре»
+// (finance-gated в UI). Один запрос; RLS скоупит финансовую видимость, при отказе → 0. kind
+// свободный, поэтому материалы ловим по подстроке; нет совпадений → 0 (расходов ещё нет).
+export async function getMaterialsSpendTotal(): Promise<number> {
+  const { data, error } = await supabase.from('project_expenses')
+    .select('kind, amount').is('deleted_at', null)
+  if (error || !data) return 0
+  return (data as { kind: string | null; amount: number | null }[]).reduce((acc, row) => {
+    const kind = (row.kind ?? '').toLowerCase()
+    const isMaterial = kind.includes('material') || kind.includes('материал')
+    return isMaterial ? acc + (Number(row.amount) || 0) : acc
+  }, 0)
+}
+
 export async function getDocumentItems(documentId: string): Promise<DocumentItem[]> {
   const { data, error } = await supabase.from('document_items')
     .select('id, document_id, cost_code_id, description, qty, unit_id, unit_price, markup_pct, is_client_material, total, sort_order, metadata, unit:units(abbreviation, name), cost_code:cost_codes(code, name)')

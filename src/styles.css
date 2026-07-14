@@ -899,6 +899,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 /* NAV-1: сгруппированные секции экрана «Ещё / More» (РАБОТА / ФИНАНСЫ / АДМИН). */
 .more-group { display: grid; gap: 10px; margin-bottom: 8px; }
 .more-group .more-link { margin-bottom: 0; }
+/* NAV-2 (в): иконка + подпись в пунктах «Ещё», выравнивание по левому краю. */
+.more-link { display: flex; align-items: center; justify-content: flex-start; gap: 10px; }
+.more-ico { display: inline-flex; flex: 0 0 auto; color: var(--muted); }
+.more-ico svg { width: 18px; height: 18px; }
+/* NAV-2 (а): кнопка перехода из «Обзора» в командный центр. */
+.overview-screen > .muted { margin-top: -6px; margin-bottom: 12px; }
+.overview-cta { margin-top: 18px; }
 
 .clients-screen { max-width: 980px; }
 .clients-head {
