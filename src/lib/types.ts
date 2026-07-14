@@ -458,7 +458,7 @@ export interface ShiftGeoEvent {
 }
 
 // Мягко удалённые сущности для экрана «Архив и Корзина» (deleted_at IS NOT NULL)
-export type ArchiveTable = 'projects' | 'tasks' | 'media'
+export type ArchiveTable = 'projects' | 'tasks' | 'media' | 'profiles' | 'project_expenses'
 
 export interface ArchivedProject {
   id: string
@@ -484,6 +484,59 @@ export interface ArchivedMedia {
   category: string | null
   deleted_at: string
   project?: { name: string | null } | null
+}
+
+// ARCH-1 «Архив»: сводка по архивному проекту (archived_at IS NOT NULL) — плитки и таблица вкладки «Проекты».
+// Счётчики (задачи/файлы/часы/рабочие) считаются на клиенте из связанных строк архивного проекта.
+export interface ArchiveProjectSummary {
+  id: string
+  name: string
+  address: string | null
+  status: string | null
+  archived_at: string | null
+  taskCount: number
+  completedTaskCount: number
+  mediaCount: number
+  hours: number
+  workerCount: number
+}
+
+// ARCH-1: строка сотрудника в закрытом/оплаченном периоде зарплаты (вкладка «Зарплата / Рабочие»).
+export interface ArchivePayItem {
+  profile_id: string
+  worker_name: string | null
+  worker_role: string | null
+  regular_hours: number
+  overtime_hours: number
+  total: number
+}
+
+// ARCH-1: закрытый/оплаченный период зарплаты со строками сотрудников.
+export interface ArchivePayPeriod {
+  id: string
+  label: string | null
+  period_start: string
+  period_end: string
+  status: string | null
+  paid_at: string | null
+  items: ArchivePayItem[]
+}
+
+// ARCH-1: деактивированный работник (is_active=false, не удалён) — вкладка «Зарплата / Рабочие».
+export interface DeactivatedWorker {
+  id: string
+  name: string
+  role: string
+}
+
+// ARCH-1 «Корзина»: строка удалённой сущности (deleted_at IS NOT NULL) в общем списке восстановления.
+export type TrashKind = 'project' | 'profile' | 'task' | 'receipt'
+export interface TrashItem {
+  id: string
+  kind: TrashKind
+  table: ArchiveTable
+  name: string
+  deleted_at: string
 }
 
 // Справочник «Магазины поставок» — менеджер ведёт список для авто-детекта заездов (детект — бэкенд).

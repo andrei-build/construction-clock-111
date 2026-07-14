@@ -1,5 +1,5 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from './types'
 import { todayStartISO, weekStartISO, workedMs } from './time'
 import { notifyMessagePush } from './push'
 
@@ -2305,14 +2305,175 @@ const RESTORE_ENTITY_TYPE: Record<ArchiveTable, string> = {
   projects: 'project',
   tasks: 'task',
   media: 'media',
+  profiles: 'profile',
+  project_expenses: 'expense',
 }
 
 // Восстановление из корзины: очищаем deleted_at и пишем событие ${entity}.restored в журнал.
+// Аддитивный UPDATE; для profiles/project_expenses при запрете RLS запрос упадёт — UI покажет restore_failed.
 export async function restoreEntity(p: Profile, table: ArchiveTable, id: string) {
   const { error } = await supabase.from(table).update({ deleted_at: null }).eq('id', id)
   if (error) throw error
   const entityType = RESTORE_ENTITY_TYPE[table]
   await logEvent(p, `${entityType}.restored`, entityType, id, {})
+}
+
+// ARCH-1 «Корзина»: мягко удалённые сущности (deleted_at IS NOT NULL) одним списком для восстановления.
+// projects/profiles/tasks/project_expenses — RLS держит org-скоуп; если RLS прячет удалённые строки,
+// соответствующий запрос вернёт пусто, и экран покажет пустую корзину (не падаем).
+export async function getTrashItems(): Promise<TrashItem[]> {
+  const [projectsRes, profilesRes, tasksRes, receiptsRes] = await Promise.all([
+    supabase.from('projects').select('id, name, deleted_at').not('deleted_at', 'is', null),
+    supabase.from('profiles').select('id, name, deleted_at').not('deleted_at', 'is', null),
+    supabase.from('tasks').select('id, title, deleted_at').not('deleted_at', 'is', null),
+    supabase.from('project_expenses').select('id, description, vendor, deleted_at').not('deleted_at', 'is', null),
+  ])
+  const items: TrashItem[] = []
+  for (const row of (projectsRes.data ?? []) as Array<{ id: string; name: string | null; deleted_at: string }>) {
+    items.push({ id: row.id, kind: 'project', table: 'projects', name: row.name ?? '—', deleted_at: row.deleted_at })
+  }
+  for (const row of (profilesRes.data ?? []) as Array<{ id: string; name: string | null; deleted_at: string }>) {
+    items.push({ id: row.id, kind: 'profile', table: 'profiles', name: row.name ?? '—', deleted_at: row.deleted_at })
+  }
+  for (const row of (tasksRes.data ?? []) as Array<{ id: string; title: string | null; deleted_at: string }>) {
+    items.push({ id: row.id, kind: 'task', table: 'tasks', name: row.title ?? '—', deleted_at: row.deleted_at })
+  }
+  for (const row of (receiptsRes.data ?? []) as Array<{ id: string; description: string | null; vendor: string | null; deleted_at: string }>) {
+    const label = [row.vendor, row.description].filter(Boolean).join(' — ') || '—'
+    items.push({ id: row.id, kind: 'receipt', table: 'project_expenses', name: label, deleted_at: row.deleted_at })
+  }
+  items.sort((a, b) => new Date(b.deleted_at).getTime() - new Date(a.deleted_at).getTime())
+  return items
+}
+
+// BACKEND REQUEST: жёсткое удаление (purge) из корзины не реализовано на фронте — во всём приложении
+// действует только мягкое удаление (deleted_at). Для «Удалить навсегда» нужен серверный путь:
+// RPC/edge-функция purge_entity(table, id) под owner-гейтом (RLS DELETE на projects/profiles/tasks/
+// project_expenses сейчас не гарантирован). До его появления кнопка «Удалить навсегда» отключена
+// (owner-only, disabled) — см. src/screens/Trash.tsx. Ничего не подделываем: реального DELETE тут нет.
+
+// ARCH-1 «Архив» → вкладка «Проекты»: архивные проекты (archived_at IS NOT NULL, не удалённые) со
+// связанной историей — задачи/файлы(медиа)/часы/рабочие. Счётчики собираем на клиенте из связанных
+// строк одним пакетом запросов (in(project_id)). Финансов тут нет — только сохранённая история.
+export async function getArchiveProjectsSummary(): Promise<ArchiveProjectSummary[]> {
+  const { data: projRows, error } = await supabase.from('projects')
+    .select('id, name, address, status, archived_at')
+    .not('archived_at', 'is', null)
+    .is('deleted_at', null)
+    .order('archived_at', { ascending: false })
+  if (error || !projRows) return []
+  const projects = projRows as Array<{ id: string; name: string; address: string | null; status: string | null; archived_at: string | null }>
+  const ids = projects.map((p) => p.id)
+  if (ids.length === 0) return []
+
+  const [tasksRes, mediaRes, intervalsRes] = await Promise.all([
+    supabase.from('tasks').select('project_id, status').in('project_id', ids).is('deleted_at', null),
+    supabase.from('media').select('project_id').in('project_id', ids).is('deleted_at', null),
+    supabase.from('v_work_intervals').select('project_id, profile_id, start_at, end_at').in('project_id', ids),
+  ])
+
+  const taskAgg = new Map<string, { total: number; done: number }>()
+  for (const row of (tasksRes.data ?? []) as Array<{ project_id: string | null; status: string | null }>) {
+    if (!row.project_id) continue
+    const agg = taskAgg.get(row.project_id) ?? { total: 0, done: 0 }
+    agg.total += 1
+    if (row.status === 'done') agg.done += 1
+    taskAgg.set(row.project_id, agg)
+  }
+  const mediaAgg = new Map<string, number>()
+  for (const row of (mediaRes.data ?? []) as Array<{ project_id: string | null }>) {
+    if (!row.project_id) continue
+    mediaAgg.set(row.project_id, (mediaAgg.get(row.project_id) ?? 0) + 1)
+  }
+  const hoursAgg = new Map<string, number>()
+  const workerAgg = new Map<string, Set<string>>()
+  for (const row of (intervalsRes.data ?? []) as Array<{ project_id: string | null; profile_id: string; start_at: string; end_at: string | null }>) {
+    if (!row.project_id || !row.end_at) continue
+    const ms = new Date(row.end_at).getTime() - new Date(row.start_at).getTime()
+    if (ms > 0) hoursAgg.set(row.project_id, (hoursAgg.get(row.project_id) ?? 0) + ms / 3_600_000)
+    const set = workerAgg.get(row.project_id) ?? new Set<string>()
+    set.add(row.profile_id)
+    workerAgg.set(row.project_id, set)
+  }
+
+  return projects.map((p) => ({
+    id: p.id,
+    name: p.name,
+    address: p.address,
+    status: p.status,
+    archived_at: p.archived_at,
+    taskCount: taskAgg.get(p.id)?.total ?? 0,
+    completedTaskCount: taskAgg.get(p.id)?.done ?? 0,
+    mediaCount: mediaAgg.get(p.id) ?? 0,
+    hours: hoursAgg.get(p.id) ?? 0,
+    workerCount: workerAgg.get(p.id)?.size ?? 0,
+  }))
+}
+
+// ARCH-1 «Архив» → вкладка «Зарплата / Рабочие»: закрытые/оплаченные периоды (status approved|paid) со
+// строками сотрудников. Три запроса (периоды → строки → имена/роли), сборка на клиенте — без embed,
+// чтобы не зависеть от строгих FK. Денежные суммы гейтит UI (finance-only), тут только читаем.
+export async function getArchivePayPeriods(): Promise<ArchivePayPeriod[]> {
+  const { data: periodRows, error } = await supabase.from('pay_periods')
+    .select('id, label, period_start, period_end, status, paid_at')
+    .in('status', ['approved', 'paid'])
+    .order('period_start', { ascending: false })
+  if (error || !periodRows) return []
+  const periods = periodRows as Array<{ id: string; label: string | null; period_start: string; period_end: string; status: string | null; paid_at: string | null }>
+  if (periods.length === 0) return []
+
+  const periodIds = periods.map((p) => p.id)
+  const { data: itemRows } = await supabase.from('pay_period_items')
+    .select('pay_period_id, profile_id, regular_hours, overtime_hours, total')
+    .in('pay_period_id', periodIds)
+  const items = (itemRows ?? []) as Array<{ pay_period_id: string; profile_id: string; regular_hours: number | null; overtime_hours: number | null; total: number | null }>
+
+  const workerIds = [...new Set(items.map((i) => i.profile_id))]
+  const workerById = new Map<string, { name: string | null; role: string | null }>()
+  if (workerIds.length > 0) {
+    const { data: profRows } = await supabase.from('profiles').select('id, name, role').in('id', workerIds)
+    for (const row of (profRows ?? []) as Array<{ id: string; name: string | null; role: string | null }>) {
+      workerById.set(row.id, { name: row.name, role: row.role })
+    }
+  }
+
+  const itemsByPeriod = new Map<string, ArchivePayItem[]>()
+  for (const it of items) {
+    const list = itemsByPeriod.get(it.pay_period_id) ?? []
+    const prof = workerById.get(it.profile_id)
+    list.push({
+      profile_id: it.profile_id,
+      worker_name: prof?.name ?? null,
+      worker_role: prof?.role ?? null,
+      regular_hours: Number(it.regular_hours) || 0,
+      overtime_hours: Number(it.overtime_hours) || 0,
+      total: Number(it.total) || 0,
+    })
+    itemsByPeriod.set(it.pay_period_id, list)
+  }
+
+  return periods.map((p) => ({
+    id: p.id,
+    label: p.label,
+    period_start: p.period_start,
+    period_end: p.period_end,
+    status: p.status,
+    paid_at: p.paid_at,
+    items: itemsByPeriod.get(p.id) ?? [],
+  }))
+}
+
+// ARCH-1 «Архив» → вкладка «Зарплата / Рабочие»: деактивированные работники (is_active=false, не удалены —
+// удалённые живут в корзине). RLS profiles отдаёт менеджеру org-скоуп.
+export async function getDeactivatedWorkers(): Promise<DeactivatedWorker[]> {
+  const { data, error } = await supabase.from('profiles')
+    .select('id, name, role, is_active, deleted_at')
+    .eq('is_active', false)
+    .is('deleted_at', null)
+    .order('name')
+  if (error) return []
+  return ((data ?? []) as Array<{ id: string; name: string; role: string }>)
+    .map((row) => ({ id: row.id, name: row.name, role: row.role }))
 }
 
 // «Магазины поставок»: справочник supply_stores. NB: point — PostGIS geography, никогда не селектим (hex EWKB).
