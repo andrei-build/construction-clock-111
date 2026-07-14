@@ -1571,6 +1571,35 @@ export async function sendDispatchPlan(p: Profile, project: Project, workers: Pr
   }
 }
 
+// DISP-1: бейдж «отправлено кому/когда» в конструкторе плана. Берём из ленты событий
+// последние рассылки плана (событие dispatch.plan_sent пишет sendDispatchPlan выше).
+// entity_id = проект; data.workers = сколько получателей. error → [] (бейдж не критичен).
+export interface DispatchPlanSend {
+  id: string
+  project_id: string
+  workers: number
+  created_at: string
+  actor_name: string | null
+}
+
+export async function getRecentDispatchPlanSends(): Promise<DispatchPlanSend[]> {
+  const { data, error } = await supabase.from('events')
+    .select('id, entity_id, actor_name, data, created_at')
+    .eq('event_type', 'dispatch.plan_sent')
+    .order('created_at', { ascending: false })
+    .limit(50)
+  if (error) return []
+  return ((data ?? []) as Array<{ id: string; entity_id: string | null; actor_name: string | null; data: { workers?: number } | null; created_at: string }>)
+    .filter((row) => row.entity_id)
+    .map((row) => ({
+      id: row.id,
+      project_id: row.entity_id as string,
+      workers: Number(row.data?.workers) || 0,
+      created_at: row.created_at,
+      actor_name: row.actor_name,
+    }))
+}
+
 export async function markTaskDone(p: Profile, task: Task, mediaId: string | null = null) {
   if (task.task_type === 'material' || task.task_type === 'delivery') {
     throw new Error('material_status_rpc_required')
