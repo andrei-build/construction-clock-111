@@ -393,6 +393,8 @@ export interface AppSettings {
   timezone: string
   overlong_shift_hours: number
   default_gps_radius_m: number
+  // G1: разрыв между сменами в один день, после которого он подсвечивается (всё равно оплачивается)
+  paid_gap_alert_hours: number
   settings: Record<string, unknown>
   updated_by: string | null
   updated_at: string

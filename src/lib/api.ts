@@ -14,9 +14,9 @@ export async function logEvent(p: Profile, eventType: string, entityType: string
   })
 }
 
-export type AppSettingsInput = Pick<AppSettings, 'default_language' | 'timezone' | 'overlong_shift_hours' | 'default_gps_radius_m'>
+export type AppSettingsInput = Pick<AppSettings, 'default_language' | 'timezone' | 'overlong_shift_hours' | 'default_gps_radius_m' | 'paid_gap_alert_hours'>
 
-const APP_SETTINGS_SELECT = 'org_id, default_language, timezone, overlong_shift_hours, default_gps_radius_m, settings, updated_by, updated_at'
+const APP_SETTINGS_SELECT = 'org_id, default_language, timezone, overlong_shift_hours, default_gps_radius_m, paid_gap_alert_hours, settings, updated_by, updated_at'
 
 export async function getAppSettings(): Promise<AppSettings | null> {
   const { data, error } = await supabase.from('app_settings')

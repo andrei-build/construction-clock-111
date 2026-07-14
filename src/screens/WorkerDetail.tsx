@@ -17,6 +17,7 @@ import {
   getWorkerIntervals,
   getWorkerLocationConsents,
   getWorkerPinAccess,
+  getAppSettings,
   getWorkerProfile,
   getWorkerProfileFiles,
   getWorkerSafetyAcks,
@@ -33,7 +34,7 @@ import {
   unassignWorkerFromProject,
   updateWorkerProfileSettings,
 } from '../lib/api'
-import { fmtClock, fmtHours } from '../lib/time'
+import { fmtClock, fmtHours, computeTravelGaps, intervalsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 import { computeTransferGaps } from '../lib/shift-gaps'
 import { canAssignRole, isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type UserCapability, type WorkInterval } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
@@ -170,6 +171,8 @@ export default function WorkerDetail() {
   const [projects, setProjects] = useState<Project[]>([])
   const [intervals, setIntervals] = useState<WorkInterval[]>([])
   const [rates, setRates] = useState<ProfileRate[]>([])
+  const [timezone, setTimezone] = useState<string | null>(null)
+  const [alertHours, setAlertHours] = useState(DEFAULT_PAID_GAP_ALERT_HOURS)
   const [assignments, setAssignments] = useState<ProjectAssignment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -223,18 +226,24 @@ export default function WorkerDetail() {
     setLoading(true)
     setError(false)
     try {
-      const [workerRow, projectRows, intervalRowsData, rateRows, pinAccess] = await Promise.all([
+      const [workerRow, projectRows, intervalRowsData, rateRows, pinAccess, settings] = await Promise.all([
         getWorkerProfile(id),
         getProjects(),
         getWorkerIntervals(id),
         getVisibleProfileRates(),
         getWorkerPinAccess(id),
+        getAppSettings(),
       ])
       const assignmentRows = await getProjectAssignments(projectRows.map((project) => project.id))
       setWorker(workerRow)
       setProjects(projectRows)
       setIntervals(intervalRowsData)
       setRates(rateRows)
+      // G1: часовой пояс организации + порог оповещения о разрыве (для время-в-пути).
+      const tz = settings?.timezone?.trim()
+      setTimezone(tz ? tz : null)
+      const gapAlert = Number(settings?.paid_gap_alert_hours)
+      setAlertHours(Number.isFinite(gapAlert) && gapAlert > 0 ? gapAlert : DEFAULT_PAID_GAP_ALERT_HOURS)
       setAssignments(assignmentRows)
       setPinSupported(pinAccess.supported)
       setPinEnabled(Boolean(pinAccess.enabled))
@@ -300,6 +309,14 @@ export default function WorkerDetail() {
   // F15: обзорные чипы разрывов перехода между проектами в один день (только показ, не меняет часы).
   const transferGaps = useMemo(() => computeTransferGaps(intervals), [intervals])
 
+  // G1: оплачиваемое время в пути — разрывы между сменами в один org-local день (входит в часы).
+  const travelGaps = useMemo(
+    () => computeTravelGaps(intervalsToTravelShifts(intervals), timezone, alertHours),
+    [intervals, timezone, alertHours],
+  )
+  const travelTotalMs = useMemo(() => travelGaps.reduce((acc, g) => acc + (g.endMs - g.startMs), 0), [travelGaps])
+  const travelHasOverAlert = useMemo(() => travelGaps.some((g) => g.overAlert), [travelGaps])
+
   if (!canView) return <Navigate to="/" />
 
   const today = startOfDay(new Date(now))
@@ -330,8 +347,14 @@ export default function WorkerDetail() {
     const start = addDays(today, -index)
     const end = addDays(start, 1)
     const hoursMs = rangeIntervalMs(intervals, start, end, now)
+    // G1: время в пути этого дня — разрывы, чей уход (startMs) попал в окно суток.
+    const startMs = start.getTime()
+    const endMs = end.getTime()
+    const dayGaps = travelGaps.filter((g) => g.startMs >= startMs && g.startMs < endMs)
+    const travelMs = dayGaps.reduce((acc, g) => acc + (g.endMs - g.startMs), 0)
+    const travelOverAlert = dayGaps.some((g) => g.overAlert)
     // Границы суток в ISO (в локальной TZ экрана) — их передаём в детали дня.
-    return { key: start.toISOString(), label: start.toLocaleDateString(), hoursMs, startISO: start.toISOString(), endISO: end.toISOString() }
+    return { key: start.toISOString(), label: start.toLocaleDateString(), hoursMs, travelMs, travelOverAlert, startISO: start.toISOString(), endISO: end.toISOString() }
   })
 
   // Раскрыть/свернуть день; при первом раскрытии — ленивая загрузка фото и закрытых задач (guard по кэшу).
@@ -597,6 +620,16 @@ export default function WorkerDetail() {
                   </div>
                 ))}
               </div>
+              {/* G1: оплачиваемое время в пути за всё время (входит в оплачиваемые часы). */}
+              {travelTotalMs > 0 && (
+                <p className="muted worker-travel-total">
+                  {t('travel_hours')}: <strong className="num-display">{fmtHours(travelTotalMs)} {t('h')}</strong>
+                  {travelHasOverAlert && (
+                    <span className="badge amber" title={t('payroll_gap_alert_hint')}> ⚠ {t('payroll_travel_alert')}</span>
+                  )}
+                  <span className="muted"> — {t('travel_paid_hint')}</span>
+                </p>
+              )}
             </section>
           </div>
 
@@ -617,6 +650,14 @@ export default function WorkerDetail() {
                       <span className="worker-day-caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
                       <span>{day.label}</span>
                       <strong className="num-display">{fmtHours(day.hoursMs)} {t('h')}</strong>
+                      {day.travelMs > 0 && (
+                        <span
+                          className={`badge ${day.travelOverAlert ? 'amber' : 'blue'}`}
+                          title={t('travel_paid_hint')}
+                        >
+                          {day.travelOverAlert ? '⚠ ' : ''}+{fmtHours(day.travelMs)} {t('travel_hours')}
+                        </span>
+                      )}
                       {day.hoursMs > ELEVEN_HOURS_MS && <span className="badge amber">{t('over_11h')}</span>}
                     </button>
 
