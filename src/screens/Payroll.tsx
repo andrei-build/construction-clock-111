@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { closePayPeriod, getAppSettings, getCurrentPayPeriod, getIntervalsBetween, getTeam, getVisibleProfileRates, logEvent, markPayPeriodPaid } from '../lib/api'
+import { closePayPeriod, getAppSettings, getArchivePayPeriods, getCurrentPayPeriod, getIntervalsBetween, getPayPeriodByExactDates, getTeam, getVisibleProfileRates, getYearlyPayrollReport, logEvent, markPayPeriodPaid } from '../lib/api'
 import { orgWeekGrouping, computeTravelGaps, intervalsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
-import type { PayPeriod, Profile, ProfileRate, WorkInterval } from '../lib/types'
+import type { ArchivePayPeriod, PayPeriod, Profile, ProfileRate, WorkInterval, YearlyPayReportRow } from '../lib/types'
 
 interface PeriodWindow {
   id: string | null
@@ -22,6 +23,9 @@ interface PayrollRow {
   rate: number | null
   total: number
 }
+
+// PAY-1: пресеты периода для черновика зарплаты «из текущих часов».
+type PresetKey = 'lastWeek' | 'last2Weeks' | 'thisMonth' | 'custom'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const WEEK_MS = 7 * DAY_MS
@@ -54,6 +58,45 @@ function periodFromDb(period: PayPeriod | null): PeriodWindow {
   const end = startOfDay(new Date(`${period.period_end}T00:00:00`))
   end.setDate(end.getDate() + 1)
   return { id: period.id, start, end, status: period.status }
+}
+
+// PAY-1: окно из строки истории (ArchivePayPeriod) — как periodFromDb (end + 1 день, эксклюзивно).
+function periodFromArchive(p: ArchivePayPeriod): PeriodWindow {
+  const start = startOfDay(new Date(`${p.period_start}T00:00:00`))
+  const end = startOfDay(new Date(`${p.period_end}T00:00:00`))
+  end.setDate(end.getDate() + 1)
+  return { id: p.id, start, end, status: p.status }
+}
+
+// PAY-1: окно пресета. Границы недели/суток — через setDate (DST-безопасно, как startOfWeek).
+// end — эксклюзивная (полночь следующего дня), той же семантики, что periodFromDb.
+function presetWindow(key: PresetKey, customStart: string, customEnd: string): PeriodWindow | null {
+  const now = new Date()
+  if (key === 'lastWeek') {
+    const start = startOfWeek(now)
+    start.setDate(start.getDate() - 7)
+    const end = new Date(start)
+    end.setDate(end.getDate() + 7)
+    return { id: null, start, end, status: null }
+  }
+  if (key === 'last2Weeks') {
+    const thisWeek = startOfWeek(now)
+    const start = new Date(thisWeek)
+    start.setDate(start.getDate() - 14)
+    return { id: null, start, end: thisWeek, status: null }
+  }
+  if (key === 'thisMonth') {
+    const start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1))
+    const end = startOfDay(new Date(now.getFullYear(), now.getMonth() + 1, 1))
+    return { id: null, start, end, status: null }
+  }
+  // custom: даты включительно; end смещаем на +1 день (эксклюзивно).
+  if (!customStart || !customEnd) return null
+  const start = startOfDay(new Date(`${customStart}T00:00:00`))
+  const end = startOfDay(new Date(`${customEnd}T00:00:00`))
+  end.setDate(end.getDate() + 1)
+  if (!(end > start)) return null
+  return { id: null, start, end, status: null }
 }
 
 // Локальная дата YYYY-MM-DD (без сдвига часового пояса, в отличие от toISOString)
@@ -109,6 +152,53 @@ function weeklyHours(intervals: WorkInterval[], period: PeriodWindow, timeZone: 
   return weeks
 }
 
+// PAY-1: строки зарплаты из отработанных интервалов — ЕДИНЫЙ источник расчёта для текущего
+// периода И для черновика по пресету. Математика (weeklyHours + порог 40ч ×1.5 + время в пути)
+// не изменилась: логика вынесена сюда байт-в-байт из прежнего useMemo, чтобы деньги для уже
+// посчитанного периода совпадали.
+function buildPayrollRows(
+  team: Profile[],
+  intervals: WorkInterval[],
+  period: PeriodWindow,
+  timezone: string | null,
+  rates: ProfileRate[],
+  alertHours: number,
+): PayrollRow[] {
+  const byWorker = new Map<string, WorkInterval[]>()
+  for (const interval of intervals) {
+    if (!byWorker.has(interval.profile_id)) byWorker.set(interval.profile_id, [])
+    byWorker.get(interval.profile_id)!.push(interval)
+  }
+
+  const rateByWorker = new Map(rates.map((r) => [r.profile_id, r.hourly_rate === null ? null : Number(r.hourly_rate)]))
+
+  return team
+    .filter((worker) => byWorker.has(worker.id) || rateByWorker.has(worker.id))
+    .map((worker) => {
+      const workerIntervals = byWorker.get(worker.id) ?? []
+      const weeks = weeklyHours(workerIntervals, period, timezone)
+      let regularHours = 0
+      let overtimeHours = 0
+      for (const hours of weeks.values()) {
+        regularHours += Math.min(hours, 40)
+        overtimeHours += Math.max(0, hours - 40)
+      }
+      // G1: время в пути — разрывы между сменами в один org-local день. Считается ОТДЕЛЬНО
+      // и НЕ участвует в разбивке regular/OT (оплачивается прямой ставкой поверх work-часов).
+      const travelGaps = computeTravelGaps(intervalsToTravelShifts(workerIntervals), timezone, alertHours)
+      let travelHours = 0
+      let overAlertGapMs = 0
+      for (const gap of travelGaps) {
+        travelHours += gap.durationHours
+        if (gap.overAlert) overAlertGapMs = Math.max(overAlertGapMs, gap.endMs - gap.startMs)
+      }
+      const rate = rateByWorker.get(worker.id) ?? null
+      const total = rate === null ? 0 : (regularHours * rate) + (overtimeHours * rate * 1.5) + (travelHours * rate)
+      return { worker, regularHours, overtimeHours, travelHours, overAlertGapMs, rate, total }
+    })
+    .sort((a, b) => a.worker.name.localeCompare(b.worker.name))
+}
+
 function formatHours(hours: number) {
   return (Math.round(hours * 100) / 100).toFixed(2)
 }
@@ -120,17 +210,39 @@ function csvCell(value: string | number) {
 export default function Payroll() {
   const { profile } = useAuth()
   const { t } = useI18n()
+  const [searchParams] = useSearchParams()
   const [period, setPeriod] = useState<PeriodWindow>(() => fallbackPeriod())
+  const [currentWindow, setCurrentWindow] = useState<PeriodWindow | null>(null)
   const [team, setTeam] = useState<Profile[]>([])
   const [intervals, setIntervals] = useState<WorkInterval[]>([])
   const [rates, setRates] = useState<ProfileRate[]>([])
   const [timezone, setTimezone] = useState<string | null>(null)
   const [alertHours, setAlertHours] = useState(DEFAULT_PAID_GAP_ALERT_HOURS)
   const [loading, setLoading] = useState(true)
+  const [bootstrapped, setBootstrapped] = useState(false)
   const [error, setError] = useState(false)
   const [working, setWorking] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
+  // PAY-1: черновик из пресета + выбор работника.
+  const [activePreset, setActivePreset] = useState<PresetKey | null>(null)
+  const [workerFilter, setWorkerFilter] = useState<string>('') // '' → все работники
+  const [customStart, setCustomStart] = useState('')
+  const [customEnd, setCustomEnd] = useState('')
+
+  // PAY-1: история периодов.
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [history, setHistory] = useState<ArchivePayPeriod[] | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  // PAY-1: годовой отчёт.
+  const [reportOpen, setReportOpen] = useState(false)
+  const [reportYear, setReportYear] = useState(() => new Date().getFullYear())
+  const [report, setReport] = useState<YearlyPayReportRow[] | null>(null)
+  const [reportLoading, setReportLoading] = useState(false)
+
+  // Загрузка справочников (команда, ставки, настройки, текущий период). Интервалы грузит
+  // отдельный эффект по окну period, чтобы черновик по пресету переиспользовал тот же расчёт.
   useEffect(() => {
     let mounted = true
     async function load() {
@@ -139,16 +251,15 @@ export default function Payroll() {
       try {
         const dbPeriod = await getCurrentPayPeriod()
         const currentPeriod = periodFromDb(dbPeriod)
-        const [workers, intervalRows, visibleRates, settings] = await Promise.all([
+        const [workers, visibleRates, settings] = await Promise.all([
           getTeam(),
-          getIntervalsBetween(currentPeriod.start.toISOString(), currentPeriod.end.toISOString()),
           getVisibleProfileRates(),
           getAppSettings(),
         ])
         if (!mounted) return
+        setCurrentWindow(currentPeriod)
         setPeriod(currentPeriod)
         setTeam(workers)
-        setIntervals(intervalRows)
         setRates(visibleRates)
         // Часовой пояс организации для границ суток/недель. Пусто → как раньше (пояс устройства).
         const tz = settings?.timezone?.trim()
@@ -156,6 +267,7 @@ export default function Payroll() {
         // G1: порог оповещения о разрыве; null/пусто/≤0 → дефолт.
         const gapAlert = Number(settings?.paid_gap_alert_hours)
         setAlertHours(Number.isFinite(gapAlert) && gapAlert > 0 ? gapAlert : DEFAULT_PAID_GAP_ALERT_HOURS)
+        setBootstrapped(true)
       } catch {
         if (mounted) setError(true)
       } finally {
@@ -166,41 +278,42 @@ export default function Payroll() {
     return () => { mounted = false }
   }, [profile?.id])
 
-  const rows = useMemo<PayrollRow[]>(() => {
-    const byWorker = new Map<string, WorkInterval[]>()
-    for (const interval of intervals) {
-      if (!byWorker.has(interval.profile_id)) byWorker.set(interval.profile_id, [])
-      byWorker.get(interval.profile_id)!.push(interval)
+  // Интервалы за окно активного периода (текущего или черновика). Перезагружается при смене окна.
+  const periodStartMs = period.start.getTime()
+  const periodEndMs = period.end.getTime()
+  useEffect(() => {
+    if (!bootstrapped) return
+    let mounted = true
+    async function loadIntervals() {
+      try {
+        const rows = await getIntervalsBetween(new Date(periodStartMs).toISOString(), new Date(periodEndMs).toISOString())
+        if (mounted) setIntervals(rows)
+      } catch {
+        if (mounted) setIntervals([])
+      }
     }
+    loadIntervals()
+    return () => { mounted = false }
+  }, [bootstrapped, periodStartMs, periodEndMs])
 
-    const rateByWorker = new Map(rates.map((r) => [r.profile_id, r.hourly_rate === null ? null : Number(r.hourly_rate)]))
+  // PAY-1: преселект работника из карточки (/payroll?worker=<id>). Ставится один раз, когда
+  // команда загружена и такой работник существует.
+  useEffect(() => {
+    const workerId = searchParams.get('worker')
+    if (!workerId || team.length === 0) return
+    if (!team.some((w) => w.id === workerId)) return
+    setWorkerFilter((current) => (current ? current : workerId))
+  }, [searchParams, team])
 
-    return team
-      .filter((worker) => byWorker.has(worker.id) || rateByWorker.has(worker.id))
-      .map((worker) => {
-        const workerIntervals = byWorker.get(worker.id) ?? []
-        const weeks = weeklyHours(workerIntervals, period, timezone)
-        let regularHours = 0
-        let overtimeHours = 0
-        for (const hours of weeks.values()) {
-          regularHours += Math.min(hours, 40)
-          overtimeHours += Math.max(0, hours - 40)
-        }
-        // G1: время в пути — разрывы между сменами в один org-local день. Считается ОТДЕЛЬНО
-        // и НЕ участвует в разбивке regular/OT (оплачивается прямой ставкой поверх work-часов).
-        const travelGaps = computeTravelGaps(intervalsToTravelShifts(workerIntervals), timezone, alertHours)
-        let travelHours = 0
-        let overAlertGapMs = 0
-        for (const gap of travelGaps) {
-          travelHours += gap.durationHours
-          if (gap.overAlert) overAlertGapMs = Math.max(overAlertGapMs, gap.endMs - gap.startMs)
-        }
-        const rate = rateByWorker.get(worker.id) ?? null
-        const total = rate === null ? 0 : (regularHours * rate) + (overtimeHours * rate * 1.5) + (travelHours * rate)
-        return { worker, regularHours, overtimeHours, travelHours, overAlertGapMs, rate, total }
-      })
-      .sort((a, b) => a.worker.name.localeCompare(b.worker.name))
-  }, [intervals, period, rates, team, timezone, alertHours])
+  const allRows = useMemo<PayrollRow[]>(
+    () => buildPayrollRows(team, intervals, period, timezone, rates, alertHours),
+    [intervals, period, rates, team, timezone, alertHours],
+  )
+  // PAY-1: выбор работника сужает таблицу, итоги, CSV и закрытие периода.
+  const rows = useMemo(
+    () => (workerFilter ? allRows.filter((r) => r.worker.id === workerFilter) : allRows),
+    [allRows, workerFilter],
+  )
 
   const totals = rows.reduce((acc, row) => ({
     regular: acc.regular + row.regularHours,
@@ -219,6 +332,7 @@ export default function Payroll() {
     return `${Math.floor(totalMin / 60)}${t('h')}${totalMin % 60}${t('min_short')}`
   }
   const endInclusive = new Date(period.end.getTime() - DAY_MS)
+  const isDraft = activePreset !== null
 
   const exportCsv = async () => {
     if (!profile || locked) return
@@ -250,7 +364,10 @@ export default function Payroll() {
 
   const reloadPeriod = async () => {
     const dbPeriod = await getCurrentPayPeriod()
-    setPeriod(periodFromDb(dbPeriod))
+    const win = periodFromDb(dbPeriod)
+    setCurrentWindow(win)
+    // Держим активное окно в синхроне: если стоим на текущем периоде (не в черновике) — обновим.
+    if (!isDraft) setPeriod(win)
   }
 
   const closePeriod = async () => {
@@ -258,7 +375,11 @@ export default function Payroll() {
     setWorking(true)
     setMsg(null)
     try {
-      const items = rows
+      // closePayPeriod пересоздаёт строки (delete-all → insert). Для СУЩЕСТВУЮЩЕГО периода
+      // (id != null) всегда пишем ВСЕХ работников окна, иначе фильтр «один работник» стёр бы
+      // строки остальных. Одиночный работник = только для нового черновика (id == null).
+      const source = period.id ? allRows : rows
+      const items = source
         .filter((row) => row.regularHours > 0 || row.overtimeHours > 0 || row.rate !== null)
         .map((row) => ({
           profile_id: row.worker.id,
@@ -267,15 +388,19 @@ export default function Payroll() {
           hourly_rate: row.rate,
           total: row.total,
         }))
-      await closePayPeriod(profile, {
+      const totalPay = source.reduce((s, r) => s + r.total, 0)
+      const savedId = await closePayPeriod(profile, {
         payPeriodId: period.id,
         periodStart: ymd(period.start),
         periodEnd: ymd(endInclusive),
         label: `${dateLabel(period.start)} – ${dateLabel(endInclusive)}`,
         items,
-        totalPay: totals.pay,
+        totalPay,
       })
+      // Черновик стал реальным периодом → закрепляем его id/статус за активным окном.
+      setPeriod((prev) => ({ ...prev, id: savedId, status: 'approved' }))
       await reloadPeriod()
+      if (history) setHistory(null) // история устарела — перечитается при открытии
       setMsg('period_closed_ok')
     } catch {
       setMsg('period_action_failed')
@@ -295,7 +420,9 @@ export default function Payroll() {
         workers: rows.length,
         totalPay: totals.pay,
       })
+      setPeriod((prev) => ({ ...prev, status: 'paid' }))
       await reloadPeriod()
+      if (history) setHistory(null)
       setMsg('period_paid_ok')
     } catch {
       setMsg('period_action_failed')
@@ -304,12 +431,80 @@ export default function Payroll() {
     }
   }
 
+  // PAY-1: применить пресет. Если под точное окно уже есть период — открываем его (с id/статусом),
+  // иначе создаём черновик (id=null), который «Закрыть период» превратит в реальный период.
+  const applyPreset = async (key: PresetKey) => {
+    const win = presetWindow(key, customStart, customEnd)
+    if (!win) return
+    setMsg(null)
+    setActivePreset(key)
+    const existing = await getPayPeriodByExactDates(ymd(win.start), ymd(new Date(win.end.getTime() - DAY_MS)))
+    setPeriod(existing ? periodFromDb(existing) : win)
+  }
+
+  const resetToCurrent = () => {
+    setActivePreset(null)
+    if (currentWindow) setPeriod(currentWindow)
+  }
+
+  const toggleHistory = async () => {
+    const next = !historyOpen
+    setHistoryOpen(next)
+    if (next && history === null && !historyLoading) {
+      setHistoryLoading(true)
+      try {
+        setHistory(await getArchivePayPeriods())
+      } catch {
+        setHistory([])
+      } finally {
+        setHistoryLoading(false)
+      }
+    }
+  }
+
+  const loadReport = async (year: number) => {
+    setReportLoading(true)
+    try {
+      setReport(await getYearlyPayrollReport(`${year}-01-01`, `${year}-12-31`))
+    } catch {
+      setReport([])
+    } finally {
+      setReportLoading(false)
+    }
+  }
+
+  const toggleReport = async () => {
+    const next = !reportOpen
+    setReportOpen(next)
+    if (next && report === null && !reportLoading) await loadReport(reportYear)
+  }
+
+  const changeReportYear = async (year: number) => {
+    setReportYear(year)
+    await loadReport(year)
+  }
+
+  const openHistoryPeriod = (p: ArchivePayPeriod) => {
+    setActivePreset('custom') // помечаем как «не текущий период», чтобы показать «← Текущий период»
+    setPeriod(periodFromArchive(p))
+    setMsg(null)
+  }
+
+  const thisYear = new Date().getFullYear()
+  const reportTotals = (report ?? []).reduce(
+    (acc, r) => ({ hours: acc.hours + r.total_hours, paid: acc.paid + r.paid }),
+    { hours: 0, paid: 0 },
+  )
+
   return (
     <div className="screen payroll-screen">
       <div className="row payroll-head">
         <div>
           <h1>💵 {t('payroll')}</h1>
-          <p className="muted">{t('pay_period')}: {dateLabel(period.start)} – {dateLabel(endInclusive)}</p>
+          <p className="muted">
+            {t('pay_period')}: {dateLabel(period.start)} – {dateLabel(endInclusive)}
+            {isDraft && <span className="badge amber payroll-draft-badge">{t('pay_draft_badge')}</span>}
+          </p>
         </div>
         <div className="payroll-actions">
           {!locked && period.status === 'paid' && (
@@ -343,6 +538,113 @@ export default function Payroll() {
 
       {!loading && !locked && (
         <>
+          {/* PAY-1: черновик зарплаты из текущих часов — пресеты периода + выбор работника. */}
+          <div className="card payroll-draft-builder">
+            <div className="row payroll-draft-head">
+              <h2>{t('pay_draft_title')}</h2>
+              {isDraft && (
+                <button className="btn ghost small" onClick={resetToCurrent}>← {t('pay_reset_current')}</button>
+              )}
+            </div>
+            <div className="payroll-preset-row">
+              <button className={`btn small ${activePreset === 'lastWeek' ? '' : 'ghost'}`} onClick={() => applyPreset('lastWeek')}>{t('pay_preset_last_week')}</button>
+              <button className={`btn small ${activePreset === 'last2Weeks' ? '' : 'ghost'}`} onClick={() => applyPreset('last2Weeks')}>{t('pay_preset_2weeks')}</button>
+              <button className={`btn small ${activePreset === 'thisMonth' ? '' : 'ghost'}`} onClick={() => applyPreset('thisMonth')}>{t('pay_preset_month')}</button>
+            </div>
+            <div className="payroll-custom-row">
+              <label>{t('pay_from')}<input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} /></label>
+              <label>{t('pay_to')}<input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} /></label>
+              <button className="btn small ghost" disabled={!customStart || !customEnd} onClick={() => applyPreset('custom')}>{t('pay_preset_custom')}</button>
+            </div>
+            <div className="payroll-worker-row">
+              <label>
+                {t('worker')}
+                <select value={workerFilter} onChange={(e) => setWorkerFilter(e.target.value)}>
+                  <option value="">{t('pay_worker_all')}</option>
+                  {team.map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+              </label>
+              <button className="btn ghost small" onClick={toggleReport}>📅 {t('pay_year_report')}</button>
+              <button className="btn ghost small" onClick={toggleHistory}>🗂 {t('pay_history_title')}</button>
+            </div>
+          </div>
+
+          {/* PAY-1: годовой отчёт по работникам (часы + оплачено $), read-only агрегация за год. */}
+          {reportOpen && (
+            <div className="card payroll-report">
+              <div className="row payroll-report-head">
+                <h2>{t('pay_year_report_title')}</h2>
+                <div className="payroll-report-years">
+                  {[thisYear, thisYear - 1, thisYear - 2].map((y) => (
+                    <button key={y} className={`btn small ${reportYear === y ? '' : 'ghost'}`} onClick={() => changeReportYear(y)}>{y}</button>
+                  ))}
+                </div>
+              </div>
+              <p className="muted">{t('pay_year_report_hint')}</p>
+              {reportLoading && <div className="card center muted">{t('loading')}</div>}
+              {!reportLoading && (report ?? []).length === 0 && <div className="card muted">{t('pay_report_empty')}</div>}
+              {!reportLoading && (report ?? []).length > 0 && (
+                <div className="payroll-table-wrap">
+                  <table className="payroll-table">
+                    <thead>
+                      <tr>
+                        <th>{t('worker')}</th>
+                        <th>{t('pay_col_hours')}</th>
+                        <th>{t('pay_report_periods')}</th>
+                        <th>{t('pay_col_paid')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(report ?? []).map((r) => (
+                        <tr key={r.profile_id}>
+                          <td>{r.worker_name ?? '—'}</td>
+                          <td>{formatHours(r.total_hours)}</td>
+                          <td>{r.periods}</td>
+                          <td>{money(r.paid)}</td>
+                        </tr>
+                      ))}
+                      <tr className="payroll-report-total">
+                        <td>{t('total')}</td>
+                        <td>{formatHours(reportTotals.hours)}</td>
+                        <td></td>
+                        <td>{money(reportTotals.paid)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* PAY-1: история закрытых/оплаченных периодов (тот же источник, что вкладка Архива). */}
+          {historyOpen && (
+            <div className="card payroll-history">
+              <h2>{t('pay_history_title')}</h2>
+              {historyLoading && <div className="card center muted">{t('loading')}</div>}
+              {!historyLoading && (history ?? []).length === 0 && <div className="card muted">{t('pay_history_empty')}</div>}
+              {!historyLoading && (history ?? []).map((p) => {
+                const hrs = p.items.reduce((s, i) => s + i.regular_hours + i.overtime_hours, 0)
+                const gross = p.items.reduce((s, i) => s + i.total, 0)
+                return (
+                  <div key={p.id} className="payroll-history-row">
+                    <div>
+                      <span className="item-title">{p.label || `${p.period_start} — ${p.period_end}`}</span>
+                      <div className="muted" style={{ fontSize: 12 }}>{p.period_start} — {p.period_end}</div>
+                    </div>
+                    <div className="payroll-history-meta">
+                      <span className={`badge ${p.status === 'paid' ? 'green' : 'amber'}`}>{p.status === 'paid' ? t('period_paid_badge') : t('pay_status_closed')}</span>
+                      <span className="badge">{hrs.toFixed(1)}h</span>
+                      <span className="badge">{money(gross)}</span>
+                      <button className="btn ghost small" onClick={() => openHistoryPeriod(p)}>{t('pay_open')}</button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
           <div className="grid2 payroll-totals">
             <div className="card center">
               <div className="big">{formatHours(totals.regular)}</div>

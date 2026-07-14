@@ -1,5 +1,5 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from './types'
 import { todayStartISO, weekStartISO, workedMs } from './time'
 import { notifyMessagePush } from './push'
 
@@ -2070,6 +2070,85 @@ export async function markPayPeriodPaid(p: Profile, payPeriodId: string, meta: {
     workers: meta.workers,
     total: meta.totalPay,
   })
+}
+
+// PAY-1: найти уже существующий период по ТОЧНЫМ датам окна (period_start/period_end).
+// Черновик из пресета переиспользует этот id (обновляет период вместо вставки дубля),
+// чтобы не задваивать деньги в Архиве/отчётах. Нет совпадения → null (будет новый черновик).
+export async function getPayPeriodByExactDates(periodStart: string, periodEnd: string): Promise<PayPeriod | null> {
+  const { data, error } = await supabase.from('pay_periods')
+    .select('id, period_start, period_end, status')
+    .eq('period_start', periodStart)
+    .eq('period_end', periodEnd)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null
+  return (data as PayPeriod | null) ?? null
+}
+
+// PAY-1: годовой отчёт (per-worker) — часы и оплачено $ по закрытым/оплаченным периодам
+// (status approved|paid), чьё period_start попадает в окно года [fromDate, toDate] (YYYY-MM-DD).
+// Тот же источник и та же нотация «закрыто/оплачено», что у Архива (getArchivePayPeriods):
+// pay_periods + pay_period_items, без RPC. Деньги гейтит UI (finance-only). Три запроса,
+// сборка на клиенте — без embed, чтобы не зависеть от строгих FK.
+export async function getYearlyPayrollReport(fromDate: string, toDate: string): Promise<YearlyPayReportRow[]> {
+  const { data: periodRows, error } = await supabase.from('pay_periods')
+    .select('id, period_start, status')
+    .in('status', ['approved', 'paid'])
+    .gte('period_start', fromDate)
+    .lte('period_start', toDate)
+  if (error || !periodRows) return []
+  const periods = periodRows as Array<{ id: string; period_start: string; status: string | null }>
+  if (periods.length === 0) return []
+
+  const periodIds = periods.map((p) => p.id)
+  const { data: itemRows } = await supabase.from('pay_period_items')
+    .select('pay_period_id, profile_id, regular_hours, overtime_hours, total')
+    .in('pay_period_id', periodIds)
+  const items = (itemRows ?? []) as Array<{ pay_period_id: string; profile_id: string; regular_hours: number | null; overtime_hours: number | null; total: number | null }>
+  if (items.length === 0) return []
+
+  const workerIds = [...new Set(items.map((i) => i.profile_id))]
+  const workerById = new Map<string, { name: string | null; role: string | null }>()
+  if (workerIds.length > 0) {
+    const { data: profRows } = await supabase.from('profiles').select('id, name, role').in('id', workerIds)
+    for (const row of (profRows ?? []) as Array<{ id: string; name: string | null; role: string | null }>) {
+      workerById.set(row.id, { name: row.name, role: row.role })
+    }
+  }
+
+  const byWorker = new Map<string, YearlyPayReportRow>()
+  const periodsByWorker = new Map<string, Set<string>>()
+  for (const it of items) {
+    const prof = workerById.get(it.profile_id)
+    const row = byWorker.get(it.profile_id) ?? {
+      profile_id: it.profile_id,
+      worker_name: prof?.name ?? null,
+      worker_role: prof?.role ?? null,
+      regular_hours: 0,
+      overtime_hours: 0,
+      total_hours: 0,
+      paid: 0,
+      periods: 0,
+    }
+    const reg = Number(it.regular_hours) || 0
+    const ot = Number(it.overtime_hours) || 0
+    row.regular_hours += reg
+    row.overtime_hours += ot
+    row.total_hours += reg + ot
+    row.paid += Number(it.total) || 0
+    byWorker.set(it.profile_id, row)
+    const set = periodsByWorker.get(it.profile_id) ?? new Set<string>()
+    set.add(it.pay_period_id)
+    periodsByWorker.set(it.profile_id, set)
+  }
+  for (const [id, set] of periodsByWorker) {
+    const row = byWorker.get(id)
+    if (row) row.periods = set.size
+  }
+
+  return [...byWorker.values()].sort((a, b) => (a.worker_name ?? '').localeCompare(b.worker_name ?? ''))
 }
 
 export async function getMessages(profileId: string): Promise<MessageRow[]> {
