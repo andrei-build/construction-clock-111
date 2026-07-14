@@ -2,14 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useEntityDrawer } from '../components/EntityDrawer'
-import { getMapProjects, getTeam, getTodayEvents, getWorkerLastLocations, type WorkerLocation } from '../lib/api'
+import { useAuth } from '../lib/auth'
+import { getLiveLastLocations, getMapProjects, getTeam, getTodayEvents, getWorkerLastLocations, subscribeToLiveLocations, type WorkerLocation } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { shiftState } from '../lib/time'
 import { keepStableListIfUnchanged } from '../lib/list-stability'
 import { formatGpsAge } from '../lib/gps-freshness'
 import { buildWorkerDisambiguationMap } from '../lib/worker-utils'
 import { workerMarkerColor } from '../lib/marker-color'
-import type { Profile, Project, TimeEvent } from '../lib/types'
+import type { LiveLastLocation, Profile, Project, TimeEvent } from '../lib/types'
 
 type MapPoint = { lat: number; lng: number }
 type ProjectMarker = { project: Project; point: MapPoint }
@@ -132,6 +133,7 @@ function groupEventsByWorker(events: TimeEvent[]) {
 
 export default function LiveMap() {
   const { t } = useI18n()
+  const { profile } = useAuth()
   const { openProject, openWorker } = useEntityDrawer()
   const mapEl = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<L.Map | null>(null)
@@ -146,6 +148,7 @@ export default function LiveMap() {
   const [error, setError] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [locations, setLocations] = useState<Map<string, WorkerLocation>>(new Map())
+  const [liveRows, setLiveRows] = useState<LiveLastLocation[]>([])
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null)
 
   const load = useCallback(async (silent = false) => {
@@ -153,11 +156,12 @@ export default function LiveMap() {
     else setLoading(true)
     setError(false)
     try {
-      const [projectRows, people, todayEvents, locs] = await Promise.all([
+      const [projectRows, people, todayEvents, locs, live] = await Promise.all([
         getMapProjects(),
         getTeam(),
         getTodayEvents(),
         getWorkerLastLocations(),
+        getLiveLastLocations(),
       ])
       if (!mountedRef.current) return
       setProjects(projectRows)
@@ -166,6 +170,7 @@ export default function LiveMap() {
       setTeam((prev) => keepStableListIfUnchanged(prev, people, (w) => w.id))
       setEvents(todayEvents)
       setLocations(locs)
+      setLiveRows(live)
       setLastUpdated(new Date())
     } catch {
       if (mountedRef.current) setError(true)
@@ -185,6 +190,17 @@ export default function LiveMap() {
       window.clearInterval(timer)
     }
   }, [load])
+
+  // GEO-1: live-подписка на новые точки live_locations по орг. — держит «Сейчас на объектах» свежим
+  // между 60-секундными поллами. Тот же контракт канала/очистки, что и остальные realtime-хелперы.
+  useEffect(() => {
+    if (!profile?.org_id) return
+    return subscribeToLiveLocations(profile.org_id, () => {
+      getLiveLastLocations().then((rows) => {
+        if (mountedRef.current) setLiveRows(rows)
+      }).catch(() => { /* best-effort — поллинг догонит */ })
+    }, `livemap:${profile.org_id}`)
+  }, [profile?.org_id])
 
   useEffect(() => {
     if (!mapEl.current || mapRef.current) return
@@ -372,6 +388,30 @@ export default function LiveMap() {
         <span><i className="map-dot on-shift" />{t('on_shift')}</span>
         <span><i className="map-dot no-gps" />{t('no_gps_data')}</span>
       </div>
+
+      {liveRows.length > 0 && (
+        <section className="card live-now-card">
+          <h2>{t('live_now_title')}</h2>
+          {liveRows.map((row) => {
+            const worker = team.find((w) => w.id === row.worker_id) ?? null
+            const name = (worker ? (workerLabels.get(worker.id) ?? worker.name) : row.name) ?? t('timeline_unknown_actor')
+            const age = formatGpsAge(row.recorded_at)
+            return (
+              <div key={row.worker_id} className="row live-now-row">
+                <div>
+                  {worker ? (
+                    <button className="inline-link item-title" onClick={() => openWorker(worker)}>{name}</button>
+                  ) : (
+                    <span className="item-title">{name}</span>
+                  )}
+                  <div className="muted">{row.role ?? ''}{age ? `${row.role ? ' · ' : ''}${age}` : ''}</div>
+                </div>
+                {row.accuracy_m != null && <span className="muted">±{Math.round(row.accuracy_m)} {t('unit_meters')}</span>}
+              </div>
+            )
+          })}
+        </section>
+      )}
 
       {lastUpdated && (
         <p className="muted map-updated">

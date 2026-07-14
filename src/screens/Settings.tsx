@@ -8,11 +8,15 @@ import { DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 
 type OrgLanguage = 'ru' | 'en' | 'es'
 
+// GEO-1: после скольких минут без GPS-сигнала в открытой смене риск «нет сигнала» (DB-дефолт 15).
+const DEFAULT_GEO_NO_SIGNAL_MINUTES = 15
+
 const DEFAULT_SETTINGS: AppSettingsInput = {
   default_language: 'ru',
   timezone: 'America/Los_Angeles',
   overlong_shift_hours: 11,
   default_gps_radius_m: 150,
+  geo_no_signal_minutes: DEFAULT_GEO_NO_SIGNAL_MINUTES,
   paid_gap_alert_hours: DEFAULT_PAID_GAP_ALERT_HOURS,
 }
 
@@ -24,6 +28,12 @@ function supportedLanguage(value: string | null | undefined): OrgLanguage {
 function gapAlertOrDefault(value: number | null | undefined): number {
   const n = Number(value)
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_PAID_GAP_ALERT_HOURS
+}
+
+// geo_no_signal_minutes: положительное число → оно; иначе (null/пусто/≤0) → дефолт (15).
+function geoNoSignalOrDefault(value: number | null | undefined): number {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_GEO_NO_SIGNAL_MINUTES
 }
 
 export default function Settings() {
@@ -39,6 +49,7 @@ export default function Settings() {
   const [timezone, setTimezone] = useState(DEFAULT_SETTINGS.timezone)
   const [overlongShiftHours, setOverlongShiftHours] = useState(String(DEFAULT_SETTINGS.overlong_shift_hours))
   const [defaultGpsRadius, setDefaultGpsRadius] = useState(String(DEFAULT_SETTINGS.default_gps_radius_m))
+  const [geoNoSignalMinutes, setGeoNoSignalMinutes] = useState(String(DEFAULT_SETTINGS.geo_no_signal_minutes))
   const [paidGapAlertHours, setPaidGapAlertHours] = useState(String(DEFAULT_SETTINGS.paid_gap_alert_hours))
 
   const canEdit = profile?.role === 'owner'
@@ -58,6 +69,8 @@ export default function Settings() {
         setTimezone(source.timezone)
         setOverlongShiftHours(String(Number(source.overlong_shift_hours)))
         setDefaultGpsRadius(String(source.default_gps_radius_m))
+        // geo_no_signal_minutes может быть null в старых строках → дефолт (15).
+        setGeoNoSignalMinutes(String(geoNoSignalOrDefault(source.geo_no_signal_minutes)))
         // paid_gap_alert_hours может быть null в старых строках → дефолт.
         setPaidGapAlertHours(String(gapAlertOrDefault(source.paid_gap_alert_hours)))
       } catch {
@@ -85,6 +98,7 @@ export default function Settings() {
     timezone,
     overlong_shift_hours: overlongShiftHours,
     default_gps_radius_m: defaultGpsRadius,
+    geo_no_signal_minutes: geoNoSignalMinutes,
     paid_gap_alert_hours: paidGapAlertHours,
   }
 
@@ -101,6 +115,10 @@ export default function Settings() {
     const gapAlert = paidGapAlertHours.trim() === ''
       ? DEFAULT_PAID_GAP_ALERT_HOURS
       : gapAlertOrDefault(Number(paidGapAlertHours))
+    // Порог «нет GPS»: положительное число минут; пусто/некорректно/≤0 → дефолт (15).
+    const geoNoSignal = geoNoSignalMinutes.trim() === ''
+      ? DEFAULT_GEO_NO_SIGNAL_MINUTES
+      : geoNoSignalOrDefault(Number(geoNoSignalMinutes))
     // Clamp to the sane [25, 300] m geofence range; empty/NaN falls back to the default.
     const radius = defaultGpsRadius.trim() === ''
       ? DEFAULT_SETTINGS.default_gps_radius_m
@@ -111,6 +129,7 @@ export default function Settings() {
       timezone: timezone.trim(),
       overlong_shift_hours: hours,
       default_gps_radius_m: radius,
+      geo_no_signal_minutes: geoNoSignal,
       paid_gap_alert_hours: gapAlert,
     }
 
@@ -122,6 +141,7 @@ export default function Settings() {
       setTimezone(saved.timezone)
       setOverlongShiftHours(String(Number(saved.overlong_shift_hours)))
       setDefaultGpsRadius(String(saved.default_gps_radius_m))
+      setGeoNoSignalMinutes(String(geoNoSignalOrDefault(saved.geo_no_signal_minutes)))
       setPaidGapAlertHours(String(gapAlertOrDefault(saved.paid_gap_alert_hours)))
       setDefaultLanguage(supportedLanguage(saved.default_language))
       setMsg('settings_saved')
@@ -137,6 +157,7 @@ export default function Settings() {
     { key: 'timezone', label: t('settings_timezone'), value: currentValues.timezone },
     { key: 'overlong', label: t('settings_overlong_shift'), value: `${currentValues.overlong_shift_hours} ${t('h')}` },
     { key: 'radius', label: t('settings_default_gps_radius'), value: currentValues.default_gps_radius_m },
+    { key: 'geo_no_signal', label: t('settings_geo_no_signal'), value: `${currentValues.geo_no_signal_minutes} ${t('min_short')}` },
     { key: 'paid_gap', label: t('settings_paid_gap_alert'), value: `${currentValues.paid_gap_alert_hours} ${t('h')}` },
   ]
   const msgClass = msg === 'settings_saved' ? 'ok-msg' : 'error-msg'
@@ -202,6 +223,19 @@ export default function Settings() {
             onChange={(e) => setDefaultGpsRadius(e.target.value)}
           />
           <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('gps_radius_hint')}</p>
+
+          <label htmlFor="settings-geo-no-signal">{t('settings_geo_no_signal')}</label>
+          <input
+            id="settings-geo-no-signal"
+            type="number"
+            min="1"
+            step="1"
+            inputMode="numeric"
+            value={geoNoSignalMinutes}
+            disabled={saving}
+            onChange={(e) => setGeoNoSignalMinutes(e.target.value)}
+          />
+          <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('settings_geo_no_signal_hint')}</p>
 
           <label htmlFor="settings-paid-gap">{t('settings_paid_gap_alert')}</label>
           <input

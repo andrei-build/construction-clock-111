@@ -1442,6 +1442,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   opacity: .65;
 }
 .map-updated { margin: 0 2px 12px; }
+/* GEO-1: панель «Сейчас на объектах (live)» под картой. */
+.live-now-card { margin-top: 12px; }
+.live-now-row { padding: 8px 0; align-items: center; }
+.live-now-row + .live-now-row { border-top: 1px solid var(--line); }
 .map-marker {
   display: grid;
   place-items: center;

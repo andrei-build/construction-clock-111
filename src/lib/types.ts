@@ -393,11 +393,43 @@ export interface AppSettings {
   timezone: string
   overlong_shift_hours: number
   default_gps_radius_m: number
+  // GEO-1: после скольких минут без GPS-сигнала в открытой смене поднимается риск «нет сигнала» (дефолт 15)
+  geo_no_signal_minutes: number
   // G1: разрыв между сменами в один день, после которого он подсвечивается (всё равно оплачивается)
   paid_gap_alert_hours: number
   settings: Record<string, unknown>
   updated_by: string | null
   updated_at: string
+}
+
+// GEO-1: последняя live-точка работника из view v_live_last_location (security_invoker, окно 12ч).
+// Менеджер видит всю орг., работник — только себя. minutes_ago — свежесть в минутах.
+export interface LiveLastLocation {
+  worker_id: string
+  name: string | null
+  role: string | null
+  lat: number
+  lng: number
+  accuracy_m: number | null
+  recorded_at: string
+  minutes_ago: number | null
+}
+
+// GEO-1: гео-риск смены (shift_geo_events). status: 'no_signal' — сигнал был, но пропал дольше
+// порога; 'out_of_zone' — свежая точка дальше радиуса геозоны объекта. Неразрешённые — resolved_at IS NULL.
+// Строки пишет бэкенд; экран только читает (sge_select пускает менеджера+). Колонки берём '*' —
+// набор фиксирован контрактом миграции 0028, но имена не хардкодим в select.
+export interface ShiftGeoEvent {
+  id: string
+  org_id: string
+  worker_id: string
+  project_id?: string | null
+  status: 'no_signal' | 'out_of_zone' | string
+  minutes_since_signal?: number | null
+  distance_m?: number | null
+  resolved_at: string | null
+  recorded_at?: string | null
+  created_at?: string | null
 }
 
 // Мягко удалённые сущности для экрана «Архив и Корзина» (deleted_at IS NOT NULL)

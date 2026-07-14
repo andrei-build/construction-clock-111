@@ -13,12 +13,14 @@ import {
   getSuspiciousShifts,
   approveShiftReview,
   getAppSettings,
+  getOpenGeoEvents,
   subscribeToTaskChanges,
   subscribeToOrgEvents,
+  subscribeToGeoEvents,
 } from '../lib/api'
 import { shiftState, workedMs, fmtHours, fmtClock, computeTravelGaps, eventsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 import { isManagerWrite } from '../lib/types'
-import type { Profile, Project, TimeEvent, Task, EventRow, ProfileRate, SuspiciousShift } from '../lib/types'
+import type { Profile, Project, TimeEvent, Task, EventRow, ProfileRate, SuspiciousShift, ShiftGeoEvent } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
 import CollapsibleSection from '../components/CollapsibleSection'
 
@@ -44,6 +46,7 @@ export default function Dashboard() {
   const [rates, setRates] = useState<ProfileRate[]>([])
   const [activity, setActivity] = useState<EventRow[]>([])
   const [suspicious, setSuspicious] = useState<SuspiciousShift[]>([])
+  const [geoEvents, setGeoEvents] = useState<ShiftGeoEvent[]>([])
   const [timezone, setTimezone] = useState<string | null>(null)
   const [alertHours, setAlertHours] = useState(DEFAULT_PAID_GAP_ALERT_HOURS)
   const [approvingId, setApprovingId] = useState<string | null>(null)
@@ -73,6 +76,8 @@ export default function Dashboard() {
         ])
         const photoIds = await getTaskPhotoIds(doneTk.map((task) => task.id))
         const susp = canReviewShifts ? await getSuspiciousShifts() : []
+        // GEO-1: неразрешённые гео-риски смен (RLS sge_select пускает менеджера+; иначе вернётся []).
+        const geo = await getOpenGeoEvents()
         if (!mounted) return
         // G1: часовой пояс организации + порог оповещения о разрыве (для подсветки время-в-пути).
         const tz = settings?.timezone?.trim()
@@ -88,6 +93,7 @@ export default function Dashboard() {
         setPhotoTaskIds(photoIds)
         setRates(visibleRates)
         setSuspicious(susp)
+        setGeoEvents(geo)
       } catch {
         if (mounted) setError(true)
       } finally {
@@ -115,6 +121,14 @@ export default function Dashboard() {
     return subscribeToOrgEvents(profile.org_id, () => {
       getRecentActivity().then(setActivity).catch(() => setError(true))
     }, `events:dashboard:${profile.org_id}`)
+  }, [profile?.org_id])
+
+  // GEO-1: INSERT (новый гео-риск) + UPDATE (разрешён — проставлен resolved_at) держат риски свежими.
+  useEffect(() => {
+    if (!profile?.org_id) return
+    return subscribeToGeoEvents(profile.org_id, () => {
+      getOpenGeoEvents().then(setGeoEvents).catch(() => { /* поллинг догонит */ })
+    }, `geo:dashboard:${profile.org_id}`)
   }, [profile?.org_id])
 
   const byWorker = useMemo(() => {
@@ -231,8 +245,31 @@ export default function Dashboard() {
       }
     }
 
+    // GEO-1: неразрешённые гео-риски смен — «вне геозоны» (красный) и «нет сигнала» (жёлтый).
+    // Строки carrier'ят distance_m / minutes_since_signal; имя работника берём из ростера.
+    for (const ev of geoEvents) {
+      const who = team.find((w) => w.id === ev.worker_id)?.name ?? t('timeline_unknown_actor')
+      if (ev.status === 'out_of_zone') {
+        const dist = Number(ev.distance_m)
+        items.push({
+          id: `geo-oz-${ev.id}`,
+          tone: 'red',
+          title: t('risk_geo_out_of_zone'),
+          detail: Number.isFinite(dist) ? `${who} · ${t('geo_distance')}: ${Math.round(dist)} ${t('unit_meters')}` : who,
+        })
+      } else {
+        const mins = Number(ev.minutes_since_signal)
+        items.push({
+          id: `geo-ns-${ev.id}`,
+          tone: 'amber',
+          title: t('risk_geo_no_signal'),
+          detail: Number.isFinite(mins) ? `${who} · ${t('geo_no_signal_detail')}: ${Math.round(mins)} ${t('min_short')}` : who,
+        })
+      }
+    }
+
     return items
-  }, [byWorker, donePhotoTasks, photoTaskIds, team, now, projects, timezone, alertHours])
+  }, [byWorker, donePhotoTasks, photoTaskIds, team, now, projects, timezone, alertHours, geoEvents])
 
   const nextTask = useMemo(() => {
     const score = { urgent: 4, high: 3, medium: 2, low: 1 }
