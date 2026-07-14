@@ -3144,3 +3144,53 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .route-deliver-item { grid-template-columns: 1fr; }
   .route-deliver-btn { width: 100%; }
 }
+
+/* Эскиз помещения (SKETCH-1) */
+.hub-sketch-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+}
+.hub-sketch-tools,
+.hub-sketch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hub-sketch-canvas-card { padding: 10px; }
+.hub-sketch-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: #ffffff;
+  border-radius: 8px;
+  touch-action: none;
+  user-select: none;
+}
+.hub-sketch-grid line { stroke: #e2e6ea; stroke-width: 1; }
+.hub-sketch-wall { stroke: #1f2933; stroke-width: 3; fill: rgba(31, 41, 51, .06); stroke-linejoin: round; stroke-linecap: round; }
+.hub-sketch-dim { fill: #334155; font-size: 12px; font-weight: 700; pointer-events: none; }
+.hub-sketch-node { fill: #0f172a; stroke: #ffffff; stroke-width: 2; }
+.hub-sketch-door { fill: #b45309; stroke: #ffffff; stroke-width: 2; }
+.hub-sketch-window { fill: #2563eb; stroke: #ffffff; stroke-width: 2; }
+.hub-sketch-hover { fill: rgba(37, 99, 235, .35); stroke: #2563eb; stroke-width: 1.5; }
+.hub-sketch-scale { margin: 8px 2px 0; font-size: 12px; }
+.hub-sketch-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+.hub-sketch-stat { display: flex; flex-direction: column; gap: 2px; }
+.hub-sketch-stat-value { font-size: 20px; font-weight: 900; line-height: 1.2; }
+.hub-sketch-ok { color: var(--green); font-weight: 600; margin: 0; }
+.hub-sketch-save { display: flex; flex-direction: column; gap: 8px; }
+.hub-sketch-name-label { font-size: 13px; }
+.hub-sketch-name {
+  width: 100%;
+  max-width: 320px;
+}
+.hub-sketch-save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.hub-sketch-load-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.hub-sketch-load-item { width: auto; }
