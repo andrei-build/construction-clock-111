@@ -1295,6 +1295,51 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-weight: 800;
 }
 
+/* Доска задач организации (TASKS-2): полноширинная таблица на десктопе, карточки на мобайле. */
+.tasks-screen { max-width: none; }
+/* Перебиваем .manager-app .screen{max-width:1180px} — доска на весь экран (Andrey). */
+.manager-app .screen.tasks-screen { max-width: none; }
+.tasks-table-wrap { padding: 0; overflow-x: auto; }
+.tasks-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.tasks-table th,
+.tasks-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.tasks-table th {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.tasks-table .task-row { cursor: pointer; }
+.tasks-table .task-row:hover { background: rgba(237,246,251,.03); }
+.task-caret { color: var(--muted); }
+.task-detail-row td { background: rgba(237,246,251,.02); }
+.task-status-select { min-width: 120px; }
+.task-detail { display: grid; gap: 12px; }
+.task-attach-buttons { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.task-attach-thumbs { display: flex; gap: 8px; flex-wrap: wrap; }
+.task-attach-thumb { width: 88px; height: 88px; object-fit: cover; border-radius: var(--radius); }
+.task-attach-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.task-attach-files a { color: var(--accent); }
+.task-proof { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+.task-readreceipt { font-size: 12px; }
+.task-delete-btn { justify-self: start; }
+.linklike { background: none; border: 0; color: var(--red); cursor: pointer; padding: 0 4px; font-size: 13px; }
+.task-card-meta { font-size: 13px; margin: -2px 0 4px; }
+/* Таблица — только десктоп; карточки — только мобайл. */
+.tasks-cards { display: none; }
+@media (max-width: 768px) {
+  .tasks-desktop { display: none; }
+  .tasks-cards { display: grid; gap: 12px; }
+}
+
 .timeline-screen { max-width: 900px; }
 .timeline-head {
   margin-bottom: 12px;

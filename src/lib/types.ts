@@ -109,6 +109,10 @@ export interface Task {
   urgent_flag?: boolean | null
   requires_photo?: boolean
   done_at?: string | null
+  done_by?: string | null
+  // jsonb-мешок задачи. Используем metadata.read_by = { [profile_id]: iso_ts } под
+  // отметку «Прочитано: кто, когда» (паритет Check Time «Водитель увидел»).
+  metadata?: Record<string, unknown> | null
   // Дополнительные (необязательные) колонки для глобального экрана «Задачи» (/tasks).
   // Опциональны, чтобы не ломать существующие узкие select'ы (getOpenTasks и т.п.).
   due_date?: string | null
@@ -124,6 +128,16 @@ export interface TaskMedia {
   id: string
   preview_url: string
   storage_path: string
+}
+
+// Вложение задачи для карточки глобального экрана «Задачи»: строка media, привязанная к task_id.
+export interface TaskAttachment {
+  id: string
+  storage_path: string
+  media_type: string
+  category: string | null
+  filename: string | null
+  created_at: string | null
 }
 
 export interface ProjectPhoto {

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useI18n } from '../../lib/i18n'
+import VoiceMic from '../../components/VoiceMic'
 import {
   bulkInsertProjectMaterials,
   getProjectMaterialTasks,
@@ -102,63 +103,6 @@ const STATUS_BADGE: Record<MaterialSpecStatus, string> = {
   requested: 'badge amber',
   picked_up: 'badge blue',
   delivered: 'badge green',
-}
-
-// --- Голосовой ввод (Web Speech API). Мягкая деградация: если не поддержан — кнопки нет. ---
-type SpeechCtor = new () => {
-  lang: string
-  interimResults: boolean
-  maxAlternatives: number
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
-  onend: (() => void) | null
-  onerror: (() => void) | null
-  start: () => void
-  stop: () => void
-}
-const SpeechRecognitionImpl: SpeechCtor | undefined =
-  typeof window !== 'undefined'
-    ? ((window as unknown as { SpeechRecognition?: SpeechCtor; webkitSpeechRecognition?: SpeechCtor }).SpeechRecognition
-      || (window as unknown as { webkitSpeechRecognition?: SpeechCtor }).webkitSpeechRecognition)
-    : undefined
-
-const speechLocale: Record<'ru' | 'en' | 'es', string> = { ru: 'ru-RU', en: 'en-US', es: 'es-ES' }
-
-function VoiceMic({ lang, onResult, title }: { lang: 'ru' | 'en' | 'es'; onResult: (text: string) => void; title: string }) {
-  const [listening, setListening] = useState(false)
-  const recRef = useRef<InstanceType<SpeechCtor> | null>(null)
-
-  useEffect(() => () => { try { recRef.current?.stop() } catch { /* ignore */ } }, [])
-
-  if (!SpeechRecognitionImpl) return null
-
-  const toggle = () => {
-    if (listening) { try { recRef.current?.stop() } catch { /* ignore */ } ; return }
-    const rec = new SpeechRecognitionImpl()
-    rec.lang = speechLocale[lang]
-    rec.interimResults = false
-    rec.maxAlternatives = 1
-    rec.onresult = (e) => {
-      const text = e.results?.[0]?.[0]?.transcript
-      if (text) onResult(String(text).trim())
-    }
-    rec.onend = () => setListening(false)
-    rec.onerror = () => setListening(false)
-    recRef.current = rec
-    setListening(true)
-    try { rec.start() } catch { setListening(false) }
-  }
-
-  return (
-    <button
-      type="button"
-      className={`voice-mic ${listening ? 'listening' : ''}`}
-      title={title}
-      aria-label={title}
-      onClick={toggle}
-    >
-      {listening ? '●' : '🎤'}
-    </button>
-  )
 }
 
 export default function MaterialsTab({ project, profile }: MaterialsTabProps) {

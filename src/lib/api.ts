@@ -1,5 +1,5 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from './types'
 import { todayStartISO, weekStartISO, workedMs } from './time'
 import { notifyMessagePush } from './push'
 
@@ -392,7 +392,7 @@ export async function getOpenTasks(): Promise<Task[]> {
 // по всем статусам, (2) более широкий select (due_date/description/assigned_to/created_at)
 // для колонок и сортировки. RLS tasks_select уже держит org-скоуп, прячет deleted_at,
 // не пускает client и ограничивает driver только доставками. Сортировка приоритет→срок.
-const ALL_TASK_SELECT = 'id, org_id, project_id, task_type, title, description, status, priority, assigned_to, requires_photo, due_date, done_at, created_at'
+const ALL_TASK_SELECT = 'id, org_id, project_id, task_type, title, description, status, priority, assigned_to, urgent_flag, requires_photo, due_date, done_at, done_by, created_at, metadata'
 export async function getAllTasks(): Promise<Task[]> {
   const { data, error } = await supabase.from('tasks')
     .select(ALL_TASK_SELECT)
@@ -403,7 +403,8 @@ export async function getAllTasks(): Promise<Task[]> {
 }
 
 export interface NewTaskInput {
-  project_id: string
+  // null → «Общая задача» (без проекта). tasks.project_id nullable в живой схеме.
+  project_id: string | null
   title: string
   task_type: Task['task_type']
   priority: Task['priority']
@@ -417,11 +418,12 @@ export interface NewTaskInput {
 // (org_id совпадает и app.is_manager_write()). Не-менеджеру insert отклонит RLS — гейтим в UI.
 // Пишем только те колонки, что задаёт форма; остальное берёт server-side defaults
 // (status='open', metadata, version, created_at и т.д.). Зеркалит форму задач старого Check Time.
-export async function createTask(p: Profile, input: NewTaskInput): Promise<void> {
+export async function createTask(p: Profile, input: NewTaskInput): Promise<string> {
   const row: Record<string, unknown> = {
     org_id: p.org_id,
     created_by: p.id,
-    project_id: input.project_id,
+    // null допустимо: «Общая задача» без проекта (project_id nullable).
+    project_id: input.project_id ?? null,
     title: input.title,
     task_type: input.task_type,
     priority: input.priority,
@@ -434,6 +436,101 @@ export async function createTask(p: Profile, input: NewTaskInput): Promise<void>
   const { data, error } = await supabase.from('tasks').insert(row).select('id').single()
   if (error) throw error
   await logEvent(p, 'task.created', 'task', data.id, { title: input.title, task_type: input.task_type })
+  return String(data.id)
+}
+
+// Смена статуса задачи из дропдауна карточки (ожидает/в работе/готово) глобального экрана.
+// Прямой UPDATE — RLS tasks_update пускает менеджера, назначенного исполнителя, либо
+// (задача без исполнителя И доступ к проекту). При переводе в done проставляем done_at/done_by
+// (проставит «Доказательства выполнения»), при возврате из done — очищаем.
+export async function updateTaskStatus(p: Profile, task: Task, status: Task['status']): Promise<void> {
+  const patch: Record<string, unknown> = { status, updated_by: p.id }
+  if (status === 'done') {
+    patch.done_at = new Date().toISOString()
+    patch.done_by = p.id
+  } else if (task.status === 'done') {
+    patch.done_at = null
+    patch.done_by = null
+  }
+  const { error } = await supabase.from('tasks').update(patch).eq('id', task.id)
+  if (error) throw error
+  await logEvent(p, 'task.status_changed', 'task', task.id, { status, from: task.status })
+}
+
+// Отметка «Прочитано»: пишем metadata.read_by[profile_id] = iso в jsonb (без новой колонки).
+// Сначала читаем актуальный metadata (чтобы не затереть чужие ключи), затем мержим и обновляем.
+// Идемпотентно: если запись уже есть — ничего не пишем. Ошибка не критична (best-effort).
+export async function markTaskRead(p: Profile, taskId: string): Promise<void> {
+  const { data, error } = await supabase.from('tasks').select('metadata').eq('id', taskId).maybeSingle()
+  if (error) throw error
+  const metadata = ((data as { metadata?: Record<string, unknown> | null } | null)?.metadata ?? {}) as Record<string, unknown>
+  const readBy = { ...((metadata.read_by as Record<string, string> | undefined) ?? {}) }
+  if (readBy[p.id]) return // уже отмечено
+  readBy[p.id] = new Date().toISOString()
+  const { error: upErr } = await supabase.from('tasks')
+    .update({ metadata: { ...metadata, read_by: readBy } })
+    .eq('id', taskId)
+  if (upErr) throw upErr
+}
+
+// Мягкое удаление задачи: deleted_at = now(). RLS tasks_update (менеджер/исполнитель) —
+// в UI гейтим на менеджера. tasks_select уже прячет deleted_at IS NOT NULL из выборок.
+export async function softDeleteTask(p: Profile, taskId: string): Promise<void> {
+  const { error } = await supabase.from('tasks')
+    .update({ deleted_at: new Date().toISOString(), updated_by: p.id })
+    .eq('id', taskId)
+  if (error) throw error
+  await logEvent(p, 'task.deleted', 'task', taskId, {})
+}
+
+// Тип медиа по MIME/имени для строки media (media_type — свободный text в живой схеме).
+function inferMediaType(file: { type?: string | null; name?: string | null }): 'photo' | 'video' | 'file' {
+  const type = (file.type || '').toLowerCase()
+  if (type.startsWith('image/')) return 'photo'
+  if (type.startsWith('video/')) return 'video'
+  const name = file.name || ''
+  const ext = name.includes('.') ? (name.split('.').pop() || '').toLowerCase() : ''
+  if (FILE_IMAGE_EXTS.includes(ext)) return 'photo'
+  return 'file'
+}
+
+// Универсальное вложение задачи (Галерея/Камера/Файлы) — те же bucket и строка media,
+// что uploadTaskPhoto, но с произвольным типом. RLS media_insert: uploaded_by=self ИЛИ менеджер.
+// category='task_attachment' (для «Доказательства выполнения» используем те же вложения).
+export async function uploadTaskAttachment(p: Profile, task: Task, file: File): Promise<TaskAttachment> {
+  validateUpload(file, 'file')
+  const mediaType = inferMediaType(file)
+  const ext = safeFileName(file.name, file.type).split('.').pop() || 'bin'
+  const storagePath = `tasks/${p.org_id}/${task.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`
+  const { error: uploadError } = await supabase.storage
+    .from(TASK_MEDIA_BUCKET)
+    .upload(storagePath, file, { contentType: inferUploadContentType(file), upsert: false })
+  if (uploadError) throw uploadError
+  const { data, error } = await supabase.from('media').insert({
+    org_id: p.org_id,
+    project_id: task.project_id ?? null,
+    task_id: task.id,
+    uploaded_by: p.id,
+    media_type: mediaType,
+    category: 'task_attachment',
+    storage_path: storagePath,
+    filename: safeFileName(file.name, file.type),
+    mime: file.type || null,
+    size_bytes: file.size,
+  }).select('id, storage_path, media_type, category, filename, created_at').single()
+  if (error) throw error
+  return data as unknown as TaskAttachment
+}
+
+// Вложения задачи для карточки. error → [] (карточка деградирует без вложений, не падает).
+export async function getTaskAttachments(taskId: string): Promise<TaskAttachment[]> {
+  const { data, error } = await supabase.from('media')
+    .select('id, storage_path, media_type, category, filename, created_at')
+    .eq('task_id', taskId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data as TaskAttachment[]) ?? []
 }
 
 export async function getDonePhotoTasks(): Promise<Task[]> {
