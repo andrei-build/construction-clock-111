@@ -10,45 +10,25 @@ import {
   getProjectCrewCounts,
   getProjectWeekHours,
   getProjectsNotesPreview,
-  getTeam,
   getTodayEvents,
   createProject,
   updateProject,
   archiveProject,
   geocodeAddress,
-  markMaterialStatus,
-  markTaskDone,
   subscribeToTaskChanges,
-  uploadTaskPhoto,
-  validateUpload,
-  uploadErrorCode,
   captureGPS,
-  type MaterialStatusAction,
 } from '../lib/api'
-import { enqueueFieldAction } from '../lib/offlineFieldActions'
-import { enqueueMediaUpload } from '../lib/offlineMediaQueue'
 import { isManagerWrite } from '../lib/types'
 import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
-import type { Profile, Project, ProjectProfit, Task, TaskMedia } from '../lib/types'
+import type { Project, ProjectProfit, Task } from '../lib/types'
 import { isEffectiveOpenTask } from '../lib/task-status'
-import MediaComments from '../components/MediaComments'
-import MaterialStatusChain, { isMaterialFlowTask } from '../components/MaterialStatusChain'
 import ProjectNavActions, { CopyAddressButton } from '../components/ProjectNavActions'
-import { getDeadlineInfo, statusDotClass } from './project-hub/status'
-import { formatProjectCountdown, projectScheduleState } from '../lib/project-schedule'
+import { getDeadlineInfo, statusDotClass, type TrafficStatus } from './project-hub/status'
+import { formatProjectCountdown, projectScheduleState, isDateRangeInvalid } from '../lib/project-schedule'
 import { fmtHours } from '../lib/time'
 
 // F29: разбираем вставленную пару «широта, долгота» ("47.61, -122.33", "47.61 -122.33").
 // Терпим пробелы, знак градуса и ведущую метку до двоеточия; null, если это не чистая валидная пара.
-function isOnline() {
-  return typeof navigator === 'undefined' || navigator.onLine
-}
-
-function isNetworkError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error ?? '')
-  return /failed to fetch|networkerror|network|fetch|load failed/i.test(message)
-}
-
 export function parsePastedCoordinatePair(text: string): { lat: number; lng: number } | null {
   if (!text) return null
   let s = text.trim()
@@ -109,7 +89,6 @@ export default function Projects() {
   const navigate = useNavigate()
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
-  const [team, setTeam] = useState<Profile[]>([])
   const [profits, setProfits] = useState<ProjectProfit[]>([])
   const [clientRatings, setClientRatings] = useState<Map<string, string>>(new Map())
   // PROJ-1: сколько человек сегодня отметилось на объекте (check_in за сегодня), по проекту.
@@ -136,19 +115,16 @@ export default function Projects() {
   const [lat, setLat] = useState('')
   const [lng, setLng] = useState('')
   const [gpsRadius, setGpsRadius] = useState('')
+  // PROJ-2: даты графика проекта в форме создания/правки (YYYY-MM-DD из <input type="date">).
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [geoBusy, setGeoBusy] = useState(false)
   const [geoError, setGeoError] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [taskBusy, setTaskBusy] = useState<string | null>(null)
-  const [photoBusy, setPhotoBusy] = useState<string | null>(null)
-  const [photoByTask, setPhotoByTask] = useState<Record<string, TaskMedia>>({})
-  const [taskError, setTaskError] = useState<string | null>(null)
-  // F64: non-error notice for an action queued while offline (shown with a warn tone).
-  const [taskNotice, setTaskNotice] = useState<string | null>(null)
 
   const load = async () => {
-    const [p, tk, pf, people, todayEv] = await Promise.all([
-      getBoardProjects(), getOpenTasks(), getProjectProfit(), getTeam(), getTodayEvents(),
+    const [p, tk, pf, todayEv] = await Promise.all([
+      getBoardProjects(), getOpenTasks(), getProjectProfit(), getTodayEvents(),
     ])
     const projectIds = p.map((project) => project.id)
     const accountIds = p.map((project) => project.client_account_id).filter(Boolean) as string[]
@@ -170,7 +146,7 @@ export default function Projects() {
     }
     const peopleToday = new Map<string, number>()
     for (const [projectId, set] of byProject) peopleToday.set(projectId, set.size)
-    setProjects(p); setTasks(tk); setProfits(pf); setTeam(people); setClientRatings(cr)
+    setProjects(p); setTasks(tk); setProfits(pf); setClientRatings(cr)
     setPeopleTodayByProject(peopleToday)
     setCrewByProject(crew); setWeekHoursByProject(weekHours); setNotesByProject(notesPrev)
   }
@@ -184,7 +160,8 @@ export default function Projects() {
   // PROJ-1b: финансовый гейт для плитки МАТЕРИАЛЫ ($) — только owner/admin (ДНК §1), как в
   // FinanceTab/Documents. Цена/финансы НЕ показываются остальным ролям.
   const financeAllowed = profile ? (profile.role === 'owner' || profile.role === 'admin') : false
-  const peopleById = useMemo(() => new Map(team.map((person) => [person.id, person.name])), [team])
+  // PROJ-2: диапазон дат в форме битый (end<start) — блокируем сохранение + красный хайлайт полей.
+  const dateFormInvalid = Boolean(startDate && endDate && endDate < startDate)
 
   // PROJ-1b: применяем фильтр статуса + поиск + сортировку. Дефолт «active» сохраняет прежний вид
   // (getBoardProjects тянет все статусы, но по умолчанию показываем активные).
@@ -202,6 +179,7 @@ export default function Projects() {
 
   const resetForm = () => {
     setName(''); setAddress(''); setLat(''); setLng(''); setGpsRadius(''); setGeoError(false)
+    setStartDate(''); setEndDate('')
     setGeocodeMsg(null)
     setAdding(false); setEditingId(null)
   }
@@ -224,6 +202,8 @@ export default function Projects() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!profile || !name.trim()) return
+    // PROJ-2: end_date < start_date — НЕ сохраняем молча; поля уже подсвечены красным (dateFormInvalid).
+    if (dateFormInvalid) return
     setBusy(true)
     try {
       let latNum = lat.trim() === '' ? undefined : Number(lat)
@@ -237,11 +217,13 @@ export default function Projects() {
         } catch { /* нет ключа/результата — создаём без координат */ }
       }
       const radiusNum = gpsRadius.trim() === '' ? undefined : clampGpsRadius(Number(gpsRadius), GPS_RADIUS_MIN)
+      // PROJ-2: даты графика — пустое поле шлём как null (можно очистить дату).
+      const dates = { start_date: startDate.trim() || null, end_date: endDate.trim() || null }
       if (editingId) {
-        // F76: пишем ТОЛЬКО name/address/gps_radius_m + site_point (если введены новые координаты).
-        await updateProject(profile, editingId, { name: name.trim(), address: address.trim(), lat: latNum, lng: lngNum, gpsRadiusM: radiusNum })
+        // F76: пишем name/address/gps_radius_m + site_point (если введены новые координаты) + даты графика.
+        await updateProject(profile, editingId, { name: name.trim(), address: address.trim(), lat: latNum, lng: lngNum, gpsRadiusM: radiusNum, ...dates })
       } else {
-        await createProject(profile, name.trim(), address.trim(), latNum, lngNum, radiusNum)
+        await createProject(profile, name.trim(), address.trim(), latNum, lngNum, radiusNum, dates)
       }
       resetForm()
       await load()
@@ -259,6 +241,9 @@ export default function Projects() {
     setAddress(src.address ?? '')
     setLat(''); setLng('')
     setGpsRadius(src.gps_radius_m != null ? String(src.gps_radius_m) : '')
+    // PROJ-2: префилл дат графика. Битый диапазон НЕ правим — просто показываем как есть (красный хайлайт).
+    setStartDate(src.start_date ?? '')
+    setEndDate(src.end_date ?? '')
     setGeoError(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -270,6 +255,8 @@ export default function Projects() {
     setAddress(src.address ?? '')
     setLat(''); setLng('')
     setGpsRadius(src.gps_radius_m != null ? String(src.gps_radius_m) : '')
+    // PROJ-2: шаблон-копия НЕ наследует даты графика — пусть менеджер задаст свежие.
+    setStartDate(''); setEndDate('')
     setGeoError(false)
     setEditingId(null)
     setAdding(true)
@@ -314,95 +301,15 @@ export default function Projects() {
     }
   }
 
-  const done = async (task: Task) => {
-    if (!profile || isMaterialFlowTask(task)) return
-    const mediaId = photoByTask[task.id]?.id ?? null
-    if (task.requires_photo && !mediaId) return
-    setTaskBusy(task.id)
-    setTaskError(null)
-    setTaskNotice(null)
-    // F64: offline / network drop — queue the status change and reflect it optimistically
-    // so the task leaves the open list; it replays on reconnect. done_at is authoritative
-    // for isEffectiveOpenTask, so setting it locally hides the task without a refetch.
-    const queueOffline = () => {
-      enqueueFieldAction({ kind: 'task_status', dedupeKey: `task_status:${task.id}`, payload: { task, mediaId } })
-      setTasks((rows) => rows.map((r) => (r.id === task.id ? { ...r, status: 'done', done_at: new Date().toISOString() } : r)))
-      setTaskNotice('offline_action_queued')
-    }
-    try {
-      if (!isOnline()) { queueOffline(); return }
-      await markTaskDone(profile, task, mediaId)
-      await load()
-    } catch (err) {
-      if (!isOnline() || isNetworkError(err)) { queueOffline(); return }
-      setTaskError('error')
-    } finally {
-      setTaskBusy(null)
-    }
-  }
-
-  const updateMaterialStatus = async (task: Task, action: MaterialStatusAction) => {
-    if (!profile) return
-    setTaskBusy(task.id)
-    setTaskError(null)
-    setTaskNotice(null)
-    try {
-      await markMaterialStatus(task.id, action)
-      await load()
-    } catch {
-      setTaskError('material_status_failed')
-    } finally {
-      setTaskBusy(null)
-    }
-  }
-
-  const addPhoto = async (task: Task, file: File | undefined) => {
-    if (!profile || !file || photoBusy) return
-    try {
-      validateUpload(file, 'photo')
-    } catch (err) {
-      setTaskError(uploadErrorCode(err) ?? 'photo_upload_failed')
-      return
-    }
-    setPhotoBusy(task.id)
-    setTaskError(null)
-    setTaskNotice(null)
-    // F51: offline / network drop — store the photo in the durable media queue and replay the
-    // real upload on reconnect instead of losing it. No mediaId exists until replay, so this
-    // deliberately does NOT populate photoByTask: a requires_photo task still cannot be marked
-    // done offline (that F64 coupling is untouched). The online path below stays byte-identical.
-    const queueOffline = () => {
-      void enqueueMediaUpload({
-        kind: 'task_photo',
-        dedupeKey: `task_photo:${task.id}:${crypto.randomUUID?.() ?? Date.now()}`,
-        file,
-        target: { task },
-      })
-      setTaskNotice('offline_photo_queued')
-    }
-    try {
-      if (!isOnline()) { queueOffline(); return }
-      const media = await uploadTaskPhoto(profile, task, file)
-      setPhotoByTask((current) => ({ ...current, [task.id]: media }))
-    } catch (err) {
-      const code = uploadErrorCode(err)
-      // A non-network error (validation / permission) still surfaces; never silently queue it.
-      if (!code && (!isOnline() || isNetworkError(err))) { queueOffline(); return }
-      setTaskError(code ?? 'photo_upload_failed')
-    } finally {
-      setPhotoBusy(null)
-    }
-  }
-
-  const prio = (p: Task['priority']) => p === 'urgent' ? 'red' : p === 'high' ? 'amber' : 'blue'
+  // PROJ-2: инлайн-задачи (фото/цепочка материалов) убраны из карточки списка — они живут в
+  // /tasks, во вкладке «Задачи» хаба и в дневном «Маршруте». На карточке задачи = только плитка
+  // ЗАДАЧИ со счётчиком (deep-link в хаб). Поэтому обработчики done/фото/материалов здесь не нужны.
   const profitFor = (projectId: string) => profits.find((p) => p.project_id === projectId)
   const formatMargin = (value: number) => `${Math.round(value * 10) / 10}%`
 
   return (
     <div className="screen">
       <h1>📁 {t('projects')}</h1>
-      {taskError && <p className="error-msg">{t(taskError)}</p>}
-      {taskNotice && <p className="warn-msg">{t(taskNotice)}</p>}
 
       {canWrite && !adding && !editingId && (
         <button className="btn ghost small" onClick={() => setAdding(true)}>+ {t('add_project')}</button>
@@ -414,6 +321,18 @@ export default function Projects() {
           <input value={name} onChange={(e) => setName(e.target.value)} />
           <label>{t('address')}</label>
           <input value={address} onChange={(e) => setAddress(e.target.value)} />
+          {/* PROJ-2: даты графика проекта + валидация диапазона (end<start → красный + блок сохранения). */}
+          <div className="row coord-row">
+            <div className="coord-field">
+              <label>{t('proj_form_start_date')}</label>
+              <input type="date" className={dateFormInvalid ? 'input-invalid' : ''} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </div>
+            <div className="coord-field">
+              <label>{t('proj_form_end_date')}</label>
+              <input type="date" className={dateFormInvalid ? 'input-invalid' : ''} value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </div>
+          </div>
+          {dateFormInvalid && <p className="error-msg">{t('proj_form_date_range_error')}</p>}
           <div className="row coord-row">
             <div className="coord-field">
               <label>{t('project_lat')}</label>
@@ -448,7 +367,7 @@ export default function Projects() {
           {geocodeMsg && <p className={geocodeMsg === 'geocode_ok' ? 'muted' : 'warn-msg'}>{t(geocodeMsg)}</p>}
           {geoError && <p className="error-msg">{t('location_unavailable')}</p>}
           <div className="row">
-            <button className="btn" disabled={busy || !name.trim()}>{editingId ? t('save_changes') : t('create')}</button>
+            <button className="btn" disabled={busy || !name.trim() || dateFormInvalid}>{editingId ? t('save_changes') : t('create')}</button>
             <button type="button" className="btn ghost small" disabled={busy} onClick={resetForm}>{t('cancel')}</button>
           </div>
         </form>
@@ -493,9 +412,11 @@ export default function Projects() {
         </div>
       )}
 
+      {/* PROJ-2: плотная сетка карточек проектов (2 колонки на десктопе, 1 на мобиле), паритет Check Time. */}
+      <div className="projects-grid">
       {visibleProjects.map((p) => {
-        // done_at авторитетнее status: строку с проставленным done_at, но отставшим
-        // status в список открытых не пускаем (паритет с Check Time, F81).
+        // ЗАДАЧИ-плитка: считаем открытые задачи проекта. done_at авторитетнее status (паритет Check Time, F81).
+        // Сами задачи (фото/цепочка материалов) на карточке НЕ показываем — только счётчик (PROJ-2).
         const ptasks = tasks.filter((tk) => tk.project_id === p.id && isEffectiveOpenTask(tk))
         const profit = profitFor(p.id)
         const showProfit = profit?.margin_pct !== null && profit?.margin_pct !== undefined && profit.profit_status && profit.profit_status !== 'grey'
@@ -503,6 +424,11 @@ export default function Projects() {
         const dl = dlInfo.status
         const countdown = p.end_date ? formatProjectCountdown(p.end_date) : ''
         const rating = (p.client_account_id ? clientRatings.get(p.client_account_id) : undefined) as 'green' | 'amber' | 'red' | undefined
+        // PROJ-2: третий светофор — МАРЖА. Цвет из profit_status, но ТОЛЬКО для finance-ролей
+        // (owner/admin) — иначе здоровье маржи не раскрываем: нейтральная точка (ДНК §1, паритет плитки МАТЕРИАЛЫ).
+        const marginDot: TrafficStatus = financeAllowed && profit?.profit_status && profit.profit_status !== 'grey'
+          ? (profit.profit_status as TrafficStatus)
+          : 'neutral'
         const peopleToday = peopleTodayByProject.get(p.id) ?? 0
         // PROJ-1b: координаты/геозона, плитки, статус-график, превью заметок.
         const coords = projectCoords(p)
@@ -514,6 +440,8 @@ export default function Projects() {
         const statusLabel = t(`project_status_${p.status}`)
         const startLabel = formatCardDate(p.start_date) ?? '—'
         const endLabel = formatCardDate(p.end_date) ?? '—'
+        // PROJ-2: end_date раньше start_date (опечатка в годе) — красный хайлайт + предупреждение, БЕЗ автоправки.
+        const datesInvalid = isDateRangeInvalid(p)
         const healthText = dlInfo.daysOverdue != null
           ? t('proj_overdue_days').replace('{n}', String(dlInfo.daysOverdue))
           : `${t(`proj_sched_${schedState}`)}${countdown && countdown !== 'overdue' ? ` · ${countdown}` : ''}`
@@ -521,7 +449,8 @@ export default function Projects() {
         const noteFirst = notePrev?.firstLine || (p.notes ? (p.notes.split('\n').map((s) => s.trim()).find(Boolean) ?? '') : '')
         const noteCount = notePrev?.count ?? 0
         return (
-          <div key={p.id} className="card">
+          <div key={p.id} className="card project-card">
+            {/* Заголовок + 3 светофора (срок / маржа / клиент) + обратный отсчёт. */}
             <div className="project-title-row">
               <button className="inline-link project-name-link" onClick={() => navigate(`/projects/${p.id}`)}>{p.name}</button>
               {canWrite && (
@@ -538,33 +467,41 @@ export default function Projects() {
               )}
               <span className="project-row-dots" aria-hidden="true">
                 <span className={statusDotClass(dl)} title={t('hub_deadline')} />
+                <span className={statusDotClass(marginDot)} title={t('proj_dot_margin')} />
                 <span className={statusDotClass(rating ?? 'neutral')} title={t('hub_client_rating')} />
               </span>
               {countdown && <span className={`schedule-countdown-badge ${dl}`}>{countdown}</span>}
             </div>
 
-            {/* PROJ-1b: статус-строка «СТАТУС · график/просрочка · старт…до» (паритет Check Time). */}
+            {/* Статус-строка: бейдж статуса · график/просрочка · старт…до (паритет Check Time). */}
             <div className={`project-status-line ${dl}`}>
               <span className={`badge ${statusBadgeTone(p.status)} project-status-badge`}>{statusLabel}</span>
               <span className="project-status-health">{healthText}</span>
-              <span className="muted project-status-dates">{t('proj_card_start')} {startLabel} · {t('proj_card_due')} {endLabel}</span>
+              <span className={`muted project-status-dates${datesInvalid ? ' project-dates-invalid' : ''}`}>{t('proj_card_start')} {startLabel} · {t('proj_card_due')} {endLabel}</span>
+              {datesInvalid && <span className="badge red project-dates-invalid-badge" title={t('proj_dates_invalid_hint')}>{t('proj_dates_invalid')}</span>}
             </div>
 
-            {/* PROJ-1b: адрес + копирование + GPS-бейдж + кнопки навигации. */}
+            {/* Адрес + КОПИРОВАТЬ. */}
             {(p.address || coords) && (
               <div className="project-address-line">
                 {p.address
                   ? <span className="muted project-card-address">📍 {p.address}</span>
                   : <span className="muted project-card-address">📍 {coords!.lat}, {coords!.lng}</span>}
                 {p.address && <CopyAddressButton address={p.address} />}
-                <span className={`badge ${hasGeofence ? 'green' : 'amber'} project-gps-badge`}>
-                  {hasGeofence ? t('proj_gps_ok') : t('proj_gps_none')}
-                </span>
               </div>
             )}
+
+            {/* Единая строка навигации (В путь / Apple / Google / Tesla-share / Скопировать точку). */}
             <ProjectNavActions projectName={p.name} address={p.address} lat={coords?.lat ?? null} lng={coords?.lng ?? null} />
 
-            {/* PROJ-1b: плитки БРИГАДА / НЕДЕЛЯ / МАТЕРИАЛЫ ($, finance) / ЗАДАЧИ. */}
+            {/* GPS OK / нет границы — отдельным бейджем. */}
+            <div className="project-gps-line">
+              <span className={`badge ${hasGeofence ? 'green' : 'amber'} project-gps-badge`}>
+                {hasGeofence ? t('proj_gps_ok') : t('proj_gps_none')}
+              </span>
+            </div>
+
+            {/* 4 плитки в один ряд: БРИГАДА / НЕДЕЛЯ / МАТЕРИАЛЫ ($, finance) / ЗАДАЧИ (deep-link в хаб). */}
             <div className="project-stat-tiles">
               <div className="project-stat-tile">
                 <span className="muted">{t('proj_tile_crew')}</span>
@@ -589,6 +526,13 @@ export default function Projects() {
               </button>
             </div>
 
+            {/* Заметки (1 строка + счётчик) + чип «сегодня на объекте». */}
+            {(noteFirst || noteCount > 0) && (
+              <div className="project-notes-preview">
+                <span className="muted project-notes-count">📝 {t('proj_notes_count').replace('{n}', String(noteCount))}</span>
+                {noteFirst && <span className="project-notes-first">{noteFirst}</span>}
+              </div>
+            )}
             {peopleToday > 0 && (
               <div className="project-card-meta">
                 <span
@@ -600,15 +544,7 @@ export default function Projects() {
               </div>
             )}
 
-            {/* PROJ-1b: превью заметок — первая строка + счётчик. */}
-            {(noteFirst || noteCount > 0) && (
-              <div className="project-notes-preview">
-                <span className="muted project-notes-count">📝 {t('proj_notes_count').replace('{n}', String(noteCount))}</span>
-                {noteFirst && <span className="project-notes-first">{noteFirst}</span>}
-              </div>
-            )}
-
-            {/* PROJ-1b: действия карточки — Подробности / Редактировать / Убрать. */}
+            {/* Действия карточки — Подробности / Редактировать / Убрать. */}
             <div className="project-card-actions">
               <button type="button" className="btn small" onClick={() => navigate(`/projects/${p.id}`)}>{t('proj_action_details')}</button>
               {canWrite && <button type="button" className="btn ghost small" onClick={() => startEdit(p)}>{t('proj_action_edit')}</button>}
@@ -618,75 +554,10 @@ export default function Projects() {
                 </button>
               )}
             </div>
-
-            {ptasks.length > 0 && <h2>{t('tasks')}</h2>}
-            {ptasks.map((tk) => {
-              const photo = photoByTask[tk.id]
-              const needsPhoto = Boolean(tk.requires_photo && !photo)
-              const uploading = photoBusy === tk.id
-              return (
-                <div key={tk.id} className="task-card">
-                  <div className="row task-card-head">
-                    <div>
-                      <span className={`badge ${prio(tk.priority)}`}>{tk.task_type === 'delivery' ? '🚚' : tk.task_type === 'material' ? '📦' : '🔨'}</span>{' '}
-                      <span className="task-title">{tk.title}</span>
-                    </div>
-                    {tk.requires_photo && <span className="badge amber">{t('photo_required')}</span>}
-                  </div>
-                  {tk.description && <p className="muted task-description">{tk.description}</p>}
-
-                  {tk.requires_photo && (
-                    <>
-                      <input
-                        id={`photo-${tk.id}`}
-                        className="photo-input"
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        disabled={uploading || taskBusy !== null}
-                        onChange={(e) => {
-                          addPhoto(tk, e.target.files?.[0])
-                          e.currentTarget.value = ''
-                        }}
-                      />
-                      <label className={`camera-button ${uploading ? 'disabled' : ''}`} htmlFor={`photo-${tk.id}`}>
-                        <span className="camera-icon">📷</span>
-                        <span>{uploading ? t('photo_uploading') : photo ? t('photo_replace') : t('photo_add')}</span>
-                      </label>
-                      {photo ? (
-                        <>
-                          <img className="task-photo-preview" src={photo.preview_url} alt={t('photo_preview')} />
-                          <MediaComments mediaId={photo.id} />
-                        </>
-                      ) : (
-                        <p className="muted task-photo-hint">{t('photo_required_hint')}</p>
-                      )}
-                    </>
-                  )}
-
-                  {isMaterialFlowTask(tk) ? (
-                    <MaterialStatusChain
-                      task={tk}
-                      peopleById={peopleById}
-                      busy={taskBusy !== null}
-                      onStatusChange={updateMaterialStatus}
-                    />
-                  ) : (
-                    <button
-                      className="btn ghost small"
-                      disabled={taskBusy !== null || uploading || needsPhoto}
-                      title={needsPhoto ? t('photo_required_hint') : undefined}
-                      onClick={() => done(tk)}
-                    >
-                      {t('done')}
-                    </button>
-                  )}
-                </div>
-              )
-            })}
           </div>
         )
       })}
+      </div>
     </div>
   )
 }

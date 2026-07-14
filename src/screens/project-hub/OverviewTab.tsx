@@ -4,6 +4,7 @@ import { getOpenTasks, getProjectHubFiles, getProjectNotes, getProjectTimeEvents
 import { isEffectiveOpenTask } from '../../lib/task-status'
 import type { Account, Profile, Project, ProjectProfit, ProjectTimeEvent, ScheduleAssignment } from '../../lib/types'
 import { getDeadlineInfo, statusDotClass, type TrafficStatus } from './status'
+import { isDateRangeInvalid } from '../../lib/project-schedule'
 
 type TileKey = 'deadline' | 'profit' | 'client'
 export type OverviewCountTab = 'tasks' | 'time' | 'files' | 'notes'
@@ -194,6 +195,7 @@ export default function OverviewTab({ project, profit, account, managerView, onO
   const budget = formatMoney(project.budget_amount ?? profit?.budget_amount)
   const startDate = formatDate(project.start_date)
   const endDate = formatDate(project.end_date)
+  const datesInvalid = isDateRangeInvalid(project)
 
   const deadlineValue = deadline.daysOverdue !== null
     ? formatCount(t(deadline.valueKey), deadline.daysOverdue)
@@ -249,9 +251,11 @@ export default function OverviewTab({ project, profit, account, managerView, onO
             <span className="item-title">{t('hub_deadline')}</span>
           </div>
           <div className="hub-indicator-value">{deadlineValue}</div>
-          <div className="muted hub-dates-row">
+          <div className={`muted hub-dates-row${datesInvalid ? ' hub-dates-invalid' : ''}`}>
             {t('hub_dates')}: {startDate ?? t('hub_no_data')} | {endDate ?? t('hub_no_data')}
           </div>
+          {/* PROJ-2: end_date раньше start_date (опечатка в годе) — красное предупреждение, без автоправки. */}
+          {datesInvalid && <div className="hub-dates-invalid-warn">{t('proj_dates_invalid_hint')}</div>}
           {expanded === 'deadline' && <div className="hub-tile-explain">{t(deadline.explanationKey)}</div>}
         </button>
 

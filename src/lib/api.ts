@@ -3149,7 +3149,7 @@ export async function requestProjectMaterial(p: Profile, material: ProjectMateri
   return updateProjectMaterial(p, material.id, { task_id: task.id, status: 'requested' })
 }
 
-export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number, gpsRadiusM?: number) {
+export async function createProject(p: Profile, name: string, address: string, lat?: number, lng?: number, gpsRadiusM?: number, dates?: { start_date?: string | null; end_date?: string | null }) {
   const row: Record<string, unknown> = { org_id: p.org_id, name, address, created_by: p.id }
   if (lat !== undefined && lng !== undefined && !Number.isNaN(lat) && !Number.isNaN(lng)) {
     row.site_point = `SRID=4326;POINT(${lng} ${lat})`
@@ -3157,13 +3157,16 @@ export async function createProject(p: Profile, name: string, address: string, l
   if (gpsRadiusM !== undefined && !Number.isNaN(gpsRadiusM)) {
     row.gps_radius_m = Math.round(gpsRadiusM)
   }
+  // PROJ-2: даты графика проекта из формы (пустая строка → null). Валидация end<start — в UI.
+  if (dates?.start_date !== undefined) row.start_date = dates.start_date || null
+  if (dates?.end_date !== undefined) row.end_date = dates.end_date || null
   const { data, error } = await supabase.from('projects').insert(row).select('id').single()
   if (error) throw error
   await logEvent(p, 'project.created', 'project', data.id, { name })
 }
 
-// Редактирование существующего проекта — зеркалит ТОЛЬКО писабельные колонки createProject:
-// name, address, site_point (условно), gps_radius_m (условно). Больше НИКАКИХ колонок.
+// Редактирование существующего проекта — зеркалит писабельные колонки createProject:
+// name, address, site_point (условно), gps_radius_m (условно), start_date/end_date (условно).
 // site_point на клиенте нельзя надёжно прочитать (PostGIS hex EWKB), поэтому координаты в форме
 // НЕ префилятся из site_point: перезаписываем site_point ТОЛЬКО когда менеджер ввёл/захватил
 // новые lat/lng (тот же guard, что в createProject). Без новых координат ключ site_point опускаем
@@ -3172,9 +3175,9 @@ export async function createProject(p: Profile, name: string, address: string, l
 export async function updateProject(
   p: Profile,
   projectId: string,
-  fields: { name: string; address: string; lat?: number; lng?: number; gpsRadiusM?: number },
+  fields: { name: string; address: string; lat?: number; lng?: number; gpsRadiusM?: number; start_date?: string | null; end_date?: string | null },
 ) {
-  const { name, address, lat, lng, gpsRadiusM } = fields
+  const { name, address, lat, lng, gpsRadiusM, start_date, end_date } = fields
   const row: Record<string, unknown> = { name, address }
   if (lat !== undefined && lng !== undefined && Number.isFinite(lat) && Number.isFinite(lng)) {
     row.site_point = `SRID=4326;POINT(${lng} ${lat})`
@@ -3182,6 +3185,9 @@ export async function updateProject(
   if (gpsRadiusM !== undefined && Number.isFinite(gpsRadiusM)) {
     row.gps_radius_m = Math.round(gpsRadiusM)
   }
+  // PROJ-2: даты графика проекта из формы (пустая строка → null). Валидация end<start — в UI.
+  if (start_date !== undefined) row.start_date = start_date || null
+  if (end_date !== undefined) row.end_date = end_date || null
   const { error } = await supabase.from('projects').update(row).eq('id', projectId)
   if (error) throw error
   await logEvent(p, 'project.updated', 'project', projectId, { name })

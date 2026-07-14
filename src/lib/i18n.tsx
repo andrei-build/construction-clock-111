@@ -1042,6 +1042,14 @@ const dict: Record<string, Record<Lang, string>> = {
   proj_sched_overdue: { ru: 'просрочен', en: 'overdue', es: 'atrasado' },
   proj_card_start: { ru: 'старт', en: 'start', es: 'inicio' },
   proj_card_due: { ru: 'до', en: 'due', es: 'hasta' },
+  // PROJ-2: третий светофор карточки (маржа) + предупреждение о битом диапазоне дат.
+  proj_dot_margin: { ru: 'Маржа', en: 'Margin', es: 'Margen' },
+  proj_dates_invalid: { ru: '⚠ даты задом-наперёд', en: '⚠ dates reversed', es: '⚠ fechas invertidas' },
+  proj_dates_invalid_hint: { ru: 'Дата окончания раньше даты начала — вероятно опечатка в годе. Исправьте вручную.', en: 'End date is before the start date — likely a year typo. Fix it by hand.', es: 'La fecha de fin es anterior a la de inicio — probablemente un error en el año. Corríjalo a mano.' },
+  // PROJ-2: поля дат в форме создания/правки проекта + ошибка валидации диапазона.
+  proj_form_start_date: { ru: 'Дата начала', en: 'Start date', es: 'Fecha de inicio' },
+  proj_form_end_date: { ru: 'Дата окончания', en: 'End date', es: 'Fecha de fin' },
+  proj_form_date_range_error: { ru: 'Дата окончания раньше даты начала — исправьте, чтобы сохранить.', en: 'End date is before the start date — fix it to save.', es: 'La fecha de fin es anterior a la de inicio — corríjala para guardar.' },
   // PROJ-1b: GPS-бейдж карточки (наличие геозоны объекта).
   proj_gps_ok: { ru: 'GPS OK', en: 'GPS OK', es: 'GPS OK' },
   proj_gps_none: { ru: 'нет границы', en: 'no geofence', es: 'sin geocerca' },
