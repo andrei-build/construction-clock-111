@@ -38,6 +38,8 @@ export default function More() {
   const manager = profile ? isManagerRole(profile.role) : false
   const salesAccess = profile ? manager || profile.role === 'sales' : false
   const isOwner = profile?.role === 'owner'
+  // SET-1: /settings regated to owner/admin only (plain managers no longer see it).
+  const isAdminOrOwner = isOwner || profile?.role === 'admin'
 
   // NAV-1/NAV-2: «Ещё / More» — три сгруппированные секции (РАБОТА / ФИНАНСЫ / АДМИН).
   // Верхнее меню держим коротким (см. src/components/Nav.tsx); всё остальное — здесь.
@@ -84,7 +86,8 @@ export default function More() {
         <>
           <h2>{t('more_group_admin')}</h2>
           <div className="more-group">
-            <MoreLink to="/settings" Icon={IconSettings} label={t('settings')} />
+            {isOwner && <MoreLink to="/owner-settings" Icon={IconSettings} label={t('owner_settings')} />}
+            {isAdminOrOwner && <MoreLink to="/settings" Icon={IconSettings} label={t('settings')} />}
             <MoreLink to="/archive" Icon={IconFolder} label={t('archive')} />
             {/* TODO WF-1: move consents into worker dossier /team/:id. */}
             <MoreLink to="/consents" Icon={IconTarget} label={t('consents')} />
