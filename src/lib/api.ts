@@ -407,6 +407,31 @@ export async function markMaterialStatus(taskId: string, action: MaterialStatusA
   if (error) throw error
 }
 
+// Активные (неудалённые) водители организации — для мгновенного пуша по новой заявке.
+// error → [] (пуши best-effort, не должны ронять создание заявки).
+export async function listActiveDrivers(orgId: string): Promise<Array<{ id: string; name: string; language: string | null }>> {
+  const { data, error } = await supabase.from('profiles')
+    .select('id, name, language')
+    .eq('org_id', orgId)
+    .eq('role', 'driver')
+    .eq('is_active', true)
+    .is('deleted_at', null)
+  if (error) return []
+  return (data as Array<{ id: string; name: string; language: string | null }>) ?? []
+}
+
+// Короткие локализованные строки для пушей по материалам (api.ts вне React-контекста,
+// поэтому держим собственные карты, как push.ts). Ключ — язык получателя.
+type MaterialPushLang = 'ru' | 'en' | 'es'
+const MATERIAL_PUSH: Record<MaterialPushLang, { newMaterial: string; created: string }> = {
+  ru: { newMaterial: 'Новый материал', created: 'Заявка создана, водители уведомлены' },
+  en: { newMaterial: 'New material', created: 'Request created, drivers notified' },
+  es: { newMaterial: 'Nuevo material', created: 'Solicitud creada, conductores notificados' },
+}
+function materialPushLang(l?: string | null): MaterialPushLang {
+  return l === 'en' || l === 'es' ? l : 'ru'
+}
+
 export async function createMaterialRequest(p: Profile, input: {
   projectId: string
   title: string
@@ -430,6 +455,38 @@ export async function createMaterialRequest(p: Profile, input: {
     project_id: input.projectId,
     title: input.title,
   })
+
+  // Мгновенный пуш всем активным водителям + подтверждение создателю. Best-effort:
+  // любая ошибка здесь НЕ должна ронять возврат созданной заявки (Realtime /route
+  // подхватит заявку и без пуша).
+  try {
+    let projectName: string | null = null
+    try {
+      const { data: proj } = await supabase.from('projects')
+        .select('name')
+        .eq('id', input.projectId)
+        .maybeSingle()
+      projectName = (proj as { name?: string | null } | null)?.name ?? null
+    } catch {
+      projectName = null
+    }
+
+    const drivers = await listActiveDrivers(p.org_id)
+    for (const d of drivers) {
+      if (d.id === p.id) continue // не дублируем пуш, если создатель сам водитель
+      const label = MATERIAL_PUSH[materialPushLang(d.language)].newMaterial
+      const body = projectName
+        ? `${label}: ${input.title} — ${projectName}`
+        : `${label}: ${input.title}`
+      notifyMessagePush(d.id, p.name, body, d.language, '/route')
+    }
+
+    // Подтверждение создателю.
+    notifyMessagePush(p.id, p.name, MATERIAL_PUSH[materialPushLang(p.language)].created, p.language)
+  } catch (pushErr) {
+    console.error('material push notify failed', pushErr)
+  }
+
   return data as Task
 }
 
