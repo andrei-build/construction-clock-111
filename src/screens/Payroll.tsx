@@ -385,6 +385,8 @@ export default function Payroll() {
           profile_id: row.worker.id,
           regular_hours: row.regularHours,
           overtime_hours: row.overtimeHours,
+          // REP-1: пишем разбивку проезда. total НЕ меняется — оплата проезда уже в row.total.
+          travel_hours: row.travelHours,
           hourly_rate: row.rate,
           total: row.total,
         }))
@@ -492,8 +494,8 @@ export default function Payroll() {
 
   const thisYear = new Date().getFullYear()
   const reportTotals = (report ?? []).reduce(
-    (acc, r) => ({ hours: acc.hours + r.total_hours, paid: acc.paid + r.paid }),
-    { hours: 0, paid: 0 },
+    (acc, r) => ({ travel: acc.travel + r.travel_hours, hours: acc.hours + r.total_hours, paid: acc.paid + r.paid }),
+    { travel: 0, hours: 0, paid: 0 },
   )
 
   return (
@@ -591,6 +593,7 @@ export default function Payroll() {
                     <thead>
                       <tr>
                         <th>{t('worker')}</th>
+                        <th>{t('travel_hours')}</th>
                         <th>{t('pay_col_hours')}</th>
                         <th>{t('pay_report_periods')}</th>
                         <th>{t('pay_col_paid')}</th>
@@ -600,6 +603,7 @@ export default function Payroll() {
                       {(report ?? []).map((r) => (
                         <tr key={r.profile_id}>
                           <td>{r.worker_name ?? '—'}</td>
+                          <td>{formatHours(r.travel_hours)}</td>
                           <td>{formatHours(r.total_hours)}</td>
                           <td>{r.periods}</td>
                           <td>{money(r.paid)}</td>
@@ -607,6 +611,7 @@ export default function Payroll() {
                       ))}
                       <tr className="payroll-report-total">
                         <td>{t('total')}</td>
+                        <td>{formatHours(reportTotals.travel)}</td>
                         <td>{formatHours(reportTotals.hours)}</td>
                         <td></td>
                         <td>{money(reportTotals.paid)}</td>

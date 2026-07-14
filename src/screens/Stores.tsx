@@ -177,24 +177,31 @@ export default function Stores() {
 
           <h2>{t('stores_visits')}</h2>
           {visits.length === 0 && <div className="card muted">{t('stores_no_visits')}</div>}
-          {visits.map((visit) => (
-            <div key={visit.id} className="card row">
-              <div>
-                <span className="item-title">{visit.worker?.name ?? t('stores_unknown_worker')}</span>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  {visit.store?.name ?? t('stores_unknown_store')}
-                  {visit.project?.name ? ` · ${visit.project.name}` : ''}
-                  {' · '}
-                  {formatDate(visit.entered_at)}
-                  {visit.exited_at ? ` — ${formatDate(visit.exited_at)}` : ''}
+          {visits.map((visit) => {
+            // REP-1/0033: открытый заезд = exited_at IS NULL (работник сейчас в магазине).
+            const isOpen = visit.exited_at === null
+            return (
+              <div key={visit.id} className="card row">
+                <div>
+                  <span className="item-title">
+                    {visit.worker?.name ?? t('stores_unknown_worker')}
+                    {isOpen && <span className="badge amber" style={{ marginLeft: 6 }}>{t('stores_visit_open')}</span>}
+                  </span>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    {visit.store?.name ?? t('stores_unknown_store')}
+                    {visit.project?.name ? ` · ${visit.project.name}` : ''}
+                    {' · '}
+                    {formatDate(visit.entered_at)}
+                    {visit.exited_at ? ` — ${formatDate(visit.exited_at)}` : ''}
+                  </div>
+                  {visit.note && <div className="muted" style={{ fontSize: 12 }}>{visit.note}</div>}
                 </div>
-                {visit.note && <div className="muted" style={{ fontSize: 12 }}>{visit.note}</div>}
+                <span className={`badge ${visit.is_paid ? 'green' : 'red'}`}>
+                  {visit.is_paid ? t('stores_paid') : t('stores_unpaid')}
+                </span>
               </div>
-              <span className={`badge ${visit.is_paid ? 'green' : 'red'}`}>
-                {visit.is_paid ? t('stores_paid') : t('stores_unpaid')}
-              </span>
-            </div>
-          ))}
+            )
+          })}
         </>
       )}
     </div>

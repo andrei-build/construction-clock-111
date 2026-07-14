@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import type { ReportCell, ReportKind, ReportRow } from '../lib/types'
 
-const reportTabs: ReportKind[] = ['hours', 'payroll', 'expenses']
+const reportTabs: ReportKind[] = ['hours', 'payroll', 'expenses', 'travel']
 const numericSkip = /(^|_)id$|pin|phone|zip|number/i
 
 function dateValue(date: Date) {
