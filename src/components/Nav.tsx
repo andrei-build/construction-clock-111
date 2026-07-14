@@ -51,6 +51,7 @@ export default function Nav({ manager }: { manager: boolean }) {
       items: [
         { to: '/dispatch', Icon: IconDispatch, label: t('dispatch') },
         { to: '/calendar', Icon: IconCalendar, label: t('calendar') },
+        { to: '/team-calendar', Icon: IconCalendar, label: t('team_calendar') },
         { to: '/stores', Icon: IconBriefcase, label: t('stores') },
         { to: '/map', Icon: IconMap, label: t('map') },
         { to: '/timeline', Icon: IconChart, label: t('timeline') },

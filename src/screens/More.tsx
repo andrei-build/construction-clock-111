@@ -30,6 +30,7 @@ export default function More() {
       <div className="more-group">
         {manager && <Link to="/dispatch" className="btn ghost small more-link">{t('dispatch')}</Link>}
         {manager && <Link to="/calendar" className="btn ghost small more-link">{t('calendar')}</Link>}
+        {manager && <Link to="/team-calendar" className="btn ghost small more-link">{t('team_calendar')}</Link>}
         {manager && <Link to="/stores" className="btn ghost small more-link">{t('stores')}</Link>}
         {manager && <Link to="/map" className="btn ghost small more-link">{t('map')}</Link>}
         {manager && <Link to="/timeline" className="btn ghost small more-link">{t('timeline')}</Link>}
