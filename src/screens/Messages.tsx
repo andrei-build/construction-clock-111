@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getMessages, getTeam, markMessageRead } from '../lib/api'
+import { getMessages, getTeam, markMessageRead, subscribeToMyMessages } from '../lib/api'
 import { isManagerRole, type MessageRow, type Profile } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
 import MessageOverlay from '../components/MessageOverlay'
@@ -44,6 +44,11 @@ export default function Messages() {
   }
 
   useEffect(() => { load() }, [profile?.id])
+
+  useEffect(() => {
+    if (!profile?.id) return
+    return subscribeToMyMessages(profile.id, () => { void load() }, `messages:screen:${profile.id}`)
+  }, [profile?.id])
 
   const peopleById = useMemo(() => {
     const m = new Map<string, Profile>()
