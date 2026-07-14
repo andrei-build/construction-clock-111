@@ -112,7 +112,7 @@ export default function ProjectHub() {
           {tab === 'tasks' && <TasksTab project={project} profile={profile} />}
           {tab === 'time' && <TimeTab />}
           {tab === 'finance' && <FinanceTab />}
-          {tab === 'files' && <FilesTab />}
+          {tab === 'files' && <FilesTab project={project} profile={profile} />}
           {tab === 'reports' && <ReportsTab />}
           {tab === 'notes' && <NotesTab project={project} profile={profile} />}
           {tab === 'client' && <ClientTab />}

@@ -2471,6 +2471,72 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin-bottom: 0;
 }
 .hub-placeholder h2 { margin-bottom: 8px; }
+
+/* Вкладка «Файлы и медиа» хаба (ХАБ-2). */
+.hub-file-upload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.hub-file-upload .hub-file-input { flex: 1 1 200px; min-width: 0; }
+.hub-file-upload .error-msg { flex-basis: 100%; margin: 0; }
+.hub-file-filters { flex-wrap: wrap; margin-bottom: 0; }
+.hub-file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.hub-file-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  margin-bottom: 0;
+}
+.hub-file-card:disabled { opacity: .6; cursor: default; }
+.hub-file-preview {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--border, rgba(255, 255, 255, .08));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hub-file-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.hub-file-icon { font-size: 34px; line-height: 1; }
+.hub-file-badge {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: rgba(0, 0, 0, .65);
+  color: #fff;
+}
+.hub-file-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.hub-file-name { overflow-wrap: anywhere; }
+.hub-file-sub { font-size: 12px; overflow-wrap: anywhere; }
+.gallery-lightbox video {
+  max-width: min(92vw, 1100px);
+  max-height: 82vh;
+  border-radius: 8px;
+}
 .project-row-dots { display: inline-flex; align-items: center; gap: 6px; margin: 0; flex: 0 0 auto; }
 .project-row-dots .status-dot { margin-top: 0; }
 

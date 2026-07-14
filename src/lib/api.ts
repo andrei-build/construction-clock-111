@@ -1,5 +1,5 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectNote, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectHubFile, ProjectNote, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
 import { todayStartISO } from './time'
 import { notifyMessagePush } from './push'
 
@@ -1888,6 +1888,20 @@ export async function getProjectFiles(projectId: string): Promise<FileRow[]> {
     .order('created_at', { ascending: false })
   if (error) return []
   return (data as FileRow[]) ?? []
+}
+
+// Файлы проекта с именем автора загрузки — для вкладки «Файлы и медиа» хаба.
+// Как getProjectFiles, но embed-ом тянем uploader:profiles(name) (единственный FK files.uploaded_by,
+// тот же, что в getGalleryPdfs). Только чтение; RLS files держит org-скоуп и приватность.
+export async function getProjectHubFiles(projectId: string): Promise<ProjectHubFile[]> {
+  const { data, error } = await supabase.from('files')
+    .select(`${FILE_SELECT}, uploader:profiles!files_uploaded_by_fkey(name)`)
+    .eq('project_id', projectId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return ((data ?? []) as unknown as Array<FileRow & { uploader?: { name: string | null } | null }>)
+    .map(({ uploader, ...row }) => ({ ...(row as FileRow), uploader_name: uploader?.name ?? null }))
 }
 
 // Подписанный запрос к edge-функции r2-sign: возвращает { url, method, key, expires_in }.
