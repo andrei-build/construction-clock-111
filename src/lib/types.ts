@@ -516,6 +516,32 @@ export interface ProjectNote {
   author?: { name: string | null } | null
 }
 
+// Статусы позиции спецификации материалов (project_materials.status). Реальный прогресс
+// забора/доставки живёт в связанной задаче (task_id) — см. MaterialStatusChain.
+export type MaterialSpecStatus = 'plan' | 'requested' | 'picked_up' | 'delivered'
+
+// Позиция плановой спецификации материалов проекта (project_materials, MAT-3). БЕЗ цен —
+// это plan-BOM. task_id указывает на связанную материальную заявку (tasks, task_type='material').
+export interface ProjectMaterial {
+  id: string
+  org_id: string
+  project_id: string
+  section: string | null
+  name: string
+  qty: number | null
+  unit: string | null
+  supplier: string | null
+  url: string | null
+  note: string | null
+  sort_order: number
+  status: MaterialSpecStatus
+  task_id: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  deleted_at?: string | null
+}
+
 // Рейтинг клиента (accounts.client_rating/rating_note) для «Хаба проекта» — светофор + заметка.
 export interface AccountRating {
   client_rating: 'green' | 'amber' | 'red' | null
