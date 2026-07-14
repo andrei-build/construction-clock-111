@@ -2095,6 +2095,24 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .team-cal-cell { min-height: 78px; }
 }
 
+/* CAL-1b: события/задачи в день-панели, создатель события, вкладка «Доставки и задачи», роль-нота */
+.team-cal-rolenote { margin: -6px 0 10px; }
+.team-cal-panel-events { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.team-cal-panel-event { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid var(--line); padding-top: 8px; }
+.team-cal-panel-event:first-child { border-top: none; padding-top: 0; }
+.team-cal-editor-times { gap: 10px; align-items: flex-start; }
+.team-cal-editor-times label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); flex: 1; }
+.team-cal-editor textarea { width: 100%; resize: vertical; }
+.small { font-size: 12px; }
+
+.team-cal-deliveries { display: flex; flex-direction: column; gap: 16px; }
+.team-cal-delivery-group { display: flex; flex-direction: column; gap: 8px; }
+.team-cal-delivery-date { margin: 0; text-transform: capitalize; font-size: 14px; color: var(--muted); }
+.team-cal-delivery-row { display: flex; flex-direction: column; gap: 8px; }
+.team-cal-delivery-head { align-items: flex-start; gap: 10px; }
+.team-cal-delivery-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.team-cal-delivery-actions { gap: 8px; justify-content: flex-start; flex-wrap: wrap; }
+
 .sales-screen { max-width: 1180px; }
 .sales-board {
   display: grid;

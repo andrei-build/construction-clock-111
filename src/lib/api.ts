@@ -1963,12 +1963,33 @@ export async function getCalendarEvents(startISO: string, endISO: string): Promi
   return (data as CalendarEvent[]) ?? []
 }
 
+// CAL-1b: события календаря для «Календаря команды». Тот же источник, что getCalendarEvents,
+// но более широкий select (project_id/ends_at/assigned_to/notes/location) — нужен для сплита по
+// ролям (assigned_to) и привязки к проекту. Отдельный хелпер, чтобы не менять узкий select
+// /calendar. RLS calendar_events держит org-скоуп. error → [] (мягкая деградация UI).
+export async function getTeamCalendarEvents(startISO: string, endISO: string): Promise<CalendarEvent[]> {
+  const { data, error } = await supabase.from('calendar_events')
+    .select('id, org_id, title, event_type, starts_at, ends_at, location, project_id, assigned_to, permit_number, inspection_status, notes')
+    .gte('starts_at', startISO)
+    .lt('starts_at', endISO)
+    .order('starts_at')
+  if (error) return []
+  return (data as CalendarEvent[]) ?? []
+}
+
+// CAL-1b: доп. опциональные колонки (project_id/assigned_to/ends_at/notes) — additive, узкий
+// вызов из /calendar (Calendar.tsx) их не передаёт и работает как прежде. Пропускаем в insert
+// только заданные ключи (spread не включает отсутствующие).
 export async function createCalendarEvent(p: Profile, input: {
   title: string
   event_type: CalendarEvent['event_type']
   starts_at: string
   permit_number: string | null
   inspection_status: string | null
+  ends_at?: string | null
+  project_id?: string | null
+  assigned_to?: string | null
+  notes?: string | null
 }) {
   const { data, error } = await supabase.from('calendar_events')
     .insert({ org_id: p.org_id, created_by: p.id, ...input })
