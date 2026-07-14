@@ -17,6 +17,7 @@ import { shiftState, workedMs, fmtHours, fmtClock } from '../lib/time'
 import { isManagerWrite } from '../lib/types'
 import type { Profile, Project, TimeEvent, Task, EventRow, ProfileRate, SuspiciousShift } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
+import CollapsibleSection from '../components/CollapsibleSection'
 
 type Risk = {
   id: string
@@ -214,7 +215,7 @@ export default function Dashboard() {
   if (loading) {
     return (
       <div className="screen dashboard-screen">
-        <h1>{t('command_center')}</h1>
+        <h1>{t('dashboard')}</h1>
         <div className="card center muted">{t('loading')}</div>
       </div>
     )
@@ -222,7 +223,7 @@ export default function Dashboard() {
 
   return (
     <div className="screen dashboard-screen">
-      <h1>{t('command_center')}</h1>
+      <h1>{t('dashboard')}</h1>
       {error && <p className="error-msg">{t('load_error')}</p>}
 
       <div className="dashboard-tiles">
@@ -266,44 +267,6 @@ export default function Dashboard() {
         </section>
       </div>
 
-      {canReviewShifts && (
-        <section className="card review-card">
-          <h2 className="review-title">{t('suspicious_shifts_title')}</h2>
-          {suspicious.length === 0 ? (
-            <div className="muted">{t('suspicious_none')}</div>
-          ) : (
-            suspicious.map((s) => (
-              <div key={s.checkout_event_id} className="review-row">
-                <div className="review-main">
-                  <button className="inline-link item-title" onClick={() => { const w = team.find((x) => x.id === s.profile_id); if (w) openWorker(w) }}>{s.name}</button>
-                  <div className="muted">{s.project_name ?? t('unknown_project')}</div>
-                  <div className="muted">
-                    {new Date(s.started_at).toLocaleDateString()} · {fmtClock(s.started_at)}–{fmtClock(s.ended_at)} · {fmtHm(s.hours)}
-                  </div>
-                  <div className="review-chips">
-                    {s.too_long && <span className="badge amber">{t('chip_too_long')}</span>}
-                    {s.gps_issue && <span className="badge red">{t('chip_no_gps')}</span>}
-                    {s.time_gap_issue && <span className="badge red">{t('chip_time_gap')}</span>}
-                  </div>
-                </div>
-                <div className="review-action">
-                  {s.review_status === 'approved' ? (
-                    <span className="badge green">{t('chip_reviewed')}</span>
-                  ) : (
-                    <>
-                      <span className="badge red">{t('chip_needs_review')}</span>
-                      <button className="btn small" disabled={approvingId === s.checkout_event_id} onClick={() => approveShift(s)}>
-                        {t('mark_reviewed')}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
-        </section>
-      )}
-
       <section className="card pulse-card">
         <h2>{t('shift_pulse_title')}</h2>
         {onSite.length === 0 ? (
@@ -320,9 +283,8 @@ export default function Dashboard() {
         )}
       </section>
 
-      <div className="dashboard-columns">
-        <section>
-          <h2>{t('dashboard_risks')}</h2>
+      <div className="dashboard-strips">
+        <CollapsibleSection title={t('dashboard_risks')} count={risks.length} defaultOpen={risks.length > 0}>
           {risks.length === 0 && <div className="card muted">{t('no_risks')}</div>}
           {risks.map((risk) => (
             <div key={risk.id} className="card risk-row">
@@ -333,10 +295,9 @@ export default function Dashboard() {
               </div>
             </div>
           ))}
-        </section>
+        </CollapsibleSection>
 
-        <section>
-          <h2>{t('on_site_now')}</h2>
+        <CollapsibleSection title={t('on_site_now')} count={onSite.length}>
           {onSite.length === 0 && <div className="card muted">{t('nobody_on_site')}</div>}
           {onSite.map((w) => {
             const evs = byWorker.get(w.id) ?? []
@@ -357,10 +318,9 @@ export default function Dashboard() {
               </div>
             )
           })}
-        </section>
+        </CollapsibleSection>
 
-        <section>
-          <h2>{t('recent_activity')}</h2>
+        <CollapsibleSection title={t('recent_activity')} count={activity.length}>
           {activity.length === 0 && <div className="card muted">{t('no_activity')}</div>}
           {activity.map((a) => (
             <div key={a.id} className="feed-item">
@@ -368,7 +328,44 @@ export default function Dashboard() {
               <div className="when">{new Date(a.created_at).toLocaleString()}</div>
             </div>
           ))}
-        </section>
+        </CollapsibleSection>
+
+        {canReviewShifts && (
+          <CollapsibleSection title={t('suspicious_shifts_title')} count={suspicious.length}>
+            {suspicious.length === 0 ? (
+              <div className="muted">{t('suspicious_none')}</div>
+            ) : (
+              suspicious.map((s) => (
+                <div key={s.checkout_event_id} className="review-row">
+                  <div className="review-main">
+                    <button className="inline-link item-title" onClick={() => { const w = team.find((x) => x.id === s.profile_id); if (w) openWorker(w) }}>{s.name}</button>
+                    <div className="muted">{s.project_name ?? t('unknown_project')}</div>
+                    <div className="muted">
+                      {new Date(s.started_at).toLocaleDateString()} · {fmtClock(s.started_at)}–{fmtClock(s.ended_at)} · {fmtHm(s.hours)}
+                    </div>
+                    <div className="review-chips">
+                      {s.too_long && <span className="badge amber">{t('chip_too_long')}</span>}
+                      {s.gps_issue && <span className="badge red">{t('chip_no_gps')}</span>}
+                      {s.time_gap_issue && <span className="badge red">{t('chip_time_gap')}</span>}
+                    </div>
+                  </div>
+                  <div className="review-action">
+                    {s.review_status === 'approved' ? (
+                      <span className="badge green">{t('chip_reviewed')}</span>
+                    ) : (
+                      <>
+                        <span className="badge red">{t('chip_needs_review')}</span>
+                        <button className="btn small" disabled={approvingId === s.checkout_event_id} onClick={() => approveShift(s)}>
+                          {t('mark_reviewed')}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </CollapsibleSection>
+        )}
       </div>
     </div>
   )
