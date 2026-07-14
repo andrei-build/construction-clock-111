@@ -719,6 +719,10 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_file_delete_failed: { ru: 'Не удалось удалить файл', en: 'Could not delete file', es: 'No se pudo eliminar el archivo' },
   hub_file_open_failed: { ru: 'Не удалось открыть файл', en: 'Could not open file', es: 'No se pudo abrir el archivo' },
   hub_files_load_error: { ru: 'Не удалось загрузить файлы', en: 'Could not load files', es: 'No se pudieron cargar los archivos' },
+  hub_files_filter_empty: { ru: 'В этом фильтре ничего нет', en: 'Nothing in this filter', es: 'Nada en este filtro' },
+  hub_file_video_badge: { ru: 'Видео', en: 'Video', es: 'Video' },
+  hub_file_uploader_unknown: { ru: 'Неизвестный автор', en: 'Unknown uploader', es: 'Autor desconocido' },
+  hub_files_close: { ru: 'Закрыть', en: 'Close', es: 'Cerrar' },
   // Вкладка «Время»
   hub_time_worker: { ru: 'Работник', en: 'Worker', es: 'Trabajador' },
   hub_time_hours: { ru: 'ч', en: 'h', es: 'h' },

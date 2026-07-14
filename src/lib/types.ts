@@ -576,6 +576,11 @@ export interface FileRow {
   created_at: string
 }
 
+// Файл проекта с именем автора загрузки (embed uploader:profiles) — вкладка «Файлы и медиа» хаба.
+export interface ProjectHubFile extends FileRow {
+  uploader_name: string | null
+}
+
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)
 export const isManagerWrite = (r: Role) => ['manager', 'admin', 'owner'].includes(r)
 
