@@ -8,6 +8,19 @@ import { buildWorkerDisambiguationMap } from '../lib/worker-utils'
 import { canAssignRole, isManagerWrite, type Profile, type Role, type TimeEvent } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
 
+// TEAM-1: порядок ролевых групп на списке /team. owner/admin закреплены сверху,
+// далее менеджеры · супервайзеры · рабочие · доставщики · сабконтракторы · sales.
+const TEAM_GROUPS: { key: string; titleKey: string; roles: Role[] }[] = [
+  { key: 'owners', titleKey: 'team_group_owners', roles: ['owner', 'admin'] },
+  { key: 'managers', titleKey: 'team_group_managers', roles: ['manager'] },
+  { key: 'supervisors', titleKey: 'team_group_supervisors', roles: ['supervisor'] },
+  { key: 'workers', titleKey: 'team_group_workers', roles: ['worker'] },
+  { key: 'drivers', titleKey: 'team_group_drivers', roles: ['driver'] },
+  { key: 'subcontractors', titleKey: 'team_group_subcontractors', roles: ['subcontractor'] },
+  { key: 'sales', titleKey: 'team_group_sales', roles: ['sales'] },
+]
+const GROUPED_ROLES = new Set<Role>(TEAM_GROUPS.flatMap((g) => g.roles))
+
 export default function Team() {
   const { profile } = useAuth()
   const { t } = useI18n()
@@ -56,6 +69,19 @@ export default function Team() {
 
   const canManage = profile ? isManagerWrite(profile.role) : false
 
+  // TEAM-1: раскладываем команду по ролевым группам (порядок фиксирован), плюс бакет
+  // «Прочие» для ролей вне списка (например client), чтобы никто не исчез из списка.
+  const groupedTeam = useMemo(() => {
+    const sections = TEAM_GROUPS.map((g) => ({
+      key: g.key,
+      titleKey: g.titleKey,
+      members: team.filter((w) => g.roles.includes(w.role)),
+    }))
+    const other = team.filter((w) => !GROUPED_ROLES.has(w.role))
+    if (other.length) sections.push({ key: 'other', titleKey: 'team_group_other', members: other })
+    return sections.filter((s) => s.members.length > 0)
+  }, [team])
+
   // F3: гейт создания работника — предлагаем только роли, которые актёр вправе назначить.
   // Плоский менеджер не увидит driver (его выдают только owner/admin) и не создаст роль >= своей.
   const addRoleOptions: Role[] = ['worker', 'driver', 'supervisor', 'manager', 'subcontractor']
@@ -101,35 +127,40 @@ export default function Team() {
       )}
       {msg && <p className={msg === 'worker_created' ? 'ok-msg' : 'error-msg'}>{t(msg)}</p>}
 
-      {team.map((w) => {
-        const evs = byWorker.get(w.id) ?? []
-        const st = shiftState(evs)
-        return (
-          <div key={w.id} className="card row">
-            <div>
-              <button className="inline-link item-title" onClick={() => openWorker(w)}>{workerLabels.get(w.id) ?? w.name}</button>
-              <span className={`badge ${roleBadge(w.role)}`}>{w.role}</span>
-            </div>
-            <div className="center">
-              <div style={{ fontWeight: 700 }}>{fmtHours(workedMs(evs))}{t('h')}</div>
-              {st.status !== 'off' && <span className="badge green">●</span>}
-              {canManage && (
-                <label className="checkout-video-toggle" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12 }}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(w.require_checkout_video)}
-                    onChange={() => toggleCheckoutVideo(w)}
-                  />
-                  <span className="muted">{t('checkout_video_required')}</span>
-                </label>
-              )}
-              <button className="btn ghost small team-details-btn" onClick={() => navigate(`/team/${w.id}`)}>
-                {t('details')}
-              </button>
-            </div>
-          </div>
-        )
-      })}
+      {groupedTeam.map((section) => (
+        <div key={section.key} className="team-group">
+          <h2 className="team-group-title">{t(section.titleKey)} <span className="muted">· {section.members.length}</span></h2>
+          {section.members.map((w) => {
+            const evs = byWorker.get(w.id) ?? []
+            const st = shiftState(evs)
+            return (
+              <div key={w.id} className="card row">
+                <div>
+                  <button className="inline-link item-title" onClick={() => openWorker(w)}>{workerLabels.get(w.id) ?? w.name}</button>
+                  <span className={`badge ${roleBadge(w.role)}`}>{w.role}</span>
+                </div>
+                <div className="center">
+                  <div style={{ fontWeight: 700 }}>{fmtHours(workedMs(evs))}{t('h')}</div>
+                  {st.status !== 'off' && <span className="badge green">●</span>}
+                  {canManage && (
+                    <label className="checkout-video-toggle" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12 }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(w.require_checkout_video)}
+                        onChange={() => toggleCheckoutVideo(w)}
+                      />
+                      <span className="muted">{t('checkout_video_required')}</span>
+                    </label>
+                  )}
+                  <button className="btn ghost small team-details-btn" onClick={() => navigate(`/team/${w.id}`)}>
+                    {t('details')}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ))}
     </div>
   )
 }

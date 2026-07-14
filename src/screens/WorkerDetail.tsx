@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, Navigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import {
@@ -18,9 +18,11 @@ import {
   getWorkerLocationConsents,
   getWorkerPinAccess,
   getAppSettings,
+  getCurrentPayPeriod,
   getWorkerProfile,
   getWorkerProfileFiles,
   getWorkerSafetyAcks,
+  getWorkerTimeEvents,
   type WorkerDayClosedTask,
   type WorkerDayPhoto,
   type WorkerLocationConsentRow,
@@ -29,15 +31,18 @@ import {
   removeProjectExclusion,
   setProjectAccessMode,
   setUserCapability,
+  setWorkerActive,
   setWorkerPinEnabled,
   setWorkerRate,
   unassignWorkerFromProject,
   updateWorkerProfileSettings,
+  updateWorkerSkills,
 } from '../lib/api'
 import { fmtClock, fmtHours, computeTravelGaps, intervalsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 import { computeTransferGaps } from '../lib/shift-gaps'
-import { canAssignRole, isManagerRole, isManagerWrite, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type UserCapability, type WorkInterval } from '../lib/types'
+import { canAssignRole, isManagerRole, isManagerWrite, type PayPeriod, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type TimeEvent, type UserCapability, type WorkInterval } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
+import VoiceMic from '../components/VoiceMic'
 
 const ELEVEN_HOURS_MS = 11 * 60 * 60 * 1000
 
@@ -166,7 +171,8 @@ function intervalRows(intervals: WorkInterval[], projects: Project[], now: numbe
 export default function WorkerDetail() {
   const { id } = useParams()
   const { profile } = useAuth()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
+  const navigate = useNavigate()
   const [worker, setWorker] = useState<Profile | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [intervals, setIntervals] = useState<WorkInterval[]>([])
@@ -196,6 +202,17 @@ export default function WorkerDetail() {
   const [excludePick, setExcludePick] = useState('')
 
   const [capabilities, setCapabilities] = useState<UserCapability[]>([])
+
+  // TEAM-1: навыки для ИИ-распределения (profiles.skills — text, храним как чипы через запятую)
+  // и заметка по способностям (profiles.skills_note — text).
+  const [skillsChips, setSkillsChips] = useState<string[]>([])
+  const [skillDraft, setSkillDraft] = useState('')
+  const [skillsNote, setSkillsNote] = useState('')
+
+  // TEAM-1: показатели за неделю (GPS/без GPS, закрытые задачи) + текущий период оплаты (только чтение).
+  const [gpsWeek, setGpsWeek] = useState<{ withGps: number; withoutGps: number } | null>(null)
+  const [weekTaskCount, setWeekTaskCount] = useState<number | null>(null)
+  const [payPeriod, setPayPeriod] = useState<PayPeriod | null>(null)
 
   // WF-1: «Документы и согласия» — GPS-согласия, подписи ТБ, личные файлы этого работника.
   const [consents, setConsents] = useState<WorkerLocationConsentRow[]>([])
@@ -252,6 +269,9 @@ export default function WorkerDetail() {
         setRole(workerRow.role)
         setRequireVideo(Boolean(workerRow.require_checkout_video))
         setAccessMode(workerRow.project_access_mode ?? 'assigned')
+        // TEAM-1: skills — text-колонка; чипы через запятую. Пустые токены отбрасываем.
+        setSkillsChips((workerRow.skills ?? '').split(',').map((s) => s.trim()).filter(Boolean))
+        setSkillsNote(workerRow.skills_note ?? '')
         const rate = rateRows.find((row) => row.profile_id === workerRow.id)
         setRateInput(rate?.hourly_rate === null || rate?.hourly_rate === undefined ? '' : String(rate.hourly_rate))
       }
@@ -301,6 +321,46 @@ export default function WorkerDetail() {
     return () => { active = false }
   }, [id])
 
+  // TEAM-1: показатели за неделю (GPS/без GPS по отметкам входа) + закрытые задачи недели
+  // + текущий период оплаты. Только чтение; считаем один раз при смене работника.
+  useEffect(() => {
+    if (!id) return
+    let active = true
+    const weekFrom = startOfWeek(new Date())
+    const weekTo = addDays(weekFrom, 7)
+    Promise.all([
+      getWorkerTimeEvents(id),
+      getWorkerDayClosedTasks(id, weekFrom.toISOString(), weekTo.toISOString()),
+      getCurrentPayPeriod(),
+    ])
+      .then(([events, weekTasks, period]) => {
+        if (!active) return
+        // GPS-статистика недели: считаем только отметки входа (check_in) в окне недели.
+        const inWeek = (e: TimeEvent) => {
+          const ts = new Date(e.event_time).getTime()
+          return e.event_type === 'check_in' && ts >= weekFrom.getTime() && ts < weekTo.getTime()
+        }
+        let withGps = 0
+        let withoutGps = 0
+        for (const e of events) {
+          if (!inWeek(e)) continue
+          // По всему приложению «есть GPS» = gps_status 'good'; остальное (off/null) — без GPS.
+          if (e.gps_status === 'good') withGps += 1
+          else withoutGps += 1
+        }
+        setGpsWeek({ withGps, withoutGps })
+        setWeekTaskCount(weekTasks.length)
+        setPayPeriod(period)
+      })
+      .catch(() => {
+        if (!active) return
+        setGpsWeek(null)
+        setWeekTaskCount(null)
+        setPayPeriod(null)
+      })
+    return () => { active = false }
+  }, [id])
+
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000)
     return () => clearInterval(timer)
@@ -342,6 +402,39 @@ export default function WorkerDetail() {
     { key: 'month', label: t('month'), value: rangeIntervalMs(intervals, monthStart, startOfNextMonth(monthStart), now) },
     { key: 'all_time', label: t('all_time'), value: totalIntervalMs(intervals, now) },
   ]
+
+  // TEAM-1: плитки-показатели. Метрики без источника показываем как «—» (не выдумываем).
+  const currentWeekMs = rangeIntervalMs(intervals, weekStart, addDays(weekStart, 7), now)
+  const onShiftNow = intervals.some((iv) => !iv.end_at)
+  const rateRow = rates.find((row) => row.profile_id === worker?.id)
+  const rateValue = rateRow?.hourly_rate ?? null
+  const statTiles: { key: string; label: string; value: string }[] = [
+    { key: 'week', label: t('week'), value: `${fmtHours(currentWeekMs)} ${t('h')}` },
+    { key: 'tasks', label: t('tasks'), value: weekTaskCount === null ? '—' : String(weekTaskCount) },
+    { key: 'on_shift', label: t('on_shift'), value: onShiftNow ? t('stat_on_shift_yes') : t('stat_on_shift_no') },
+    ...(ratesVisible ? [{ key: 'rate', label: t('rate'), value: rateValue === null ? '—' : `$${rateValue}` }] : []),
+    { key: 'with_gps', label: t('stat_with_gps'), value: gpsWeek === null ? '—' : String(gpsWeek.withGps) },
+    { key: 'without_gps', label: t('stat_without_gps'), value: gpsWeek === null ? '—' : String(gpsWeek.withoutGps) },
+  ]
+
+  // TEAM-1: текущий период оплаты (только чтение, finance-gated через ratesVisible).
+  // Не оплачено = часы работника в окне периода × ставка; корректировки = число исправленных смен в окне.
+  const payPeriodEnd = payPeriod ? addDays(new Date(payPeriod.period_end), 1) : null
+  const payUnpaid = payPeriod && payPeriodEnd && rateValue !== null
+    ? (rangeIntervalMs(intervals, new Date(payPeriod.period_start), payPeriodEnd, now) / 3600000) * rateValue
+    : null
+  const payAdjustments = payPeriod && payPeriodEnd
+    ? intervals.filter((iv) => {
+        if (!iv.was_adjusted) return false
+        const ts = new Date(iv.start_at).getTime()
+        return ts >= new Date(payPeriod.period_start).getTime() && ts < payPeriodEnd.getTime()
+      }).length
+    : 0
+  const payStatusKey = payPeriod?.status === 'paid'
+    ? 'pay_status_paid'
+    : (payPeriod?.status === 'approved' || payPeriod?.status === 'closed')
+      ? 'pay_status_closed'
+      : 'pay_status_open'
 
   const dailyRows = Array.from({ length: 7 }, (_, index) => {
     const start = addDays(today, -index)
@@ -492,6 +585,49 @@ export default function WorkerDetail() {
     }
   }
 
+  // TEAM-1: чипы навыков (пишутся в profiles.skills одной text-строкой через запятую).
+  const addSkill = (raw: string) => {
+    const value = raw.trim()
+    if (!value) return
+    setSkillsChips((prev) => (prev.some((s) => s.toLowerCase() === value.toLowerCase()) ? prev : [...prev, value]))
+    setSkillDraft('')
+  }
+  const removeSkill = (skill: string) => setSkillsChips((prev) => prev.filter((s) => s !== skill))
+
+  const saveSkills = async () => {
+    if (!profile || !worker || !canEditProfile || busy) return
+    setBusy('skills')
+    setMsg(null)
+    try {
+      await updateWorkerSkills(profile, worker.id, {
+        skills: skillsChips.join(', '),
+        skills_note: skillsNote.trim() === '' ? null : skillsNote.trim(),
+      })
+      setMsg('skills_saved')
+    } catch {
+      setMsg('skills_save_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // TEAM-1: активация/деактивация работника (profiles.is_active).
+  const toggleActive = async () => {
+    if (!profile || !worker || !canEditProfile || busy) return
+    const next = !worker.is_active
+    setBusy('active')
+    setMsg(null)
+    try {
+      await setWorkerActive(profile, worker.id, next)
+      setMsg(next ? 'worker_activated' : 'worker_deactivated')
+      await load()
+    } catch {
+      setMsg('worker_active_toggle_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const openAdjustment = (row: IntervalRow) => {
     setEditingKey(row.key)
     setAdjustIn(toDatetimeLocal(row.interval.start_at))
@@ -559,7 +695,12 @@ export default function WorkerDetail() {
               <h2>{t('profile_settings')}</h2>
               <form onSubmit={saveSettings}>
                 <label>{t('name')}</label>
-                <input value={name} disabled={!canEditProfile || busy !== null} onChange={(e) => setName(e.target.value)} />
+                <div className="worker-name-row">
+                  <input value={name} disabled={!canEditProfile || busy !== null} onChange={(e) => setName(e.target.value)} />
+                  {canEditProfile && (
+                    <VoiceMic lang={lang} title={t('voice_input')} onResult={(text) => setName(text)} />
+                  )}
+                </div>
 
                 <label>{t('role')}</label>
                 <select value={role} disabled={!canEditProfile || busy !== null} onChange={(e) => setRole(e.target.value as Role)}>
@@ -608,6 +749,29 @@ export default function WorkerDetail() {
 
                 <button className="btn" disabled={!canEditProfile || busy !== null}>{t('save')}</button>
               </form>
+
+              {/* TEAM-1: сброс PIN и деактивация. Сброс PIN пока без серверной поддержки — показываем подсказку. */}
+              {canEditProfile && (
+                <div className="worker-danger-actions">
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    disabled
+                    title={t('reset_pin_backend_pending')}
+                  >
+                    {t('reset_pin')}
+                  </button>
+                  <p className="muted">{t('reset_pin_backend_pending')}</p>
+                  <button
+                    type="button"
+                    className={`btn small ${worker.is_active ? 'red' : 'green'}`}
+                    disabled={busy !== null}
+                    onClick={toggleActive}
+                  >
+                    {worker.is_active ? t('deactivate') : t('activate')}
+                  </button>
+                </div>
+              )}
             </section>
 
             <section>
@@ -632,6 +796,73 @@ export default function WorkerDetail() {
               )}
             </section>
           </div>
+
+          {/* TEAM-1: показатели за неделю. */}
+          <section>
+            <h2>{t('worker_stats')}</h2>
+            <div className="worker-hour-grid">
+              {statTiles.map((tile) => (
+                <div key={tile.key} className="card metric-card blue">
+                  <div className="metric-value num-display">{tile.value}</div>
+                  <div className="muted">{tile.label}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* TEAM-1: навыки для ИИ-распределения (profiles.skills) + заметка (profiles.skills_note). */}
+          <section className="card worker-skills-card">
+            <h2>{t('skills_section')}</h2>
+            <div className="skills-chip-list">
+              {skillsChips.length === 0 && <span className="muted">{t('skills_empty')}</span>}
+              {skillsChips.map((skill) => (
+                <span key={skill} className="skills-chip">
+                  {skill}
+                  {canEditProfile && (
+                    <button
+                      type="button"
+                      className="skills-chip-remove"
+                      aria-label={t('remove')}
+                      disabled={busy !== null}
+                      onClick={() => removeSkill(skill)}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+            {canEditProfile && (
+              <div className="row skills-add-row">
+                <input
+                  value={skillDraft}
+                  placeholder={t('skills_add_placeholder')}
+                  disabled={busy !== null}
+                  onChange={(e) => setSkillDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); addSkill(skillDraft) }
+                  }}
+                />
+                <VoiceMic lang={lang} title={t('voice_input')} onResult={(text) => addSkill(text)} />
+                <button type="button" className="btn ghost small" disabled={busy !== null || !skillDraft.trim()} onClick={() => addSkill(skillDraft)}>
+                  {t('skills_add')}
+                </button>
+              </div>
+            )}
+
+            <label>{t('skills_note_label')}</label>
+            <textarea
+              value={skillsNote}
+              disabled={!canEditProfile || busy !== null}
+              rows={3}
+              onChange={(e) => setSkillsNote(e.target.value)}
+            />
+            <p className="muted">{t('skills_note_caption')}</p>
+
+            {canEditProfile && (
+              <button type="button" className="btn" disabled={busy !== null} onClick={saveSkills}>{t('save')}</button>
+            )}
+          </section>
 
           <section>
             <h2>{t('daily_totals_7')}</h2>
@@ -719,6 +950,16 @@ export default function WorkerDetail() {
 
           <section>
             <h2>{t('latest_shifts')}</h2>
+            {/* TEAM-1: ручное добавление НОВОЙ смены нет чем поддержать — механизм корректировок
+                привязан к существующей отметке. «Редактировать» ниже работает. См. BACKEND REQUEST. */}
+            {canEditProfile && (
+              <div className="add-shift-row">
+                <button type="button" className="btn ghost small" disabled title={t('add_shift_backend_pending')}>
+                  + {t('add_shift_manual')}
+                </button>
+                <p className="muted">{t('add_shift_backend_pending')}</p>
+              </div>
+            )}
             {transferGaps.length > 0 && (
               <div className="transfer-gap-list">
                 {transferGaps.map((gap) => {
@@ -915,6 +1156,39 @@ export default function WorkerDetail() {
                   )
                 })}
               </div>
+            </section>
+          )}
+
+          {/* TEAM-1: текущий период оплаты — только чтение, finance-gated. Логика закрытия — в Payroll (PAY-1). */}
+          {ratesVisible && (
+            <section className="card worker-pay-period-card">
+              <h2>{t('pay_period_current')}</h2>
+              {!payPeriod ? (
+                <p className="muted">{t('pay_period_none')}</p>
+              ) : (
+                <>
+                  <div className="pay-period-window num-display">
+                    {dateLabel(payPeriod.period_start)} — {dateLabel(payPeriod.period_end)}
+                  </div>
+                  <div className="worker-hour-grid">
+                    <div className="card metric-card blue">
+                      <div className="metric-value num-display">{payUnpaid === null ? '—' : `$${payUnpaid.toFixed(2)}`}</div>
+                      <div className="muted">{t('pay_unpaid')}</div>
+                    </div>
+                    <div className="card metric-card blue">
+                      <div className="metric-value">{t(payStatusKey)}</div>
+                      <div className="muted">{t('pay_status')}</div>
+                    </div>
+                    <div className="card metric-card blue">
+                      <div className="metric-value num-display">{payAdjustments}</div>
+                      <div className="muted">{t('pay_adjustments')}</div>
+                    </div>
+                  </div>
+                </>
+              )}
+              <button type="button" className="btn ghost small" onClick={() => navigate('/payroll')}>
+                {t('close_pay_here')} →
+              </button>
             </section>
           )}
 

@@ -1125,6 +1125,72 @@ const dict: Record<string, Record<Lang, string>> = {
   route_deliver_all: { ru: 'Доставлено всё', en: 'Deliver all', es: 'Entregar todo' },
   route_delivery_count: { ru: 'позиций: {n}', en: '{n} items', es: '{n} artículos' },
   route_no_address: { ru: 'Адрес не указан', en: 'No address', es: 'Sin dirección' },
+
+  // TEAM-1: role groups on the /team list
+  team_group_owners: { ru: 'Владелец · Админ', en: 'Owner · Admin', es: 'Propietario · Admin' },
+  team_group_managers: { ru: 'Менеджеры', en: 'Managers', es: 'Gerentes' },
+  team_group_supervisors: { ru: 'Супервайзеры', en: 'Supervisors', es: 'Supervisores' },
+  team_group_workers: { ru: 'Рабочие', en: 'Workers', es: 'Trabajadores' },
+  team_group_drivers: { ru: 'Доставщики', en: 'Drivers', es: 'Repartidores' },
+  team_group_subcontractors: { ru: 'Сабконтракторы', en: 'Subcontractors', es: 'Subcontratistas' },
+  team_group_sales: { ru: 'Sales', en: 'Sales', es: 'Ventas' },
+  team_group_other: { ru: 'Прочие', en: 'Other', es: 'Otros' },
+
+  // TEAM-1: worker card — voice name input, skills for AI, stat tiles, pay period
+  voice_input: { ru: 'Голосовой ввод', en: 'Voice input', es: 'Entrada por voz' },
+  skills_section: { ru: 'Навыки для ИИ-распределения', en: 'Skills for AI assignment', es: 'Habilidades para asignación IA' },
+  skills_add_placeholder: { ru: 'Добавить навык…', en: 'Add a skill…', es: 'Agregar habilidad…' },
+  skills_add: { ru: 'Добавить', en: 'Add', es: 'Agregar' },
+  skills_empty: { ru: 'Навыки не указаны', en: 'No skills yet', es: 'Sin habilidades' },
+  skills_note_label: { ru: 'Заметка по способностям', en: 'Ability note', es: 'Nota de aptitudes' },
+  skills_note_caption: {
+    ru: 'Помощник менеджера читает это, когда подсказывает, кого ставить на задачу',
+    en: 'The manager assistant reads this when suggesting who to put on a task',
+    es: 'El asistente del gerente lee esto al sugerir a quién asignar una tarea',
+  },
+  skills_saved: { ru: 'Навыки сохранены', en: 'Skills saved', es: 'Habilidades guardadas' },
+  skills_save_failed: { ru: 'Не удалось сохранить навыки', en: 'Could not save skills', es: 'No se pudieron guardar las habilidades' },
+
+  worker_stats: { ru: 'Показатели', en: 'Stats', es: 'Indicadores' },
+  stat_with_gps: { ru: 'с GPS (неделя)', en: 'with GPS (week)', es: 'con GPS (semana)' },
+  stat_without_gps: { ru: 'без GPS (неделя)', en: 'without GPS (week)', es: 'sin GPS (semana)' },
+  stat_on_shift_yes: { ru: 'Да', en: 'Yes', es: 'Sí' },
+  stat_on_shift_no: { ru: 'Нет', en: 'No', es: 'No' },
+
+  deactivate: { ru: 'Деактивировать', en: 'Deactivate', es: 'Desactivar' },
+  activate: { ru: 'Активировать', en: 'Activate', es: 'Activar' },
+  worker_deactivated: { ru: 'Работник деактивирован', en: 'Worker deactivated', es: 'Trabajador desactivado' },
+  worker_activated: { ru: 'Работник активирован', en: 'Worker activated', es: 'Trabajador activado' },
+  worker_active_toggle_failed: { ru: 'Не удалось изменить статус', en: 'Could not change status', es: 'No se pudo cambiar el estado' },
+  reset_pin: { ru: 'Сбросить PIN', en: 'Reset PIN', es: 'Restablecer PIN' },
+  reset_pin_backend_pending: {
+    ru: 'Сброс PIN требует поддержки на сервере',
+    en: 'PIN reset needs backend support',
+    es: 'Restablecer PIN requiere soporte del servidor',
+  },
+
+  add_shift_manual: { ru: 'Добавить смену вручную', en: 'Add shift manually', es: 'Agregar turno manualmente' },
+  add_shift_backend_pending: {
+    ru: 'Ручное добавление смены требует поддержки на сервере (корректировки применяются к существующим отметкам)',
+    en: 'Manual shift entry needs backend support (adjustments apply to existing punches)',
+    es: 'Agregar turno manual requiere soporte del servidor (los ajustes se aplican a fichajes existentes)',
+  },
+
+  message_attachment_backend_pending: {
+    ru: 'Вложения в сообщениях требуют поддержки на сервере',
+    en: 'Message attachments need backend support',
+    es: 'Los adjuntos de mensajes requieren soporte del servidor',
+  },
+
+  pay_period_current: { ru: 'Текущий период оплаты', en: 'Current pay period', es: 'Período de pago actual' },
+  pay_unpaid: { ru: 'Не оплачено', en: 'Unpaid', es: 'Sin pagar' },
+  pay_status: { ru: 'Статус', en: 'Status', es: 'Estado' },
+  pay_status_paid: { ru: 'Оплачено', en: 'Paid', es: 'Pagado' },
+  pay_status_closed: { ru: 'Закрыто', en: 'Closed', es: 'Cerrado' },
+  pay_status_open: { ru: 'Открыт', en: 'Open', es: 'Abierto' },
+  pay_adjustments: { ru: 'Корректировки', en: 'Adjustments', es: 'Ajustes' },
+  close_pay_here: { ru: 'Закрыть оплату здесь', en: 'Close pay here', es: 'Cerrar pago aquí' },
+  pay_period_none: { ru: 'Нет активного периода оплаты', en: 'No active pay period', es: 'Sin período de pago activo' },
 }
 
 interface I18n {

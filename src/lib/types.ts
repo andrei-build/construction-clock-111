@@ -12,6 +12,10 @@ export interface Profile {
   project_access_mode: 'assigned' | 'all_active'
   require_checkout_video?: boolean | null
   pin_enabled?: boolean | null
+  // TEAM-1: AI task-assignment hints (migration 0030). skills is a single text column
+  // (free-form, comma-separated chips), skills_note is a free-form note.
+  skills?: string | null
+  skills_note?: string | null
 }
 
 export interface Project {

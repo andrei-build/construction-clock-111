@@ -4,6 +4,7 @@ import { useI18n } from '../lib/i18n'
 import { sendMessage } from '../lib/api'
 import { enqueueFieldAction } from '../lib/offlineFieldActions'
 import type { MessageRow, Profile } from '../lib/types'
+import VoiceMic from './VoiceMic'
 
 type Priority = MessageRow['priority']
 
@@ -34,7 +35,7 @@ export default function MessageComposer({
   onSent,
 }: MessageComposerProps) {
   const { profile } = useAuth()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [recipient, setRecipient] = useState(initialRecipientId ?? recipients[0]?.id ?? '')
   const [priority, setPriority] = useState<Priority>('info')
   const [body, setBody] = useState('')
@@ -103,7 +104,14 @@ export default function MessageComposer({
         <option value="good">{t('priority_good')}</option>
         <option value="urgent">{t('priority_urgent')}</option>
       </select>
-      <label>{t('message')}</label>
+      <div className="message-body-label">
+        <label>{t('message')}</label>
+        <VoiceMic
+          lang={lang}
+          title={t('voice_input')}
+          onResult={(text) => setBody((prev) => (prev ? `${prev} ${text}` : text))}
+        />
+      </div>
       <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} />
       <button className="btn" disabled={busy || !recipient || !body.trim()}>{t('send')}</button>
       {error && <p className="error-msg">{t('load_error')}</p>}
