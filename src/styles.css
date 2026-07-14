@@ -896,6 +896,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .profit-badge.red .profit-dot { background: var(--red); }
 
 .more-link { margin-bottom: 12px; text-decoration: none; }
+/* NAV-1: сгруппированные секции экрана «Ещё / More» (РАБОТА / ФИНАНСЫ / АДМИН). */
+.more-group { display: grid; gap: 10px; margin-bottom: 8px; }
+.more-group .more-link { margin-bottom: 0; }
 
 .clients-screen { max-width: 980px; }
 .clients-head {

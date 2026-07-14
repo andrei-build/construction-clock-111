@@ -12,6 +12,10 @@ export default function More() {
   const salesAccess = profile ? manager || profile.role === 'sales' : false
   const isOwner = profile?.role === 'owner'
 
+  // NAV-1: «Ещё / More» — три сгруппированные секции (РАБОТА / ФИНАНСЫ / АДМИН).
+  // Верхнее меню держим коротким (см. src/components/Nav.tsx); всё остальное — здесь.
+  // Экраны /daily, /gallery, /files больше не имеют пункта в меню (живут в хабе проекта),
+  // но маршруты в src/App.tsx сохранены (глубокие ссылки продолжают работать).
   return (
     <div className="screen">
       <h1>⚙️ {t('more')}</h1>
@@ -21,40 +25,47 @@ export default function More() {
         <span className="badge amber">{profile?.role}</span>
       </div>
 
-      <h2>{t('work')}</h2>
-      <Link to="/daily" className="btn ghost small more-link">{t('daily_reports')}</Link>
+      {/* РАБОТА / WORK */}
+      <h2>{t('more_group_work')}</h2>
+      <div className="more-group">
+        {manager && <Link to="/dispatch" className="btn ghost small more-link">{t('dispatch')}</Link>}
+        {manager && <Link to="/calendar" className="btn ghost small more-link">{t('calendar')}</Link>}
+        {manager && <Link to="/stores" className="btn ghost small more-link">{t('stores')}</Link>}
+        {manager && <Link to="/map" className="btn ghost small more-link">{t('map')}</Link>}
+        {manager && <Link to="/timeline" className="btn ghost small more-link">{t('timeline')}</Link>}
+        <Link to="/messages" className="btn ghost small more-link">{t('messages')}</Link>
+      </div>
 
-      {manager && (
+      {/* ФИНАНСЫ / FINANCE */}
+      {salesAccess && (
         <>
-          <Link to="/route" className="btn ghost small more-link">{t('route_nav')}</Link>
-          <Link to="/dispatch" className="btn ghost small more-link">{t('dispatch')}</Link>
-          <Link to="/map" className="btn ghost small more-link">{t('map')}</Link>
-          <h2>{t('office')}</h2>
-          <Link to="/calendar" className="btn ghost small more-link">{t('calendar')}</Link>
-          <Link to="/payroll" className="btn ghost small more-link">{t('payroll')}</Link>
-          <Link to="/documents" className="btn ghost small more-link">{t('documents')}</Link>
-          <Link to="/files" className="btn ghost small more-link">{t('files')}</Link>
-          <Link to="/stores" className="btn ghost small more-link">{t('stores')}</Link>
-          <Link to="/gallery" className="btn ghost small more-link">{t('gallery')}</Link>
-          <Link to="/settings" className="btn ghost small more-link">{t('settings')}</Link>
-          <Link to="/archive" className="btn ghost small more-link">{t('archive')}</Link>
+          <h2>{t('more_group_finance')}</h2>
+          <div className="more-group">
+            <Link to="/sales" className="btn ghost small more-link">{t('sales')}</Link>
+            {manager && <Link to="/clients" className="btn ghost small more-link">{t('clients')}</Link>}
+            {manager && <Link to="/payroll" className="btn ghost small more-link">{t('payroll')}</Link>}
+            {manager && <Link to="/documents" className="btn ghost small more-link">{t('documents')}</Link>}
+            {manager && <Link to="/reports" className="btn ghost small more-link">{t('reports')}</Link>}
+          </div>
         </>
       )}
 
-      <h2>{t('communication')}</h2>
-      <Link to="/messages" className="btn ghost small more-link">{t('messages')}</Link>
+      {/* АДМИН / ADMIN */}
+      {manager && (
+        <>
+          <h2>{t('more_group_admin')}</h2>
+          <div className="more-group">
+            <Link to="/settings" className="btn ghost small more-link">{t('settings')}</Link>
+            <Link to="/archive" className="btn ghost small more-link">{t('archive')}</Link>
+            {/* TODO WF-1: move consents into worker dossier /team/:id. */}
+            <Link to="/consents" className="btn ghost small more-link">{t('consents')}</Link>
+          </div>
+        </>
+      )}
 
       <h2>{t('push_section')}</h2>
       <PushToggle />
 
-      {salesAccess && (
-        <>
-          <h2>{t('finance_clients')}</h2>
-          {manager && <Link to="/reports" className="btn ghost small more-link">{t('reports')}</Link>}
-          {manager && <Link to="/clients" className="btn ghost small more-link">{t('clients')}</Link>}
-          <Link to="/sales" className="btn ghost small more-link">{t('sales')}</Link>
-        </>
-      )}
       <h2>{t('language')}</h2>
       <div className="tabs">
         {(['ru', 'en', 'es'] as const).map((l) => (
