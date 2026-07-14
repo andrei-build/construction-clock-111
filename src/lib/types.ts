@@ -94,6 +94,11 @@ export interface Task {
   assigned_to: string | null
   requires_photo?: boolean
   done_at?: string | null
+  // Дополнительные (необязательные) колонки для глобального экрана «Задачи» (/tasks).
+  // Опциональны, чтобы не ломать существующие узкие select'ы (getOpenTasks и т.п.).
+  description?: string | null
+  due_date?: string | null
+  created_at?: string | null
 }
 
 export interface TaskMedia {

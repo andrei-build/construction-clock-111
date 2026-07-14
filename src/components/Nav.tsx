@@ -17,6 +17,7 @@ import {
   IconMoney,
   IconSettings,
   IconTarget,
+  IconTasks,
   IconUsers,
 } from './icons'
 
@@ -44,6 +45,7 @@ export default function Nav({ manager }: { manager: boolean }) {
         { to: '/projects', Icon: IconFolder, label: t('projects') },
         { to: '/daily', Icon: IconChart, label: t('daily_reports') },
         { to: '/team', Icon: IconUsers, label: t('team') },
+        { to: '/tasks', Icon: IconTasks, label: t('tasks') },
         { to: '/consents', Icon: IconTarget, label: t('consents') },
         { to: '/dispatch', Icon: IconDispatch, label: t('dispatch') },
         { to: '/calendar', Icon: IconCalendar, label: t('calendar') },
@@ -79,11 +81,6 @@ export default function Nav({ manager }: { manager: boolean }) {
             <span className="ico"><IconDashboard /></span>{t('dashboard')}
           </NavLink>
         )}
-        {manager && (
-          <NavLink to="/timeline" className={cls}>
-            <span className="ico"><IconChart /></span>{t('timeline')}
-          </NavLink>
-        )}
         <NavLink to="/checkin" className={cls}>
           <span className="ico"><IconTarget /></span>{t('checkin')}
         </NavLink>
@@ -95,6 +92,9 @@ export default function Nav({ manager }: { manager: boolean }) {
             <span className="ico"><IconUsers /></span>{t('team')}
           </NavLink>
         )}
+        <NavLink to="/tasks" className={cls}>
+          <span className="ico"><IconTasks /></span>{t('tasks')}
+        </NavLink>
         <NavLink to="/time" className={cls}>
           <span className="ico"><IconClock /></span>{t('my_time')}
         </NavLink>
