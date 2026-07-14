@@ -214,12 +214,45 @@ export async function addTimeEvent(
   return String(data.id)
 }
 
+// Ask the backend to notify the client that a worker is on the way. Best-effort and
+// fire-and-forget: NEVER blocks or throws into the travel-start path. The edge function
+// gates entirely on the project's Client-tab grants and always returns ok:true; a non-send
+// response ({ sent:0, reason:'no_grants'|'no_recipient_email'|'no_provider' }) is fine and
+// silently ignored. Mirrors notifyMessagePush's try/catch + swallow style.
+export function notifyTravelStarted(
+  projectId: string,
+  opts?: { action?: 'travel' | 'checkin' | 'checkout'; eta_minutes?: number; note?: string },
+): void {
+  try {
+    void supabase.functions
+      .invoke('travel-notify', {
+        body: {
+          project_id: projectId,
+          action: opts?.action ?? 'travel',
+          ...(opts?.eta_minutes != null ? { eta_minutes: opts.eta_minutes } : {}),
+          ...(opts?.note ? { note: opts.note } : {}),
+        },
+      })
+      .then((res) => {
+        const data = res?.data as { sent?: number; reason?: string } | null
+        if (data && data.sent === 0) console.debug('travel-notify not sent', data.reason)
+      })
+      .catch((err) => {
+        console.debug('travel-notify failed', err)
+      })
+  } catch (err) {
+    console.debug('travel-notify failed', err)
+  }
+}
+
 export async function startProjectTravel(p: Profile, project: Project, startedAt: string) {
   await logEvent(p, 'travel.started', 'project', project.id, {
     project_id: project.id,
     address: project.address ?? '',
     started_at: startedAt,
   })
+  // travel.started recorded → best-effort notify the client (never blocks the flow above).
+  notifyTravelStarted(project.id)
 }
 
 export async function getTeam(): Promise<Profile[]> {
