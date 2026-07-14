@@ -28,6 +28,7 @@ import Messages from './screens/Messages'
 import More from './screens/More'
 import Settings from './screens/Settings'
 import Nav from './components/Nav'
+import BackButton from './components/BackButton'
 import { EntityDrawerProvider } from './components/EntityDrawer'
 import LocationConsentGate from './components/LocationConsentGate'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
@@ -47,6 +48,7 @@ export default function App() {
         <main className="app-content">
           <OfflineStatusBanner />
           <OfflineFieldSync />
+          <BackButton />
           <Routes>
             <Route path="/" element={manager ? <Dashboard /> : <CheckIn />} />
             <Route path="/checkin" element={<CheckIn />} />
