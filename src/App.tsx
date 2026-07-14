@@ -7,6 +7,7 @@ import CheckIn from './screens/CheckIn'
 import Projects from './screens/Projects'
 import ProjectHub from './screens/ProjectHub'
 import Team from './screens/Team'
+import Tasks from './screens/Tasks'
 import WorkerDetail from './screens/WorkerDetail'
 import Dispatch from './screens/Dispatch'
 import Calendar from './screens/Calendar'
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="/projects/:id" element={<ProjectHub />} />
             <Route path="/team" element={manager ? <Team /> : <Navigate to="/" />} />
             <Route path="/team/:id" element={manager ? <WorkerDetail /> : <Navigate to="/" />} />
+            <Route path="/tasks" element={<Tasks />} />
             <Route path="/dispatch" element={manager ? <Dispatch /> : <Navigate to="/" />} />
             <Route path="/calendar" element={manager ? <Calendar /> : <Navigate to="/" />} />
             <Route path="/map" element={manager ? <LiveMap /> : <Navigate to="/" />} />

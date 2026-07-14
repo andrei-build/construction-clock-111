@@ -316,6 +316,55 @@ export async function getOpenTasks(): Promise<Task[]> {
   return (data as Task[]) ?? []
 }
 
+// Кросс-проектный список задач для глобального экрана «Задачи» (/tasks).
+// Тот же источник, что getOpenTasks, но: (1) без фильтра по status — экран сам фильтрует
+// по всем статусам, (2) более широкий select (due_date/description/assigned_to/created_at)
+// для колонок и сортировки. RLS tasks_select уже держит org-скоуп, прячет deleted_at,
+// не пускает client и ограничивает driver только доставками. Сортировка приоритет→срок.
+const ALL_TASK_SELECT = 'id, org_id, project_id, task_type, title, description, status, priority, assigned_to, requires_photo, due_date, done_at, created_at'
+export async function getAllTasks(): Promise<Task[]> {
+  const { data, error } = await supabase.from('tasks')
+    .select(ALL_TASK_SELECT)
+    .order('priority', { ascending: false })
+    .order('due_date', { ascending: true, nullsFirst: false })
+  if (error) throw error
+  return (data as Task[]) ?? []
+}
+
+export interface NewTaskInput {
+  project_id: string
+  title: string
+  task_type: Task['task_type']
+  priority: Task['priority']
+  assigned_to?: string | null
+  due_date?: string | null
+  description?: string | null
+  requires_photo?: boolean
+}
+
+// Создать задачу. org_id=p.org_id + created_by=p.id удовлетворяют RLS check tasks_insert
+// (org_id совпадает и app.is_manager_write()). Не-менеджеру insert отклонит RLS — гейтим в UI.
+// Пишем только те колонки, что задаёт форма; остальное берёт server-side defaults
+// (status='open', metadata, version, created_at и т.д.). Зеркалит форму задач старого Check Time.
+export async function createTask(p: Profile, input: NewTaskInput): Promise<void> {
+  const row: Record<string, unknown> = {
+    org_id: p.org_id,
+    created_by: p.id,
+    project_id: input.project_id,
+    title: input.title,
+    task_type: input.task_type,
+    priority: input.priority,
+  }
+  if (input.assigned_to) row.assigned_to = input.assigned_to
+  if (input.due_date) row.due_date = input.due_date
+  const description = input.description?.trim()
+  if (description) row.description = description
+  if (input.requires_photo !== undefined) row.requires_photo = input.requires_photo
+  const { data, error } = await supabase.from('tasks').insert(row).select('id').single()
+  if (error) throw error
+  await logEvent(p, 'task.created', 'task', data.id, { title: input.title, task_type: input.task_type })
+}
+
 export async function getDonePhotoTasks(): Promise<Task[]> {
   const { data, error } = await supabase.from('tasks')
     .select('id, org_id, project_id, task_type, title, status, priority, assigned_to, requires_photo, done_at')
