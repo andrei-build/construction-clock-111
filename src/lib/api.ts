@@ -309,7 +309,7 @@ export async function createTimeAdjustment(p: Profile, input: {
   return String(data.id)
 }
 
-const TASK_SELECT = 'id, org_id, project_id, task_type, title, description, status, priority, assigned_to, urgent_flag, requires_photo, done_at, picked_up_at, picked_up_by, delivered_at, delivered_by'
+const TASK_SELECT = 'id, org_id, project_id, task_type, title, description, status, priority, assigned_to, urgent_flag, requires_photo, done_at, created_at, picked_up_at, picked_up_by, delivered_at, delivered_by'
 
 export async function getOpenTasks(): Promise<Task[]> {
   const { data } = await supabase.from('tasks')

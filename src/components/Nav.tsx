@@ -26,6 +26,7 @@ type IconType = ComponentType<SVGProps<SVGSVGElement>>
 export default function Nav({ manager }: { manager: boolean }) {
   const { t } = useI18n()
   const { profile } = useAuth()
+  const driver = profile?.role === 'driver'
   const cls = ({ isActive }: { isActive: boolean }) => (isActive ? 'active' : '')
   const sideCls = ({ isActive }: { isActive: boolean }) => `side-link ${isActive ? 'active' : ''}`
 
@@ -45,6 +46,7 @@ export default function Nav({ manager }: { manager: boolean }) {
         { to: '/projects', Icon: IconFolder, label: t('projects') },
         { to: '/daily', Icon: IconChart, label: t('daily_reports') },
         { to: '/team', Icon: IconUsers, label: t('team') },
+        { to: '/route', Icon: IconDispatch, label: t('route_nav') },
         { to: '/tasks', Icon: IconTasks, label: t('tasks') },
         { to: '/consents', Icon: IconTarget, label: t('consents') },
         { to: '/dispatch', Icon: IconDispatch, label: t('dispatch') },
@@ -79,6 +81,11 @@ export default function Nav({ manager }: { manager: boolean }) {
         {manager && (
           <NavLink to="/" end className={cls}>
             <span className="ico"><IconDashboard /></span>{t('dashboard')}
+          </NavLink>
+        )}
+        {driver && (
+          <NavLink to="/route" className={cls}>
+            <span className="ico"><IconDispatch /></span>{t('route_nav')}
           </NavLink>
         )}
         <NavLink to="/checkin" className={cls}>

@@ -26,6 +26,7 @@ import DailyReports from './screens/DailyReports'
 import MyTime from './screens/MyTime'
 import Payroll from './screens/Payroll'
 import Messages from './screens/Messages'
+import DriverRoute from './screens/Route'
 import More from './screens/More'
 import Settings from './screens/Settings'
 import Nav from './components/Nav'
@@ -41,6 +42,7 @@ export default function App() {
   if (!profile) return <Login />
 
   const manager = isManagerRole(profile.role)
+  const driver = profile.role === 'driver'
   const salesAccess = manager || profile.role === 'sales'
   return (
     <LocationConsentGate profile={profile}>
@@ -51,7 +53,8 @@ export default function App() {
           <OfflineFieldSync />
           <BackButton />
           <Routes>
-            <Route path="/" element={manager ? <Dashboard /> : <CheckIn />} />
+            <Route path="/" element={manager ? <Dashboard /> : driver ? <DriverRoute /> : <CheckIn />} />
+            <Route path="/route" element={manager || driver ? <DriverRoute /> : <Navigate to="/" />} />
             <Route path="/checkin" element={<CheckIn />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:id" element={<ProjectHub />} />

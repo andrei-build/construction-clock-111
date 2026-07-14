@@ -26,6 +26,7 @@ export default function More() {
 
       {manager && (
         <>
+          <Link to="/route" className="btn ghost small more-link">{t('route_nav')}</Link>
           <Link to="/dispatch" className="btn ghost small more-link">{t('dispatch')}</Link>
           <Link to="/map" className="btn ghost small more-link">{t('map')}</Link>
           <h2>{t('office')}</h2>
