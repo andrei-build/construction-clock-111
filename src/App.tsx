@@ -20,6 +20,7 @@ import Reports from './screens/Reports'
 import Timeline from './screens/Timeline'
 import Consents from './screens/Consents'
 import Archive from './screens/Archive'
+import Trash from './screens/Trash'
 import Stores from './screens/Stores'
 import Clients from './screens/Clients'
 import Gallery from './screens/Gallery'
@@ -79,6 +80,7 @@ export default function App() {
             <Route path="/timeline" element={manager ? <Timeline /> : <Navigate to="/" />} />
             <Route path="/consents" element={manager ? <Consents /> : <Navigate to="/" />} />
             <Route path="/archive" element={manager ? <Archive /> : <Navigate to="/" />} />
+            <Route path="/trash" element={manager ? <Trash /> : <Navigate to="/" />} />
             <Route path="/stores" element={manager ? <Stores /> : <Navigate to="/" />} />
             <Route path="/clients" element={manager ? <Clients /> : <Navigate to="/" />} />
             <Route path="/gallery" element={manager ? <Gallery /> : <Navigate to="/" />} />
