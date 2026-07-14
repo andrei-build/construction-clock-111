@@ -2143,34 +2143,96 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 /* CAL-1a: полноэкранный «Календарь команды» — сетка месяца заполняет ширину, без узкого контейнера. */
 .team-calendar-screen { max-width: none; }
 .team-cal-tabs { max-width: 480px; }
-.team-cal-toolbar { flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
-.team-cal-monthnav { gap: 8px; justify-content: flex-start; }
-.team-cal-month { font-weight: 700; font-size: 16px; min-width: 150px; text-align: center; text-transform: capitalize; }
-.team-cal-filter { display: flex; gap: 12px; flex-wrap: wrap; }
+.team-cal-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.team-cal-monthnav { display: flex; flex: 1 1 430px; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: flex-start; }
+.team-cal-month {
+  flex: 1 1 260px;
+  min-width: min(260px, 100%);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-transform: capitalize;
+  font-variant-numeric: tabular-nums;
+}
+.team-cal-filter { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
 .team-cal-filter label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-.team-cal-filter input { width: auto; }
+.team-cal-filter input { width: auto; min-width: 150px; margin: 0; }
+.team-cal-reset { align-self: flex-end; }
 .team-cal-stub { padding: 40px 16px; }
 .team-cal-hint { text-align: center; margin-top: 12px; }
 
 .team-cal-layout { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+.team-cal-main { min-width: 0; overflow-x: auto; padding-bottom: 6px; }
 .team-cal-weekdays,
-.team-cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.team-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 760px;
+}
 .team-cal-weekday { padding: 6px 4px; text-align: center; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: capitalize; }
 .team-cal-grid { margin-top: 6px; }
 .team-cal-cell {
-  min-height: 104px; display: flex; flex-direction: column; gap: 6px; align-items: stretch;
-  padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  position: relative;
+  min-height: 154px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
   cursor: pointer; text-align: left; color: var(--text);
 }
 .team-cal-cell:hover { background: var(--elevated); }
 .team-cal-cell.other-month { opacity: .45; }
-.team-cal-cell.today { border-color: var(--accent); }
+.team-cal-cell.today { border-color: rgba(200,169,59,.35); }
 .team-cal-cell.selected { outline: 2px solid var(--accent); }
-.team-cal-daynum { font-size: 13px; font-weight: 700; }
-.team-cal-plashki { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.team-cal-cell-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; }
+.team-cal-daynum {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1;
+}
+.team-cal-cell.today .team-cal-daynum {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.team-cal-count {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #070b12;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.team-cal-plashki { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .team-cal-plashka {
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 11px; padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.25;
+  padding: 5px 8px;
+  text-align: left;
+}
+.team-cal-empty {
+  margin-top: auto;
+  color: var(--muted2);
+  font-size: 12px;
+  line-height: 1.3;
 }
 
 .team-cal-panel { position: sticky; top: 12px; align-self: start; }
@@ -2186,7 +2248,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .team-cal-layout:has(.team-cal-panel) { grid-template-columns: minmax(0, 1fr) 340px; }
 }
 @media (max-width: 620px) {
-  .team-cal-cell { min-height: 78px; }
+  .team-cal-cell { min-height: 134px; }
+  .team-cal-month { flex-basis: 100%; }
 }
 
 /* CAL-1b: события/задачи в день-панели, создатель события, вкладка «Доставки и задачи», роль-нота */
