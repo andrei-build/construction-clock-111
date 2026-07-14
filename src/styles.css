@@ -3230,3 +3230,45 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   object-fit: contain;
   background: #fff;
 }
+
+/* MAT-3: Спецификация материалов (plan-BOM) */
+.hub-materials { display: flex; flex-direction: column; gap: 14px; }
+.hub-materials h3 { margin: 0 0 10px; font-size: 16px; }
+.material-form, .material-import { display: flex; flex-direction: column; }
+.material-draft-row { display: flex; align-items: flex-start; gap: 8px; }
+.material-edit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 0.7fr 0.7fr 1fr 1fr 1fr;
+  gap: 8px;
+  flex: 1;
+}
+.material-edit-grid input { margin-bottom: 0; }
+.material-name-cell { display: flex; align-items: stretch; gap: 6px; }
+.material-name-cell input { flex: 1; }
+.material-qty { text-align: right; }
+.voice-mic {
+  flex: 0 0 auto;
+  width: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 16px;
+}
+.voice-mic.listening { background: var(--red); color: #fff; border-color: transparent; }
+.material-remove-draft { flex: 0 0 auto; margin-top: 0; }
+.material-form-actions { justify-content: flex-end; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.material-file-label { cursor: pointer; display: inline-flex; align-items: center; }
+.material-list { display: flex; flex-direction: column; gap: 14px; }
+.material-section { display: flex; flex-direction: column; gap: 8px; }
+.material-section-title { margin: 4px 0 2px; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.material-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.material-row.editing { align-items: stretch; flex-direction: column; }
+.material-row-main { flex: 1; min-width: 200px; }
+.material-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.material-row-meta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; font-size: 13px; }
+.material-row-actions { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 720px) {
+  .material-edit-grid { grid-template-columns: 1fr 1fr; }
+}

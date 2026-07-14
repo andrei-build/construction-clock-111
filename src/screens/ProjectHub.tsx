@@ -14,8 +14,9 @@ import ReportsTab from './project-hub/ReportsTab'
 import NotesTab from './project-hub/NotesTab'
 import ClientTab from './project-hub/ClientTab'
 import SketchTab from './project-hub/SketchTab'
+import MaterialsTab from './project-hub/MaterialsTab'
 
-type HubTab = 'overview' | 'tasks' | 'time' | 'finance' | 'files' | 'reports' | 'notes' | 'client' | 'sketch'
+type HubTab = 'overview' | 'tasks' | 'time' | 'finance' | 'files' | 'reports' | 'notes' | 'client' | 'sketch' | 'materials'
 
 const HUB_TABS: { key: HubTab; labelKey: string; workerVisible?: boolean }[] = [
   { key: 'overview', labelKey: 'hub_tab_overview', workerVisible: true },
@@ -26,6 +27,7 @@ const HUB_TABS: { key: HubTab; labelKey: string; workerVisible?: boolean }[] = [
   { key: 'reports', labelKey: 'hub_tab_reports' },
   { key: 'notes', labelKey: 'hub_tab_notes', workerVisible: true },
   { key: 'sketch', labelKey: 'hub_tab_sketch', workerVisible: true },
+  { key: 'materials', labelKey: 'hub_tab_materials', workerVisible: true },
   { key: 'client', labelKey: 'hub_tab_client' },
 ]
 
@@ -118,6 +120,7 @@ export default function ProjectHub() {
           {tab === 'reports' && <ReportsTab project={project} />}
           {tab === 'notes' && <NotesTab project={project} profile={profile} />}
           {tab === 'sketch' && <SketchTab project={project} profile={profile} />}
+          {tab === 'materials' && <MaterialsTab project={project} profile={profile} />}
           {tab === 'client' && <ClientTab project={project} profile={profile} />}
         </>
       )}
