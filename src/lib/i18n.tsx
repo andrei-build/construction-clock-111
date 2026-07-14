@@ -858,6 +858,23 @@ const dict: Record<string, Record<Lang, string>> = {
   push_denied_hint: { ru: 'Уведомления заблокированы в браузере. Разрешите их в настройках браузера или устройства.', en: 'Notifications are blocked in the browser. Allow them in your browser or device settings.', es: 'Las notificaciones están bloqueadas en el navegador. Permítalas en los ajustes del navegador o del dispositivo.' },
   push_unsupported_hint: { ru: 'Установите приложение на экран «Домой», чтобы получать уведомления.', en: 'Install the app to your home screen to receive notifications.', es: 'Instale la aplicación en la pantalla de inicio para recibir notificaciones.' },
   push_toggle_failed: { ru: 'Не удалось изменить настройку уведомлений', en: 'Could not change the notification setting', es: 'No se pudo cambiar el ajuste de notificaciones' },
+  // Экран водителя «Маршрут дня» (/route): закупка утром + развоз по объектам (MAT-2)
+  route_nav: { ru: 'Маршрут', en: 'Route', es: 'Ruta' },
+  route_title: { ru: 'Маршрут дня', en: 'Day route', es: 'Ruta del día' },
+  route_load_error: { ru: 'Не удалось загрузить маршрут', en: 'Could not load the route', es: 'No se pudo cargar la ruta' },
+  route_procurement: { ru: 'Закупка', en: 'Pickup', es: 'Compra' },
+  route_procurement_sub: { ru: 'Забрать всё по объектам', en: 'Grab everything for the sites', es: 'Recoger todo para las obras' },
+  route_delivery: { ru: 'Развоз', en: 'Delivery', es: 'Reparto' },
+  route_delivery_sub: { ru: 'Развезти забранное по объектам', en: 'Drop off what you picked up', es: 'Entregar lo recogido en las obras' },
+  route_picked_counter: { ru: 'Взято {n} из {m}', en: 'Picked up {n} of {m}', es: 'Recogido {n} de {m}' },
+  route_new_badge: { ru: 'НОВОЕ', en: 'NEW', es: 'NUEVO' },
+  route_urgent_badge: { ru: 'СРОЧНО', en: 'URGENT', es: 'URGENTE' },
+  route_no_pickup: { ru: 'Нечего забирать — всё взято', en: 'Nothing to pick up — all done', es: 'Nada que recoger — todo listo' },
+  route_no_delivery: { ru: 'Нечего развозить', en: 'Nothing to deliver', es: 'Nada que entregar' },
+  route_deliver_one: { ru: 'Доставил', en: 'Delivered', es: 'Entregado' },
+  route_deliver_all: { ru: 'Доставлено всё', en: 'Deliver all', es: 'Entregar todo' },
+  route_delivery_count: { ru: 'позиций: {n}', en: '{n} items', es: '{n} artículos' },
+  route_no_address: { ru: 'Адрес не указан', en: 'No address', es: 'Sin dirección' },
 }
 
 interface I18n {
