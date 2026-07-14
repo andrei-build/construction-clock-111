@@ -70,6 +70,19 @@ export interface TimeEvent {
   metadata: Record<string, unknown>
 }
 
+// Событие времени по проекту с именем работника (embed profile:profiles(name)) — вкладка «Время» хаба.
+// profile_id — единственный FK в profiles; пары check_in/check_out считаем на клиенте, без денег.
+export interface ProjectTimeEvent {
+  id: string
+  org_id: string
+  profile_id: string
+  project_id: string | null
+  event_type: TimeEventType
+  event_time: string
+  gps_status: string | null
+  profile?: { name: string | null } | null
+}
+
 // Единый источник правды по отработанным интервалам — с учётом корректировок менеджера (v_work_intervals)
 export interface WorkInterval {
   org_id: string
@@ -531,6 +544,23 @@ export interface DocumentRow {
   deleted_at: string | null
   account?: { name: string | null } | null
   project?: { name: string | null } | null
+}
+
+// Расход по проекту (project_expenses): свободный kind/description, сумма amount. Мягкое удаление deleted_at.
+// Вкладка «Финансы» хаба показывает список и сумму (finance-gated), без правок.
+export interface ProjectExpense {
+  id: string
+  org_id: string
+  project_id: string
+  kind: string | null
+  description: string | null
+  amount: number | null
+  vendor: string | null
+  source: string | null
+  incurred_at: string | null
+  created_by: string | null
+  created_at: string
+  deleted_at: string | null
 }
 
 export interface DocumentItem {

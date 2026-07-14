@@ -1,5 +1,5 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectHubFile, ProjectNote, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData } from './types'
 import { todayStartISO } from './time'
 import { notifyMessagePush } from './push'
 
@@ -124,6 +124,28 @@ export async function getProjectIntervals(projectId: string): Promise<WorkInterv
     .select('*').eq('project_id', projectId).order('start_at', { ascending: false }).limit(300)
   if (error) return []
   return (data as WorkInterval[]) ?? []
+}
+
+// События check_in/check_out по проекту с именем работника — вкладка «Время» в Project Hub.
+// profile_id — единственный FK в profiles; при жёсткой схеме падаем на FK-квалифицированный embed.
+// Пары и часы считаем на клиенте, БЕЗ ставок/денег. Порядок по event_time.
+const PROJECT_TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, profile:profiles(name)'
+const PROJECT_TIME_EVENT_SELECT_FK = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, profile:profiles!time_events_profile_id_fkey(name)'
+
+export async function getProjectTimeEvents(projectId: string): Promise<ProjectTimeEvent[]> {
+  const run = (select: string) => supabase.from('time_events')
+    .select(select)
+    .eq('project_id', projectId)
+    .in('event_type', ['check_in', 'check_out'])
+    .order('event_time')
+  let { data, error } = await run(PROJECT_TIME_EVENT_SELECT)
+  if (error) {
+    const fallback = await run(PROJECT_TIME_EVENT_SELECT_FK)
+    data = fallback.data
+    error = fallback.error
+  }
+  if (error) return []
+  return (data as unknown as ProjectTimeEvent[]) ?? []
 }
 
 export async function getProjectShiftEvents(projectId: string, sinceISO: string): Promise<TimeEvent[]> {
@@ -835,6 +857,17 @@ export async function getProjectDocuments(projectId: string): Promise<DocumentRo
     .order('created_at', { ascending: false })
   if (error) return []
   return (data as unknown as DocumentRow[]) ?? []
+}
+
+// Расходы одного проекта — вкладка «Финансы» в Project Hub (RLS скоупит финансовую видимость; удалённые прячем)
+const PROJECT_EXPENSE_SELECT = 'id, org_id, project_id, kind, description, amount, vendor, source, incurred_at, created_by, created_at, deleted_at'
+
+export async function getProjectExpenses(projectId: string): Promise<ProjectExpense[]> {
+  const { data, error } = await supabase.from('project_expenses')
+    .select(PROJECT_EXPENSE_SELECT).eq('project_id', projectId).is('deleted_at', null)
+    .order('incurred_at', { ascending: false, nullsFirst: false })
+  if (error) return []
+  return (data as ProjectExpense[]) ?? []
 }
 
 export async function getDocumentItems(documentId: string): Promise<DocumentItem[]> {
