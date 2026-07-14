@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { closePayPeriod, getCurrentPayPeriod, getIntervalsBetween, getTeam, getVisibleProfileRates, logEvent, markPayPeriodPaid } from '../lib/api'
+import { closePayPeriod, getAppSettings, getCurrentPayPeriod, getIntervalsBetween, getTeam, getVisibleProfileRates, logEvent, markPayPeriodPaid } from '../lib/api'
+import { orgWeekGrouping } from '../lib/time'
 import type { PayPeriod, Profile, ProfileRate, WorkInterval } from '../lib/types'
 
 interface PeriodWindow {
@@ -66,7 +67,10 @@ function weekKey(ms: number) {
 
 // Часы по неделям из v_work_intervals (корректировки уже применены); неделя — по start_at интервала.
 // Интервалы, пересекающие границу недели, разбиваются: каждая часть попадает в свою неделю.
-function weeklyHours(intervals: WorkInterval[], period: PeriodWindow, now = Date.now()) {
+// Границы недели считаются в часовом поясе организации (timeZone); при null/пустом — как раньше,
+// в локальном поясе устройства. В обоих случаях суммарные часы в периоде неизменны — меняется
+// только распределение по неделям у самой границы (что влияет на разбивку regular/overtime).
+function weeklyHours(intervals: WorkInterval[], period: PeriodWindow, timeZone: string | null, now = Date.now()) {
   const weeks = new Map<string, number>()
   const periodStart = period.start.getTime()
   const periodEnd = period.end.getTime()
@@ -79,11 +83,22 @@ function weeklyHours(intervals: WorkInterval[], period: PeriodWindow, now = Date
     const segEnd = Math.min(rawEndMs, periodEnd)
     let cursor = segStart
     while (cursor < segEnd) {
-      const nextWeek = startOfWeek(new Date(cursor))
-      nextWeek.setDate(nextWeek.getDate() + 7)
-      const portionEnd = Math.min(segEnd, nextWeek.getTime())
+      let key: string
+      let boundary: number
+      if (timeZone) {
+        // Границы недели в поясе организации (DST-корректно через Intl).
+        const g = orgWeekGrouping(cursor, timeZone)
+        key = g.weekKey
+        boundary = g.nextWeekStartMs
+      } else {
+        // Прежнее поведение: границы недели в локальном поясе устройства.
+        const nextWeek = startOfWeek(new Date(cursor))
+        nextWeek.setDate(nextWeek.getDate() + 7)
+        boundary = nextWeek.getTime()
+        key = weekKey(cursor)
+      }
+      const portionEnd = Math.min(segEnd, boundary)
       const hours = Math.max(0, portionEnd - cursor) / 3600000
-      const key = weekKey(cursor)
       weeks.set(key, (weeks.get(key) ?? 0) + hours)
       cursor = portionEnd
     }
@@ -106,6 +121,7 @@ export default function Payroll() {
   const [team, setTeam] = useState<Profile[]>([])
   const [intervals, setIntervals] = useState<WorkInterval[]>([])
   const [rates, setRates] = useState<ProfileRate[]>([])
+  const [timezone, setTimezone] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [working, setWorking] = useState(false)
@@ -119,16 +135,20 @@ export default function Payroll() {
       try {
         const dbPeriod = await getCurrentPayPeriod()
         const currentPeriod = periodFromDb(dbPeriod)
-        const [workers, intervalRows, visibleRates] = await Promise.all([
+        const [workers, intervalRows, visibleRates, settings] = await Promise.all([
           getTeam(),
           getIntervalsBetween(currentPeriod.start.toISOString(), currentPeriod.end.toISOString()),
           getVisibleProfileRates(),
+          getAppSettings(),
         ])
         if (!mounted) return
         setPeriod(currentPeriod)
         setTeam(workers)
         setIntervals(intervalRows)
         setRates(visibleRates)
+        // Часовой пояс организации для границ суток/недель. Пусто → как раньше (пояс устройства).
+        const tz = settings?.timezone?.trim()
+        setTimezone(tz ? tz : null)
       } catch {
         if (mounted) setError(true)
       } finally {
@@ -151,7 +171,7 @@ export default function Payroll() {
     return team
       .filter((worker) => byWorker.has(worker.id) || rateByWorker.has(worker.id))
       .map((worker) => {
-        const weeks = weeklyHours(byWorker.get(worker.id) ?? [], period)
+        const weeks = weeklyHours(byWorker.get(worker.id) ?? [], period, timezone)
         let regularHours = 0
         let overtimeHours = 0
         for (const hours of weeks.values()) {
@@ -163,7 +183,7 @@ export default function Payroll() {
         return { worker, regularHours, overtimeHours, rate, total }
       })
       .sort((a, b) => a.worker.name.localeCompare(b.worker.name))
-  }, [intervals, period, rates, team])
+  }, [intervals, period, rates, team, timezone])
 
   const totals = rows.reduce((acc, row) => ({
     regular: acc.regular + row.regularHours,
