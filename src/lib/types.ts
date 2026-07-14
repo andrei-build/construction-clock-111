@@ -422,6 +422,8 @@ export interface AppSettings {
   geo_no_signal_minutes: number
   // G1: разрыв между сменами в один день, после которого он подсвечивается (всё равно оплачивается)
   paid_gap_alert_hours: number
+  // SET-1: радиус геозоны для отметки визита в магазин поставок (migration 0030, дефолт 75 м)
+  store_visit_radius_m: number
   settings: Record<string, unknown>
   updated_by: string | null
   updated_at: string

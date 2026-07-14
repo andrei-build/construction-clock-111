@@ -33,6 +33,7 @@ import Messages from './screens/Messages'
 import DriverRoute from './screens/Route'
 import More from './screens/More'
 import Settings from './screens/Settings'
+import OwnerSettings from './screens/OwnerSettings'
 import Nav from './components/Nav'
 import BackButton from './components/BackButton'
 import { EntityDrawerProvider } from './components/EntityDrawer'
@@ -50,6 +51,8 @@ export default function App() {
   const driver = profile.role === 'driver'
   const salesOnly = profile.role === 'sales'
   const salesAccess = manager || salesOnly
+  // SET-1: /settings regated to owner/admin only (plain managers/supervisors lose it).
+  const adminOrOwner = profile.role === 'owner' || profile.role === 'admin'
   return (
     <LocationConsentGate profile={profile}>
     <EntityDrawerProvider>
@@ -87,7 +90,9 @@ export default function App() {
             <Route path="/documents" element={manager ? <Documents /> : <Navigate to="/" />} />
             <Route path="/files" element={manager ? <Files /> : <Navigate to="/" />} />
             <Route path="/daily" element={<DailyReports />} />
-            <Route path="/settings" element={manager ? <Settings /> : <Navigate to="/" />} />
+            <Route path="/settings" element={adminOrOwner ? <Settings /> : <Navigate to="/" />} />
+            {/* SET-1: owner-only page renders its own friendly denied note for non-owners (no crash). */}
+            <Route path="/owner-settings" element={<OwnerSettings />} />
             <Route path="/time" element={<MyTime />} />
             <Route path="/payroll" element={manager ? <Payroll /> : <Navigate to="/" />} />
             <Route path="/messages" element={<Messages />} />

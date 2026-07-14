@@ -14,9 +14,11 @@ export async function logEvent(p: Profile, eventType: string, entityType: string
   })
 }
 
-export type AppSettingsInput = Pick<AppSettings, 'default_language' | 'timezone' | 'overlong_shift_hours' | 'default_gps_radius_m' | 'geo_no_signal_minutes' | 'paid_gap_alert_hours'>
+// SET-1: store_visit_radius_m — необязательное поле (существующий /settings его не шлёт;
+// owner-only экран добавляет его в payload аддитивно, не сбрасывая прочие колонки).
+export type AppSettingsInput = Pick<AppSettings, 'default_language' | 'timezone' | 'overlong_shift_hours' | 'default_gps_radius_m' | 'geo_no_signal_minutes' | 'paid_gap_alert_hours'> & { store_visit_radius_m?: number }
 
-const APP_SETTINGS_SELECT = 'org_id, default_language, timezone, overlong_shift_hours, default_gps_radius_m, geo_no_signal_minutes, paid_gap_alert_hours, settings, updated_by, updated_at'
+const APP_SETTINGS_SELECT = 'org_id, default_language, timezone, overlong_shift_hours, default_gps_radius_m, geo_no_signal_minutes, paid_gap_alert_hours, store_visit_radius_m, settings, updated_by, updated_at'
 
 export async function getAppSettings(): Promise<AppSettings | null> {
   const { data, error } = await supabase.from('app_settings')
