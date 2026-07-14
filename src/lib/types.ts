@@ -235,6 +235,16 @@ export interface ProjectAssignment {
   profile_id: string
 }
 
+// Назначение с датой и именем проекта — для экрана «Расписание». assigned_at служит
+// днём, с которого назначение действует (project_assignments не датируется по дням).
+export interface ScheduleAssignment {
+  id: string
+  project_id: string
+  profile_id: string
+  assigned_at: string | null
+  project?: { name: string | null } | null
+}
+
 // Исключение проекта (project_exclusions): при project_access_mode='all_active' скрывает
 // конкретный проект от работника. Имя проекта подтягиваем join-ом для показа в списке.
 export interface ProjectExclusion {

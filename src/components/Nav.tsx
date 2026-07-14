@@ -46,6 +46,7 @@ export default function Nav({ manager }: { manager: boolean }) {
         { to: '/daily', Icon: IconChart, label: t('daily_reports') },
         { to: '/team', Icon: IconUsers, label: t('team') },
         { to: '/tasks', Icon: IconTasks, label: t('tasks') },
+        { to: '/schedule', Icon: IconCalendar, label: t('schedule') },
         { to: '/consents', Icon: IconTarget, label: t('consents') },
         { to: '/dispatch', Icon: IconDispatch, label: t('dispatch') },
         { to: '/calendar', Icon: IconCalendar, label: t('calendar') },
@@ -94,6 +95,9 @@ export default function Nav({ manager }: { manager: boolean }) {
         )}
         <NavLink to="/tasks" className={cls}>
           <span className="ico"><IconTasks /></span>{t('tasks')}
+        </NavLink>
+        <NavLink to="/schedule" className={cls}>
+          <span className="ico"><IconCalendar /></span>{t('schedule')}
         </NavLink>
         <NavLink to="/time" className={cls}>
           <span className="ico"><IconClock /></span>{t('my_time')}
