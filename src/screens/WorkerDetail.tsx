@@ -15,10 +15,16 @@ import {
   getWorkerDayPhotos,
   getWorkerDayTimeEvents,
   getWorkerIntervals,
+  getWorkerLocationConsents,
   getWorkerPinAccess,
   getWorkerProfile,
+  getWorkerProfileFiles,
+  getWorkerSafetyAcks,
   type WorkerDayClosedTask,
   type WorkerDayPhoto,
+  type WorkerLocationConsentRow,
+  type WorkerProfileFileRow,
+  type WorkerSafetyAckRow,
   removeProjectExclusion,
   setProjectAccessMode,
   setUserCapability,
@@ -129,6 +135,14 @@ function dateLabel(iso: string) {
   return new Date(iso).toLocaleDateString()
 }
 
+// Размер файла для списка личных документов (как экран «Файлы»).
+function formatSize(bytes: number | null): string {
+  if (!bytes || bytes <= 0) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 // F15: разрыв перехода как «Nh Mm» — только для показа, часы/оплату не трогает.
 function fmtGapDuration(ms: number) {
   const totalMin = Math.round(ms / 60000)
@@ -179,6 +193,12 @@ export default function WorkerDetail() {
   const [excludePick, setExcludePick] = useState('')
 
   const [capabilities, setCapabilities] = useState<UserCapability[]>([])
+
+  // WF-1: «Документы и согласия» — GPS-согласия, подписи ТБ, личные файлы этого работника.
+  const [consents, setConsents] = useState<WorkerLocationConsentRow[]>([])
+  const [safetyAcks, setSafetyAcks] = useState<WorkerSafetyAckRow[]>([])
+  const [profileFiles, setProfileFiles] = useState<WorkerProfileFileRow[]>([])
+  const [docsState, setDocsState] = useState<'loading' | 'ready' | 'error'>('loading')
 
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [adjustIn, setAdjustIn] = useState('')
@@ -250,6 +270,27 @@ export default function WorkerDetail() {
     getProjectExclusions(id).then((rows) => { if (active) setExclusions(rows) })
     return () => { active = false }
   }, [id, accessMode])
+
+  // WF-1: документы и согласия работника — грузим отдельно (RLS уже гейтит доступ на сервере).
+  useEffect(() => {
+    if (!id) return
+    let active = true
+    setDocsState('loading')
+    Promise.all([
+      getWorkerLocationConsents(id),
+      getWorkerSafetyAcks(id),
+      getWorkerProfileFiles(id),
+    ])
+      .then(([consentRows, ackRows, fileRows]) => {
+        if (!active) return
+        setConsents(consentRows)
+        setSafetyAcks(ackRows)
+        setProfileFiles(fileRows)
+        setDocsState('ready')
+      })
+      .catch(() => { if (active) setDocsState('error') })
+    return () => { active = false }
+  }, [id])
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000)
@@ -707,6 +748,102 @@ export default function WorkerDetail() {
                 </div>
               ))}
             </div>
+          </section>
+
+          {/* WF-1: «Документы и согласия» — только чтение; RLS гейтит менеджер+ / сам работник. */}
+          <section className="card worker-docs-card">
+            <h2>{t('team_docs_section')}</h2>
+            <p className="muted worker-docs-video">
+              {requireVideo ? `🎥 ${t('video_checkout_required')}` : t('video_checkout_not_required')}
+            </p>
+
+            {docsState === 'loading' && <p className="muted">{t('loading')}</p>}
+            {docsState === 'error' && <p className="error-msg">{t('load_error')}</p>}
+            {docsState === 'ready' && (
+              <>
+                <h3>{t('gps_consents')}</h3>
+                {consents.length === 0 ? (
+                  <p className="muted">{t('no_records')}</p>
+                ) : (
+                  <div className="worker-docs-list">
+                    {consents.map((row) => (
+                      <div className="worker-doc-row" key={row.id}>
+                        <div className="worker-doc-main">
+                          <div className="item-title">{dateLabel(row.signed_at ?? row.created_at)}</div>
+                          <div className="muted">{t('consent_version')}: {row.consent_version ?? '—'}</div>
+                        </div>
+                        <span className={`badge ${row.revoked_at ? 'amber' : 'blue'}`}>
+                          {row.revoked_at
+                            ? `${t('consent_revoked')} · ${dateLabel(row.revoked_at)}`
+                            : t('consent_active')}
+                        </span>
+                        {row.signature_url && (
+                          <button
+                            type="button"
+                            className="gallery-item worker-doc-sig"
+                            onClick={() => setActiveDayPhotoUrl(row.signature_url)}
+                            aria-label={t('signature')}
+                          >
+                            <img src={row.signature_url} alt={t('signature')} loading="lazy" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <h3>{t('safety_acks')}</h3>
+                {safetyAcks.length === 0 ? (
+                  <p className="muted">{t('no_records')}</p>
+                ) : (
+                  <div className="worker-docs-list">
+                    {safetyAcks.map((row) => (
+                      <div className="worker-doc-row" key={row.id}>
+                        <div className="worker-doc-main">
+                          <div className="item-title">{row.signed_at ? dateLabel(row.signed_at) : '—'}</div>
+                          <div className="muted">{t('doc_version')}: {row.doc_version ?? '—'}</div>
+                        </div>
+                        {row.signature_url && (
+                          <button
+                            type="button"
+                            className="gallery-item worker-doc-sig"
+                            onClick={() => setActiveDayPhotoUrl(row.signature_url)}
+                            aria-label={t('signature')}
+                          >
+                            <img src={row.signature_url} alt={t('signature')} loading="lazy" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <h3>{t('personal_files')}</h3>
+                {profileFiles.length === 0 ? (
+                  <p className="muted">{t('no_records')}</p>
+                ) : (
+                  <div className="worker-docs-list">
+                    {profileFiles.map((row) => (
+                      <div className="worker-doc-row" key={row.id}>
+                        <div className="worker-doc-main">
+                          <div className="item-title">{row.name}</div>
+                          <div className="muted">
+                            {[row.doc_kind, formatSize(row.size_bytes), dateLabel(row.created_at)]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </div>
+                        </div>
+                        {row.url && (
+                          <a className="btn ghost small" href={row.url} target="_blank" rel="noopener noreferrer">
+                            {t('download')}
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </section>
 
           {canManageCapabilities && (

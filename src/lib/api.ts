@@ -860,6 +860,88 @@ export async function getSafetyAcknowledgements(workerIds: string[]): Promise<Sa
   return (data as SafetyAckRow[]) ?? []
 }
 
+// === Досье работника /team/:id → «Документы и согласия» (WF-1). Только чтение; RLS уже гейтит:
+// wlc/sa — org + (worker_id=uid ИЛИ менеджер); files — org + видимость. Подписи и файлы — bucket media.
+
+// GPS-согласия ОДНОГО работника (полный набор колонок, новейшие сверху). signature_url — подписанный
+// URL превью подписи из media (mediaUrl сам чистит ведущий '/' и префикс 'media/'). status считаем в UI
+// по revoked_at (null → активно).
+export interface WorkerLocationConsentRow {
+  id: string
+  consent_version: string | null
+  signed_at: string | null
+  created_at: string
+  revoked_at: string | null
+  signature_url: string | null
+}
+export async function getWorkerLocationConsents(workerId: string): Promise<WorkerLocationConsentRow[]> {
+  const { data, error } = await supabase.from('worker_location_consents')
+    .select('id, consent_version, signature_path, signed_at, created_at, revoked_at')
+    .eq('worker_id', workerId)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return Promise.all(((data ?? []) as Array<{
+    id: string
+    consent_version: string | null
+    signature_path: string | null
+    signed_at: string | null
+    created_at: string
+    revoked_at: string | null
+  }>).map(async (row) => ({
+    id: row.id,
+    consent_version: row.consent_version ?? null,
+    signed_at: row.signed_at ?? null,
+    created_at: row.created_at,
+    revoked_at: row.revoked_at ?? null,
+    signature_url: row.signature_path ? await mediaUrl(row.signature_path) : null,
+  })))
+}
+
+// Подписи ТБ (safety_acknowledgements) ОДНОГО работника, новейшие сверху, с превью подписи.
+export interface WorkerSafetyAckRow {
+  id: string
+  doc_version: string | null
+  signed_at: string | null
+  signature_url: string | null
+}
+export async function getWorkerSafetyAcks(workerId: string): Promise<WorkerSafetyAckRow[]> {
+  const { data, error } = await supabase.from('safety_acknowledgements')
+    .select('id, doc_version, signature_path, signed_at')
+    .eq('worker_id', workerId)
+    .order('signed_at', { ascending: false })
+  if (error) return []
+  return Promise.all(((data ?? []) as Array<{
+    id: string
+    doc_version: string | null
+    signature_path: string | null
+    signed_at: string | null
+  }>).map(async (row) => ({
+    id: row.id,
+    doc_version: row.doc_version ?? null,
+    signed_at: row.signed_at ?? null,
+    signature_url: row.signature_path ? await mediaUrl(row.signature_path) : null,
+  })))
+}
+
+// Личные файлы работника (files scope='profile', profile_id=workerId, не удалённые), новейшие сверху.
+// storage_path — в bucket media (scope!=='project'), поэтому URL для скачивания через mediaUrl, НЕ r2-sign.
+export interface WorkerProfileFileRow extends FileRow {
+  url: string | null
+}
+export async function getWorkerProfileFiles(workerId: string): Promise<WorkerProfileFileRow[]> {
+  const { data, error } = await supabase.from('files')
+    .select(FILE_SELECT)
+    .eq('scope', 'profile')
+    .eq('profile_id', workerId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return Promise.all(((data ?? []) as FileRow[]).map(async (row) => ({
+    ...row,
+    url: row.storage_path ? await mediaUrl(row.storage_path) : null,
+  })))
+}
+
 // Закрытые смены с подозрением (слишком долго / без GPS / разрыв во времени) — очередь на проверку
 export async function getSuspiciousShifts(): Promise<SuspiciousShift[]> {
   const { data, error } = await supabase.from('v_suspicious_shifts')
