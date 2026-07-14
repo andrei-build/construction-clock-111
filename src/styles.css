@@ -3068,9 +3068,31 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .project-gps-badge { flex: 0 0 auto; }
 
 /* PROJ-1b: кнопки навигации карточки. */
-.project-nav-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.project-nav-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
 .project-nav-actions .btn { padding: 4px 10px; }
 .project-nav-go { font-weight: 700; }
+/* TRAVEL-2: «⋯» overflow (Tesla-share) — маленький anchor для выпадающего меню. */
+.project-nav-more { position: relative; display: inline-flex; }
+.project-nav-more-toggle { padding: 4px 8px; }
+.project-nav-more-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 20;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px; border-radius: 8px;
+  background: var(--card, #fff); border: 1px solid var(--border, #d8dde5);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+/* TRAVEL-2: тост «Поехали!…» — видимая обратная связь после нажатия «В путь». */
+.travel-toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 2000;
+  max-width: min(92vw, 420px); padding: 12px 18px; border-radius: 12px;
+  background: var(--accent, #1f7a3f); color: #fff; font-weight: 600; text-align: center;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  animation: travel-toast-in 0.18s ease-out;
+}
+@keyframes travel-toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
 
 /* PROJ-2: плитки статистики карточки — 4 в один ряд (БРИГАДА / НЕДЕЛЯ / МАТЕРИАЛЫ / ЗАДАЧИ). */
 .project-stat-tiles {

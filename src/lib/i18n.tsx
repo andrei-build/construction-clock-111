@@ -1082,6 +1082,13 @@ const dict: Record<string, Record<Lang, string>> = {
   proj_nav_apple: { ru: 'Apple', en: 'Apple', es: 'Apple' },
   proj_nav_google: { ru: 'Google', en: 'Google', es: 'Google' },
   proj_nav_tesla: { ru: 'Tesla', en: 'Tesla', es: 'Tesla' },
+  proj_nav_more: { ru: 'Ещё', en: 'More', es: 'Más' },
+  // TRAVEL-2: тост после «В путь» — навигация открыта + клиент уведомлён (если грант включён).
+  proj_nav_travel_toast: {
+    ru: 'Поехали! Навигация открыта, клиент уведомлён (если включено)',
+    en: "Let's go! Navigation opened, client notified (if enabled)",
+    es: '¡En marcha! Navegación abierta, cliente notificado (si está activado)',
+  },
   proj_nav_copied: { ru: 'Скопировано', en: 'Copied', es: 'Copiado' },
   proj_nav_copy_point: { ru: 'Скопировать точку', en: 'Copy point', es: 'Copiar punto' },
   proj_nav_copy_address: { ru: 'Скопировать адрес', en: 'Copy address', es: 'Copiar dirección' },
