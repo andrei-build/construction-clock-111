@@ -23,6 +23,7 @@ import { isManagerWrite } from '../lib/types'
 import type { Profile, Project, TimeEvent, Task, EventRow, ProfileRate, SuspiciousShift, ShiftGeoEvent } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
 import CollapsibleSection from '../components/CollapsibleSection'
+import PlanConstructor from './dashboard/PlanConstructor'
 
 type Risk = {
   id: string
@@ -341,6 +342,8 @@ export default function Dashboard() {
           </p>
         </section>
       </div>
+
+      <PlanConstructor />
 
       <section className="card pulse-card">
         <h2>{t('shift_pulse_title')}</h2>

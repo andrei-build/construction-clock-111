@@ -3510,3 +3510,25 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 @media (max-width: 720px) {
   .material-edit-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* DISP-1: конструктор плана в командном центре (дополнительно, не трогает /dispatch). */
+.plan-constructor { display: grid; gap: 12px; }
+.plan-constructor-head { align-items: center; }
+.plan-constructor h3 { margin: 0; font-size: 14px; }
+.plan-date-picker {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 700; color: var(--muted);
+}
+.plan-date-picker input { width: auto; margin: 0; }
+.plan-conflicts { display: grid; gap: 8px; }
+.plan-add-project { display: grid; gap: 8px; }
+.plan-add-list { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.plan-empty { padding: 8px 0; }
+.plan-sent-badge { justify-self: start; }
+.plan-add-task { align-self: start; font-weight: 700; }
+.plan-task-form { display: grid; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel2); }
+.plan-task-title-row { display: flex; align-items: center; gap: 8px; }
+.plan-task-title-row input { flex: 1; margin: 0; }
+.plan-task-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.plan-task-controls select { width: auto; margin: 0; flex: 1; min-width: 120px; }
+.plan-task-actions { display: flex; gap: 8px; }
