@@ -343,6 +343,13 @@ export interface CalendarEvent {
   starts_at: string
   permit_number: string | null
   inspection_status: string | null
+  // CAL-1b: доп. колонки calendar_events (существуют в схеме, но узкий select /calendar их
+  // опускает). Опциональны — не ломают существующий getCalendarEvents/Calendar.tsx.
+  ends_at?: string | null
+  project_id?: string | null
+  assigned_to?: string | null
+  notes?: string | null
+  location?: string | null
 }
 
 export type DealStage = 'lead' | 'contacted' | 'measured' | 'quoted' | 'negotiation' | 'signed' | 'handed_off' | 'lost'
