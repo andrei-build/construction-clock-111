@@ -117,6 +117,7 @@ export default function ProjectHub() {
               project={project}
               profit={hub.profit}
               account={hub.account}
+              profile={profile}
               managerView={managerView}
               onOpenTab={(next) => setTab(next)}
             />

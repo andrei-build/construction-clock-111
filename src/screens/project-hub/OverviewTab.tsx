@@ -6,6 +6,7 @@ import { isEffectiveOpenTask } from '../../lib/task-status'
 import type { Account, CalendarEvent, Profile, Project, ProjectProfit, ProjectTimeEvent, ScheduleAssignment } from '../../lib/types'
 import { getDeadlineInfo, statusDotClass, type TrafficStatus } from './status'
 import { isDateRangeInvalid } from '../../lib/project-schedule'
+import ProjectNavActions from '../../components/ProjectNavActions'
 
 type TileKey = 'deadline' | 'profit' | 'client'
 export type OverviewCountTab = 'tasks' | 'time' | 'files' | 'notes'
@@ -14,6 +15,7 @@ interface OverviewTabProps {
   project: Project
   profit: ProjectProfit | null
   account: Account | null
+  profile: Profile | null
   managerView: boolean
   onOpenTab: (tab: OverviewCountTab) => void
 }
@@ -147,7 +149,7 @@ function normalizedProfitStatus(profit: ProjectProfit | null): TrafficStatus {
   return profit.profit_status
 }
 
-export default function OverviewTab({ project, profit, account, managerView, onOpenTab }: OverviewTabProps) {
+export default function OverviewTab({ project, profit, account, profile, managerView, onOpenTab }: OverviewTabProps) {
   const { t } = useI18n()
   const navigate = useNavigate()
   const [expanded, setExpanded] = useState<TileKey | null>(null)
@@ -265,6 +267,9 @@ export default function OverviewTab({ project, profit, account, managerView, onO
 
   return (
     <section className="hub-tab-panel">
+      {/* TRAVEL-2: та же одна кнопка «В путь» (travel.started + уведомление клиента), что и на карточке /projects. */}
+      <ProjectNavActions project={project} profile={profile} projectName={project.name} address={project.address} lat={project.lat ?? null} lng={project.lng ?? null} />
+
       <div className="hub-overview-grid">
         <button
           type="button"

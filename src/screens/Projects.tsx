@@ -492,7 +492,7 @@ export default function Projects() {
             )}
 
             {/* Единая строка навигации (В путь / Apple / Google / Tesla-share / Скопировать точку). */}
-            <ProjectNavActions projectName={p.name} address={p.address} lat={coords?.lat ?? null} lng={coords?.lng ?? null} />
+            <ProjectNavActions project={p} profile={profile} projectName={p.name} address={p.address} lat={coords?.lat ?? null} lng={coords?.lng ?? null} />
 
             {/* GPS OK / нет границы — отдельным бейджем. */}
             <div className="project-gps-line">
