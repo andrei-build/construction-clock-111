@@ -110,7 +110,15 @@ export default function ProjectHub() {
             ))}
           </div>
 
-          {tab === 'overview' && <OverviewTab project={project} profit={hub.profit} account={hub.account} />}
+          {tab === 'overview' && (
+            <OverviewTab
+              project={project}
+              profit={hub.profit}
+              account={hub.account}
+              managerView={managerView}
+              onOpenTab={(next) => setTab(next)}
+            />
+          )}
           {tab === 'tasks' && <TasksTab project={project} profile={profile} />}
           {tab === 'time' && <TimeTab project={project} />}
           {tab === 'finance' && <FinanceTab project={project} profile={profile} />}

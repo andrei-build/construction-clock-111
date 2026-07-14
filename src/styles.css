@@ -2556,6 +2556,88 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* PROJ-1: счётчики «Обзора» с переходом по вкладкам + карточка команды проекта. */
+.hub-overview-counters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.hub-counter {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.hub-counter-num {
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1.1;
+}
+.hub-overview-team { margin-top: 12px; }
+.hub-overview-team-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.hub-overview-team-head h2 { margin: 0; }
+.hub-overview-team-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.hub-overview-team-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.hub-overview-team-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.hub-overview-team-row:last-child { border-bottom: none; }
+.hub-overview-team-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hub-on-shift-badge { flex: none; }
+/* PROJ-1: метки-«чипы» на карточке проекта в списке /projects. */
+.project-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.project-card-address { overflow-wrap: anywhere; }
+.project-card-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--chip, rgba(127, 127, 127, 0.12));
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.project-card-chip.on-site { color: var(--green); }
 /* График проекта: прогресс-бар прошедшего срока + обратный отсчёт (F75). */
 .schedule-progress-block { margin-top: 8px; }
 .schedule-progress {
