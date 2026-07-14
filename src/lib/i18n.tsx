@@ -800,6 +800,11 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_doc_status_approved: { ru: 'Утверждён', en: 'Approved', es: 'Aprobado' },
   hub_doc_status_paid: { ru: 'Оплачен', en: 'Paid', es: 'Pagado' },
   hub_doc_status_void: { ru: 'Аннулирован', en: 'Void', es: 'Anulado' },
+  hub_finance_documents_title: { ru: 'Документы', en: 'Documents', es: 'Documentos' },
+  hub_finance_expenses_title: { ru: 'Расходы по проекту', en: 'Project expenses', es: 'Gastos del proyecto' },
+  hub_finance_expenses_total: { ru: 'Сумма расходов', en: 'Expenses total', es: 'Total de gastos' },
+  hub_finance_expenses_empty: { ru: 'Расходов по проекту пока нет', en: 'No expenses for this project yet', es: 'Aún no hay gastos para este proyecto' },
+  hub_finance_expenses_load_error: { ru: 'Не удалось загрузить расходы', en: 'Could not load expenses', es: 'No se pudieron cargar los gastos' },
   // Вкладка «Рапорты»
   hub_reports_empty: { ru: 'Рапортов по проекту пока нет', en: 'No reports for this project yet', es: 'Aún no hay reportes para este proyecto' },
   hub_reports_load_error: { ru: 'Не удалось загрузить рапорты', en: 'Could not load reports', es: 'No se pudieron cargar los reportes' },

@@ -110,10 +110,10 @@ export default function ProjectHub() {
 
           {tab === 'overview' && <OverviewTab project={project} profit={hub.profit} account={hub.account} />}
           {tab === 'tasks' && <TasksTab project={project} profile={profile} />}
-          {tab === 'time' && <TimeTab />}
-          {tab === 'finance' && <FinanceTab />}
+          {tab === 'time' && <TimeTab project={project} />}
+          {tab === 'finance' && <FinanceTab project={project} profile={profile} />}
           {tab === 'files' && <FilesTab project={project} profile={profile} />}
-          {tab === 'reports' && <ReportsTab />}
+          {tab === 'reports' && <ReportsTab project={project} />}
           {tab === 'notes' && <NotesTab project={project} profile={profile} />}
           {tab === 'client' && <ClientTab />}
         </>
