@@ -12,3 +12,32 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || url.pathname.startsWith('/rest') || url.pathname.startsWith('/functions')) return
   e.respondWith(fetch(e.request).catch(() => caches.match(e.request).then((r) => r || caches.match('/'))))
 })
+
+// Web-push: render the incoming payload as a notification.
+self.addEventListener('push', (e) => {
+  const d = e.data?.json() ?? {}
+  e.waitUntil(
+    self.registration.showNotification(d.title || 'Construction Clock', {
+      body: d.body || '',
+      data: { url: d.url || '/' },
+      icon: '/icon.svg',
+      badge: '/icon.svg',
+    }),
+  )
+})
+
+// Focus an existing window (navigating it to the target url) or open a new one.
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close()
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((ws) => {
+      for (const w of ws) {
+        if ('focus' in w) {
+          w.navigate(e.notification.data?.url || '/')
+          return w.focus()
+        }
+      }
+      return clients.openWindow(e.notification.data?.url || '/')
+    }),
+  )
+})

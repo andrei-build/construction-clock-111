@@ -1,6 +1,7 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
 import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, Unit, FileRow, ProjectNote, AccountRating, GalleryVideo, GalleryPdf } from './types'
 import { todayStartISO } from './time'
+import { notifyMessagePush } from './push'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
 
@@ -995,6 +996,12 @@ export async function sendDispatchPlan(p: Profile, project: Project, workers: Pr
   const { error } = await supabase.from('messages').insert(rows)
   if (error) throw error
   await logEvent(p, 'dispatch.plan_sent', 'project', project.id, { workers: workers.length, tasks: tasks.length })
+  // Fire-and-forget web push per recipient — same invoke as a direct message, localized
+  // to each worker. The plan body is trimmed to 100 chars inside notifyMessagePush.
+  for (const worker of workers) {
+    const lang = dispatchLang(worker.language)
+    notifyMessagePush(worker.id, p.name, dispatchPlanBody(project, tasks, planDate, lang), worker.language)
+  }
 }
 
 export async function markTaskDone(p: Profile, task: Task, mediaId: string | null = null) {
@@ -1460,6 +1467,8 @@ export async function sendMessage(p: Profile, recipientId: string, body: string,
     .single()
   if (error) throw error
   await logEvent(p, 'message.sent', 'message', data.id, { recipient_id: recipientId, priority })
+  // Fire-and-forget web push to the recipient. Never blocks/throws into the send path.
+  notifyMessagePush(recipientId, p.name, body, p.language)
 }
 
 export async function markMessageRead(p: Profile, messageId: string) {

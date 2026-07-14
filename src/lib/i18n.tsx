@@ -728,6 +728,18 @@ const dict: Record<string, Record<Lang, string>> = {
   about_base_url: { ru: 'Базовый URL', en: 'Base URL', es: 'URL base' },
   // Offline read cache (F65)
   offline_cache_notice: { ru: 'Показаны сохранённые данные от {time}', en: 'Showing cached data from {time}', es: 'Mostrando datos guardados de {time}' },
+  // Web-push notifications (device toggle in «More»)
+  push_section: { ru: 'Уведомления', en: 'Notifications', es: 'Notificaciones' },
+  push_device_toggle: { ru: 'Уведомления на этом устройстве', en: 'Notifications on this device', es: 'Notificaciones en este dispositivo' },
+  push_device_hint: { ru: 'Получайте push-уведомления о новых сообщениях на этом устройстве.', en: 'Get push notifications about new messages on this device.', es: 'Recibe notificaciones push sobre mensajes nuevos en este dispositivo.' },
+  push_state_on: { ru: 'Включены', en: 'On', es: 'Activadas' },
+  push_state_off: { ru: 'Выключены', en: 'Off', es: 'Desactivadas' },
+  push_enable: { ru: 'Включить', en: 'Enable', es: 'Activar' },
+  push_disable: { ru: 'Выключить', en: 'Disable', es: 'Desactivar' },
+  push_working: { ru: 'Применяю…', en: 'Applying…', es: 'Aplicando…' },
+  push_denied_hint: { ru: 'Уведомления заблокированы в браузере. Разрешите их в настройках браузера или устройства.', en: 'Notifications are blocked in the browser. Allow them in your browser or device settings.', es: 'Las notificaciones están bloqueadas en el navegador. Permítalas en los ajustes del navegador o del dispositivo.' },
+  push_unsupported_hint: { ru: 'Установите приложение на экран «Домой», чтобы получать уведомления.', en: 'Install the app to your home screen to receive notifications.', es: 'Instale la aplicación en la pantalla de inicio para recibir notificaciones.' },
+  push_toggle_failed: { ru: 'Не удалось изменить настройку уведомлений', en: 'Could not change the notification setting', es: 'No se pudo cambiar el ajuste de notificaciones' },
 }
 
 interface I18n {
