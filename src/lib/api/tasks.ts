@@ -45,7 +45,7 @@ export interface NewTaskInput {
 // (org_id совпадает и app.is_manager_write()). Не-менеджеру insert отклонит RLS — гейтим в UI.
 // Пишем только те колонки, что задаёт форма; остальное берёт server-side defaults
 // (status='open', metadata, version, created_at и т.д.). Зеркалит форму задач старого Check Time.
-export async function createTask(p: Profile, input: NewTaskInput): Promise<string> {
+export async function createTask(p: Profile, input: NewTaskInput, clientId?: string): Promise<string> {
   const row: Record<string, unknown> = {
     org_id: p.org_id,
     created_by: p.id,
@@ -60,6 +60,10 @@ export async function createTask(p: Profile, input: NewTaskInput): Promise<strin
   const description = input.description?.trim()
   if (description) row.description = description
   if (input.requires_photo !== undefined) row.requires_photo = input.requires_photo
+  // Offline replay: carry the queued clientId as the partial-unique client_id so a duplicate
+  // replay raises 23505 (treated as success) instead of inserting a second row. Online callers
+  // pass nothing → client_id stays absent (NULL, ignored by the partial unique index).
+  if (clientId) row.client_id = clientId
   const { data, error } = await supabase.from('tasks').insert(row).select('id').single()
   if (error) throw error
   await logEvent(p, 'task.created', 'task', data.id, { title: input.title, task_type: input.task_type })

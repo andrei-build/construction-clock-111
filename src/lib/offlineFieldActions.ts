@@ -227,6 +227,15 @@ function removeAction(clientActionId: string): void {
   writeAll(readAll().filter((row) => row.clientActionId !== clientActionId))
 }
 
+// A duplicate INSERT carrying a client_id that already landed on a prior replay raises Postgres
+// unique_violation (23505, surfaced by PostgREST with the same code). That means the row is
+// already on the server, so the replay is a SUCCESS, not a failure — the item must be removed,
+// never retried. 23505 can only come from the task_create / note_create inserts (both carry a
+// partial-unique client_id); no other action kind can raise it, so a blanket check is safe.
+function isUniqueViolation(e: unknown): boolean {
+  return !!e && typeof e === 'object' && 'code' in e && (e as { code?: unknown }).code === '23505'
+}
+
 function bumpRetry(clientActionId: string): void {
   const rows = readAll()
   const next = rows
@@ -249,11 +258,12 @@ async function replayAction(profile: Profile, action: QueuedFieldAction): Promis
       return
     case 'task_create':
       // Replayed under the same worker (queue is cleared on logout), so the replay-time profile is
-      // the original author — mirrors how task_status replay reuses `profile`.
-      await createTask(profile, action.payload.input)
+      // the original author — mirrors how task_status replay reuses `profile`. The queued clientId
+      // is threaded through as tasks.client_id so a duplicate replay raises 23505 (exactly-once).
+      await createTask(profile, action.payload.input, action.payload.clientId)
       return
     case 'note_create':
-      await createProjectNote(profile, action.payload.projectId, action.payload.body)
+      await createProjectNote(profile, action.payload.projectId, action.payload.body, action.payload.clientId)
       return
     case 'task_claim':
       // No task-claim API in CC yet — nothing enqueues this kind (see BACKEND REQUEST).
@@ -277,11 +287,15 @@ export async function flushFieldActions(
     if (typeof navigator !== 'undefined' && !navigator.onLine) break
     try {
       await replayAction(profile, action)
-    } catch {
-      // Keep the action for a later flush; drop it once it has failed too many times so
-      // one poison mutation cannot block everything queued behind it.
-      bumpRetry(action.clientActionId)
-      continue
+    } catch (err) {
+      if (!isUniqueViolation(err)) {
+        // Keep the action for a later flush; drop it once it has failed too many times so
+        // one poison mutation cannot block everything queued behind it.
+        bumpRetry(action.clientActionId)
+        continue
+      }
+      // 23505: the row already landed on a prior replay — exactly-once. Fall through to the
+      // success path (remove + count + notify) so the duplicate is retired, not retried.
     }
     removeAction(action.clientActionId)
     sent += 1
