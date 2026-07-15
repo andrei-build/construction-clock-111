@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { supabase } from '../lib/supabase'
 
 const ORG_SLUG = 'nwbuild' // одна организация — слаг фиксирован; мультиорг добавится позже
 
@@ -13,6 +14,7 @@ export default function Login() {
   const [pin, setPin] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [resetSent, setResetSent] = useState(false)
 
   const submitEmail = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -20,6 +22,19 @@ export default function Login() {
     const r = await loginEmail(email.trim(), password)
     if (r) setErr(r)
     setBusy(false)
+  }
+
+  // ACC-1 (b): сброс пароля для EMAIL-аккаунтов (owner/admin). PIN-работники не затронуты.
+  const forgotPassword = async () => {
+    if (busy) return
+    setErr(null); setResetSent(false)
+    const addr = email.trim()
+    if (!addr) { setErr('forgot_password_need_email'); return }
+    setBusy(true)
+    // Не раскрываем, существует ли аккаунт: всегда показываем «проверьте почту».
+    await supabase.auth.resetPasswordForEmail(addr, { redirectTo: `${window.location.origin}/reset` })
+    setBusy(false)
+    setResetSent(true)
   }
 
   const pressKey = async (k: string) => {
@@ -70,6 +85,10 @@ export default function Login() {
           <label>{t('password')}</label>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
           <button className="btn" disabled={busy || !email || !password}>{t('signin')}</button>
+          <button type="button" className="btn ghost small" style={{ marginTop: 8 }} disabled={busy} onClick={forgotPassword}>
+            {t('forgot_password')}
+          </button>
+          {resetSent && <p className="ok-msg">{t('forgot_password_sent')}</p>}
         </form>
       )}
 

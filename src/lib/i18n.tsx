@@ -1359,6 +1359,25 @@ const dict: Record<string, Record<Lang, string>> = {
   pay_adjustments: { ru: 'Корректировки', en: 'Adjustments', es: 'Ajustes' },
   close_pay_here: { ru: 'Закрыть оплату здесь', en: 'Close pay here', es: 'Cerrar pago aquí' },
   pay_period_none: { ru: 'Нет активного периода оплаты', en: 'No active pay period', es: 'Sin período de pago activo' },
+
+  // ACC-1: «Мой аккаунт» — смена пароля (a) + сброс по ссылке из письма (b).
+  account_section: { ru: 'Мой аккаунт', en: 'My account', es: 'Mi cuenta' },
+  change_password: { ru: 'Сменить пароль', en: 'Change password', es: 'Cambiar contraseña' },
+  new_password: { ru: 'Новый пароль', en: 'New password', es: 'Nueva contraseña' },
+  repeat_password: { ru: 'Повторите пароль', en: 'Repeat password', es: 'Repita la contraseña' },
+  pw_too_short: { ru: 'Пароль должен быть не короче 8 символов', en: 'Password must be at least 8 characters', es: 'La contraseña debe tener al menos 8 caracteres' },
+  pw_mismatch: { ru: 'Пароли не совпадают', en: 'Passwords do not match', es: 'Las contraseñas no coinciden' },
+  pw_empty: { ru: 'Введите новый пароль', en: 'Enter a new password', es: 'Ingrese una nueva contraseña' },
+  pw_changed: { ru: 'Пароль изменён', en: 'Password changed', es: 'Contraseña cambiada' },
+  pw_change_failed: { ru: 'Не удалось изменить пароль', en: 'Could not change password', es: 'No se pudo cambiar la contraseña' },
+  forgot_password: { ru: 'Забыли пароль?', en: 'Forgot password?', es: '¿Olvidó su contraseña?' },
+  forgot_password_need_email: { ru: 'Сначала введите email выше', en: 'Enter your email above first', es: 'Primero ingrese su correo arriba' },
+  forgot_password_sent: { ru: 'Если такой аккаунт существует, мы отправили ссылку для сброса пароля. Проверьте почту.', en: 'If that account exists, we sent a password reset link. Check your inbox.', es: 'Si esa cuenta existe, enviamos un enlace para restablecer la contraseña. Revise su correo.' },
+  reset_password_title: { ru: 'Новый пароль', en: 'Set new password', es: 'Nueva contraseña' },
+  reset_password_intro: { ru: 'Задайте новый пароль для входа в аккаунт.', en: 'Set a new password for your account.', es: 'Establezca una nueva contraseña para su cuenta.' },
+  reset_no_session: { ru: 'Ссылка недействительна или устарела. Запросите сброс пароля заново.', en: 'This link is invalid or expired. Request a new password reset.', es: 'El enlace no es válido o expiró. Solicite un nuevo restablecimiento.' },
+  reset_success: { ru: 'Пароль обновлён. Теперь можно войти.', en: 'Password updated. You can sign in now.', es: 'Contraseña actualizada. Ya puede iniciar sesión.' },
+  back_to_login: { ru: 'К входу', en: 'Back to sign in', es: 'Volver a iniciar sesión' },
 }
 
 interface I18n {
