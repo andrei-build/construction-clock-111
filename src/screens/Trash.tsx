@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getTrashItems, restoreEntity } from '../lib/api'
-import type { TrashItem, TrashKind } from '../lib/types'
+import { getTrashItems, purgeEntity, restoreEntity } from '../lib/api'
+import type { PurgeEntityType } from '../lib/api'
+import type { ArchiveTable, TrashItem, TrashKind } from '../lib/types'
 
 const localeByLang = {
   ru: 'ru-RU',
@@ -25,9 +26,24 @@ const KIND_ICON: Record<TrashKind, string> = {
   receipt: '🧾',
 }
 
+const PURGE_ENTITY_TYPE: Partial<Record<ArchiveTable, PurgeEntityType>> = {
+  tasks: 'task',
+  media: 'media',
+  project_expenses: 'project_expense',
+}
+
+function purgeErrorKey(error: unknown): string {
+  const message = String((error as { message?: unknown } | null)?.message ?? '')
+  if (message === 'only_owner_can_purge') return 'purge_err_only_owner'
+  if (message === 'not_in_trash') return 'purge_err_not_in_trash'
+  if (message === 'unsupported_entity_type') return 'purge_err_unsupported'
+  if (message === 'purge_blocked_by_references') return 'purge_err_blocked'
+  if (message === 'no_profile') return 'purge_err_no_profile'
+  return 'purge_err_generic'
+}
+
 // ARCH-1 «Корзина»: мягко удалённые сущности (deleted_at IS NOT NULL) → «Восстановить» (очистка deleted_at)
-// или «Удалить навсегда» (owner-only). Жёсткого удаления на фронте нет (см. BACKEND REQUEST в api.ts),
-// поэтому кнопка purge показывается только владельцу и отключена. Маршрут гейтится менеджером в App.tsx.
+// или «Удалить навсегда» через owner-only RPC purge_entity. Маршрут гейтится менеджером в App.tsx.
 export default function Trash() {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
@@ -38,6 +54,7 @@ export default function Trash() {
   const [error, setError] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [restoreError, setRestoreError] = useState(false)
+  const [purgeMsg, setPurgeMsg] = useState<string | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -64,11 +81,32 @@ export default function Trash() {
     if (!profile || busyId) return
     setBusyId(item.id)
     setRestoreError(false)
+    setPurgeMsg(null)
     try {
       await restoreEntity(profile, item.table, item.id)
       setItems((rows) => rows.filter((r) => !(r.id === item.id && r.kind === item.kind)))
     } catch {
       setRestoreError(true)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function handlePurge(item: TrashItem, entityType: PurgeEntityType) {
+    if (!profile || busyId || !isOwner) return
+    if (typeof window !== 'undefined') {
+      if (!window.confirm(t('purge_confirm1'))) return
+      if (!window.confirm(t('purge_confirm2'))) return
+    }
+    setBusyId(item.id)
+    setRestoreError(false)
+    setPurgeMsg(null)
+    try {
+      await purgeEntity(entityType, item.id)
+      setItems((rows) => rows.filter((r) => !(r.id === item.id && r.kind === item.kind)))
+      setPurgeMsg('purge_success')
+    } catch (err) {
+      setPurgeMsg(purgeErrorKey(err))
     } finally {
       setBusyId(null)
     }
@@ -88,6 +126,7 @@ export default function Trash() {
       {loading && <div className="card center muted">{t('loading')}</div>}
       {error && <p className="error-msg">{t('load_error')}</p>}
       {restoreError && <p className="error-msg">{t('restore_failed')}</p>}
+      {purgeMsg && <p className={purgeMsg === 'purge_success' ? 'ok-msg' : 'error-msg'}>{t(purgeMsg)}</p>}
       {!loading && !error && (
         <p className="muted" style={{ fontSize: 12 }}>{items.length} {t('trash_items')}</p>
       )}
@@ -96,42 +135,43 @@ export default function Trash() {
         <div className="card center muted">🧹 {t('trash_empty')}</div>
       )}
 
-      {!loading && !error && items.map((item) => (
-        <div key={`${item.kind}-${item.id}`} className="card">
-          <div className="row">
-            <div>
-              <span className="item-title">{KIND_ICON[item.kind]} {item.name}</span>
-              <div className="muted" style={{ fontSize: 12 }}>
-                <span className="badge">{t(KIND_LABEL[item.kind])}</span>
-                {' '}{t('archive_deleted_on')}: {formatDate(item.deleted_at)}
+      {!loading && !error && items.map((item) => {
+        const purgeType = PURGE_ENTITY_TYPE[item.table]
+        const isBusy = busyId === item.id
+        return (
+          <div key={`${item.kind}-${item.id}`} className="card">
+            <div className="row">
+              <div>
+                <span className="item-title">{KIND_ICON[item.kind]} {item.name}</span>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  <span className="badge">{t(KIND_LABEL[item.kind])}</span>
+                  {' '}{t('archive_deleted_on')}: {formatDate(item.deleted_at)}
+                </div>
               </div>
             </div>
-          </div>
-          <div className="project-nav-actions">
-            <button
-              type="button"
-              className="btn small"
-              disabled={busyId === item.id}
-              onClick={() => handleRestore(item)}
-            >
-              {busyId === item.id ? '…' : t('restore')}
-            </button>
-            {/* «Удалить навсегда» — OWNER-ONLY (DNA). Жёсткого удаления на фронте нет, кнопка отключена.
-                BACKEND REQUEST: purge_entity(table, id) под owner-гейтом — см. src/lib/api.ts. */}
-            {isOwner && (
+            <div className="project-nav-actions">
               <button
                 type="button"
-                className="btn small red"
-                disabled
-                title={t('trash_purge_unavailable')}
+                className="btn small"
+                disabled={isBusy}
+                onClick={() => handleRestore(item)}
               >
-                {t('trash_delete_permanently')}
+                {isBusy ? '…' : t('restore')}
               </button>
-            )}
+              {isOwner && purgeType && (
+                <button
+                  type="button"
+                  className="btn small red"
+                  disabled={isBusy}
+                  onClick={() => handlePurge(item, purgeType)}
+                >
+                  {isBusy ? '…' : t('purge_forever')}
+                </button>
+              )}
+            </div>
           </div>
-          {isOwner && <div className="muted trash-purge-note">{t('trash_purge_unavailable')}</div>}
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
