@@ -8,8 +8,14 @@
 // the JSON array, every access is wrapped so Safari private mode / disabled storage
 // degrades to an in-memory no-op rather than throwing.
 
-import type { MessageRow, Profile, Task } from './types'
+import type { MessageRow, Profile, ProjectNote, Task } from './types'
 import { markTaskDone, sendMessage } from './api'
+// New (pass 1b remainder) replay targets import the RAW domain writers directly (not the api.ts
+// shim, whose createTask/createProjectNote/markMaterialStatus are the offline-aware wrappers that
+// call back into THIS module) — importing the raw functions keeps replay from recursing into the
+// enqueue path.
+import { markMaterialStatus, createTask, type MaterialStatusAction, type NewTaskInput } from './api/tasks'
+import { createProjectNote } from './api/projects'
 
 const STORAGE_KEY = 'ccfieldq:v1'
 // Soft cap: keep the newest N actions so a wedged queue never grows without bound or
@@ -21,7 +27,15 @@ const MAX_RETRIES = 8
 
 // task_claim is kept in the union for parity with the old Check Time queue, but CC has
 // no task-claim API/column today, so no call site enqueues it (see BACKEND REQUEST).
-export type FieldActionKind = 'task_claim' | 'task_status' | 'message_send'
+// material_status / task_create / note_create were added in pass 1b remainder so those mutations
+// degrade to a durable queue offline instead of throwing the worker's write away (DNA §14).
+export type FieldActionKind =
+  | 'task_claim'
+  | 'task_status'
+  | 'message_send'
+  | 'material_status'
+  | 'task_create'
+  | 'note_create'
 
 export interface TaskClaimPayload {
   taskId: string
@@ -38,6 +52,29 @@ export interface MessageSendPayload {
   priority: MessageRow['priority']
 }
 
+// Every new-kind payload carries a client-generated clientId. It is the dedupe anchor while the
+// item sits in the queue; it is ALSO the seed for the optimistic offline id handed back to the UI
+// (`offline-<clientId>`). NOTE: material_status is a task state-transition (RPC UPDATE) so a
+// double-replay is naturally idempotent; task_create / note_create are INSERTs with no server-side
+// dedup today, so exactly-once relies on remove-after-confirmed-success here — see BACKEND REQUEST
+// in the summary for the unique-constraint that would make an at-least-once replay fully safe.
+export interface MaterialStatusPayload {
+  taskId: string
+  action: MaterialStatusAction
+  clientId: string
+}
+
+export interface TaskCreatePayload {
+  input: NewTaskInput
+  clientId: string
+}
+
+export interface NoteCreatePayload {
+  projectId: string
+  body: string
+  clientId: string
+}
+
 interface FieldActionBase {
   clientActionId: string // stable unique id for this queued action (dedupe on replay)
   dedupeKey: string // logical key — re-enqueuing the same action does not duplicate
@@ -50,11 +87,17 @@ export type QueuedFieldAction =
   | (FieldActionBase & { kind: 'task_claim'; payload: TaskClaimPayload })
   | (FieldActionBase & { kind: 'task_status'; payload: TaskStatusPayload })
   | (FieldActionBase & { kind: 'message_send'; payload: MessageSendPayload })
+  | (FieldActionBase & { kind: 'material_status'; payload: MaterialStatusPayload })
+  | (FieldActionBase & { kind: 'task_create'; payload: TaskCreatePayload })
+  | (FieldActionBase & { kind: 'note_create'; payload: NoteCreatePayload })
 
 export type FieldActionInput =
   | { kind: 'task_claim'; dedupeKey: string; payload: TaskClaimPayload }
   | { kind: 'task_status'; dedupeKey: string; payload: TaskStatusPayload }
   | { kind: 'message_send'; dedupeKey: string; payload: MessageSendPayload }
+  | { kind: 'material_status'; dedupeKey: string; payload: MaterialStatusPayload }
+  | { kind: 'task_create'; dedupeKey: string; payload: TaskCreatePayload }
+  | { kind: 'note_create'; dedupeKey: string; payload: NoteCreatePayload }
 
 // localStorage access itself can throw (Safari private mode, storage disabled), so every
 // entry point routes through here and treats "unavailable" as null.
@@ -129,6 +172,57 @@ export function enqueueFieldAction(input: FieldActionInput): QueuedFieldAction {
   return action
 }
 
+// ── Typed enqueue helpers (pass 1b remainder) ───────────────────────────────────────────────
+// Thin wrappers over enqueueFieldAction so the api.ts offline-write shim (and any caller) enqueues
+// a well-formed payload + stable dedupeKey without re-deriving the shape. Each mints its own
+// clientId; material_status dedupes on task+action (re-clicking the same status offline is a
+// no-op), while task_create / note_create dedupe on the fresh clientId (each submit is distinct).
+
+// Enqueue a material pick-up / undo / delivery status change. Idempotent on replay (RPC UPDATE).
+export function enqueueMaterialStatus(taskId: string, statusAction: MaterialStatusAction): void {
+  enqueueFieldAction({
+    kind: 'material_status',
+    dedupeKey: `material_status:${taskId}:${statusAction}`,
+    payload: { taskId, action: statusAction, clientId: actionId() },
+  })
+}
+
+// Enqueue a task creation. Returns the optimistic offline id (`offline-<clientId>`) so the caller
+// can proceed exactly as it would with the real id (e.g. attach files — those degrade separately).
+export function enqueueTaskCreate(input: NewTaskInput): string {
+  const clientId = actionId()
+  enqueueFieldAction({
+    kind: 'task_create',
+    dedupeKey: `task_create:${clientId}`,
+    payload: { input, clientId },
+  })
+  return `offline-${clientId}`
+}
+
+// Enqueue a project-note creation. Returns an optimistic ProjectNote so the notes list can render
+// it immediately (mirrors createProjectNote's own offline-safe fallback shape).
+export function enqueueNoteCreate(p: Profile, projectId: string, body: string): ProjectNote {
+  const clientId = actionId()
+  const trimmed = body.trim()
+  enqueueFieldAction({
+    kind: 'note_create',
+    dedupeKey: `note_create:${clientId}`,
+    payload: { projectId, body: trimmed, clientId },
+  })
+  const now = new Date().toISOString()
+  return {
+    id: `offline-${clientId}`,
+    org_id: p.org_id,
+    project_id: projectId,
+    author_id: p.id,
+    body: trimmed,
+    pinned: false,
+    created_at: now,
+    updated_at: now,
+    author: { name: p.name },
+  }
+}
+
 function removeAction(clientActionId: string): void {
   writeAll(readAll().filter((row) => row.clientActionId !== clientActionId))
 }
@@ -148,6 +242,18 @@ async function replayAction(profile: Profile, action: QueuedFieldAction): Promis
       return
     case 'message_send':
       await sendMessage(profile, action.payload.recipientId, action.payload.body, action.payload.priority)
+      return
+    case 'material_status':
+      // A task state-transition RPC — replaying the same action is idempotent (no duplicate rows).
+      await markMaterialStatus(action.payload.taskId, action.payload.action)
+      return
+    case 'task_create':
+      // Replayed under the same worker (queue is cleared on logout), so the replay-time profile is
+      // the original author — mirrors how task_status replay reuses `profile`.
+      await createTask(profile, action.payload.input)
+      return
+    case 'note_create':
+      await createProjectNote(profile, action.payload.projectId, action.payload.body)
       return
     case 'task_claim':
       // No task-claim API in CC yet — nothing enqueues this kind (see BACKEND REQUEST).
