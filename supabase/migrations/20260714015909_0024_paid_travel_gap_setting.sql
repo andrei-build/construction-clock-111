@@ -1,0 +1,3 @@
+-- 0024: порог сигнала по оплачиваемому проезду между объектами (требование Андрея 14.07)
+alter table public.app_settings add column if not exists paid_gap_alert_hours numeric not null default 1.0;
+comment on column public.app_settings.paid_gap_alert_hours is 'Гэп между чекаутом на одном объекте и чекином на следующем В ПРЕДЕЛАХ ОДНОГО ДНЯ оплачивается как рабочее время (проезд). Если гэп > этого порога (часы) — сигнал владельцу/менеджеру. Настраивается на экране /settings.';
