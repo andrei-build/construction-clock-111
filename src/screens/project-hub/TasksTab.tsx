@@ -84,7 +84,13 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
   const done = async (task: Task) => {
     if (!profile || isMaterialFlowTask(task)) return
     const mediaId = photoByTask[task.id]?.id ?? null
-    if (task.requires_photo && !mediaId) return
+    // Закон Андрея: закрыть можно без фото; фото обязательно ТОЛЬКО при requires_photo === true.
+    // Раньше здесь был «тихий» return — теперь причина видна работнику.
+    if (task.requires_photo && !mediaId) {
+      setTaskError('task_done_needs_photo')
+      setTaskNotice(null)
+      return
+    }
     setTaskBusy(task.id)
     setTaskError(null)
     setTaskNotice(null)
@@ -275,14 +281,17 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
                 onStatusChange={updateMaterialStatus}
               />
             ) : (
-              <button
-                className="btn ghost small"
-                disabled={taskBusy !== null || uploading || needsPhoto}
-                title={needsPhoto ? t('photo_required_hint') : undefined}
-                onClick={() => done(task)}
-              >
-                {t('done')}
-              </button>
+              <>
+                <button
+                  className="btn ghost small"
+                  disabled={taskBusy !== null || uploading || needsPhoto}
+                  title={needsPhoto ? t('task_done_needs_photo') : undefined}
+                  onClick={() => done(task)}
+                >
+                  {t('done')}
+                </button>
+                {needsPhoto && <p className="warn-msg task-photo-hint">{t('task_done_needs_photo')}</p>}
+              </>
             )}
           </div>
         )

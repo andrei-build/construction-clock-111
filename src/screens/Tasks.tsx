@@ -233,15 +233,17 @@ export default function Tasks() {
     setFFiles((cur) => [...cur, ...Array.from(files)])
   }
 
-  const loadAttachments = async (taskId: string) => {
+  const loadAttachments = async (taskId: string): Promise<Attachment[]> => {
     try {
       const rows = await getTaskAttachments(taskId)
       const withUrls = await Promise.all(rows.map(async (r) => {
         try { return { ...r, url: (await mediaUrl(r.storage_path)) ?? undefined } } catch { return { ...r } }
       }))
       setAttachments((cur) => ({ ...cur, [taskId]: withUrls }))
+      return withUrls
     } catch {
       setAttachments((cur) => ({ ...cur, [taskId]: [] }))
+      return []
     }
   }
 
@@ -272,6 +274,15 @@ export default function Tasks() {
 
   const changeStatus = async (task: Task, status: Task['status']) => {
     if (!profile || status === task.status) return
+    // Закон Андрея: фото нужно для закрытия задачи ТОЛЬКО когда requires_photo === true.
+    // При requires_photo=false путь остаётся прежним (никаких предупреждений).
+    if (status === 'done' && task.requires_photo) {
+      const list = attachments[task.id] ?? await loadAttachments(task.id)
+      if (!list.some((a) => a.media_type === 'photo')) {
+        setCardError('task_done_needs_photo')
+        return
+      }
+    }
     setStatusBusy(task.id)
     setCardError(null)
     try {
