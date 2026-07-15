@@ -13,6 +13,9 @@ const dict: Record<string, Record<Lang, string>> = {
   manager_alerts_unmute: { ru: 'Вкл. звук', en: 'Unmute', es: 'Activar sonido' },
   manager_alerts_kind_message: { ru: 'Сообщение', en: 'Message', es: 'Mensaje' },
   manager_alerts_kind_task: { ru: 'Задача', en: 'Task', es: 'Tarea' },
+  // MSG-1: заголовки Web-уведомлений при новом сообщении / новой назначенной задаче.
+  notif_new_message: { ru: 'Новое сообщение', en: 'New message', es: 'Nuevo mensaje' },
+  notif_new_task: { ru: 'Новая задача', en: 'New task', es: 'Nueva tarea' },
   nav_group_main: { ru: 'ОСНОВНОЕ', en: 'MAIN', es: 'PRINCIPAL' },
   nav_group_work: { ru: 'РАБОТА', en: 'WORK', es: 'TRABAJO' },
   nav_group_finance_clients: { ru: 'ФИНАНСЫ И КЛИЕНТЫ', en: 'FINANCE & CLIENTS', es: 'FINANZAS Y CLIENTES' },
@@ -726,6 +729,9 @@ const dict: Record<string, Record<Lang, string>> = {
   // G1: оплачиваемое время в пути между объектами (травел)
   settings_paid_gap_alert: { ru: 'Порог оповещения о разрыве, ч', en: 'Gap alert threshold, h', es: 'Umbral de alerta de brecha, h' },
   settings_paid_gap_alert_hint: { ru: 'Разрыв между сменами в один день оплачивается как время в пути. Если разрыв больше порога — он всё равно оплачивается, но подсвечивается для проверки.', en: 'A gap between shifts on the same day is paid as travel time. A gap larger than the threshold is still paid, but highlighted for review.', es: 'Una brecha entre turnos del mismo día se paga como tiempo de viaje. Una brecha mayor que el umbral se paga igualmente, pero se resalta para revisión.' },
+  // MSG-1: час вечернего дайджеста (app_settings.digest_hour). Бэкенд шлёт пуш сам, тут только час.
+  settings_digest_hour: { ru: 'Час вечернего дайджеста (0–23)', en: 'Evening digest hour (0–23)', es: 'Hora del resumen vespertino (0–23)' },
+  settings_digest_hour_hint: { ru: 'В этот час (по часовому поясу организации) отправляется вечерний дайджест дня. По умолчанию 18:00.', en: 'The evening day digest is sent at this hour (in the org timezone). Default is 18:00.', es: 'El resumen vespertino del día se envía a esta hora (en la zona horaria de la organización). Predeterminado 18:00.' },
   travel_hours: { ru: 'Время в пути', en: 'Travel time', es: 'Tiempo de viaje' },
   travel_paid_hint: { ru: 'Оплачиваемый переезд между объектами в один день (входит в оплачиваемые часы)', en: 'Paid travel between sites on the same day (included in paid hours)', es: 'Viaje pagado entre obras el mismo día (incluido en las horas pagadas)' },
   payroll_travel_alert: { ru: 'оплачивается как переезд', en: 'paid as travel', es: 'pagado como viaje' },

@@ -37,6 +37,7 @@ import OwnerSettings from './screens/OwnerSettings'
 import Nav from './components/Nav'
 import BackButton from './components/BackButton'
 import { EntityDrawerProvider } from './components/EntityDrawer'
+import { NotificationsProvider } from './lib/notifications'
 import LocationConsentGate from './components/LocationConsentGate'
 import LiveLocationPinger from './components/LiveLocationPinger'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
@@ -59,6 +60,7 @@ export default function App() {
   return (
     <LocationConsentGate profile={profile}>
     <EntityDrawerProvider>
+    <NotificationsProvider>
       <div className={`app ${manager ? 'manager-app' : ''}`}>
         <LiveLocationPinger profile={profile} />
         <main className="app-content">
@@ -105,6 +107,7 @@ export default function App() {
         </main>
         <Nav manager={manager} />
       </div>
+    </NotificationsProvider>
     </EntityDrawerProvider>
     </LocationConsentGate>
   )

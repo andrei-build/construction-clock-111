@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { useNotifications } from '../lib/notifications'
 import { getMessages, getTeam, markMessageRead, subscribeToMyMessages } from '../lib/api'
 import { isManagerRole, type MessageRow, type Profile } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
@@ -19,6 +20,9 @@ interface Thread {
 export default function Messages() {
   const { profile } = useAuth()
   const { t } = useI18n()
+  // MSG-1: сообщаем глобальному счётчику пересчитаться сразу после отметки «прочитано» — чтение
+  // это UPDATE, а realtime-подписка ловит только INSERT, поэтому бейдж иначе очистится лишь по поллу.
+  const { refreshUnread } = useNotifications()
   const [team, setTeam] = useState<Profile[]>([])
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -105,6 +109,7 @@ export default function Messages() {
     try {
       await markMessageRead(profile, message.id)
       await load()
+      refreshUnread()
     } catch {
       setError(true)
     } finally {
@@ -118,6 +123,7 @@ export default function Messages() {
     if (!profile) return
     await markMessageRead(profile, message.id)
     await load()
+    refreshUnread()
   }
 
   const markAllRead = async () => {
@@ -127,6 +133,7 @@ export default function Messages() {
     try {
       await Promise.all(unreadIds.map((id) => markMessageRead(profile, id)))
       await load()
+      refreshUnread()
     } catch {
       setError(true)
     } finally {

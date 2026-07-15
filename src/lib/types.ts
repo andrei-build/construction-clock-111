@@ -19,6 +19,9 @@ export interface Profile {
   // A2: гибкие права (user_capabilities), где granted=true, подгружаются в auth.fetchProfile.
   // Пусто/undefined = прав нет. Читать через hasFinanceAccess и т.п., не по строке напрямую.
   capabilities?: string[] | null
+  // MSG-1: предпочтение уведомлений (profiles.notif_mode). Управляет звуком/пушем при новом
+  // сообщении/задаче. Пусто/undefined = обычный режим (звук + уведомления). Трактуется notifPrefs.
+  notif_mode?: string | null
 }
 
 export interface Project {
@@ -427,6 +430,9 @@ export interface AppSettings {
   paid_gap_alert_hours: number
   // SET-1: радиус геозоны для отметки визита в магазин поставок (migration 0030, дефолт 75 м)
   store_visit_radius_m: number
+  // MSG-1: час вечернего дайджеста (app_settings.digest_hour, 0–23, дефолт 18). Дайджест шлёт
+  // бэкенд (migration 0035 + edge function); клиент только читает/пишет это значение на /settings.
+  digest_hour: number
   settings: Record<string, unknown>
   updated_by: string | null
   updated_at: string
@@ -789,6 +795,19 @@ export interface FileRow {
 // Файл проекта с именем автора загрузки (embed uploader:profiles) — вкладка «Файлы и медиа» хаба.
 export interface ProjectHubFile extends FileRow {
   uploader_name: string | null
+}
+
+// MSG-1: как трактовать profiles.notif_mode для клиентских уведомлений (звук + Web Notification).
+// Значение свободное (бэкенд-энум); трактуем защитно по смыслу:
+//   off/none/disabled — тишина (ни звука, ни уведомления);
+//   quiet/silent/muted — без звука, но уведомления показываем;
+//   иначе (all/on/null/undefined) — звук и уведомления включены.
+// Бейдж непрочитанных показывается всегда — он пассивный, notif_mode на него не влияет.
+export function notifPrefs(mode: string | null | undefined): { sound: boolean; notify: boolean } {
+  const m = (mode ?? '').toLowerCase()
+  if (m === 'off' || m === 'none' || m === 'disabled') return { sound: false, notify: false }
+  if (m === 'quiet' || m === 'silent' || m === 'muted') return { sound: false, notify: true }
+  return { sound: true, notify: true }
 }
 
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)

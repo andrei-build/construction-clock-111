@@ -11,6 +11,9 @@ type OrgLanguage = 'ru' | 'en' | 'es'
 // GEO-1: после скольких минут без GPS-сигнала в открытой смене риск «нет сигнала» (DB-дефолт 15).
 const DEFAULT_GEO_NO_SIGNAL_MINUTES = 15
 
+// MSG-1: час вечернего дайджеста (app_settings.digest_hour, целое 0–23, DB-дефолт 18).
+const DEFAULT_DIGEST_HOUR = 18
+
 const DEFAULT_SETTINGS: AppSettingsInput = {
   default_language: 'ru',
   timezone: 'America/Los_Angeles',
@@ -18,6 +21,7 @@ const DEFAULT_SETTINGS: AppSettingsInput = {
   default_gps_radius_m: 150,
   geo_no_signal_minutes: DEFAULT_GEO_NO_SIGNAL_MINUTES,
   paid_gap_alert_hours: DEFAULT_PAID_GAP_ALERT_HOURS,
+  digest_hour: DEFAULT_DIGEST_HOUR,
 }
 
 function supportedLanguage(value: string | null | undefined): OrgLanguage {
@@ -36,6 +40,12 @@ function geoNoSignalOrDefault(value: number | null | undefined): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_GEO_NO_SIGNAL_MINUTES
 }
 
+// digest_hour: целое в диапазоне 0–23 → оно; иначе (null/пусто/вне диапазона) → дефолт (18).
+function digestHourOrDefault(value: number | null | undefined): number {
+  const n = Math.trunc(Number(value))
+  return Number.isFinite(n) && n >= 0 && n <= 23 ? n : DEFAULT_DIGEST_HOUR
+}
+
 export default function Settings() {
   const { profile } = useAuth()
   const { t } = useI18n()
@@ -51,6 +61,7 @@ export default function Settings() {
   const [defaultGpsRadius, setDefaultGpsRadius] = useState(String(DEFAULT_SETTINGS.default_gps_radius_m))
   const [geoNoSignalMinutes, setGeoNoSignalMinutes] = useState(String(DEFAULT_SETTINGS.geo_no_signal_minutes))
   const [paidGapAlertHours, setPaidGapAlertHours] = useState(String(DEFAULT_SETTINGS.paid_gap_alert_hours))
+  const [digestHour, setDigestHour] = useState(String(DEFAULT_DIGEST_HOUR))
 
   const canEdit = profile?.role === 'owner'
 
@@ -73,6 +84,8 @@ export default function Settings() {
         setGeoNoSignalMinutes(String(geoNoSignalOrDefault(source.geo_no_signal_minutes)))
         // paid_gap_alert_hours может быть null в старых строках → дефолт.
         setPaidGapAlertHours(String(gapAlertOrDefault(source.paid_gap_alert_hours)))
+        // digest_hour может быть null/вне диапазона в старых строках → дефолт (18).
+        setDigestHour(String(digestHourOrDefault(source.digest_hour)))
       } catch {
         if (mounted) {
           setSettings(null)
@@ -100,6 +113,7 @@ export default function Settings() {
     default_gps_radius_m: defaultGpsRadius,
     geo_no_signal_minutes: geoNoSignalMinutes,
     paid_gap_alert_hours: paidGapAlertHours,
+    digest_hour: digestHour,
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -123,6 +137,10 @@ export default function Settings() {
     const radius = defaultGpsRadius.trim() === ''
       ? DEFAULT_SETTINGS.default_gps_radius_m
       : clampGpsRadius(Number(defaultGpsRadius), DEFAULT_SETTINGS.default_gps_radius_m)
+    // Час дайджеста: целое 0–23; пусто/вне диапазона → дефолт (18). Не блокируем сохранение.
+    const digest = digestHour.trim() === ''
+      ? DEFAULT_DIGEST_HOUR
+      : digestHourOrDefault(Number(digestHour))
 
     const values: AppSettingsInput = {
       default_language: defaultLanguage,
@@ -131,6 +149,7 @@ export default function Settings() {
       default_gps_radius_m: radius,
       geo_no_signal_minutes: geoNoSignal,
       paid_gap_alert_hours: gapAlert,
+      digest_hour: digest,
     }
 
     setSaving(true)
@@ -143,6 +162,7 @@ export default function Settings() {
       setDefaultGpsRadius(String(saved.default_gps_radius_m))
       setGeoNoSignalMinutes(String(geoNoSignalOrDefault(saved.geo_no_signal_minutes)))
       setPaidGapAlertHours(String(gapAlertOrDefault(saved.paid_gap_alert_hours)))
+      setDigestHour(String(digestHourOrDefault(saved.digest_hour)))
       setDefaultLanguage(supportedLanguage(saved.default_language))
       setMsg('settings_saved')
     } catch {
@@ -159,6 +179,7 @@ export default function Settings() {
     { key: 'radius', label: t('settings_default_gps_radius'), value: currentValues.default_gps_radius_m },
     { key: 'geo_no_signal', label: t('settings_geo_no_signal'), value: `${currentValues.geo_no_signal_minutes} ${t('min_short')}` },
     { key: 'paid_gap', label: t('settings_paid_gap_alert'), value: `${currentValues.paid_gap_alert_hours} ${t('h')}` },
+    { key: 'digest_hour', label: t('settings_digest_hour'), value: `${currentValues.digest_hour}:00` },
   ]
   const msgClass = msg === 'settings_saved' ? 'ok-msg' : 'error-msg'
 
@@ -249,6 +270,20 @@ export default function Settings() {
             onChange={(e) => setPaidGapAlertHours(e.target.value)}
           />
           <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('settings_paid_gap_alert_hint')}</p>
+
+          <label htmlFor="settings-digest-hour">{t('settings_digest_hour')}</label>
+          <input
+            id="settings-digest-hour"
+            type="number"
+            min="0"
+            max="23"
+            step="1"
+            inputMode="numeric"
+            value={digestHour}
+            disabled={saving}
+            onChange={(e) => setDigestHour(e.target.value)}
+          />
+          <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('settings_digest_hour_hint')}</p>
 
           <button className="btn" disabled={saving}>{saving ? t('settings_saving') : t('save')}</button>
         </form>
