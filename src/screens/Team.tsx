@@ -21,6 +21,11 @@ const TEAM_GROUPS: { key: string; titleKey: string; roles: Role[] }[] = [
 ]
 const GROUPED_ROLES = new Set<Role>(TEAM_GROUPS.flatMap((g) => g.roles))
 
+// TEAM-2: инициалы для запасного (без фото) круглого аватара в строках списка.
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || '👷'
+}
+
 export default function Team() {
   const { profile } = useAuth()
   const { t } = useI18n()
@@ -135,9 +140,15 @@ export default function Team() {
             const st = shiftState(evs)
             return (
               <div key={w.id} className="card row">
-                <div>
-                  <button className="inline-link item-title" onClick={() => openWorker(w)}>{workerLabels.get(w.id) ?? w.name}</button>
-                  <span className={`badge ${roleBadge(w.role)}`}>{w.role}</span>
+                <div className="team-row-id">
+                  {/* TEAM-2: круглый аватар работника (публичный avatar_url) в строке списка. */}
+                  <div className="team-avatar sm" aria-hidden="true">
+                    {w.avatar_url ? <img src={w.avatar_url} alt="" /> : <span>{initials(w.name)}</span>}
+                  </div>
+                  <div>
+                    <button className="inline-link item-title" onClick={() => openWorker(w)}>{workerLabels.get(w.id) ?? w.name}</button>
+                    <span className={`badge ${roleBadge(w.role)}`}>{w.role}</span>
+                  </div>
                 </div>
                 <div className="center">
                   <div style={{ fontWeight: 700 }}>{fmtHours(workedMs(evs))}{t('h')}</div>

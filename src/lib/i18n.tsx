@@ -1288,6 +1288,26 @@ const dict: Record<string, Record<Lang, string>> = {
   skills_saved: { ru: 'Навыки сохранены', en: 'Skills saved', es: 'Habilidades guardadas' },
   skills_save_failed: { ru: 'Не удалось сохранить навыки', en: 'Could not save skills', es: 'No se pudieron guardar las habilidades' },
 
+  // TEAM-2: клиент-facing публичный профиль (avatar_url + public_bio). Контакты сюда НЕ входят.
+  public_profile_section: { ru: 'Публичный профиль (видит клиент)', en: 'Public profile (client sees this)', es: 'Perfil público (lo ve el cliente)' },
+  public_profile_hint: {
+    ru: 'Только фото и описание ниже показываются клиенту. Контакты работника никогда не передаются.',
+    en: 'Only the photo and description below are shown to the client. Worker contacts are never shared.',
+    es: 'Solo la foto y la descripción de abajo se muestran al cliente. Los contactos del trabajador nunca se comparten.',
+  },
+  upload_photo: { ru: 'Загрузить фото', en: 'Upload photo', es: 'Subir foto' },
+  public_photo_caption: {
+    ru: 'Круглое фото, которое увидит клиент',
+    en: 'Round photo the client will see',
+    es: 'Foto redonda que verá el cliente',
+  },
+  public_bio_label: { ru: 'Описание для клиента', en: 'Description for the client', es: 'Descripción para el cliente' },
+  public_bio_caption: { ru: 'Это увидит клиент. БЕЗ контактов.', en: 'The client will see this. NO contacts.', es: 'Esto lo verá el cliente. SIN contactos.' },
+  public_bio_saved: { ru: 'Описание сохранено', en: 'Description saved', es: 'Descripción guardada' },
+  public_bio_save_failed: { ru: 'Не удалось сохранить описание', en: 'Could not save description', es: 'No se pudo guardar la descripción' },
+  avatar_saved: { ru: 'Фото сохранено', en: 'Photo saved', es: 'Foto guardada' },
+  avatar_save_failed: { ru: 'Не удалось загрузить фото', en: 'Could not upload photo', es: 'No se pudo subir la foto' },
+
   worker_stats: { ru: 'Показатели', en: 'Stats', es: 'Indicadores' },
   stat_with_gps: { ru: 'с GPS (неделя)', en: 'with GPS (week)', es: 'con GPS (semana)' },
   stat_without_gps: { ru: 'без GPS (неделя)', en: 'without GPS (week)', es: 'sin GPS (semana)' },
