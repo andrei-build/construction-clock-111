@@ -23,19 +23,34 @@ export async function getCurrentPayPeriod(): Promise<PayPeriod | null> {
   return (data as PayPeriod | null) ?? null
 }
 
-// Строка снапшота зарплаты — считается на клиенте из уже рассчитанных строк таблицы (rows)
+// Строка снапшота зарплаты — считается на клиенте из уже рассчитанных строк таблицы (rows).
+// A4c: расширена под jsonb-элемент close_pay_period. Новые поля опциональны — closePayPeriod
+// подставляет дефолты (overtime_multiplier 1.5, bonus/reimbursement/deduction 0, time_event_ids []),
+// чтобы существующие вызовы не ломались. total — уже округлённый round-half-up (см. A4a).
 export interface PayPeriodItemInput {
   profile_id: string
   regular_hours: number
   overtime_hours: number
+  overtime_multiplier?: number
   // REP-1: часы проезда за период (pay_period_items.travel_hours, миграция 0032). ТОЛЬКО разбивка —
-  // оплата проезда уже входит в total (см. closePayPeriod: total пишется без изменений).
+  // оплата проезда уже входит в total (total пишется без изменений).
   travel_hours: number
   hourly_rate: number | null
+  bonus?: number
+  reimbursement?: number
+  deduction?: number
   total: number
+  time_event_ids?: string[]
+  adjustments?: unknown
+  note?: string | null
 }
 
-// Закрыть период: draft → approved. Апсертит pay_periods и переснимает pay_period_items из строк таблицы.
+// Закрыть период: draft → approved. A4c: один транзакционный вызов SECURITY DEFINER RPC
+// close_pay_period (миграция 0037, finance-gated) вместо ручного upsert → delete-all → insert
+// тремя нетранзакционными запросами. RPC пересоздаёт pay_period_items в ОДНОЙ транзакции и
+// возвращает id периода (string). p_period_id = null → новый период. БД запрещает мутировать
+// approved/paid строки (триггеры pay_period_items_immutable / pay_period_status_flow) — UI не
+// предлагает пере-закрытие такого периода; отказ RPC ловится вызывающим и показывается дружелюбно.
 export async function closePayPeriod(p: Profile, input: {
   payPeriodId: string | null
   periodStart: string
@@ -44,56 +59,31 @@ export async function closePayPeriod(p: Profile, input: {
   items: PayPeriodItemInput[]
   totalPay: number
 }): Promise<string> {
-  const now = new Date().toISOString()
-  let payPeriodId = input.payPeriodId
+  const p_items = input.items.map((item) => ({
+    profile_id: item.profile_id,
+    regular_hours: item.regular_hours,
+    overtime_hours: item.overtime_hours,
+    overtime_multiplier: item.overtime_multiplier ?? 1.5,
+    // travel_hours — ТОЛЬКО разбивка; оплата проезда уже сидит в total, повторно не прибавляем.
+    travel_hours: item.travel_hours,
+    hourly_rate: item.hourly_rate,
+    bonus: item.bonus ?? 0,
+    reimbursement: item.reimbursement ?? 0,
+    deduction: item.deduction ?? 0,
+    total: item.total,
+    time_event_ids: item.time_event_ids ?? [],
+    adjustments: item.adjustments ?? null,
+    note: item.note ?? null,
+  }))
 
-  if (payPeriodId) {
-    const { error } = await supabase.from('pay_periods')
-      .update({ status: 'approved', approved_by: p.id, approved_at: now })
-      .eq('id', payPeriodId)
-    if (error) throw error
-  } else {
-    const { data, error } = await supabase.from('pay_periods')
-      .insert({
-        org_id: p.org_id,
-        label: input.label,
-        period_start: input.periodStart,
-        period_end: input.periodEnd,
-        status: 'approved',
-        approved_by: p.id,
-        approved_at: now,
-      })
-      .select('id')
-      .single()
-    if (error) throw error
-    payPeriodId = String(data.id)
-  }
-
-  const { error: delError } = await supabase.from('pay_period_items')
-    .delete()
-    .eq('pay_period_id', payPeriodId)
-  if (delError) throw delError
-
-  if (input.items.length > 0) {
-    const rows = input.items.map((item) => ({
-      pay_period_id: payPeriodId,
-      profile_id: item.profile_id,
-      regular_hours: item.regular_hours,
-      overtime_hours: item.overtime_hours,
-      // REP-1: travel_hours — ТОЛЬКО разбивка. Оплата проезда уже сидит в item.total
-      // (buildPayrollRows: total = reg*rate + ot*rate*1.5 + travel*rate). НЕ прибавляем
-      // проезд к total повторно, деньги (total) не трогаем.
-      travel_hours: item.travel_hours,
-      overtime_multiplier: 1.5,
-      hourly_rate: item.hourly_rate,
-      bonus: 0,
-      reimbursement: 0,
-      deduction: 0,
-      total: item.total,
-    }))
-    const { error: insError } = await supabase.from('pay_period_items').insert(rows)
-    if (insError) throw insError
-  }
+  const { data, error } = await supabase.rpc('close_pay_period', {
+    p_period_start: input.periodStart,
+    p_period_end: input.periodEnd,
+    p_items,
+    p_period_id: input.payPeriodId,
+  })
+  if (error) throw error
+  const payPeriodId = String(data)
 
   await logEvent(p, 'payroll.period_closed', 'pay_period', payPeriodId, {
     period_start: input.periodStart,

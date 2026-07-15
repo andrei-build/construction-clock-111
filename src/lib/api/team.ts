@@ -42,12 +42,16 @@ export async function getWorkerIntervals(profileId: string): Promise<WorkInterva
   return (data as WorkInterval[]) ?? []
 }
 
-// Отработанные интервалы всех работников за период — для зарплаты (v_work_intervals)
+// Отработанные интервалы всех работников за период — для зарплаты (v_work_intervals).
+// A4b: OVERLAP-фильтр интервала [start_at, end_at) с окном [from, to) — смена, НАЧАВШАЯСЯ до
+// окна, но заканчивающаяся внутри, больше НЕ теряется. Держим строки, где start_at < to И
+// (end_at > from ИЛИ end_at IS NULL). end_at = null у ОТКРЫТОЙ смены (ещё идёт): начавшаяся
+// до `to` пересекается — включаем. Клип часов до окна делает weeklyHours (splitHoursByWeek).
 export async function getIntervalsBetween(fromISO: string, toISO: string): Promise<WorkInterval[]> {
   const { data, error } = await supabase.from('v_work_intervals')
     .select('*')
-    .gte('start_at', fromISO)
     .lt('start_at', toISO)
+    .or(`end_at.gt.${fromISO},end_at.is.null`)
     .order('start_at', { ascending: false })
   if (error) throw error
   return (data as WorkInterval[]) ?? []
