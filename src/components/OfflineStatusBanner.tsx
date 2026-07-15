@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getQueuedTimeEvents } from '../lib/offlineTimeQueue'
+import { getPendingOutboxCount } from '../lib/offlineOutbox'
 import { useI18n } from '../lib/i18n'
 
 // Feature-detect navigator.onLine; assume online when the browser can't tell us.
@@ -27,10 +27,13 @@ export default function OfflineStatusBanner() {
 
     const refreshCount = async () => {
       try {
-        const rows = await getQueuedTimeEvents()
-        if (alive) setCount(rows.length)
+        // OFFLINE-1 (1b): count all three write queues (time events + field actions + media
+        // uploads), not only time events, so a queued task-done / message / photo is reflected
+        // in "{n} action(s) queued" too. getPendingOutboxCount self-guards per source.
+        const n = await getPendingOutboxCount()
+        if (alive) setCount(n)
       } catch {
-        // Queue unreadable (e.g. no IndexedDB) — treat as empty, never block the UI.
+        // Queues unreadable (e.g. no IndexedDB) — treat as empty, never block the UI.
         if (alive) setCount(0)
       }
     }
