@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { RX, CREDS, loginWithPin } from './helpers'
+import { RX, CREDS, loginWorkerReady } from './helpers'
 
 // Scenario 5 — Project hub opens.
 // Needs a login (worker PIN is enough — workers can open a project hub) and at least one
@@ -8,8 +8,8 @@ import { RX, CREDS, loginWithPin } from './helpers'
 test.describe('Scenario 5 · Project hub', () => {
   test('opening a project shows the project hub with its tabs', async ({ page }) => {
     test.skip(!CREDS.workerPin, 'SKIP: set E2E_WORKER_PIN to open a project hub.')
-    const ok = await loginWithPin(page, CREDS.workerPin)
-    test.skip(!ok, 'SKIP: E2E_WORKER_PIN did not authenticate.')
+    const ok = await loginWorkerReady(page, CREDS.workerPin)
+    test.skip(!ok, 'SKIP: E2E_WORKER_PIN did not authenticate / could not pass the GPS-consent gate.')
 
     await page.goto('/projects')
     await expect(page.getByRole('heading', { name: RX.projectsTitle })).toBeVisible()

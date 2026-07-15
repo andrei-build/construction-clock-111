@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { RX, CREDS, loginWithPin } from './helpers'
+import { RX, CREDS, loginWorkerReady } from './helpers'
 
 // Scenario 2 — Check-in / check-out flow.
 // Needs a worker login (E2E_WORKER_PIN); self-skips otherwise.
@@ -12,8 +12,10 @@ import { RX, CREDS, loginWithPin } from './helpers'
 test.describe('Scenario 2 · Check-in flow', () => {
   test('worker reaches the check-in screen and can arm the check-in action', async ({ page }) => {
     test.skip(!CREDS.workerPin, 'SKIP: set E2E_WORKER_PIN to exercise the check-in screen.')
-    const ok = await loginWithPin(page, CREDS.workerPin)
-    test.skip(!ok, 'SKIP: E2E_WORKER_PIN did not authenticate.')
+    // loginWorkerReady also clears the mandatory WA-law GPS-consent gate (GpsConsent.tsx) that a
+    // worker without an active consent hits before the app — otherwise /checkin never mounts.
+    const ok = await loginWorkerReady(page, CREDS.workerPin)
+    test.skip(!ok, 'SKIP: E2E_WORKER_PIN did not authenticate / could not pass the GPS-consent gate.')
 
     await page.goto('/checkin')
     await expect(page.getByRole('heading', { name: RX.checkinTitle })).toBeVisible()
