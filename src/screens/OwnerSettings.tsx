@@ -97,6 +97,7 @@ export default function OwnerSettings() {
         geo_no_signal_minutes: 15,
         paid_gap_alert_hours: 4,
         store_visit_radius_m: STORE_RADIUS_DEFAULT,
+        digest_hour: 18,
         settings: {},
         updated_by: null,
         updated_at: '',

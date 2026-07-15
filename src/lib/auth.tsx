@@ -24,7 +24,7 @@ async function fetchProfile(): Promise<Profile | null> {
   // на профиль как capabilities[], чтобы гейты (hasFinanceAccess) читали его из контекста авторизации.
   const [profileRes, capsRes] = await Promise.all([
     supabase.from('profiles')
-      .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video')
+      .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, notif_mode')
       .eq('id', user.id).maybeSingle(),
     supabase.from('user_capabilities')
       .select('capability, granted')

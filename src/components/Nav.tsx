@@ -2,6 +2,7 @@ import type { ComponentType, SVGProps } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { useNotifications } from '../lib/notifications'
 import ManagerWorkAlertBell from './ManagerWorkAlertBell'
 import {
   IconBriefcase,
@@ -31,6 +32,9 @@ type SideGroup = { title: string; items: SideItem[] }
 export default function Nav({ manager }: { manager: boolean }) {
   const { t } = useI18n()
   const { profile } = useAuth()
+  // MSG-1: бейдж непрочитанных сообщений на пункте «Сообщения» (мобайл + десктоп-сайдбар).
+  const { unreadMessages } = useNotifications()
+  const unreadBadge = unreadMessages > 99 ? '99+' : String(unreadMessages)
   const driver = profile?.role === 'driver'
   const sales = profile?.role === 'sales'
   const isOwner = profile?.role === 'owner'
@@ -130,7 +134,12 @@ export default function Nav({ manager }: { manager: boolean }) {
       <nav className="nav bottom-nav">
         {items.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.end} className={cls}>
-            <span className="ico"><item.Icon /></span>{item.label}
+            <span className="ico">
+              <item.Icon />
+              {item.to === '/messages' && unreadMessages > 0 && (
+                <span className="badge red nav-unread">{unreadBadge}</span>
+              )}
+            </span>{item.label}
           </NavLink>
         ))}
       </nav>
@@ -162,6 +171,9 @@ export default function Nav({ manager }: { manager: boolean }) {
                     <NavLink key={item.to} to={item.to} end={item.end} className={sideCls}>
                       <span className="side-ico"><item.Icon /></span>
                       <span>{item.label}</span>
+                      {item.to === '/messages' && unreadMessages > 0 && (
+                        <span className="badge red nav-unread">{unreadBadge}</span>
+                      )}
                     </NavLink>
                   ))}
               </section>
