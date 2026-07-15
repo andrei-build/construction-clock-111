@@ -32,7 +32,9 @@ function formatSize(bytes: number | null): string {
 }
 
 // Открытая ссылка в R2 — для project-файлов через r2-sign, иначе media bucket (как getGalleryPdfUrl).
-function fileUrl(file: ProjectHubFile): Promise<string> {
+// A5: mediaUrl может вернуть null (приватный bucket, подпись не удалась) — тип отражает это,
+// вызывающие рендерят «нет ссылки» вместо битого превью/окна.
+function fileUrl(file: ProjectHubFile): Promise<string | null> {
   return file.scope === 'project' ? getProjectFileDownloadUrl(file) : mediaUrl(file.storage_path)
 }
 
@@ -72,7 +74,8 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
         const images = rows.filter((row) => fileCategory(row.mime) === 'photos')
         const entries = await Promise.all(images.map(async (row) => {
           try {
-            return [row.id, await fileUrl(row)] as const
+            const url = await fileUrl(row)
+            return url ? ([row.id, url] as const) : null
           } catch {
             return null
           }
@@ -114,7 +117,7 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
       if (fileCategory(row.mime) === 'photos') {
         try {
           const url = await fileUrl(row)
-          setThumbs((prev) => ({ ...prev, [row.id]: url }))
+          if (url) setThumbs((prev) => ({ ...prev, [row.id]: url }))
         } catch {
           // превью не критично
         }
@@ -132,6 +135,7 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
     setOpenError(false)
     try {
       const url = await fileUrl(file)
+      if (!url) { setOpenError(true); return }
       const category = fileCategory(file.mime)
       if (category === 'photos') setLightbox({ url, kind: 'image', name: file.name })
       else if (category === 'videos') setLightbox({ url, kind: 'video', name: file.name })

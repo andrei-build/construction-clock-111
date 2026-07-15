@@ -222,6 +222,7 @@ export default function Gallery() {
     setPdfError(false)
     try {
       const url = await getGalleryPdfUrl(pdf)
+      if (!url) { setPdfError(true); return }
       window.open(url, '_blank', 'noopener,noreferrer')
     } catch {
       setPdfError(true)

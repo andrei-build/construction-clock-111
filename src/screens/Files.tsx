@@ -125,6 +125,7 @@ export default function Files() {
   async function handleDownload(row: FileRow) {
     try {
       const url = await mediaUrl(row.storage_path)
+      if (!url) { setError(true); return }
       window.open(url, '_blank', 'noopener,noreferrer')
     } catch {
       setError(true)
