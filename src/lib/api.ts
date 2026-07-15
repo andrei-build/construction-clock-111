@@ -295,14 +295,14 @@ export async function startProjectTravel(
 
 export async function getTeam(): Promise<Profile[]> {
   const { data } = await supabase.from('profiles')
-    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video')
+    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, avatar_url')
     .eq('is_active', true).order('name')
   return (data as Profile[]) ?? []
 }
 
 export async function getWorkerProfile(workerId: string): Promise<Profile | null> {
   const { data, error } = await supabase.from('profiles')
-    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, skills, skills_note')
+    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, skills, skills_note, avatar_url, public_bio')
     .eq('id', workerId)
     .maybeSingle()
   if (error) throw error
@@ -322,6 +322,41 @@ export async function updateWorkerSkills(p: Profile, workerId: string, input: {
     .eq('id', workerId)
   if (error) throw error
   await logEvent(p, 'team.skills_updated', 'profile', workerId, payload)
+}
+
+// TEAM-2: клиент-facing аватар. Bucket 'avatars' — ПУБЛИЧНЫЙ (migration 0034), поэтому храним
+// и отдаём getPublicUrl (в отличие от приватного media, где отдаём подписанный URL). Пишем URL в
+// profiles.avatar_url. Аддитивно: контакты/skills/skills_note НЕ трогаем — они внутренние.
+export async function uploadAvatar(p: Profile, workerId: string, file: File): Promise<string> {
+  validateUpload(file, 'photo')
+  const ext = safeFileName(file.name, file.type).split('.').pop() || 'jpg'
+  const storagePath = `${p.org_id}/${workerId}/${Date.now()}-${crypto.randomUUID()}.${ext}`
+  const { error: uploadError } = await supabase.storage
+    .from(AVATARS_BUCKET)
+    .upload(storagePath, file, { contentType: inferUploadContentType(file), upsert: false })
+  if (uploadError) throw uploadError
+  const { data: pub } = supabase.storage.from(AVATARS_BUCKET).getPublicUrl(storagePath)
+  const publicUrl = pub.publicUrl
+  const { error } = await supabase.from('profiles')
+    .update({ avatar_url: publicUrl })
+    .eq('id', workerId)
+  if (error) throw error
+  await logEvent(p, 'team.avatar_updated', 'profile', workerId, { avatar_url: publicUrl })
+  return publicUrl
+}
+
+// TEAM-2: клиент-facing описание (profiles.public_bio). Это видит клиент — БЕЗ контактов.
+// Отдельный helper, чтобы не смешивать с внутренними полями профиля.
+export async function updateWorkerPublicProfile(p: Profile, workerId: string, input: {
+  public_bio?: string | null
+}) {
+  const payload = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined))
+  if (Object.keys(payload).length === 0) return
+  const { error } = await supabase.from('profiles')
+    .update(payload)
+    .eq('id', workerId)
+  if (error) throw error
+  await logEvent(p, 'team.public_profile_updated', 'profile', workerId, payload)
 }
 
 // TEAM-1: активация/деактивация работника (profiles.is_active). Деактивированный
@@ -798,6 +833,8 @@ export async function getTaskPhotoIds(taskIds: string[]): Promise<Set<string>> {
 }
 
 const TASK_MEDIA_BUCKET = 'media'
+// TEAM-2: ПУБЛИЧНЫЙ bucket аватаров (migration 0034). insert/update-политики для manager+.
+const AVATARS_BUCKET = 'avatars'
 
 // ── Лимиты медиа и MIME-whitelist (паритет со старым STORAGE_LIMITS_MB) ─────────
 // Единый клиентский гейт: считаем перед КАЖДОЙ загрузкой, чтобы не жечь storage/R2.

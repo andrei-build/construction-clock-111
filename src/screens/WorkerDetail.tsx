@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
@@ -37,6 +37,9 @@ import {
   unassignWorkerFromProject,
   updateWorkerProfileSettings,
   updateWorkerSkills,
+  uploadAvatar,
+  updateWorkerPublicProfile,
+  uploadErrorCode,
 } from '../lib/api'
 import { fmtClock, fmtHours, computeTravelGaps, intervalsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 import { computeTransferGaps } from '../lib/shift-gaps'
@@ -45,6 +48,11 @@ import MessageComposer from '../components/MessageComposer'
 import VoiceMic from '../components/VoiceMic'
 
 const ELEVEN_HOURS_MS = 11 * 60 * 60 * 1000
+
+// TEAM-2: инициалы для запасного (без фото) круглого аватара.
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || '👷'
+}
 
 const roleOptions: Role[] = ['worker', 'driver', 'supervisor', 'manager', 'subcontractor', 'sales', 'admin', 'owner']
 
@@ -209,6 +217,12 @@ export default function WorkerDetail() {
   const [skillDraft, setSkillDraft] = useState('')
   const [skillsNote, setSkillsNote] = useState('')
 
+  // TEAM-2: клиент-facing публичный профиль — аватар (public bucket) + описание (public_bio).
+  // ТОЛЬКО эти поля видит клиент; контакты/навыки остаются внутренними.
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
+  const [publicBio, setPublicBio] = useState('')
+  const avatarInputRef = useRef<HTMLInputElement>(null)
+
   // TEAM-1: показатели за неделю (GPS/без GPS, закрытые задачи) + текущий период оплаты (только чтение).
   const [gpsWeek, setGpsWeek] = useState<{ withGps: number; withoutGps: number } | null>(null)
   const [weekTaskCount, setWeekTaskCount] = useState<number | null>(null)
@@ -272,6 +286,9 @@ export default function WorkerDetail() {
         // TEAM-1: skills — text-колонка; чипы через запятую. Пустые токены отбрасываем.
         setSkillsChips((workerRow.skills ?? '').split(',').map((s) => s.trim()).filter(Boolean))
         setSkillsNote(workerRow.skills_note ?? '')
+        // TEAM-2: клиент-facing поля.
+        setAvatarUrl(workerRow.avatar_url ?? null)
+        setPublicBio(workerRow.public_bio ?? '')
         const rate = rateRows.find((row) => row.profile_id === workerRow.id)
         setRateInput(rate?.hourly_rate === null || rate?.hourly_rate === undefined ? '' : String(rate.hourly_rate))
       }
@@ -611,6 +628,43 @@ export default function WorkerDetail() {
     }
   }
 
+  // TEAM-2: загрузка аватара в ПУБЛИЧНЫЙ bucket 'avatars' → publicUrl → profiles.avatar_url.
+  const onAvatarPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // позволяем повторно выбрать тот же файл
+    if (!profile || !worker || !canEditProfile || busy || !file) return
+    setBusy('avatar')
+    setMsg(null)
+    try {
+      const url = await uploadAvatar(profile, worker.id, file)
+      setAvatarUrl(url)
+      setWorker((prev) => (prev ? { ...prev, avatar_url: url } : prev))
+      setMsg('avatar_saved')
+    } catch (err) {
+      setMsg(uploadErrorCode(err) ?? 'avatar_save_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // TEAM-2: сохранение клиент-facing описания (profiles.public_bio). БЕЗ контактов.
+  const savePublicBio = async () => {
+    if (!profile || !worker || !canEditProfile || busy) return
+    setBusy('public_bio')
+    setMsg(null)
+    try {
+      await updateWorkerPublicProfile(profile, worker.id, {
+        public_bio: publicBio.trim() === '' ? null : publicBio.trim(),
+      })
+      setWorker((prev) => (prev ? { ...prev, public_bio: publicBio.trim() || null } : prev))
+      setMsg('public_bio_saved')
+    } catch {
+      setMsg('public_bio_save_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   // TEAM-1: активация/деактивация работника (profiles.is_active).
   const toggleActive = async () => {
     if (!profile || !worker || !canEditProfile || busy) return
@@ -676,10 +730,18 @@ export default function WorkerDetail() {
   return (
     <div className="screen worker-detail-screen">
       <div className="worker-detail-head">
-        <div>
-          <Link className="inline-link muted" to="/team">← {t('team')}</Link>
-          <h1>{worker ? worker.name : t('worker_profile')}</h1>
-          {worker && <span className={`badge ${worker.role === 'manager' || worker.role === 'supervisor' ? 'amber' : 'blue'}`}>{worker.role}</span>}
+        <div className="worker-detail-head-id">
+          {/* TEAM-2: круглый аватар в шапке карточки профиля. */}
+          {worker && (
+            <div className="team-avatar lg">
+              {avatarUrl ? <img src={avatarUrl} alt={worker.name} /> : <span>{initials(worker.name)}</span>}
+            </div>
+          )}
+          <div>
+            <Link className="inline-link muted" to="/team">← {t('team')}</Link>
+            <h1>{worker ? worker.name : t('worker_profile')}</h1>
+            {worker && <span className={`badge ${worker.role === 'manager' || worker.role === 'supervisor' ? 'amber' : 'blue'}`}>{worker.role}</span>}
+          </div>
         </div>
       </div>
 
@@ -808,6 +870,61 @@ export default function WorkerDetail() {
                 </div>
               ))}
             </div>
+          </section>
+
+          {/* TEAM-2: Публичный профиль — ЕДИНСТВЕННОЕ, что видит клиент (avatar_url + public_bio).
+              Контакты работника и навыки НИКОГДА сюда не попадают — они внутренние. */}
+          <section className="card public-profile-card">
+            <h2>{t('public_profile_section')}</h2>
+            <p className="muted">{t('public_profile_hint')}</p>
+
+            <div className="public-profile-avatar-row">
+              <div className="team-avatar xl">
+                {avatarUrl ? <img src={avatarUrl} alt={worker.name} /> : <span>{initials(worker.name)}</span>}
+              </div>
+              {canEditProfile && (
+                <div className="public-profile-avatar-actions">
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={onAvatarPick}
+                  />
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    disabled={busy !== null}
+                    onClick={() => avatarInputRef.current?.click()}
+                  >
+                    {busy === 'avatar' ? t('loading') : t('upload_photo')}
+                  </button>
+                  <p className="muted">{t('public_photo_caption')}</p>
+                </div>
+              )}
+            </div>
+
+            <label>{t('public_bio_label')}</label>
+            <div className="row public-bio-row">
+              <textarea
+                value={publicBio}
+                disabled={!canEditProfile || busy !== null}
+                rows={4}
+                onChange={(e) => setPublicBio(e.target.value)}
+              />
+              {canEditProfile && (
+                <VoiceMic
+                  lang={lang}
+                  title={t('voice_input')}
+                  onResult={(text) => setPublicBio((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))}
+                />
+              )}
+            </div>
+            <p className="muted">{t('public_bio_caption')}</p>
+
+            {canEditProfile && (
+              <button type="button" className="btn" disabled={busy !== null} onClick={savePublicBio}>{t('save')}</button>
+            )}
           </section>
 
           {/* TEAM-1: навыки для ИИ-распределения (profiles.skills) + заметка (profiles.skills_note). */}

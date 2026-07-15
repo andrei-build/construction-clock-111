@@ -16,6 +16,11 @@ export interface Profile {
   // (free-form, comma-separated chips), skills_note is a free-form note.
   skills?: string | null
   skills_note?: string | null
+  // TEAM-2: клиент-facing публичный профиль (migration 0034). avatar_url — публичный URL из
+  // bucket 'avatars', public_bio — безопасное для клиента описание. ТОЛЬКО эти два поля
+  // видны клиенту; контакты и skills/skills_note остаются внутренними.
+  avatar_url?: string | null
+  public_bio?: string | null
   // A2: гибкие права (user_capabilities), где granted=true, подгружаются в auth.fetchProfile.
   // Пусто/undefined = прав нет. Читать через hasFinanceAccess и т.п., не по строке напрямую.
   capabilities?: string[] | null
