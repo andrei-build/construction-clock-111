@@ -5,6 +5,7 @@ import { useI18n } from '../lib/i18n'
 import { isManagerRole } from '../lib/types'
 import AboutPanel from '../components/AboutPanel'
 import PushToggle from '../components/PushToggle'
+import ChangePasswordForm from '../components/ChangePasswordForm'
 import {
   IconBriefcase,
   IconCalendar,
@@ -52,6 +53,12 @@ export default function More() {
       <div className="card">
         <div style={{ fontWeight: 700, fontSize: 18 }}>{profile?.name}</div>
         <span className="badge amber">{profile?.role}</span>
+      </div>
+
+      {/* ACC-1 (a): «Мой аккаунт» — смена пароля для ЛЮБОЙ роли (в т.ч. PIN-работники). */}
+      <h2>{t('account_section')}</h2>
+      <div className="card">
+        <ChangePasswordForm />
       </div>
 
       {/* РАБОТА / WORK */}

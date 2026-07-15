@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './lib/auth'
 import { isManagerRole, hasFinanceAccess } from './lib/types'
 import Login from './screens/Login'
@@ -34,6 +34,7 @@ import DriverRoute from './screens/Route'
 import More from './screens/More'
 import Settings from './screens/Settings'
 import OwnerSettings from './screens/OwnerSettings'
+import ResetPassword from './screens/ResetPassword'
 import Nav from './components/Nav'
 import BackButton from './components/BackButton'
 import { EntityDrawerProvider } from './components/EntityDrawer'
@@ -46,6 +47,10 @@ import OfflineFieldSync from './components/OfflineFieldSync'
 
 export default function App() {
   const { loading, profile } = useAuth()
+  const location = useLocation()
+  // ACC-1 (b): экран восстановления пароля доступен ДО загрузки профиля —
+  // по recovery-ссылке из письма профиль может ещё не подняться, а форму показать надо.
+  if (location.pathname === '/reset') return <ResetPassword />
   if (loading) return <div className="spinner">…</div>
   if (!profile) return <Login />
 
