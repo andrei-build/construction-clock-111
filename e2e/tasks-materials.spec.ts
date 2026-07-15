@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { CREDS, loginWithPin } from './helpers'
+import { CREDS, loginWorkerReady } from './helpers'
 
 // Scenario 3 — Create a task + a material request.
 // In the project hub's Tasks tab, the material-request form (which creates a material-type task)
@@ -13,8 +13,8 @@ import { CREDS, loginWithPin } from './helpers'
 test.describe('Scenario 3 · Create task / material request', () => {
   test('material-request creation form is reachable and complete', async ({ page }) => {
     test.skip(!CREDS.workerPin, 'SKIP: set E2E_WORKER_PIN to reach the material-request form.')
-    const ok = await loginWithPin(page, CREDS.workerPin)
-    test.skip(!ok, 'SKIP: E2E_WORKER_PIN did not authenticate.')
+    const ok = await loginWorkerReady(page, CREDS.workerPin)
+    test.skip(!ok, 'SKIP: E2E_WORKER_PIN did not authenticate / could not pass the GPS-consent gate.')
 
     await page.goto('/projects')
     const projectLink = page.locator('.project-name-link').first()

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { RX, CREDS, loginWithPin, loginWithEmail } from './helpers'
+import { RX, CREDS, loginWithPin, loginWithEmail, loginWorkerReady } from './helpers'
 
 // Scenario 4 — Payroll visibility (role gate holds).
 // App.tsx gates `/payroll` behind hasFinanceAccess: owner/admin (or finance_access grant) see it;
@@ -29,8 +29,10 @@ test.describe('Scenario 4 · Payroll visibility', () => {
 
   test('payroll is NOT visible to a plain worker (redirected home)', async ({ page }) => {
     test.skip(!CREDS.workerPin, 'SKIP: set E2E_WORKER_PIN to verify the worker payroll block.')
-    const ok = await loginWithPin(page, CREDS.workerPin)
-    test.skip(!ok, 'SKIP: E2E_WORKER_PIN did not authenticate.')
+    // Must clear the GPS-consent gate first: the App.tsx <Routes> tree (and thus the /payroll →
+    // "/" redirect) only mounts once consent is signed. Without this the URL just stays on the gate.
+    const ok = await loginWorkerReady(page, CREDS.workerPin)
+    test.skip(!ok, 'SKIP: E2E_WORKER_PIN did not authenticate / could not pass the GPS-consent gate.')
 
     await page.goto('/payroll')
     // The route gate sends non-finance users to "/". The payroll heading must be absent…
