@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { closePayPeriod, getAppSettings, getArchivePayPeriods, getCurrentPayPeriod, getIntervalsBetween, getPayPeriodByExactDates, getTeam, getVisibleProfileRates, getYearlyPayrollReport, logEvent, markPayPeriodPaid } from '../lib/api'
 import { orgWeekGrouping, computeTravelGaps, intervalsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
+import { computeWorkerTotal, regularOvertimeSplit, splitHoursByWeek, type WeekBoundary } from '../lib/payrollMath'
 import type { ArchivePayPeriod, PayPeriod, Profile, ProfileRate, WorkInterval, YearlyPayReportRow } from '../lib/types'
 
 interface PeriodWindow {
@@ -116,40 +117,25 @@ function weekKey(ms: number) {
 // Границы недели считаются в часовом поясе организации (timeZone); при null/пустом — как раньше,
 // в локальном поясе устройства. В обоих случаях суммарные часы в периоде неизменны — меняется
 // только распределение по неделям у самой границы (что влияет на разбивку regular/overtime).
+// A4b: OVERLAP-clip, не старт-фильтр. Смена, НАЧАВШАЯСЯ до окна, но заканчивающаяся внутри,
+// больше НЕ теряется — считаются только часы ВНУТРИ окна (seg-clip). Чистая математика
+// (overlap + недельная нарезка) вынесена в payrollMath.splitHoursByWeek; здесь только строим
+// функцию границ недели (пояс организации через orgWeekGrouping, иначе пояс устройства).
 function weeklyHours(intervals: WorkInterval[], period: PeriodWindow, timeZone: string | null, now = Date.now()) {
-  const weeks = new Map<string, number>()
   const periodStart = period.start.getTime()
   const periodEnd = period.end.getTime()
-  for (const interval of intervals) {
-    const startMs = new Date(interval.start_at).getTime()
-    if (startMs < periodStart || startMs >= periodEnd) continue
-    const rawEndMs = interval.end_at ? new Date(interval.end_at).getTime() : Math.min(now, periodEnd)
-    // Обрезаем вклад до окна периода, затем режем по границам недель.
-    const segStart = Math.max(startMs, periodStart)
-    const segEnd = Math.min(rawEndMs, periodEnd)
-    let cursor = segStart
-    while (cursor < segEnd) {
-      let key: string
-      let boundary: number
-      if (timeZone) {
-        // Границы недели в поясе организации (DST-корректно через Intl).
-        const g = orgWeekGrouping(cursor, timeZone)
-        key = g.weekKey
-        boundary = g.nextWeekStartMs
-      } else {
-        // Прежнее поведение: границы недели в локальном поясе устройства.
-        const nextWeek = startOfWeek(new Date(cursor))
-        nextWeek.setDate(nextWeek.getDate() + 7)
-        boundary = nextWeek.getTime()
-        key = weekKey(cursor)
-      }
-      const portionEnd = Math.min(segEnd, boundary)
-      const hours = Math.max(0, portionEnd - cursor) / 3600000
-      weeks.set(key, (weeks.get(key) ?? 0) + hours)
-      cursor = portionEnd
+  const weekBoundary = (cursor: number): WeekBoundary => {
+    if (timeZone) {
+      // Границы недели в поясе организации (DST-корректно через Intl).
+      const g = orgWeekGrouping(cursor, timeZone)
+      return { key: g.weekKey, nextBoundaryMs: g.nextWeekStartMs }
     }
+    // Прежнее поведение: границы недели в локальном поясе устройства.
+    const nextWeek = startOfWeek(new Date(cursor))
+    nextWeek.setDate(nextWeek.getDate() + 7)
+    return { key: weekKey(cursor), nextBoundaryMs: nextWeek.getTime() }
   }
-  return weeks
+  return splitHoursByWeek(intervals, periodStart, periodEnd, weekBoundary, now)
 }
 
 // PAY-1: строки зарплаты из отработанных интервалов — ЕДИНЫЙ источник расчёта для текущего
@@ -177,12 +163,7 @@ function buildPayrollRows(
     .map((worker) => {
       const workerIntervals = byWorker.get(worker.id) ?? []
       const weeks = weeklyHours(workerIntervals, period, timezone)
-      let regularHours = 0
-      let overtimeHours = 0
-      for (const hours of weeks.values()) {
-        regularHours += Math.min(hours, 40)
-        overtimeHours += Math.max(0, hours - 40)
-      }
+      const { regularHours, overtimeHours } = regularOvertimeSplit(weeks)
       // G1: время в пути — разрывы между сменами в один org-local день. Считается ОТДЕЛЬНО
       // и НЕ участвует в разбивке regular/OT (оплачивается прямой ставкой поверх work-часов).
       const travelGaps = computeTravelGaps(intervalsToTravelShifts(workerIntervals), timezone, alertHours)
@@ -193,7 +174,9 @@ function buildPayrollRows(
         if (gap.overAlert) overAlertGapMs = Math.max(overAlertGapMs, gap.endMs - gap.startMs)
       }
       const rate = rateByWorker.get(worker.id) ?? null
-      const total = rate === null ? 0 : (regularHours * rate) + (overtimeHours * rate * 1.5) + (travelHours * rate)
+      // A4a FROZEN contract: round-half-up of the SUM (не по-компонентно). bonus/reimbursement/
+      // deduction = 0 сегодня, но остаются в формуле (computeWorkerTotal) на будущее. travel уже в total.
+      const total = computeWorkerTotal({ regularHours, overtimeHours, travelHours, rate })
       return { worker, regularHours, overtimeHours, travelHours, overAlertGapMs, rate, total }
     })
     .sort((a, b) => a.worker.name.localeCompare(b.worker.name))
@@ -375,9 +358,10 @@ export default function Payroll() {
     setWorking(true)
     setMsg(null)
     try {
-      // closePayPeriod пересоздаёт строки (delete-all → insert). Для СУЩЕСТВУЮЩЕГО периода
-      // (id != null) всегда пишем ВСЕХ работников окна, иначе фильтр «один работник» стёр бы
-      // строки остальных. Одиночный работник = только для нового черновика (id == null).
+      // A4c: closePayPeriod теперь идёт через транзакционный RPC close_pay_period (пересоздаёт
+      // строки в ОДНОЙ транзакции). Для СУЩЕСТВУЮЩЕГО периода (id != null) всегда пишем ВСЕХ
+      // работников окна, иначе фильтр «один работник» стёр бы строки остальных. Одиночный
+      // работник = только для нового черновика (id == null).
       const source = period.id ? allRows : rows
       const items = source
         .filter((row) => row.regularHours > 0 || row.overtimeHours > 0 || row.rate !== null)
@@ -385,10 +369,16 @@ export default function Payroll() {
           profile_id: row.worker.id,
           regular_hours: row.regularHours,
           overtime_hours: row.overtimeHours,
+          overtime_multiplier: 1.5,
           // REP-1: пишем разбивку проезда. total НЕ меняется — оплата проезда уже в row.total.
           travel_hours: row.travelHours,
           hourly_rate: row.rate,
+          bonus: 0,
+          reimbursement: 0,
+          deduction: 0,
+          // A4a: уже округлённый round-half-up total из buildPayrollRows (computeWorkerTotal).
           total: row.total,
+          time_event_ids: [] as string[],
         }))
       const totalPay = source.reduce((s, r) => s + r.total, 0)
       const savedId = await closePayPeriod(profile, {
