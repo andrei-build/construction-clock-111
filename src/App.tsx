@@ -41,6 +41,7 @@ import { NotificationsProvider } from './lib/notifications'
 import LocationConsentGate from './components/LocationConsentGate'
 import LiveLocationPinger from './components/LiveLocationPinger'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
+import OfflineCacheBanner from './components/OfflineCacheBanner'
 import OfflineFieldSync from './components/OfflineFieldSync'
 
 export default function App() {
@@ -65,6 +66,7 @@ export default function App() {
         <LiveLocationPinger profile={profile} />
         <main className="app-content">
           <OfflineStatusBanner />
+          <OfflineCacheBanner />
           <OfflineFieldSync />
           <BackButton />
           <Routes>
