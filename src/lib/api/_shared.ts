@@ -111,6 +111,20 @@ const RESTORE_ENTITY_TYPE: Record<ArchiveTable, string> = {
   project_expenses: 'expense',
 }
 
+export type PurgeEntityType =
+  | 'task'
+  | 'project_note'
+  | 'document'
+  | 'file'
+  | 'calendar_event'
+  | 'project_material'
+  | 'project_expense'
+  | 'message'
+  | 'contact'
+  | 'deal'
+  | 'daily_report'
+  | 'media'
+
 // Восстановление из корзины: очищаем deleted_at и пишем событие ${entity}.restored в журнал.
 // Аддитивный UPDATE; для profiles/project_expenses при запрете RLS запрос упадёт — UI покажет restore_failed.
 export async function restoreEntity(p: Profile, table: ArchiveTable, id: string) {
@@ -118,6 +132,11 @@ export async function restoreEntity(p: Profile, table: ArchiveTable, id: string)
   if (error) throw error
   const entityType = RESTORE_ENTITY_TYPE[table]
   await logEvent(p, `${entityType}.restored`, entityType, id, {})
+}
+
+export async function purgeEntity(entityType: PurgeEntityType, id: string): Promise<void> {
+  const { error } = await supabase.rpc('purge_entity', { p_entity_type: entityType, p_entity_id: id })
+  if (error) throw error
 }
 
 // ARCH-1 «Корзина»: мягко удалённые сущности (deleted_at IS NOT NULL) одним списком для восстановления.
@@ -147,10 +166,4 @@ export async function getTrashItems(): Promise<TrashItem[]> {
   items.sort((a, b) => new Date(b.deleted_at).getTime() - new Date(a.deleted_at).getTime())
   return items
 }
-
-// BACKEND REQUEST: жёсткое удаление (purge) из корзины не реализовано на фронте — во всём приложении
-// действует только мягкое удаление (deleted_at). Для «Удалить навсегда» нужен серверный путь:
-// RPC/edge-функция purge_entity(table, id) под owner-гейтом (RLS DELETE на projects/profiles/tasks/
-// project_expenses сейчас не гарантирован). До его появления кнопка «Удалить навсегда» отключена
-// (owner-only, disabled) — см. src/screens/Trash.tsx. Ничего не подделываем: реального DELETE тут нет.
 
