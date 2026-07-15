@@ -144,3 +144,59 @@ export const getClientDocuments = withReadCache('getClientDocuments', clientsApi
 export const getDeals = withReadCache('getDeals', clientsApi.getDeals, FIN)
 export const getAccountById = withReadCache('getAccountById', clientsApi.getAccountById)
 export const getProjectGrants = withReadCache('getProjectGrants', clientsApi.getProjectGrants)
+
+// OFFLINE-1 (pass 1b remainder): offline-aware WRITE wrappers. Same shim technique as the reads
+// above — the domain writer (tasksApi.*/projectsApi.*) stays byte-for-byte unchanged; each const
+// below shadows the wildcard re-export with a variant that, when the network is unreachable,
+// durably ENQUEUES the mutation (offlineFieldActions, replayed exactly-once app-wide by
+// flushOutbox on reconnect) instead of throwing the worker's write away. DNA §14: loss of
+// connectivity must not take data away. Behaviour online is byte-identical to the raw writer.
+import { enqueueMaterialStatus, enqueueTaskCreate, enqueueNoteCreate } from './offlineFieldActions'
+import type { Profile, ProjectNote } from './types'
+import type { MaterialStatusAction, NewTaskInput } from './api/tasks'
+
+// navigator.onLine is the fast pre-check; a mid-flight fetch failure is the reliable one, so we
+// enqueue on EITHER (parity with TasksTab's task-done / photo degrade path).
+function writeIsOnline(): boolean {
+  return typeof navigator === 'undefined' || navigator.onLine
+}
+function isWriteNetworkError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return /failed to fetch|networkerror|network|fetch|load failed/i.test(message)
+}
+
+// Material pick-up / undo / delivery (RPC). Void return — the queue replays the same state
+// transition, which is idempotent server-side (no duplicate rows on double-replay).
+export const markMaterialStatus = async (taskId: string, action: MaterialStatusAction): Promise<void> => {
+  if (!writeIsOnline()) { enqueueMaterialStatus(taskId, action); return }
+  try {
+    await tasksApi.markMaterialStatus(taskId, action)
+  } catch (err) {
+    if (isWriteNetworkError(err)) { enqueueMaterialStatus(taskId, action); return }
+    throw err
+  }
+}
+
+// Task creation. Offline returns the optimistic `offline-<clientId>` id so callers proceed as
+// with a real id (attachments uploaded against it degrade on their own path).
+export const createTask = async (p: Profile, input: NewTaskInput): Promise<string> => {
+  if (!writeIsOnline()) return enqueueTaskCreate(input)
+  try {
+    return await tasksApi.createTask(p, input)
+  } catch (err) {
+    if (isWriteNetworkError(err)) return enqueueTaskCreate(input)
+    throw err
+  }
+}
+
+// Project-note creation. Offline returns a synthetic ProjectNote so the notes list renders it
+// immediately; the real insert replays on reconnect.
+export const createProjectNote = async (p: Profile, projectId: string, body: string): Promise<ProjectNote> => {
+  if (!writeIsOnline()) return enqueueNoteCreate(p, projectId, body)
+  try {
+    return await projectsApi.createProjectNote(p, projectId, body)
+  } catch (err) {
+    if (isWriteNetworkError(err)) return enqueueNoteCreate(p, projectId, body)
+    throw err
+  }
+}
