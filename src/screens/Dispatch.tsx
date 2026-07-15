@@ -636,6 +636,9 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
   const [fDescription, setFDescription] = useState('')
   const [fAssignee, setFAssignee] = useState('')
   const [fPriority, setFPriority] = useState<Task['priority']>('medium')
+  // Фото по умолчанию НЕ обязательно (закон Андрея §3): tasks.requires_photo default=true в БД,
+  // поэтому передаём явный false, если галочка не стоит — иначе офисные задачи нельзя закрыть без фото.
+  const [fRequiresPhoto, setFRequiresPhoto] = useState(false)
   const [busy, setBusy] = useState(false)
   const [createOk, setCreateOk] = useState(false)
   const [createErr, setCreateErr] = useState(false)
@@ -669,8 +672,9 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
         priority: fPriority,
         assigned_to: fAssignee || null,
         description: fDescription,
+        requires_photo: fRequiresPhoto,
       })
-      setFTitle(''); setFDescription(''); setFAssignee(''); setFProject(''); setFPriority('medium')
+      setFTitle(''); setFDescription(''); setFAssignee(''); setFProject(''); setFPriority('medium'); setFRequiresPhoto(false)
       setCreateOk(true)
       await onChanged()
     } catch {
@@ -873,6 +877,11 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
                   </select>
                 </div>
               </div>
+
+              <label className="row" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
+                <input type="checkbox" checked={fRequiresPhoto} onChange={(e) => setFRequiresPhoto(e.target.checked)} style={{ width: 'auto' }} />
+                <span>{t('task_requires_photo')}</span>
+              </label>
 
               {createErr && <p className="error-msg">{t('tasks_create_error')}</p>}
               {createOk && <p className="ok-msg">{t('cc_task_created')}</p>}
