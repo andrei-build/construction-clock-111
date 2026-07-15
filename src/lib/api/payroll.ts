@@ -266,3 +266,78 @@ export async function getArchivePayPeriods(): Promise<ArchivePayPeriod[]> {
     items: itemsByPeriod.get(p.id) ?? [],
   }))
 }
+
+export interface UnpaidWorkSummary {
+  hours: number
+  amount: number
+}
+
+function payPeriodWindow(period: { period_start: string; period_end: string }): { startMs: number; endMs: number } {
+  const start = new Date(`${period.period_start}T00:00:00`)
+  const end = new Date(`${period.period_end}T00:00:00`)
+  end.setDate(end.getDate() + 1)
+  return { startMs: start.getTime(), endMs: end.getTime() }
+}
+
+function subtractClosedPeriods(startMs: number, endMs: number, closed: Array<{ startMs: number; endMs: number }>): number {
+  let openSegments = [{ startMs, endMs }]
+  for (const period of closed) {
+    const next: Array<{ startMs: number; endMs: number }> = []
+    for (const segment of openSegments) {
+      const overlapStart = Math.max(segment.startMs, period.startMs)
+      const overlapEnd = Math.min(segment.endMs, period.endMs)
+      if (overlapEnd <= overlapStart) {
+        next.push(segment)
+        continue
+      }
+      if (segment.startMs < overlapStart) next.push({ startMs: segment.startMs, endMs: overlapStart })
+      if (overlapEnd < segment.endMs) next.push({ startMs: overlapEnd, endMs: segment.endMs })
+    }
+    openSegments = next
+    if (openSegments.length === 0) break
+  }
+  return openSegments.reduce((sum, segment) => sum + Math.max(0, segment.endMs - segment.startMs), 0)
+}
+
+// OVR-1: finance-only Overview KPI. "Unpaid" means work interval hours that are
+// outside approved/paid pay periods. Money uses the latest visible worker rate.
+export async function getUnpaidWorkSummary(): Promise<UnpaidWorkSummary> {
+  const [periodsRes, intervalsRes, ratesRes] = await Promise.all([
+    supabase.from('pay_periods')
+      .select('period_start, period_end')
+      .in('status', ['approved', 'paid']),
+    supabase.from('v_work_intervals')
+      .select('profile_id, start_at, end_at')
+      .order('start_at', { ascending: false }),
+    supabase.from('profile_rates')
+      .select('profile_id, hourly_rate, effective_from')
+      .order('effective_from', { ascending: false }),
+  ])
+  if (periodsRes.error || intervalsRes.error || ratesRes.error) return { hours: 0, amount: 0 }
+
+  const closed = ((periodsRes.data ?? []) as Array<{ period_start: string; period_end: string }>)
+    .map(payPeriodWindow)
+    .filter((period) => Number.isFinite(period.startMs) && Number.isFinite(period.endMs))
+  const rateByWorker = new Map<string, number | null>()
+  for (const row of (ratesRes.data ?? []) as Array<{ profile_id: string; hourly_rate: number | null }>) {
+    if (!rateByWorker.has(row.profile_id)) {
+      rateByWorker.set(row.profile_id, row.hourly_rate === null ? null : Number(row.hourly_rate))
+    }
+  }
+
+  const now = Date.now()
+  let hours = 0
+  let amount = 0
+  for (const interval of (intervalsRes.data ?? []) as Array<{ profile_id: string; start_at: string; end_at: string | null }>) {
+    const startMs = new Date(interval.start_at).getTime()
+    const endMs = interval.end_at ? new Date(interval.end_at).getTime() : now
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue
+    const unpaidMs = subtractClosedPeriods(startMs, endMs, closed)
+    const unpaidHours = unpaidMs / 3600000
+    hours += unpaidHours
+    const rate = rateByWorker.get(interval.profile_id)
+    if (typeof rate === 'number' && Number.isFinite(rate)) amount += unpaidHours * rate
+  }
+
+  return { hours, amount }
+}
