@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './lib/auth'
-import { isManagerRole } from './lib/types'
+import { isManagerRole, hasFinanceAccess } from './lib/types'
 import Login from './screens/Login'
 import Dashboard from './screens/Dashboard'
 import Overview from './screens/Overview'
@@ -53,6 +53,9 @@ export default function App() {
   const salesAccess = manager || salesOnly
   // SET-1: /settings regated to owner/admin only (plain managers/supervisors lose it).
   const adminOrOwner = profile.role === 'owner' || profile.role === 'admin'
+  // A2: доступ к финансам = owner/admin ИЛИ гранта finance_access. Supervisor — manager-роль,
+  // но зарплату видеть НЕ должен, поэтому /payroll гейтим финансовым предикатом, а не isManagerRole.
+  const financeAccess = hasFinanceAccess(profile)
   return (
     <LocationConsentGate profile={profile}>
     <EntityDrawerProvider>
@@ -94,7 +97,7 @@ export default function App() {
             {/* SET-1: owner-only page renders its own friendly denied note for non-owners (no crash). */}
             <Route path="/owner-settings" element={<OwnerSettings />} />
             <Route path="/time" element={<MyTime />} />
-            <Route path="/payroll" element={manager ? <Payroll /> : <Navigate to="/" />} />
+            <Route path="/payroll" element={financeAccess ? <Payroll /> : <Navigate to="/" />} />
             <Route path="/messages" element={<Messages />} />
             <Route path="/more" element={<More />} />
             <Route path="*" element={<Navigate to="/" />} />

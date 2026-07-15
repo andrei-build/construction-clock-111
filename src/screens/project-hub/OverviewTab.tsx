@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useI18n } from '../../lib/i18n'
 import { getOpenTasks, getProjectCalendarEvents, getProjectHubFiles, getProjectNotes, getProjectTimeEvents, getScheduleAssignments, getTeam } from '../../lib/api'
 import { isEffectiveOpenTask } from '../../lib/task-status'
+import { hasFinanceAccess } from '../../lib/types'
 import type { Account, CalendarEvent, Profile, Project, ProjectProfit, ProjectTimeEvent, ScheduleAssignment } from '../../lib/types'
 import { getDeadlineInfo, statusDotClass, type TrafficStatus } from './status'
 import { isDateRangeInvalid } from '../../lib/project-schedule'
@@ -152,6 +153,9 @@ function normalizedProfitStatus(profit: ProjectProfit | null): TrafficStatus {
 export default function OverviewTab({ project, profit, account, profile, managerView, onOpenTab }: OverviewTabProps) {
   const { t } = useI18n()
   const navigate = useNavigate()
+  // A2: маржа/себестоимость/бюджет — только при доступе к финансам (owner/admin ИЛИ finance_access).
+  // Без доступа блок не рендерим вовсе (v_project_profit вернёт NULL — не показываем серые нули).
+  const financeAllowed = hasFinanceAccess(profile)
   const [expanded, setExpanded] = useState<TileKey | null>(null)
   const [team, setTeam] = useState<TeamAggregate | null>(null)
   const [counts, setCounts] = useState<OverviewCounts | null>(null)
@@ -290,25 +294,28 @@ export default function OverviewTab({ project, profit, account, profile, manager
           {expanded === 'deadline' && <div className="hub-tile-explain">{t(deadline.explanationKey)}</div>}
         </button>
 
-        <button
-          type="button"
-          className="card hub-indicator"
-          aria-expanded={expanded === 'profit'}
-          onClick={() => toggle('profit')}
-        >
-          <div className="hub-indicator-head">
-            <span className={statusDotClass(profitStatus)} />
-            <span className="item-title">{t('project_margin')}</span>
-          </div>
-          <div className="hub-indicator-value num-display">{marginValue}</div>
-          <div className="muted">{profitSummary}</div>
-          <div className="muted hub-breakdown">{profitBreakdown}</div>
-          {expanded === 'profit' && (
-            <div className="hub-tile-explain">
-              {profitStatus === 'neutral' ? t('hub_profit_no_data_explain') : t(`hub_profit_${profitStatus}_explain`)}
+        {/* A2: плитка маржи/себестоимости — только при доступе к финансам. */}
+        {financeAllowed && (
+          <button
+            type="button"
+            className="card hub-indicator"
+            aria-expanded={expanded === 'profit'}
+            onClick={() => toggle('profit')}
+          >
+            <div className="hub-indicator-head">
+              <span className={statusDotClass(profitStatus)} />
+              <span className="item-title">{t('project_margin')}</span>
             </div>
-          )}
-        </button>
+            <div className="hub-indicator-value num-display">{marginValue}</div>
+            <div className="muted">{profitSummary}</div>
+            <div className="muted hub-breakdown">{profitBreakdown}</div>
+            {expanded === 'profit' && (
+              <div className="hub-tile-explain">
+                {profitStatus === 'neutral' ? t('hub_profit_no_data_explain') : t(`hub_profit_${profitStatus}_explain`)}
+              </div>
+            )}
+          </button>
+        )}
 
         <button
           type="button"
@@ -453,7 +460,8 @@ export default function OverviewTab({ project, profit, account, profile, manager
       <div className="card hub-quick-facts">
         <h2>{t('hub_overview_quick_facts')}</h2>
         <div className="hub-fact-grid">
-          {budget && (
+          {/* A2: бюджет — финансовая величина; показываем только при доступе к финансам. */}
+          {financeAllowed && budget && (
             <div className="hub-fact">
               <span className="muted">{t('hub_budget')}</span>
               <span className="item-title num-display">{budget}</span>

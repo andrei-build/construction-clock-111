@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useI18n } from '../../lib/i18n'
 import { getProjectDocuments, getProjectExpenses } from '../../lib/api'
+import { hasFinanceAccess } from '../../lib/types'
 import type { DocumentRow, Profile, Project, ProjectExpense } from '../../lib/types'
 
 interface FinanceTabProps {
@@ -29,8 +30,8 @@ function statusTone(status: DocumentRow['status']) {
 
 export default function FinanceTab({ project, profile }: FinanceTabProps) {
   const { t } = useI18n()
-  // Финансовый гейт как в /documents: доступ к финансам получают только owner/admin (ДНК §1).
-  const financeAllowed = profile ? (profile.role === 'owner' || profile.role === 'admin') : false
+  // A2: доступ к финансам = owner/admin ИЛИ гранта finance_access (единый предикат hasFinanceAccess).
+  const financeAllowed = hasFinanceAccess(profile)
   const [documents, setDocuments] = useState<DocumentRow[]>([])
   const [expenses, setExpenses] = useState<ProjectExpense[]>([])
   const [loading, setLoading] = useState(true)

@@ -16,6 +16,9 @@ export interface Profile {
   // (free-form, comma-separated chips), skills_note is a free-form note.
   skills?: string | null
   skills_note?: string | null
+  // A2: гибкие права (user_capabilities), где granted=true, подгружаются в auth.fetchProfile.
+  // Пусто/undefined = прав нет. Читать через hasFinanceAccess и т.п., не по строке напрямую.
+  capabilities?: string[] | null
 }
 
 export interface Project {
@@ -790,6 +793,15 @@ export interface ProjectHubFile extends FileRow {
 
 export const isManagerRole = (r: Role) => ['supervisor', 'manager', 'admin', 'owner'].includes(r)
 export const isManagerWrite = (r: Role) => ['manager', 'admin', 'owner'].includes(r)
+
+// A2: единственный предикат доступа к финансам (маржа/себестоимость/бюджет/зарплата).
+// Доступ = owner/admin ИЛИ гранта finance_access (user_capabilities, выдаётся только owner/admin —
+// см. WorkerDetail). Supervisor/manager/worker без гранта финансов НЕ видят. Не размазывать проверку
+// по ролям — гейтить финансы всегда через этот предикат.
+export const hasFinanceAccess = (
+  p: Pick<Profile, 'role' | 'capabilities'> | null | undefined,
+): boolean =>
+  !!p && (p.role === 'owner' || p.role === 'admin' || (p.capabilities?.includes('finance_access') ?? false))
 
 // Иерархия власти ролей: чем выше число, тем больше прав. Основа гейта назначения ролей (F3).
 export const ROLE_POWER: Record<Role, number> = {

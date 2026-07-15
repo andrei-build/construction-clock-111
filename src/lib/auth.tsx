@@ -19,10 +19,22 @@ const Ctx = createContext<AuthState>(null as unknown as AuthState)
 async function fetchProfile(): Promise<Profile | null> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-  const { data } = await supabase.from('profiles')
-    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video')
-    .eq('id', user.id).maybeSingle()
-  return (data as Profile | null) ?? null
+  // A2: профиль + активные гибкие права (user_capabilities). finance_access выдаётся только
+  // owner/admin (см. WorkerDetail), но действовать он должен везде — поэтому грузим здесь и кладём
+  // на профиль как capabilities[], чтобы гейты (hasFinanceAccess) читали его из контекста авторизации.
+  const [profileRes, capsRes] = await Promise.all([
+    supabase.from('profiles')
+      .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video')
+      .eq('id', user.id).maybeSingle(),
+    supabase.from('user_capabilities')
+      .select('capability, granted')
+      .eq('user_id', user.id)
+      .eq('granted', true),
+  ])
+  const profile = (profileRes.data as Profile | null) ?? null
+  if (!profile) return null
+  const caps = (capsRes.data as { capability: string; granted: boolean }[] | null) ?? []
+  return { ...profile, capabilities: caps.map((row) => row.capability) }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
