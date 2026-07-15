@@ -253,7 +253,7 @@ export async function addTimeEvent(
 // silently ignored. Mirrors notifyMessagePush's try/catch + swallow style.
 export function notifyTravelStarted(
   projectId: string,
-  opts?: { action?: 'travel' | 'checkin' | 'checkout'; eta_minutes?: number; note?: string },
+  opts?: { action?: 'travel' | 'checkin' | 'checkout'; eta_minutes?: number; note?: string; traveler_profile_id?: string },
 ): void {
   try {
     void supabase.functions
@@ -262,6 +262,7 @@ export function notifyTravelStarted(
           project_id: projectId,
           action: opts?.action ?? 'travel',
           ...(opts?.eta_minutes != null ? { eta_minutes: opts.eta_minutes } : {}),
+          ...(opts?.traveler_profile_id ? { traveler_profile_id: opts.traveler_profile_id } : {}),
           ...(opts?.note ? { note: opts.note } : {}),
         },
       })
@@ -277,14 +278,19 @@ export function notifyTravelStarted(
   }
 }
 
-export async function startProjectTravel(p: Profile, project: Project, startedAt: string) {
+export async function startProjectTravel(
+  p: Profile,
+  project: Project,
+  startedAt: string,
+  opts?: { eta_minutes?: number; traveler_profile_id?: string },
+) {
   await logEvent(p, 'travel.started', 'project', project.id, {
     project_id: project.id,
     address: project.address ?? '',
     started_at: startedAt,
   })
   // travel.started recorded → best-effort notify the client (never blocks the flow above).
-  notifyTravelStarted(project.id)
+  notifyTravelStarted(project.id, opts)
 }
 
 export async function getTeam(): Promise<Profile[]> {
