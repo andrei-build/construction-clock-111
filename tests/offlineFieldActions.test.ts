@@ -107,7 +107,8 @@ describe('task_create offline queue', () => {
     const sent = await mod.flushFieldActions(profile)
     expect(sent).toBe(1)
     expect(createTask).toHaveBeenCalledTimes(1)
-    expect(createTask).toHaveBeenCalledWith(profile, expect.objectContaining({ title: 'Fix rail' }))
+    // OFFLINE-2: the queued clientId is threaded through as the 3rd arg (partial-unique client_id).
+    expect(createTask).toHaveBeenCalledWith(profile, expect.objectContaining({ title: 'Fix rail' }), expect.any(String))
 
     expect(await mod.flushFieldActions(profile)).toBe(0)
     expect(createTask).toHaveBeenCalledTimes(1)
@@ -126,7 +127,8 @@ describe('note_create offline queue', () => {
     const sent = await mod.flushFieldActions(profile)
     expect(sent).toBe(1)
     expect(createProjectNote).toHaveBeenCalledTimes(1)
-    expect(createProjectNote).toHaveBeenCalledWith(profile, 'proj1', 'hello team')
+    // OFFLINE-2: the queued clientId is threaded through as the 4th arg (partial-unique client_id).
+    expect(createProjectNote).toHaveBeenCalledWith(profile, 'proj1', 'hello team', expect.any(String))
     expect(mod.getQueuedFieldActions()).toHaveLength(0)
   })
 })
