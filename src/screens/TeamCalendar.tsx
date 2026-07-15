@@ -57,6 +57,23 @@ function toneClass(status: TrafficStatus) {
   return status === 'neutral' ? 'grey' : status
 }
 
+function markerChipTone(kind: MarkerKind): 'green' | 'red' {
+  return kind === 'start' ? 'green' : 'red'
+}
+
+function markerChipTime(kind: MarkerKind) {
+  return kind === 'start' ? '8:00' : '17:00'
+}
+
+function localTimeLabel(iso: string) {
+  const d = new Date(iso)
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function mdLabel(d: Date) {
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+}
+
 // Тон/иконка плашки события по типу (согласовано с /calendar: inspection = amber).
 function eventTone(type: EventType): 'blue' | 'amber' | 'green' {
   if (type === 'inspection') return 'amber'
@@ -253,12 +270,20 @@ export default function TeamCalendar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks, canSeeAll, isDriver, myId])
 
-  const monthLabel = monthCursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+  const monthLabel = useMemo(() => {
+    const start = firstOfMonth(monthCursor)
+    const end = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 0)
+    return `${monthCursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} · ${mdLabel(start)}→${mdLabel(end)}`
+  }, [monthCursor])
 
   const moveMonth = (direction: -1 | 1) => {
     setMonthCursor((cur) => new Date(cur.getFullYear(), cur.getMonth() + direction, 1))
   }
   const goToday = () => setMonthCursor(firstOfMonth(new Date()))
+  const resetDates = () => {
+    setFrom('')
+    setTo('')
+  }
 
   const projectName = (id?: string | null) => (id ? projects.find((p) => p.id === id)?.name ?? '' : '')
   const personName = (id?: string | null) => (id ? team.find((m) => m.id === id)?.name ?? '' : '')
@@ -343,13 +368,14 @@ export default function TeamCalendar() {
 
   const renderPlashka = (item: CellItem) => {
     if (item.kind === 'marker') {
+      const label = item.markerKind === 'start' ? t('cal_project_start_chip') : t('cal_project_deadline_chip')
       return (
         <span
           key={item.id}
-          className={`badge ${toneClass(item.status)} team-cal-plashka`}
+          className={`badge ${markerChipTone(item.markerKind)} team-cal-plashka team-cal-marker-chip`}
           title={`${item.project.name} · ${item.markerKind === 'start' ? t('cal_start_marker') : t('cal_deadline_marker')}`}
         >
-          {item.markerKind === 'start' ? '▸' : '◆'} {item.project.name}
+          {markerChipTime(item.markerKind)} · {label}
         </span>
       )
     }
@@ -361,7 +387,7 @@ export default function TeamCalendar() {
           className={`badge ${eventTone(e.event_type)} team-cal-plashka`}
           title={`${e.title} · ${t(`event_${e.event_type}`)}`}
         >
-          {eventIcon(e.event_type)} {e.title}
+          {localTimeLabel(e.starts_at)} · {e.title}
         </span>
       )
     }
@@ -436,8 +462,8 @@ export default function TeamCalendar() {
         </div>
       ) : (
         <>
-          <div className="row team-cal-toolbar">
-            <div className="row team-cal-monthnav">
+          <div className="team-cal-toolbar">
+            <div className="team-cal-monthnav">
               <button className="btn ghost small calendar-nav-btn" aria-label={t('cal_prev_month')} onClick={() => moveMonth(-1)}>←</button>
               <span className="team-cal-month">{monthLabel}</span>
               <button className="btn ghost small calendar-nav-btn" aria-label={t('cal_next_month')} onClick={() => moveMonth(1)}>→</button>
@@ -450,6 +476,7 @@ export default function TeamCalendar() {
               <label>{t('cal_to')}
                 <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
               </label>
+              <button className="btn ghost small team-cal-reset" disabled={!from && !to} onClick={resetDates}>{t('cal_reset_dates')}</button>
             </div>
           </div>
 
@@ -471,12 +498,21 @@ export default function TeamCalendar() {
                   if (otherMonth) classes.push('other-month')
                   if (key === todayKey) classes.push('today')
                   if (key === selectedDay) classes.push('selected')
+                  const visibleItems = items.slice(0, 3)
+                  const countLabel = t('cal_event_count_badge').replace('{n}', String(items.length))
                   return (
                     <button type="button" key={key} className={classes.join(' ')} onClick={() => openDay(key)}>
-                      <span className="team-cal-daynum">{day.getDate()}</span>
-                      <span className="team-cal-plashki">
-                        {items.map((item) => renderPlashka(item))}
+                      <span className="team-cal-cell-head">
+                        <span className="team-cal-daynum">{day.getDate()}</span>
+                        {items.length > 0 && <span className="team-cal-count" title={countLabel} aria-label={countLabel}>{items.length}</span>}
                       </span>
+                      {items.length > 0 ? (
+                        <span className="team-cal-plashki">
+                          {visibleItems.map((item) => renderPlashka(item))}
+                        </span>
+                      ) : (
+                        <span className="team-cal-empty">{t('cal_empty_day_caption')}</span>
+                      )}
                     </button>
                   )
                 })}
@@ -490,7 +526,7 @@ export default function TeamCalendar() {
                   <button className="btn ghost small" aria-label={t('back')} onClick={() => setSelectedDay(null)}>✕</button>
                 </div>
 
-                {selItems.length === 0 && <p className="muted">{t('cal_day_empty')}</p>}
+                {selItems.length === 0 && <p className="muted">{t('cal_empty_day_caption')}</p>}
 
                 {selMarkers.length > 0 && (
                   <div className="team-cal-panel-markers">
