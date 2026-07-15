@@ -64,7 +64,7 @@ export default function More() {
       {/* РАБОТА / WORK */}
       <h2>{t('more_group_work')}</h2>
       <div className="more-group">
-        {manager && <MoreLink to="/dispatch" Icon={IconDispatch} label={t('dispatch')} />}
+        {manager && <MoreLink to="/dispatch" Icon={IconDispatch} label={t('command_center')} />}
         {manager && <MoreLink to="/calendar" Icon={IconCalendar} label={t('calendar')} />}
         {manager && <MoreLink to="/team-calendar" Icon={IconCalendar} label={t('team_calendar')} />}
         {manager && <MoreLink to="/stores" Icon={IconBriefcase} label={t('stores')} />}

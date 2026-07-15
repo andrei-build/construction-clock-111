@@ -288,6 +288,21 @@ export async function markTaskDone(p: Profile, task: Task, mediaId: string | nul
   await logEvent(p, 'task.completed', 'task', task.id, { title: task.title, media_id: mediaId })
 }
 
+// CC-2 «Командный центр» → виджет «Статус раздачи задач»: МОИ раздачи (created_by = я) с
+// операционным следом — кто ПРОЧИТАЛ (metadata.read_by), кто ВЗЯЛ (picked_up_by/in_progress),
+// кто ЗАКРЫЛ (done_by/done_at). Отдельный select с created_by + picked_up_*: узкие select'ы
+// (getOpenTasks/getAllTasks) этих колонок не тянут. RLS tasks_select держит org-скоуп и
+// прячет deleted_at. Свежие сверху.
+const DISPATCH_TASK_SELECT = 'id, org_id, project_id, task_type, title, description, status, priority, assigned_to, urgent_flag, requires_photo, due_date, done_at, done_by, created_at, created_by, metadata, picked_up_at, picked_up_by, delivered_at, delivered_by'
+export async function getTasksCreatedBy(profileId: string): Promise<Task[]> {
+  const { data, error } = await supabase.from('tasks')
+    .select(DISPATCH_TASK_SELECT)
+    .eq('created_by', profileId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data as Task[]) ?? []
+}
+
 export async function getArchivedTasks(): Promise<ArchivedTask[]> {
   const { data, error } = await supabase.from('tasks')
     .select('id, title, project_id, status, deleted_at, project:projects(name)')

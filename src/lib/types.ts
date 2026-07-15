@@ -125,6 +125,9 @@ export interface Task {
   requires_photo?: boolean
   done_at?: string | null
   done_by?: string | null
+  // Автор задачи. Опционально: узкие select'ы (getOpenTasks/getAllTasks) его не тянут, а
+  // «Командный центр» (CC-2) выбирает МОИ раздачи через getTasksCreatedBy (select с created_by).
+  created_by?: string | null
   // jsonb-мешок задачи. Используем metadata.read_by = { [profile_id]: iso_ts } под
   // отметку «Прочитано: кто, когда» (паритет Check Time «Водитель увидел»).
   metadata?: Record<string, unknown> | null

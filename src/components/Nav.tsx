@@ -48,11 +48,13 @@ export default function Nav({ manager }: { manager: boolean }) {
   //     (см. src/screens/More.tsx) и хабах. МОБАЙЛ НЕ МЕНЯЕМ.
   //   Десктоп — слева есть место: показываем ПОЛНЫЙ сгруппированный список (sideGroups ниже),
   //     без «Ещё», каждый пункт в один клик (NAV-4: «zero extra clicks»).
+  // CC-2: командой рулят из «Командного центра» (/dispatch). Отдельный экран «Задачи» убран из
+  // навигации менеджера — доска задач живёт внутри Командного центра (маршрут /tasks → редирект).
   const managerItems: NavItem[] = [
     { to: '/overview', Icon: IconGrid, label: t('overview') },
-    { to: '/', end: true, Icon: IconDashboard, label: t('command_center') },
+    { to: '/', end: true, Icon: IconDashboard, label: t('nav_home') },
+    { to: '/dispatch', Icon: IconDispatch, label: t('command_center') },
     { to: '/projects', Icon: IconFolder, label: t('projects') },
-    { to: '/tasks', Icon: IconTasks, label: t('tasks') },
     { to: '/team', Icon: IconUsers, label: t('team') },
     { to: '/schedule', Icon: IconCalendar, label: t('schedule') },
     { to: '/more', Icon: IconSettings, label: t('more') },
@@ -91,15 +93,16 @@ export default function Nav({ manager }: { manager: boolean }) {
       title: t('nav_group_main'),
       items: [
         { to: '/overview', Icon: IconGrid, label: t('overview') },
-        { to: '/', end: true, Icon: IconDashboard, label: t('command_center') },
+        { to: '/', end: true, Icon: IconDashboard, label: t('nav_home') },
+        { to: '/dispatch', Icon: IconDispatch, label: t('command_center') },
         { to: '/projects', Icon: IconFolder, label: t('projects') },
         { to: '/team', Icon: IconUsers, label: t('team') },
       ],
     },
     {
       title: t('nav_group_work'),
+      // CC-2: пункт «Задачи» убран — доска задач внутри Командного центра (/dispatch).
       items: [
-        { to: '/tasks', Icon: IconTasks, label: t('tasks') },
         { to: '/team-calendar', Icon: IconCalendar, label: t('team_calendar') },
         { to: '/schedule', Icon: IconCalendar, label: t('schedule') },
         { to: '/map', Icon: IconMap, label: t('map') },
