@@ -476,6 +476,69 @@ export async function createWorker(name: string, pin: string, role: string): Pro
   return { ok: true }
 }
 
+type InviteAdminRole = 'owner' | 'admin'
+type InviteAdminResult = {
+  ok: boolean
+  error?: string
+  invite_link?: string
+  email?: string
+  role?: string
+  profile_id?: string
+}
+type InviteAdminEdgeResponse = {
+  ok?: boolean
+  error?: string
+  invite_link?: string
+  email?: string
+  role?: string
+  profile_id?: string
+}
+
+function inviteAdminErrorCode(value?: unknown, status?: number): string {
+  if (value === 'only_owner_can_invite') return 'only_owner_can_invite'
+  if (value === 'create_failed') return 'create_failed'
+  if (status === 403) return 'only_owner_can_invite'
+  if (status === 409) return 'create_failed'
+  return 'error'
+}
+
+function getResponseStatus(error: unknown): number | undefined {
+  const context = (error as { context?: { status?: unknown } } | null)?.context
+  return typeof context?.status === 'number' ? context.status : undefined
+}
+
+async function getFunctionErrorCode(error: unknown): Promise<unknown> {
+  const context = (error as { context?: { json?: () => Promise<unknown> } } | null)?.context
+  if (typeof context?.json !== 'function') return undefined
+  try {
+    const body = await context.json()
+    return (body as { error?: unknown } | null)?.error
+  } catch {
+    return undefined
+  }
+}
+
+export async function inviteAdmin(name: string, email: string, role: InviteAdminRole): Promise<InviteAdminResult> {
+  const { data, error } = await supabase.functions.invoke<InviteAdminEdgeResponse>('invite-admin', {
+    body: { name, email, role },
+  })
+  if (error) {
+    const errorCode = data?.error ?? await getFunctionErrorCode(error)
+    return { ok: false, error: inviteAdminErrorCode(errorCode, getResponseStatus(error)) }
+  }
+  if (data?.error) return { ok: false, error: inviteAdminErrorCode(data.error) }
+  if (data?.ok) {
+    return {
+      ok: true,
+      invite_link: data.invite_link,
+      email: data.email,
+      role: data.role,
+      profile_id: data.profile_id,
+    }
+  }
+  return { ok: false, error: 'error' }
+}
+
 // ARCH-1 «Архив» → вкладка «Зарплата / Рабочие»: деактивированные работники (is_active=false, не удалены —
 // удалённые живут в корзине). RLS profiles отдаёт менеджеру org-скоуп.
 export async function getDeactivatedWorkers(): Promise<DeactivatedWorker[]> {
