@@ -38,8 +38,17 @@ function isNetworkError(error: unknown) {
   return /failed to fetch|networkerror|network|fetch|load failed/i.test(message)
 }
 
+// The attach_checkout_video RPC raises guard exceptions as Postgres error text.
+// Map the ones the worker can act on to a friendly message; generic fallback for the rest.
+function checkoutVideoErrorMsg(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  if (/write-once/i.test(message)) return 'checkout_video_write_once'
+  if (/forbidden/i.test(message)) return 'checkout_video_forbidden'
+  return 'checkout_video_save_failed'
+}
+
 function messageClass(msg: string) {
-  if (msg === 'error') return 'error-msg'
+  if (['error', 'checkout_video_write_once', 'checkout_video_forbidden', 'checkout_video_save_failed'].includes(msg)) return 'error-msg'
   if (['offline_saved', 'checkout_video_needed', 'checkout_video_online_required', 'safety_signature_required', 'safety_online_required', 'consent_agree_required', 'file_too_large', 'file_type_not_allowed'].includes(msg)) return 'warn-msg'
   return 'ok-msg'
 }
@@ -220,6 +229,7 @@ export default function CheckIn() {
     } catch (error) {
       if (isNetworkError(error) && !requiresVideo) await saveOffline()
       else if (requiresVideo && isNetworkError(error)) setMsg('checkout_video_online_required')
+      else if (requiresVideo) setMsg(checkoutVideoErrorMsg(error))
       else setMsg('error')
     } finally {
       setBusy(false)

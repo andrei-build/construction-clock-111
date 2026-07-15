@@ -245,9 +245,10 @@ export async function uploadCheckoutVideo(p: Profile, eventId: string, file: Fil
     })
   if (uploadError) throw uploadError
 
-  const { error } = await supabase.from('time_events')
-    .update({ video_status: 'uploaded', video_path: storagePath })
-    .eq('id', eventId)
+  // time_events has NO client-side RLS UPDATE policy, so a direct .update() silently fails.
+  // The SECURITY DEFINER RPC is the only legal write path: it sets BOTH video_path AND
+  // video_status='uploaded' itself, write-once, and derives org/permission from auth context.
+  const { error } = await supabase.rpc('attach_checkout_video', { p_event_id: eventId, p_video_path: storagePath })
   if (error) throw error
   await logEvent(p, 'time.checkout_video_uploaded', 'time_event', eventId, { video_path: storagePath })
   return storagePath
