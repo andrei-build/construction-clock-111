@@ -1,9 +1,9 @@
-import type { ComponentType, SVGProps } from 'react'
+import type { ComponentType, FormEvent, SVGProps } from 'react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getTeam, getAppSettings, saveAppSettings, type AppSettingsInput } from '../lib/api'
+import { getTeam, getAppSettings, saveAppSettings, inviteAdmin, type AppSettingsInput } from '../lib/api'
 import type { AppSettings, Profile } from '../lib/types'
 import {
   STORE_RADIUS_MIN,
@@ -49,6 +49,12 @@ function payloadFrom(source: AppSettings, storeRadius: number): AppSettingsInput
   }
 }
 
+function inviteErrorKey(error?: string): string {
+  if (error === 'only_owner_can_invite') return 'invite_admin_err_only_owner'
+  if (error === 'create_failed') return 'invite_admin_err_create_failed'
+  return 'invite_admin_err_generic'
+}
+
 export default function OwnerSettings() {
   const { profile } = useAuth()
   const { t } = useI18n()
@@ -60,6 +66,13 @@ export default function OwnerSettings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [inviteName, setInviteName] = useState('')
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState<'owner' | 'admin'>('admin')
+  const [inviteBusy, setInviteBusy] = useState(false)
+  const [resultLink, setResultLink] = useState('')
+  const [errorKey, setErrorKey] = useState<string | null>(null)
+  const [inviteCopied, setInviteCopied] = useState(false)
 
   useEffect(() => {
     if (!isOwner) { setLoading(false); return }
@@ -113,6 +126,43 @@ export default function OwnerSettings() {
     }
   }
 
+  async function handleInviteSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!isOwner || inviteBusy) return
+    const trimmedName = inviteName.trim()
+    const trimmedEmail = inviteEmail.trim()
+    if (!trimmedName || !trimmedEmail) return
+    setInviteBusy(true)
+    setResultLink('')
+    setErrorKey(null)
+    setInviteCopied(false)
+    try {
+      const result = await inviteAdmin(trimmedName, trimmedEmail, inviteRole)
+      if (result.ok && result.invite_link) {
+        setResultLink(result.invite_link)
+        setInviteName('')
+        setInviteEmail('')
+      } else {
+        setErrorKey(inviteErrorKey(result.error))
+      }
+    } catch {
+      setErrorKey('invite_admin_err_generic')
+    } finally {
+      setInviteBusy(false)
+    }
+  }
+
+  async function copyInviteLink() {
+    if (!resultLink) return
+    setInviteCopied(false)
+    try {
+      await navigator.clipboard.writeText(resultLink)
+      setInviteCopied(true)
+    } catch {
+      setInviteCopied(false)
+    }
+  }
+
   const roleBadge = (r: string) =>
     r === 'owner' ? 'red' : r === 'admin' ? 'amber' : 'blue'
 
@@ -127,6 +177,7 @@ export default function OwnerSettings() {
   }
 
   const msgClass = msg === 'settings_saved' ? 'ok-msg' : 'error-msg'
+  const inviteDisabled = !inviteName.trim() || !inviteEmail.trim() || inviteBusy
 
   return (
     <div className="screen">
@@ -153,6 +204,58 @@ export default function OwnerSettings() {
             ))}
           </div>
           <Link to="/team" className="btn ghost small">{t('owner_manage_admins')}</Link>
+
+          {/* ACC-2: владелец приглашает owner/admin через edge invite-admin. */}
+          <h2 style={{ marginTop: 24 }}>{t('invite_admin_title')}</h2>
+          <form onSubmit={handleInviteSubmit} className="card">
+            <p className="muted" style={{ marginTop: 0 }}>{t('invite_admin_desc')}</p>
+            <label htmlFor="invite-admin-name">{t('invite_admin_name')}</label>
+            <input
+              id="invite-admin-name"
+              value={inviteName}
+              disabled={inviteBusy}
+              autoComplete="name"
+              onChange={(e) => setInviteName(e.target.value)}
+            />
+            <label htmlFor="invite-admin-email">{t('invite_admin_email')}</label>
+            <input
+              id="invite-admin-email"
+              type="email"
+              value={inviteEmail}
+              disabled={inviteBusy}
+              autoComplete="email"
+              onChange={(e) => setInviteEmail(e.target.value)}
+            />
+            <label htmlFor="invite-admin-role">{t('invite_admin_role')}</label>
+            <select
+              id="invite-admin-role"
+              value={inviteRole}
+              disabled={inviteBusy}
+              onChange={(e) => setInviteRole(e.target.value as 'owner' | 'admin')}
+            >
+              <option value="admin">{t('invite_admin_role_admin')}</option>
+              <option value="owner">{t('invite_admin_role_owner')}</option>
+            </select>
+            <button className="btn" disabled={inviteDisabled}>
+              {inviteBusy ? t('settings_saving') : t('invite_admin_submit')}
+            </button>
+            {errorKey && <p className="error-msg">{t(errorKey)}</p>}
+            {resultLink && (
+              <div style={{ marginTop: 12 }}>
+                <p className="muted">{t('invite_admin_link_intro')}</p>
+                <input
+                  readOnly
+                  value={resultLink}
+                  onFocus={(e) => e.currentTarget.select()}
+                  style={{ fontFamily: 'monospace' }}
+                />
+                <button type="button" className="btn ghost small" onClick={copyInviteLink}>
+                  {t('invite_admin_copy')}
+                </button>
+                {inviteCopied && <p className="ok-msg">{t('invite_admin_copied')}</p>}
+              </div>
+            )}
+          </form>
 
           {/* Центр доступа и контроля */}
           <h2 style={{ marginTop: 24 }}>{t('owner_access_center')}</h2>
