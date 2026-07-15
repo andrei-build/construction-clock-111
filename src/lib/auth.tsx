@@ -4,6 +4,7 @@ import { clearAllSnapshots } from './offlineFieldCache'
 import { clearAllFieldActions } from './offlineFieldActions'
 import { clearAllMediaUploads } from './offlineMediaQueue'
 import { clearReadCache, clearOfflineCacheState, setFinanceCacheAllowed } from './offlineReadCache'
+import { setClientErrorContext } from './clientErrors'
 import { hasFinanceAccess } from './types'
 import type { Profile } from './types'
 
@@ -47,6 +48,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const p = await fetchProfile()
     // OFFLINE-1: finance reads may only be cached for roles that pass hasFinanceAccess.
     setFinanceCacheAllowed(hasFinanceAccess(p))
+    // A8: telemetry inserts need the authed org/profile (RLS ce_insert); clears to null when p is null.
+    setClientErrorContext(p)
     setProfile(p)
   }
 
@@ -54,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refresh().finally(() => setLoading(false))
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       // Session lost (token expiry / sign-out elsewhere): drop the finance gate too.
-      if (!session) { setFinanceCacheAllowed(false); setProfile(null) }
+      if (!session) { setFinanceCacheAllowed(false); setClientErrorContext(null); setProfile(null) }
     })
     return () => sub.subscription.unsubscribe()
   }, [])
@@ -85,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const logout = async () => { clearAllSnapshots(); clearAllFieldActions(); void clearAllMediaUploads(); void clearReadCache(); clearOfflineCacheState(); setFinanceCacheAllowed(false); await supabase.auth.signOut(); setProfile(null) }
+  const logout = async () => { clearAllSnapshots(); clearAllFieldActions(); void clearAllMediaUploads(); void clearReadCache(); clearOfflineCacheState(); setFinanceCacheAllowed(false); setClientErrorContext(null); await supabase.auth.signOut(); setProfile(null) }
 
   return <Ctx.Provider value={{ loading, profile, refresh, loginEmail, loginPin, logout }}>{children}</Ctx.Provider>
 }

@@ -4,7 +4,10 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { AuthProvider } from './lib/auth'
 import { I18nProvider } from './lib/i18n'
+import { initClientErrorReporting } from './lib/clientErrors'
 import './styles.css'
+
+initClientErrorReporting()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
