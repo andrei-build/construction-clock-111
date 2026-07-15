@@ -659,3 +659,26 @@ export async function getWorkerDayTimeEvents(workerId: string, dayStartISO: stri
   if (error) return []
   return (data as TimeEvent[]) ?? []
 }
+
+// OVR-1: manager force-checkout appends a normal check_out for the worker. History stays immutable.
+export async function managerCheckoutWorker(p: Profile, workerId: string, projectId: string | null): Promise<string> {
+  const { data, error } = await supabase.from('time_events')
+    .insert({
+      org_id: p.org_id,
+      profile_id: workerId,
+      project_id: projectId,
+      event_type: 'check_out',
+      event_time: new Date().toISOString(),
+      gps_status: 'off',
+      metadata: {
+        client_id: crypto.randomUUID(),
+        manager_checkout: true,
+        forced_by: p.id,
+      },
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+  await logEvent(p, 'time.manager_checkout', 'time_event', String(data.id), { worker_id: workerId, project_id: projectId })
+  return String(data.id)
+}
