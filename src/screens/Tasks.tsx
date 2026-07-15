@@ -237,7 +237,7 @@ export default function Tasks() {
     try {
       const rows = await getTaskAttachments(taskId)
       const withUrls = await Promise.all(rows.map(async (r) => {
-        try { return { ...r, url: await mediaUrl(r.storage_path) } } catch { return { ...r } }
+        try { return { ...r, url: (await mediaUrl(r.storage_path)) ?? undefined } } catch { return { ...r } }
       }))
       setAttachments((cur) => ({ ...cur, [taskId]: withUrls }))
     } catch {
@@ -300,7 +300,7 @@ export default function Tasks() {
     setCardError(null)
     try {
       const row = await uploadTaskAttachment(profile, task, file)
-      const url = await mediaUrl(row.storage_path).catch(() => undefined)
+      const url = (await mediaUrl(row.storage_path).catch(() => undefined)) ?? undefined
       setAttachments((cur) => ({ ...cur, [task.id]: [{ ...row, url }, ...(cur[task.id] ?? [])] }))
     } catch (err) {
       setCardError(uploadErrorCode(err) ?? 'tasks_attach_error')

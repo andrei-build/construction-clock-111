@@ -5,6 +5,22 @@ import { notifyMessagePush } from './push'
 
 const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
 
+// A5: read-хелперы, глотающие ошибку в [], делают "нет доступа" неотличимым от "нет данных".
+// Не меняем возвращаемое [] (чтобы не ломать вызовы), но логируем реальную ошибку и отличаем
+// отказ доступа (RLS/права) от пустого результата. PostgREST/Supabase кладут код в error.code:
+// 42501 — insufficient_privilege; PGRST301/PGRST116/PGRST3xx — auth/RLS/роут. Для медиа/подписей
+// (приватный bucket) это важно: пустая галерея из-за отказа доступа не должна выглядеть как «пусто».
+function isAccessError(error: unknown): boolean {
+  const code = String((error as { code?: string | null } | null)?.code ?? '')
+  return code === '42501' || code === 'PGRST301' || code === 'PGRST116' || code.startsWith('PGRST3')
+}
+
+function warnReadError(context: string, error: unknown): void {
+  const e = error as { code?: string | null; message?: string } | null
+  const kind = isAccessError(e) ? 'access-denied' : 'read-error'
+  console.warn(`[api:${context}] ${kind}${e?.code ? ` (code ${e.code})` : ''}:`, e?.message ?? error)
+}
+
 // Каждое значимое действие — событие в журнале (ДНК: фундамент для AI)
 export async function logEvent(p: Profile, eventType: string, entityType: string, entityId: string | null, data: Record<string, unknown> = {}) {
   await supabase.from('events').insert({
@@ -556,7 +572,7 @@ export async function getTaskAttachments(taskId: string): Promise<TaskAttachment
     .eq('task_id', taskId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
-  if (error) return []
+  if (error) { warnReadError('getTaskAttachments', error); return [] }
   return (data as TaskAttachment[]) ?? []
 }
 
@@ -970,7 +986,10 @@ function normalizeStoragePath(path: string): string {
   return key
 }
 
-export async function mediaUrl(storagePath: string) {
+// A5: bucket media — ПРИВАТНЫЙ. Раньше при ошибке/таймауте подписи возвращали getPublicUrl(),
+// но на приватном bucket такой URL не аутентифицируется (404 / утечка пути объекта). Теперь при
+// неудаче подписи возвращаем null — вызывающий рендерит «нет ссылки», а не битый <img>/<video>.
+export async function mediaUrl(storagePath: string): Promise<string | null> {
   const key = normalizeStoragePath(storagePath)
   let timer: ReturnType<typeof setTimeout> | undefined
   const signPromise = supabase.storage.from(TASK_MEDIA_BUCKET).createSignedUrl(key, 3600)
@@ -980,20 +999,24 @@ export async function mediaUrl(storagePath: string) {
   try {
     const signed = await Promise.race([signPromise, timeoutPromise])
     if (signed && !signed.error && signed.data?.signedUrl) return signed.data.signedUrl
+    if (signed && signed.error) warnReadError('mediaUrl', signed.error)
+    else if (!signed) console.warn(`[api:mediaUrl] sign timeout after ${MEDIA_SIGN_TIMEOUT_MS}ms`)
   } finally {
     if (timer !== undefined) clearTimeout(timer)
   }
-  return supabase.storage.from(TASK_MEDIA_BUCKET).getPublicUrl(key).data.publicUrl
+  return null
 }
 
 export async function uploadCheckoutVideo(p: Profile, eventId: string, file: File) {
   validateUpload(file, 'video')
-  const storagePath = `videos/${p.org_id}/${eventId}.mp4`
+  // A5: неизменяемая улика — уникальный путь + upsert:false, чтобы второй upload НЕ перезаписал первый.
+  // Авторитетный указатель хранится в time_events.video_path (читается из строки, не пересчитывается).
+  const storagePath = `videos/${p.org_id}/${eventId}-${Date.now()}-${crypto.randomUUID()}.mp4`
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
     .upload(storagePath, file, {
       contentType: inferUploadContentType(file),
-      upsert: true,
+      upsert: false,
     })
   if (uploadError) throw uploadError
 
@@ -1006,12 +1029,13 @@ export async function uploadCheckoutVideo(p: Profile, eventId: string, file: Fil
 }
 
 export async function uploadSafetySignature(p: Profile, projectId: string, eventId: string, signature: Blob) {
-  const storagePath = `signatures/${p.org_id}/${eventId}.png`
+  // A5: неизменяемая улика — уникальный путь + upsert:false; авторитет — safety_acknowledgements.signature_path.
+  const storagePath = `signatures/${p.org_id}/${eventId}-${Date.now()}-${crypto.randomUUID()}.png`
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
     .upload(storagePath, signature, {
       contentType: 'image/png',
-      upsert: true,
+      upsert: false,
     })
   if (uploadError) throw uploadError
 
@@ -1041,12 +1065,12 @@ export async function getActiveLocationConsent(workerId: string): Promise<{ id: 
 
 // Подпись согласия на GPS: PNG в bucket media (signatures/consents/...) + строка worker_location_consents
 export async function signLocationConsent(p: Profile, signature: Blob) {
-  const storagePath = `signatures/consents/${p.org_id}/${p.id}/${Date.now()}.png`
+  const storagePath = `signatures/consents/${p.org_id}/${p.id}/${Date.now()}-${crypto.randomUUID()}.png`
   const { error: uploadError } = await supabase.storage
     .from(TASK_MEDIA_BUCKET)
     .upload(storagePath, signature, {
       contentType: 'image/png',
-      upsert: true,
+      upsert: false, // A5: неизменяемая улика согласия
     })
   if (uploadError) throw uploadError
 
@@ -1114,7 +1138,7 @@ export async function getWorkerLocationConsents(workerId: string): Promise<Worke
     .select('id, consent_version, signature_path, signed_at, created_at, revoked_at')
     .eq('worker_id', workerId)
     .order('created_at', { ascending: false })
-  if (error) return []
+  if (error) { warnReadError('getWorkerLocationConsents', error); return [] }
   return Promise.all(((data ?? []) as Array<{
     id: string
     consent_version: string | null
@@ -1144,7 +1168,7 @@ export async function getWorkerSafetyAcks(workerId: string): Promise<WorkerSafet
     .select('id, doc_version, signature_path, signed_at')
     .eq('worker_id', workerId)
     .order('signed_at', { ascending: false })
-  if (error) return []
+  if (error) { warnReadError('getWorkerSafetyAcks', error); return [] }
   return Promise.all(((data ?? []) as Array<{
     id: string
     doc_version: string | null
@@ -1170,7 +1194,7 @@ export async function getWorkerProfileFiles(workerId: string): Promise<WorkerPro
     .eq('profile_id', workerId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
-  if (error) return []
+  if (error) { warnReadError('getWorkerProfileFiles', error); return [] }
   return Promise.all(((data ?? []) as FileRow[]).map(async (row) => ({
     ...row,
     url: row.storage_path ? await mediaUrl(row.storage_path) : null,
@@ -1690,9 +1714,11 @@ export async function getProjectRecentPhotos(projectId: string): Promise<Project
     created_at?: string | null
   }>).map(async (row) => {
     if (!row.storage_path) return null
+    const url = await mediaUrl(row.storage_path)
+    if (!url) return null // A5: подпись не удалась → не показываем битое превью (приватный bucket)
     return {
       id: row.id,
-      url: await mediaUrl(row.storage_path),
+      url,
       filename: row.filename ?? null,
       created_at: row.created_at ?? null,
     }
@@ -1723,9 +1749,11 @@ export async function getProjectPhotos(projectId: string): Promise<GalleryPhoto[
     project?: { name: string | null } | null
   }>).map(async (row) => {
     if (!row.storage_path) return null
+    const url = await mediaUrl(row.storage_path)
+    if (!url) return null // A5: подпись не удалась → не показываем битое превью (приватный bucket)
     return {
       id: row.id,
-      url: await mediaUrl(row.storage_path),
+      url,
       filename: row.filename ?? null,
       created_at: row.created_at ?? null,
       project_id: row.project_id ?? null,
@@ -1762,9 +1790,11 @@ export async function getProjectVideos(projectId: string): Promise<GalleryVideo[
     project?: { name: string | null } | null
   }>).map(async (row) => {
     if (!row.storage_path) return null
+    const url = await mediaUrl(row.storage_path)
+    if (!url) return null // A5: подпись не удалась → не показываем битое превью (приватный bucket)
     return {
       id: row.id,
-      url: await mediaUrl(row.storage_path),
+      url,
       filename: row.filename ?? null,
       created_at: row.created_at ?? null,
       project_id: row.project_id ?? null,
@@ -1791,7 +1821,7 @@ export async function getGalleryPhotos(offset = 0, limit = GALLERY_PAGE_SIZE): P
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
-  if (error) return []
+  if (error) { warnReadError('getGalleryPhotos', error); return [] }
 
   const photos = await Promise.all(((data ?? []) as unknown as Array<{
     id: string
@@ -1805,9 +1835,11 @@ export async function getGalleryPhotos(offset = 0, limit = GALLERY_PAGE_SIZE): P
     uploader?: { name: string | null } | null
   }>).map(async (row) => {
     if (!row.storage_path) return null
+    const url = await mediaUrl(row.storage_path)
+    if (!url) return null // A5: подпись не удалась → не показываем битое превью (приватный bucket)
     return {
       id: row.id,
-      url: await mediaUrl(row.storage_path),
+      url,
       filename: row.filename ?? null,
       created_at: row.created_at ?? null,
       project_id: row.project_id ?? null,
@@ -1830,7 +1862,7 @@ export async function getGalleryVideos(offset = 0, limit = GALLERY_PAGE_SIZE): P
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
-  if (error) return []
+  if (error) { warnReadError('getGalleryVideos', error); return [] }
 
   const videos = await Promise.all(((data ?? []) as unknown as Array<{
     id: string
@@ -1844,9 +1876,11 @@ export async function getGalleryVideos(offset = 0, limit = GALLERY_PAGE_SIZE): P
     uploader?: { name: string | null } | null
   }>).map(async (row) => {
     if (!row.storage_path) return null
+    const url = await mediaUrl(row.storage_path)
+    if (!url) return null // A5: подпись не удалась → не показываем битое превью (приватный bucket)
     return {
       id: row.id,
-      url: await mediaUrl(row.storage_path),
+      url,
       filename: row.filename ?? null,
       created_at: row.created_at ?? null,
       project_id: row.project_id ?? null,
@@ -1870,7 +1904,7 @@ export async function getGalleryPdfs(offset = 0, limit = GALLERY_PAGE_SIZE): Pro
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
-  if (error) return []
+  if (error) { warnReadError('getGalleryPdfs', error); return [] }
 
   return ((data ?? []) as unknown as Array<{
     id: string
@@ -1897,7 +1931,7 @@ export async function getGalleryPdfs(offset = 0, limit = GALLERY_PAGE_SIZE): Pro
 
 // Ссылка на PDF галереи: scope='project' — R2 (r2Sign download, как getProjectFileDownloadUrl),
 // иначе — media bucket (mediaUrl, как экран «Файлы»). Переиспользуем имеющуюся логику скачивания.
-export async function getGalleryPdfUrl(pdf: { scope: string; storage_path: string }): Promise<string> {
+export async function getGalleryPdfUrl(pdf: { scope: string; storage_path: string }): Promise<string | null> {
   if (pdf.scope === 'project') {
     const signed = await r2Sign('download', pdf.storage_path)
     return signed.url
@@ -2687,7 +2721,9 @@ export async function getDailyReportPhotos(mediaIds: string[]): Promise<{ id: st
 
   const photos = await Promise.all(((data ?? []) as Array<{ id: string; storage_path: string | null }>).map(async (row) => {
     if (!row.storage_path) return null
-    return { id: row.id, url: await mediaUrl(row.storage_path) }
+    const url = await mediaUrl(row.storage_path)
+    if (!url) return null // A5: подпись не удалась → пропускаем (приватный bucket, без битой ссылки)
+    return { id: row.id, url }
   }))
   return photos.filter((photo): photo is { id: string; url: string } => photo !== null)
 }
@@ -2815,7 +2851,7 @@ export async function getProjectHubFiles(projectId: string): Promise<ProjectHubF
     .eq('project_id', projectId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
-  if (error) return []
+  if (error) { warnReadError('getProjectHubFiles', error); return [] }
   return ((data ?? []) as unknown as Array<FileRow & { uploader?: { name: string | null } | null }>)
     .map(({ uploader, ...row }) => ({ ...(row as FileRow), uploader_name: uploader?.name ?? null }))
 }
@@ -3357,7 +3393,7 @@ export async function getWorkerDayPhotos(workerId: string, dayStartISO: string, 
     .gte('created_at', dayStartISO)
     .lt('created_at', dayEndISO)
     .order('created_at', { ascending: false })
-  if (error) return []
+  if (error) { warnReadError('getWorkerDayPhotos', error); return [] }
 
   const photos = await Promise.all(((data ?? []) as unknown as Array<{
     id: string
@@ -3366,9 +3402,11 @@ export async function getWorkerDayPhotos(workerId: string, dayStartISO: string, 
     created_at?: string | null
   }>).map(async (row) => {
     if (!row.storage_path) return null
+    const url = await mediaUrl(row.storage_path)
+    if (!url) return null // A5: подпись не удалась → не показываем битое превью (приватный bucket)
     return {
       id: row.id,
-      url: await mediaUrl(row.storage_path),
+      url,
       created_at: row.created_at ?? null,
       filename: row.filename ?? null,
     }
