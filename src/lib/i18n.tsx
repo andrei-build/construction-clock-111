@@ -552,6 +552,7 @@ const dict: Record<string, Record<Lang, string>> = {
   tasks_proof_by: { ru: 'Выполнил', en: 'Completed by', es: 'Completado por' },
   tasks_proof_hint: { ru: 'Отметьте «Готово» и приложите фото-доказательство', en: 'Mark “Done” and attach a proof photo', es: 'Marque “Hecho” y adjunte una foto de prueba' },
   tasks_proof_photo_needed: { ru: 'Нужно фото-доказательство', en: 'A proof photo is required', es: 'Se requiere una foto de prueba' },
+  task_done_needs_photo: { ru: 'Нельзя закрыть: нужна фотография', en: "Can't close: a photo is required", es: 'No se puede cerrar: se requiere una foto' },
   tasks_read_none: { ru: 'Ещё не прочитано', en: 'Not read yet', es: 'Aún no leído' },
   tasks_read_by: { ru: 'Прочитано', en: 'Read by', es: 'Leído por' },
   tasks_hide_done: { ru: 'Убрать выполненные', en: 'Hide completed', es: 'Ocultar completadas' },
