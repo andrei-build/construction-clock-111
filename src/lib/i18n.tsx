@@ -198,6 +198,7 @@ const dict: Record<string, Record<Lang, string>> = {
   offline_banner_offline: { ru: 'Нет связи — отметки сохраняются и уйдут позже', en: 'You are offline — marks are saved and will send later', es: 'Sin conexión — las marcas se guardan y se enviarán luego' },
   offline_banner_pending: { ru: 'В очереди отметок: {n} — уйдут при появлении связи', en: '{n} action(s) queued — will send when back online', es: '{n} acción(es) en cola — se enviarán al reconectar' },
   offline_banner_syncing: { ru: 'Синхронизация сохранённых отметок…', en: 'Syncing saved actions…', es: 'Sincronizando acciones guardadas…' },
+  offline_read_banner: { ru: 'Нет связи — данные на {time}', en: 'No connection — data as of {time}', es: 'Sin conexión — datos al {time}' },
   offline_action_queued: { ru: 'Нет связи — действие сохранено и уйдёт при появлении связи', en: 'You are offline — action saved and will send when connection returns.', es: 'Sin conexión — la acción se guardó y se enviará cuando vuelva la conexión.' },
   offline_photo_queued: { ru: 'Нет связи — фото сохранено и загрузится при появлении связи', en: 'You are offline — photo saved and will upload when connection returns.', es: 'Sin conexión — la foto se guardó y se subirá cuando vuelva la conexión.' },
   finish_shift: { ru: 'Завершить смену', en: 'Finish shift', es: 'Terminar turno' },

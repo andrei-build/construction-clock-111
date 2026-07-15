@@ -3,6 +3,8 @@ import { supabase, SUPABASE_URL, SUPABASE_KEY } from './supabase'
 import { clearAllSnapshots } from './offlineFieldCache'
 import { clearAllFieldActions } from './offlineFieldActions'
 import { clearAllMediaUploads } from './offlineMediaQueue'
+import { clearReadCache, clearOfflineCacheState, setFinanceCacheAllowed } from './offlineReadCache'
+import { hasFinanceAccess } from './types'
 import type { Profile } from './types'
 
 interface AuthState {
@@ -41,12 +43,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<Profile | null>(null)
 
-  const refresh = async () => setProfile(await fetchProfile())
+  const refresh = async () => {
+    const p = await fetchProfile()
+    // OFFLINE-1: finance reads may only be cached for roles that pass hasFinanceAccess.
+    setFinanceCacheAllowed(hasFinanceAccess(p))
+    setProfile(p)
+  }
 
   useEffect(() => {
     refresh().finally(() => setLoading(false))
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (!session) setProfile(null)
+      // Session lost (token expiry / sign-out elsewhere): drop the finance gate too.
+      if (!session) { setFinanceCacheAllowed(false); setProfile(null) }
     })
     return () => sub.subscription.unsubscribe()
   }, [])
@@ -77,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const logout = async () => { clearAllSnapshots(); clearAllFieldActions(); void clearAllMediaUploads(); await supabase.auth.signOut(); setProfile(null) }
+  const logout = async () => { clearAllSnapshots(); clearAllFieldActions(); void clearAllMediaUploads(); void clearReadCache(); clearOfflineCacheState(); setFinanceCacheAllowed(false); await supabase.auth.signOut(); setProfile(null) }
 
   return <Ctx.Provider value={{ loading, profile, refresh, loginEmail, loginPin, logout }}>{children}</Ctx.Provider>
 }
