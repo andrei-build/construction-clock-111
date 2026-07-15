@@ -1094,6 +1094,11 @@ const dict: Record<string, Record<Lang, string>> = {
     en: "Let's go! Navigation opened, client notified (if enabled)",
     es: '¡En marcha! Navegación abierta, cliente notificado (si está activado)',
   },
+  proj_nav_travel_toast_eta: {
+    ru: 'Поехали! ~{n} мин',
+    en: "Let's go! ~{n} min",
+    es: '¡En marcha! ~{n} min',
+  },
   proj_nav_copied: { ru: 'Скопировано', en: 'Copied', es: 'Copiado' },
   proj_nav_copy_point: { ru: 'Скопировать точку', en: 'Copy point', es: 'Copiar punto' },
   proj_nav_copy_address: { ru: 'Скопировать адрес', en: 'Copy address', es: 'Copiar dirección' },

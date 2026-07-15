@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
 import { startProjectTravel } from '../lib/api'
 import type { Profile, Project } from '../lib/types'
 import {
+  haversineMeters,
   getNavigationDestination,
   buildAddressCopyText,
   buildGoogleMapsUrl,
@@ -25,6 +26,54 @@ interface ProjectNavActionsProps {
   lng?: number | string | null
 }
 
+const GEO_TIMEOUT_MS = 5000
+const GEO_MAX_AGE_MS = 60000
+const ROAD_WINDING_FACTOR = 1.25
+const AVERAGE_DRIVING_MPH = 28
+
+function finiteNumber(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const num = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(num) ? num : null
+}
+
+function requestBrowserPosition(): Promise<GeolocationPosition | null> {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined' || !navigator.geolocation) {
+    return Promise.resolve(null)
+  }
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (position: GeolocationPosition | null) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      resolve(position)
+    }
+    const timer = window.setTimeout(() => finish(null), GEO_TIMEOUT_MS)
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (position) => finish(position),
+        () => finish(null),
+        { timeout: GEO_TIMEOUT_MS, maximumAge: GEO_MAX_AGE_MS },
+      )
+    } catch {
+      finish(null)
+    }
+  })
+}
+
+function etaMinutesFromPosition(position: GeolocationPosition, projectLat: number, projectLng: number): number | null {
+  const straightLineMeters = haversineMeters(
+    position.coords.latitude,
+    position.coords.longitude,
+    projectLat,
+    projectLng,
+  )
+  const metersPerMinute = AVERAGE_DRIVING_MPH * 1609.344 / 60
+  const etaMinutes = Math.round(straightLineMeters * ROAD_WINDING_FACTOR / metersPerMinute)
+  return Number.isFinite(etaMinutes) ? Math.max(1, etaMinutes) : null
+}
+
 // TRAVEL-2: одна кнопка «В путь» = реальный «Let's go». Клик:
 //   1) fire-and-forget startProjectTravel → travel.started + notifyTravelStarted (edge travel-notify);
 //      ошибка НИКОГДА не блокирует навигацию (best-effort).
@@ -37,6 +86,8 @@ export default function ProjectNavActions({ project, profile, projectName, addre
   const { t } = useI18n()
   const [copied, setCopied] = useState<'point' | null>(null)
   const [toast, setToast] = useState(false)
+  const [toastEtaMinutes, setToastEtaMinutes] = useState<number | null>(null)
+  const toastTimerRef = useRef<number | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
   const destination = getNavigationDestination({ address, lat, lng })
   if (!destination) return null
@@ -53,17 +104,43 @@ export default function ProjectNavActions({ project, profile, projectName, addre
   const copyPoint = async (text: string) => {
     try { await navigator.clipboard.writeText(text); flashPoint() } catch { /* не фатально */ }
   }
-  const flashToast = () => {
+  const flashToast = (etaMinutes?: number | null) => {
+    setToastEtaMinutes(etaMinutes ?? null)
     setToast(true)
-    window.setTimeout(() => setToast(false), 3200)
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(false)
+      setToastEtaMinutes(null)
+      toastTimerRef.current = null
+    }, 3200)
+  }
+  const travelEtaPromise = (): Promise<number | null> => {
+    const projectLat = finiteNumber(lat ?? project.lat)
+    const projectLng = finiteNumber(lng ?? project.lng)
+    if (projectLat === null || projectLng === null) return Promise.resolve(null)
+    return requestBrowserPosition().then((position) => (
+      position ? etaMinutesFromPosition(position, projectLat, projectLng) : null
+    ))
   }
   const go = () => {
+    const startedAt = new Date().toISOString()
+    const etaPromise = travelEtaPromise()
     // (1) Пишем travel.started + уведомляем клиента — строго best-effort, промах не мешает навигации.
     if (profile) {
-      startProjectTravel(profile, project, new Date().toISOString()).catch(() => { /* best-effort */ })
+      void etaPromise
+        .then((etaMinutes) => startProjectTravel(profile, project, startedAt, {
+          ...(etaMinutes != null ? { eta_minutes: etaMinutes } : {}),
+          traveler_profile_id: profile.id,
+        }))
+        .catch(() => { /* best-effort */ })
     }
     // (3) Видимая обратная связь сразу — тишина = «ничего не происходит».
     flashToast()
+    void etaPromise
+      .then((etaMinutes) => {
+        if (etaMinutes != null) flashToast(etaMinutes)
+      })
+      .catch(() => { /* best-effort */ })
     // (2) Системный выбор приложения карт по платформе.
     const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent
     const isIos = /iPhone|iPad|iPod/i.test(userAgent) || (/Macintosh/i.test(userAgent) && /Mobile/i.test(userAgent))
@@ -106,7 +183,13 @@ export default function ProjectNavActions({ project, profile, projectName, addre
           </div>
         )}
       </div>
-      {toast && <div className="travel-toast" role="status" aria-live="polite">{t('proj_nav_travel_toast')}</div>}
+      {toast && (
+        <div className="travel-toast" role="status" aria-live="polite">
+          {toastEtaMinutes != null
+            ? t('proj_nav_travel_toast_eta').replace('{n}', String(toastEtaMinutes))
+            : t('proj_nav_travel_toast')}
+        </div>
+      )}
     </div>
   )
 }
