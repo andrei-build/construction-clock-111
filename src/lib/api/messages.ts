@@ -122,6 +122,32 @@ export async function sendMessage(p: Profile, recipientId: string, body: string,
   notifyMessagePush(recipientId, p.name, body, p.language)
 }
 
+// CC-2 «Командный центр» → виджет «Сообщения команде»: одна рассылка нескольким получателям
+// (чекбокс «всем» = весь экипаж, либо выбранные). Одна вставка N строк messages (по строке на
+// получателя — единый контракт с sendMessage/sendDispatchPlan). Возвращает число отправленных.
+// Fire-and-forget web-push каждому получателю (как sendMessage). Себя и дубликаты отсеиваем.
+export async function sendTeamMessage(
+  p: Profile,
+  recipientIds: string[],
+  body: string,
+  priority: MessageRow['priority'],
+): Promise<number> {
+  const ids = Array.from(new Set(recipientIds)).filter((id) => id && id !== p.id)
+  if (ids.length === 0) return 0
+  const rows = ids.map((recipientId) => ({
+    org_id: p.org_id,
+    sender_id: p.id,
+    recipient_id: recipientId,
+    body,
+    priority,
+  }))
+  const { data, error } = await supabase.from('messages').insert(rows).select('id')
+  if (error) throw error
+  await logEvent(p, 'message.broadcast', 'message', null, { recipients: ids.length, priority })
+  for (const recipientId of ids) notifyMessagePush(recipientId, p.name, body, p.language)
+  return (data as Array<{ id: string }> | null)?.length ?? ids.length
+}
+
 export async function markMessageRead(p: Profile, messageId: string) {
   const { error } = await supabase.from('messages')
     .update({ read_at: new Date().toISOString() })

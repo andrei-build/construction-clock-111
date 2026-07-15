@@ -84,9 +84,13 @@ export default function App() {
             <Route path="/projects/:id" element={<ProjectHub />} />
             <Route path="/team" element={manager ? <Team /> : <Navigate to="/" />} />
             <Route path="/team/:id" element={manager ? <WorkerDetail /> : <Navigate to="/" />} />
-            <Route path="/tasks" element={<Tasks />} />
+            {/* CC-2: standalone «Задачи» retired from manager nav. Managers now land on the
+                Command Center task board; field roles (worker/driver) keep their task list. */}
+            <Route path="/tasks" element={manager ? <Navigate to="/dispatch" replace /> : <Tasks />} />
             <Route path="/schedule" element={<Schedule />} />
             <Route path="/dispatch" element={manager ? <Dispatch /> : <Navigate to="/" />} />
+            {/* CC-2: /command-center alias for the Командный центр (/dispatch stays canonical). */}
+            <Route path="/command-center" element={manager ? <Dispatch /> : <Navigate to="/" />} />
             <Route path="/calendar" element={manager ? <Calendar /> : <Navigate to="/" />} />
             <Route path="/team-calendar" element={manager ? <TeamCalendar /> : <Navigate to="/" />} />
             <Route path="/map" element={manager ? <LiveMap /> : <Navigate to="/" />} />
