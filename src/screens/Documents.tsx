@@ -2,17 +2,24 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   convertEstimateToInvoice,
   createEstimateDocument,
+  detachDocumentFile,
   getDocumentAccounts,
+  getDocumentFiles,
+  getDocumentFileUrl,
   getDocumentItems,
   getDocumentProjects,
   getDocuments,
   getDocumentUnits,
   getVisibleProfileRates,
   markDocumentPaid,
+  uploadDocumentFile,
+  uploadErrorCode,
+  type DocumentFileRow,
   type DocumentLineInput,
 } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { isManagerWrite } from '../lib/types'
 import type { Account, DocumentItem, DocumentProjectOption, DocumentRow, DocumentType, ProfileRate, Unit } from '../lib/types'
 
 type FormItem = {
@@ -87,6 +94,14 @@ function nextDocumentNumber(type: DocumentType, date: string, documents: Documen
   return `${prefix}-${count + 1}`
 }
 
+function formatBytes(bytes: number | null | undefined) {
+  if (!bytes || bytes <= 0) return ''
+  if (bytes < 1024) return `${bytes} B`
+  const kb = bytes / 1024
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`
+  return `${(kb / 1024).toFixed(1)} MB`
+}
+
 function statusTone(status: DocumentRow['status']) {
   if (status === 'paid' || status === 'approved') return 'green'
   if (status === 'sent') return 'blue'
@@ -111,6 +126,10 @@ export default function Documents() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<DocumentFileRow[]>([])
+  const [attachLoading, setAttachLoading] = useState(false)
+  const [attachBusy, setAttachBusy] = useState(false)
+  const [attachDetachId, setAttachDetachId] = useState<string | null>(null)
 
   const [title, setTitle] = useState('')
   const [accountId, setAccountId] = useState('')
@@ -172,8 +191,23 @@ export default function Documents() {
     return () => { mounted = false }
   }, [selectedId])
 
+  useEffect(() => {
+    if (!selectedId) {
+      setAttachments([])
+      return
+    }
+    let mounted = true
+    setAttachLoading(true)
+    getDocumentFiles(selectedId)
+      .then((rows) => { if (mounted) setAttachments(rows) })
+      .catch(() => { if (mounted) setAttachments([]) })
+      .finally(() => { if (mounted) setAttachLoading(false) })
+    return () => { mounted = false }
+  }, [selectedId])
+
   const selected = documents.find((doc) => doc.id === selectedId) ?? null
   const activeDocuments = documents.filter((doc) => doc.doc_type === tab)
+  const canWriteAttachments = profile ? isManagerWrite(profile.role) : false
   const ownerOrAdmin = profile?.role === 'owner' || profile?.role === 'admin'
   const locked = !loading && !ownerOrAdmin && documents.length === 0 && rates.length === 0
 
@@ -293,6 +327,49 @@ export default function Documents() {
       setMsg('documents_paid_failed')
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function handleAttachUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const input = e.target
+    const file = input.files?.[0]
+    if (!profile || !selected || !file || attachBusy) { input.value = ''; return }
+    setAttachBusy(true)
+    setMsg(null)
+    try {
+      const created = await uploadDocumentFile(profile, selected, file)
+      setAttachments((rows) => [created, ...rows])
+    } catch (err) {
+      setMsg(uploadErrorCode(err) ?? 'documents_attach_failed')
+    } finally {
+      setAttachBusy(false)
+      input.value = ''
+    }
+  }
+
+  async function handleAttachDownload(row: DocumentFileRow) {
+    setMsg(null)
+    try {
+      const url = await getDocumentFileUrl(row.storage_path)
+      if (!url) { setMsg('documents_attach_download_failed'); return }
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch {
+      setMsg('documents_attach_download_failed')
+    }
+  }
+
+  async function handleAttachDetach(row: DocumentFileRow) {
+    if (!profile || attachDetachId) return
+    if (!window.confirm(t('documents_attach_detach_confirm'))) return
+    setAttachDetachId(row.id)
+    setMsg(null)
+    try {
+      await detachDocumentFile(profile, row.id)
+      setAttachments((rows) => rows.filter((r) => r.id !== row.id))
+    } catch {
+      setMsg('documents_attach_detach_failed')
+    } finally {
+      setAttachDetachId(null)
     }
   }
 
@@ -541,6 +618,51 @@ export default function Documents() {
                 <div><span>{t('total')}</span><strong>{money(selected.total)}</strong></div>
                 {selected.doc_type === 'invoice' && (
                   <div><span>{t('documents_balance')}</span><strong>{money(selected.balance)}</strong></div>
+                )}
+              </div>
+
+              <div className="document-attachments">
+                <div className="document-items-head">
+                  <h2>{t('documents_attachments')}</h2>
+                  {canWriteAttachments && (
+                    <label className="btn ghost small document-attach-btn">
+                      {attachBusy ? t('documents_attach_uploading') : t('documents_attach_file')}
+                      <input
+                        type="file"
+                        hidden
+                        disabled={attachBusy}
+                        onChange={handleAttachUpload}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {attachLoading && <div className="muted">{t('loading')}</div>}
+                {!attachLoading && attachments.length === 0 && (
+                  <div className="muted">{t('documents_attachments_empty')}</div>
+                )}
+                {!attachLoading && attachments.length > 0 && (
+                  <ul className="document-attach-list">
+                    {attachments.map((file) => (
+                      <li key={file.id} className="document-attach-item">
+                        <button type="button" className="link-btn document-attach-name" onClick={() => handleAttachDownload(file)}>
+                          {file.name}
+                        </button>
+                        {formatBytes(file.size_bytes) && <span className="muted">{formatBytes(file.size_bytes)}</span>}
+                        <span className="muted">{formatDate(file.created_at.slice(0, 10))}</span>
+                        {canWriteAttachments && (
+                          <button
+                            type="button"
+                            className="btn ghost small"
+                            disabled={attachDetachId === file.id}
+                            onClick={() => handleAttachDetach(file)}
+                          >
+                            {t('documents_attach_detach')}
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
             </div>
