@@ -1,6 +1,6 @@
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from '../supabase'
 import { logEvent, warnReadError } from './_shared'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment, ClientMediaItem } from '../types'
 
 
 // Тип медиа по MIME/имени для строки media (media_type — свободный text в живой схеме).
@@ -165,7 +165,22 @@ export function inferUploadContentType(file: { name?: string | null; type?: stri
   return EXT_CONTENT_TYPE[ext] || 'application/octet-stream'
 }
 
+// CLIENT-MEDIA-1: читает флаг «Отчёт для клиента» задачи (tasks.metadata.client_report).
+// true → фото/видео-улика этой задачи сразу помечается client_visible при вставке (владелец
+// потом может скрыть вручную на вкладке «Клиент»). Task-объект в вызывающих путях metadata
+// не несёт (Tasks.tsx создаёт голый {id,...}), поэтому читаем из БД по task_id.
+// Ошибка/нет строки/NULL → false (не палим лишнего). Идёт мимо порт-гейтов: сервер всё равно
+// отдаёт client_visible клиенту лишь при accounts.client_access_enabled.
+export async function taskWantsClientReport(taskId: string): Promise<boolean> {
+  const { data, error } = await supabase.from('tasks').select('metadata').eq('id', taskId).maybeSingle()
+  if (error) return false
+  const meta = ((data as { metadata?: Record<string, unknown> | null } | null)?.metadata ?? {}) as Record<string, unknown>
+  return meta.client_report === true
+}
+
 async function insertTaskMediaRow(p: Profile, task: Task, storagePath: string, file: File) {
+  // Проф-фото всегда media_type='photo' → если задача помечена «Отчёт для клиента», сразу видно клиенту.
+  const clientVisible = await taskWantsClientReport(task.id)
   const { data, error } = await supabase.from('media').insert({
     org_id: p.org_id,
     project_id: task.project_id ?? null,
@@ -177,6 +192,7 @@ async function insertTaskMediaRow(p: Profile, task: Task, storagePath: string, f
     filename: safeFileName(file.name, file.type),
     mime: file.type || 'image/jpeg',
     size_bytes: file.size,
+    client_visible: clientVisible,
   }).select('id').single()
   if (error) throw error
   return String(data.id)
@@ -731,4 +747,57 @@ export async function getCompanyFiles(): Promise<FileRow[]> {
     .order('created_at', { ascending: false })
   if (error) { warnReadError('getCompanyFiles', error); return [] }
   return (data as FileRow[]) ?? []
+}
+
+// === CLIENT-MEDIA-1: медиа проекта под ручным управлением видимости для клиентского портала. ===
+// Возвращаем ВСЕ фото/видео проекта (не только client_visible), чтобы владелец на вкладке «Клиент»
+// мог показать/скрыть каждый элемент вручную; client_visible несёт текущее состояние тумблера.
+// Свежие сверху; URL подписываем пачкой (приватный bucket). RLS media_select пускает менеджера ко
+// всем медиа org — клиент/чужой доступ гейтит сам сервер (не ослабляем). На ошибке — [].
+export async function getProjectClientMedia(projectId: string): Promise<ClientMediaItem[]> {
+  const { data, error } = await supabase.from('media')
+    .select('id, storage_path, media_type, client_visible, filename, created_at')
+    .eq('project_id', projectId)
+    .in('media_type', ['photo', 'video'])
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) { warnReadError('getProjectClientMedia', error); return [] }
+  return Promise.all(((data ?? []) as Array<{
+    id: string
+    storage_path: string | null
+    media_type: string
+    client_visible: boolean | null
+    filename?: string | null
+    created_at?: string | null
+  }>).map(async (r) => ({
+    id: r.id,
+    storage_path: r.storage_path ?? '',
+    media_type: r.media_type,
+    client_visible: r.client_visible === true,
+    filename: r.filename ?? null,
+    created_at: r.created_at ?? null,
+    url: r.storage_path ? await mediaUrl(r.storage_path) : null,
+  })))
+}
+
+// Ручной тумблер «Видно клиенту»: flip media.client_visible. RLS media_update — менеджер org
+// (или автор загрузки); в UI действие показываем только менеджеру. Владелец-контролируемая видимость.
+export async function setMediaClientVisible(p: Profile, mediaId: string, visible: boolean): Promise<void> {
+  const { error } = await supabase.from('media')
+    .update({ client_visible: visible })
+    .eq('id', mediaId)
+  if (error) throw error
+  await logEvent(p, visible ? 'media.client_shown' : 'media.client_hidden', 'media', mediaId, {})
+}
+
+// Мастер-выключатель клиентского доступа (accounts.client_access_enabled, 0045). false → портал
+// клиента полностью выключен (сервер уже гейтит выдачу медиа); UI отражает это как disabled-блок.
+// Нет строки/ошибка/NULL → true (дефолт колонки), чтобы зря не блокировать управление владельцем.
+export async function getClientAccessEnabled(accountId: string): Promise<boolean> {
+  const { data, error } = await supabase.from('accounts')
+    .select('client_access_enabled')
+    .eq('id', accountId)
+    .maybeSingle()
+  if (error) return true
+  return (data as { client_access_enabled?: boolean | null } | null)?.client_access_enabled !== false
 }

@@ -639,6 +639,9 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
   // Фото по умолчанию НЕ обязательно (закон Андрея §3): tasks.requires_photo default=true в БД,
   // поэтому передаём явный false, если галочка не стоит — иначе офисные задачи нельзя закрыть без фото.
   const [fRequiresPhoto, setFRequiresPhoto] = useState(false)
+  // CLIENT-MEDIA-1: «Отчёт для клиента» — фото/видео-улики такой задачи автоматически
+  // помечаются client_visible (см. tasks.metadata.client_report).
+  const [fClientReport, setFClientReport] = useState(false)
   const [busy, setBusy] = useState(false)
   const [createOk, setCreateOk] = useState(false)
   const [createErr, setCreateErr] = useState(false)
@@ -673,8 +676,9 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
         assigned_to: fAssignee || null,
         description: fDescription,
         requires_photo: fRequiresPhoto,
+        metadata: fClientReport ? { client_report: true } : undefined,
       })
-      setFTitle(''); setFDescription(''); setFAssignee(''); setFProject(''); setFPriority('medium'); setFRequiresPhoto(false)
+      setFTitle(''); setFDescription(''); setFAssignee(''); setFProject(''); setFPriority('medium'); setFRequiresPhoto(false); setFClientReport(false)
       setCreateOk(true)
       await onChanged()
     } catch {
@@ -881,6 +885,11 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
               <label className="row" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
                 <input type="checkbox" checked={fRequiresPhoto} onChange={(e) => setFRequiresPhoto(e.target.checked)} style={{ width: 'auto' }} />
                 <span>{t('task_requires_photo')}</span>
+              </label>
+
+              <label className="row" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
+                <input type="checkbox" checked={fClientReport} onChange={(e) => setFClientReport(e.target.checked)} style={{ width: 'auto' }} />
+                <span>{t('task_client_report')}</span>
               </label>
 
               {createErr && <p className="error-msg">{t('tasks_create_error')}</p>}

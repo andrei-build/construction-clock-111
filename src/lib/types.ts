@@ -859,3 +859,15 @@ export function canAssignRole(actor: Role, target: Role): boolean {
   if (target === 'owner' || target === 'admin' || target === 'driver') return false
   return ROLE_POWER[target] < ROLE_POWER[actor]
 }
+
+// CLIENT-MEDIA-1: фото/видео проекта под ручным управлением видимости для клиентского портала.
+// client_visible несёт текущее состояние тумблера «Видно клиенту» (media.client_visible).
+export interface ClientMediaItem {
+  id: string
+  storage_path: string
+  media_type: string
+  client_visible: boolean
+  filename: string | null
+  created_at: string | null
+  url: string | null
+}

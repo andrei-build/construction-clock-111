@@ -1,7 +1,7 @@
 import { supabase } from '../supabase'
 import { notifyMessagePush } from '../push'
 import { logEvent, warnReadError } from './_shared'
-import { inferMediaType, TASK_MEDIA_BUCKET, safeFileName, inferUploadContentType, validateUpload } from './storage'
+import { inferMediaType, TASK_MEDIA_BUCKET, safeFileName, inferUploadContentType, validateUpload, taskWantsClientReport } from './storage'
 import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
 
 
@@ -39,6 +39,9 @@ export interface NewTaskInput {
   due_date?: string | null
   description?: string | null
   requires_photo?: boolean
+  // CLIENT-MEDIA-1: jsonb-мешок задачи. Форма «Назначить задачу» кладёт сюда { client_report: true }
+  // при отметке «Отчёт для клиента»; прочие ключи БД заполняет server-side default ({}).
+  metadata?: Record<string, unknown>
 }
 
 // Создать задачу. org_id=p.org_id + created_by=p.id удовлетворяют RLS check tasks_insert
@@ -60,6 +63,9 @@ export async function createTask(p: Profile, input: NewTaskInput, clientId?: str
   const description = input.description?.trim()
   if (description) row.description = description
   if (input.requires_photo !== undefined) row.requires_photo = input.requires_photo
+  // CLIENT-MEDIA-1: задаём metadata только когда форма что-то в него положила (client_report),
+  // иначе оставляем server-side default ({}) — не затираем чужие будущие ключи пустым объектом.
+  if (input.metadata && Object.keys(input.metadata).length > 0) row.metadata = input.metadata
   // Offline replay: carry the queued clientId as the partial-unique client_id so a duplicate
   // replay raises 23505 (treated as success) instead of inserting a second row. Online callers
   // pass nothing → client_id stays absent (NULL, ignored by the partial unique index).
@@ -126,6 +132,10 @@ export async function uploadTaskAttachment(p: Profile, task: Task, file: File): 
     .from(TASK_MEDIA_BUCKET)
     .upload(storagePath, file, { contentType: inferUploadContentType(file), upsert: false })
   if (uploadError) throw uploadError
+  // CLIENT-MEDIA-1: фото И видео улики задачи «Отчёт для клиента» → сразу видно клиенту
+  // (владелец потом может скрыть вручную). Файлы-документы не палим. Флаг читаем из БД по task.id,
+  // т.к. вызывающий Task metadata может не нести.
+  const clientVisible = (mediaType === 'photo' || mediaType === 'video') && await taskWantsClientReport(task.id)
   const { data, error } = await supabase.from('media').insert({
     org_id: p.org_id,
     project_id: task.project_id ?? null,
@@ -137,6 +147,7 @@ export async function uploadTaskAttachment(p: Profile, task: Task, file: File): 
     filename: safeFileName(file.name, file.type),
     mime: file.type || null,
     size_bytes: file.size,
+    client_visible: clientVisible,
   }).select('id, storage_path, media_type, category, filename, created_at').single()
   if (error) throw error
   return data as unknown as TaskAttachment

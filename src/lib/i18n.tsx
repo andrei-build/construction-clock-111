@@ -1619,6 +1619,14 @@ const dict: Record<string, Record<Lang, string>> = {
   documents_company_delete_confirm: { ru: 'Удалить этот документ компании?', en: 'Delete this company document?', es: '¿Eliminar este documento de la empresa?' },
   // ACC-3: клик по блоку профиля в десктоп-сайдбаре ведёт на /more (раздел «Мой аккаунт»).
   my_account: { ru: 'Мой аккаунт', en: 'My account', es: 'Mi cuenta' },
+  // CLIENT-MEDIA-1: «Фотоотчёт клиенту» — флаг задачи + блок ручной видимости на вкладке «Клиент».
+  task_client_report: { ru: 'Отчёт для клиента', en: 'Client report', es: 'Informe para el cliente' },
+  client_visible_block: { ru: 'Видно клиенту', en: 'Visible to client', es: 'Visible para el cliente' },
+  client_visible_show: { ru: 'Показать', en: 'Show', es: 'Mostrar' },
+  client_visible_hide: { ru: 'Скрыть', en: 'Hide', es: 'Ocultar' },
+  client_visible_empty: { ru: 'Пока нет фото или видео для клиента', en: 'No client photos or videos yet', es: 'Aún no hay fotos o videos para el cliente' },
+  client_visible_error: { ru: 'Не удалось изменить видимость', en: 'Could not change visibility', es: 'No se pudo cambiar la visibilidad' },
+  client_access_disabled: { ru: 'Доступ клиента полностью отключён', en: 'Client access is fully off', es: 'El acceso del cliente está totalmente desactivado' },
 }
 
 interface I18n {
