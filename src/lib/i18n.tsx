@@ -1682,6 +1682,22 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_sync_new: { ru: '{box}: +{n} новых', en: '{box}: +{n} new', es: '{box}: +{n} nuevos' },
   mail_sync_none: { ru: '{box}: без изменений', en: '{box}: no changes', es: '{box}: sin cambios' },
   mail_sync_box_error: { ru: '{box}: ошибка', en: '{box}: error', es: '{box}: error' },
+  // MAIL-2-UI: отправка писем из приложения (модалка «Написать»/«Ответить», исходящие в списке).
+  mail_compose: { ru: 'Написать', en: 'Compose', es: 'Redactar' },
+  mail_compose_title: { ru: 'Новое письмо', en: 'New message', es: 'Nuevo mensaje' },
+  mail_reply: { ru: 'Ответить', en: 'Reply', es: 'Responder' },
+  mail_from_box: { ru: 'От кого', en: 'From', es: 'Remitente' },
+  mail_to: { ru: 'Кому', en: 'To', es: 'Para' },
+  mail_subject: { ru: 'Тема', en: 'Subject', es: 'Asunto' },
+  mail_text: { ru: 'Текст', en: 'Message', es: 'Texto' },
+  mail_send: { ru: 'Отправить', en: 'Send', es: 'Enviar' },
+  mail_sending: { ru: 'Отправляем…', en: 'Sending…', es: 'Enviando…' },
+  mail_cancel: { ru: 'Отмена', en: 'Cancel', es: 'Cancelar' },
+  mail_sent_ok: { ru: 'Письмо отправлено', en: 'Message sent', es: 'Mensaje enviado' },
+  mail_send_failed: { ru: 'Не удалось отправить', en: 'Could not send', es: 'No se pudo enviar' },
+  mail_send_failed_reason: { ru: 'Не удалось отправить: {reason}', en: 'Could not send: {reason}', es: 'No se pudo enviar: {reason}' },
+  mail_outgoing: { ru: 'Исходящее', en: 'Outgoing', es: 'Saliente' },
+  mail_unknown_recipient: { ru: 'Без получателя', en: 'Unknown recipient', es: 'Destinatario desconocido' },
 }
 
 interface I18n {

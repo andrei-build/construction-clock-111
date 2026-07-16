@@ -27,7 +27,7 @@ export interface MailMessage {
   id: string
   org_id: string
   account_id: string
-  uid: number
+  uid: number | null // MAIL-2-UI: у исходящих (direction='out') IMAP-uid нет — стал nullable.
   message_id: string | null
   from_name: string | null
   from_addr: string | null
@@ -37,13 +37,14 @@ export interface MailMessage {
   body_text: string | null
   sent_at: string | null
   seen: boolean
+  direction: 'in' | 'out' // MAIL-2-UI: 'in' входящее (DEFAULT), 'out' исходящее (отправлено из приложения).
   created_at: string
 }
 
 const MAIL_ACCOUNT_SELECT =
   'id, org_id, key, brand, email, display_name, active, last_sync_at, last_uid, last_error, imap_host, imap_port, created_at'
 const MAIL_MESSAGE_SELECT =
-  'id, org_id, account_id, uid, message_id, from_name, from_addr, to_addr, subject, snippet, body_text, sent_at, seen, created_at'
+  'id, org_id, account_id, uid, message_id, from_name, from_addr, to_addr, subject, snippet, body_text, sent_at, seen, direction, created_at'
 
 // Оба почтовых ящика (buildpro / customhomes) для вкладок. RLS отдаёт строки только владельцу;
 // admin/иные роли получат [] — это ожидаемо (мягкий пустой экран). error → [] (не роняем экран).
@@ -77,11 +78,14 @@ export async function getMailMessages(accountId?: string): Promise<MailMessage[]
 }
 
 // Счётчик непрочитанных для бейджа в навигации. head+count — не тянем строки. error → 0.
+// MAIL-2-UI: считаем ТОЛЬКО входящие непрочитанные (direction='in' AND seen=false), чтобы
+// исходящие письма (direction='out', seen=true) никогда не раздували бейдж непрочитанного.
 export async function getMailUnreadCount(): Promise<number> {
   const { count, error } = await supabase
     .from('mail_messages')
     .select('id', { count: 'exact', head: true })
     .eq('seen', false)
+    .eq('direction', 'in')
   if (error) {
     warnReadError('getMailUnreadCount', error)
     return 0
@@ -125,6 +129,62 @@ export async function triggerMailSync(): Promise<MailSyncResult> {
     ? ((data as { results: MailSyncMailboxResult[] }).results)
     : []
   return { results }
+}
+
+// MAIL-2-UI: отправка письма ИЗ приложения. Вход в edge `mail-send` (backend уже развёрнут и
+// smoke-тестирован). account_key = mail_accounts.key ('buildpro'|'customhomes'); in_reply_to —
+// message_id письма, на которое отвечаем (опционально). supabase-js сам прикрепит Bearer JWT;
+// edge авторизует owner/admin и САМ вставляет строку mail_messages (direction='out', seen=true)
+// и пишет событие mail.sent — поэтому строку исходящего мы НЕ вставляем, а просто рефетчим ящик.
+export interface SendMailInput {
+  account_key: string
+  to: string
+  subject: string
+  body: string
+  in_reply_to?: string | null
+}
+
+export interface SendMailResult {
+  ok: boolean
+  error?: string // текст ошибки от edge (для тоста), если не удалось отправить
+}
+
+// Достаём текст ошибки из тела ответа edge (FunctionsHttpError несёт Response в error.context),
+// как это делает clients.ts/broadcastFunctionErrorCode. Возвращает undefined, если тела нет.
+async function mailSendErrorText(error: unknown): Promise<string | undefined> {
+  const context = (error as { context?: { json?: () => Promise<unknown> } } | null)?.context
+  if (typeof context?.json !== 'function') return undefined
+  try {
+    const body = await context.json()
+    const raw = (body as { error?: unknown } | null)?.error
+    return typeof raw === 'string' && raw.trim() ? raw : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export async function sendMail(input: SendMailInput): Promise<SendMailResult> {
+  const { data, error } = await supabase.functions.invoke('mail-send', {
+    body: {
+      account_key: input.account_key,
+      to: input.to,
+      subject: input.subject,
+      body: input.body,
+      in_reply_to: input.in_reply_to ?? null,
+    },
+  })
+  if (error) {
+    // На non-2xx supabase-js кладёт ошибку в `error` (data=null); читаем текст edge из тела.
+    const fromData = (data as { error?: unknown } | null)?.error
+    const text = (typeof fromData === 'string' && fromData.trim() ? fromData : undefined)
+      ?? (await mailSendErrorText(error))
+      ?? (error instanceof Error ? error.message : undefined)
+    return { ok: false, error: text }
+  }
+  // Edge может вернуть 200 с { error } — тоже трактуем как неуспех.
+  const dataErr = (data as { error?: unknown } | null)?.error
+  if (typeof dataErr === 'string' && dataErr.trim()) return { ok: false, error: dataErr }
+  return { ok: true }
 }
 
 // Кросс-компонентный сигнал «непрочитанных стало иначе» — Mail.tsx шлёт его после отметки
