@@ -1617,6 +1617,8 @@ const dict: Record<string, Record<Lang, string>> = {
   documents_company_download: { ru: 'Скачать', en: 'Download', es: 'Descargar' },
   documents_company_delete: { ru: 'Удалить', en: 'Delete', es: 'Eliminar' },
   documents_company_delete_confirm: { ru: 'Удалить этот документ компании?', en: 'Delete this company document?', es: '¿Eliminar este documento de la empresa?' },
+  // ACC-3: клик по блоку профиля в десктоп-сайдбаре ведёт на /more (раздел «Мой аккаунт»).
+  my_account: { ru: 'Мой аккаунт', en: 'My account', es: 'Mi cuenta' },
 }
 
 interface I18n {

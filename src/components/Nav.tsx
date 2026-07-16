@@ -157,10 +157,18 @@ export default function Nav({ manager }: { manager: boolean }) {
             </div>
           </div>
 
-          <div className="side-profile">
+          {/* ACC-3: блок профиля — кликабельная ссылка на /more (раздел «Мой аккаунт»),
+              единственный путь к смене пароля из десктоп-сайдбара. Виден каждому менеджеру,
+              без доп. ролевого гейта: сам <aside> уже рендерится только для менеджеров. */}
+          <NavLink
+            to="/more"
+            className={({ isActive }) => `side-profile${isActive ? ' active' : ''}`}
+            aria-label={t('my_account')}
+            title={t('my_account')}
+          >
             <div className="side-profile-name">{profile?.name}</div>
             <span className="side-role">{profile?.role}</span>
-          </div>
+          </NavLink>
 
           <ManagerWorkAlertBell />
 

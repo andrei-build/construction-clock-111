@@ -2055,6 +2055,16 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     background: var(--elevated);
   }
 
+  /* ACC-3: блок профиля — ссылка на «Мой аккаунт» (/more), hover/active как у side-link. */
+  a.side-profile {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  a.side-profile:hover { border-color: var(--cyan); background: rgba(126, 160, 190, .08); }
+  a.side-profile.active { border-color: var(--cyan); }
+
   .side-profile-name {
     margin-bottom: 8px;
     overflow: hidden;
