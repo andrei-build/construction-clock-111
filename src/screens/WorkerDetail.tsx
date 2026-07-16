@@ -29,6 +29,7 @@ import {
   type WorkerProfileFileRow,
   type WorkerSafetyAckRow,
   removeProjectExclusion,
+  setMemberPassword,
   setProjectAccessMode,
   setUserCapability,
   setWorkerActive,
@@ -55,6 +56,18 @@ function initials(name: string) {
 }
 
 const roleOptions: Role[] = ['worker', 'driver', 'supervisor', 'manager', 'subcontractor', 'sales', 'admin', 'owner']
+
+// ACC-4: роли, которые входят по email+паролю (для них владелец задаёт пароль). PIN-работники
+// (worker/driver и т.п.) входят по PIN — им пароль не задаём, блок «Доступ» не показываем.
+const EMAIL_ROLES: Role[] = ['owner', 'admin', 'manager', 'sales']
+
+// ACC-4: генератор читаемого пароля (без похожих символов 0/O/1/l) через crypto — для helper «Сгенерировать».
+function generatePassword(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+  const arr = new Uint32Array(12)
+  crypto.getRandomValues(arr)
+  return Array.from(arr, (n) => chars[n % chars.length]).join('')
+}
 
 // Гибкие права (capabilities), которые владелец/админ выдаёт поверх роли. Пока только доступ к финансам.
 const CAPABILITIES: { key: string; labelKey: string; hintKey: string }[] = [
@@ -211,6 +224,11 @@ export default function WorkerDetail() {
 
   const [capabilities, setCapabilities] = useState<UserCapability[]>([])
 
+  // ACC-4: владелец задаёт пароль сотруднику (email-роль) + переключатель «может менять сам».
+  const [memberPw, setMemberPw] = useState('')
+  const [memberPwShow, setMemberPwShow] = useState(false)
+  const [memberPwMsg, setMemberPwMsg] = useState<string | null>(null)
+
   // TEAM-1: навыки для ИИ-распределения (profiles.skills — text, храним как чипы через запятую)
   // и заметка по способностям (profiles.skills_note — text).
   const [skillsChips, setSkillsChips] = useState<string[]>([])
@@ -243,6 +261,12 @@ export default function WorkerDetail() {
   const canEditProfile = profile ? isManagerWrite(profile.role) : false
   // ДНК §1: finance_access выдаёт ТОЛЬКО owner/admin — не manager. Проверяем роль явно.
   const canManageCapabilities = profile ? (profile.role === 'owner' || profile.role === 'admin') : false
+  // ACC-4: блок «Доступ» (задать пароль + переключатель самосмены) — ТОЛЬКО владелец И только для
+  // сотрудника с email-ролью. PIN-работникам пароль не задаём. Запрет «owner ставит пароль owner'у»
+  // (в т.ч. себе) финально гейтит edge (owner_changes_own_password) — тут коды просто показываем.
+  const canSetMemberPassword = profile?.role === 'owner' && !!worker && EMAIL_ROLES.includes(worker.role)
+  // ACC-4: текущее состояние права самосмены пароля (грузится вместе с прочими capabilities для owner/admin).
+  const canChangePwGranted = capabilities.some((row) => row.capability === 'can_change_password' && row.granted)
 
   // F3: гейт назначения ролей. Показываем только роли, которые актёр вправе назначить,
   // плюс всегда оставляем видимой ТЕКУЩУЮ роль работника (иначе <select> её не отрендерит),
@@ -597,6 +621,46 @@ export default function WorkerDetail() {
       setMsg('cap_saved')
     } catch {
       setMsg('cap_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // ACC-4: владелец задаёт пароль сотруднику через edge set-member-password. На {ok:true} — чистим
+  // поле и показываем успех; коды ошибок edge — это i18n-ключи (маппит api/team.ts).
+  const submitMemberPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!worker || !canSetMemberPassword || busy) return
+    if (memberPw.length < 8) { setMemberPwMsg('bad_input_password_min_8'); return }
+    setBusy('set_password')
+    setMemberPwMsg(null)
+    try {
+      const res = await setMemberPassword(worker.id, memberPw)
+      if (res.ok) {
+        setMemberPw('')
+        setMemberPwShow(false)
+        setMemberPwMsg('set_pw_success')
+      } else {
+        setMemberPwMsg(res.error ?? 'set_pw_failed')
+      }
+    } catch {
+      setMemberPwMsg('set_pw_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // ACC-4: переключатель «может менять пароль сам» — upsert user_capabilities can_change_password.
+  const toggleSelfPasswordChange = async (next: boolean) => {
+    if (!profile || !worker || !canSetMemberPassword || busy) return
+    setBusy('cap:can_change_password')
+    setMemberPwMsg(null)
+    try {
+      await setUserCapability(profile, worker.id, 'can_change_password', next)
+      setCapabilities(await getUserCapabilities(worker.id))
+      setMemberPwMsg('cap_saved')
+    } catch {
+      setMemberPwMsg('cap_failed')
     } finally {
       setBusy(null)
     }
@@ -1244,6 +1308,67 @@ export default function WorkerDetail() {
               </>
             )}
           </section>
+
+          {/* ACC-4: «Доступ» — ТОЛЬКО владелец, ТОЛЬКО для сотрудника с email-ролью. Задать пароль
+              (отдаётся сотруднику лично) + переключатель «может менять сам» (по умолчанию НЕТ). */}
+          {canSetMemberPassword && (
+            <section className="card worker-access-card">
+              <h2>{t('access_section')}</h2>
+              <p className="muted">{t('set_member_password_hint')}</p>
+
+              <form onSubmit={submitMemberPassword}>
+                <label>{t('set_member_password_label')}</label>
+                <div className="row set-password-row">
+                  <input
+                    type={memberPwShow ? 'text' : 'password'}
+                    value={memberPw}
+                    disabled={busy !== null}
+                    autoComplete="new-password"
+                    minLength={8}
+                    onChange={(e) => { setMemberPw(e.target.value); setMemberPwMsg(null) }}
+                  />
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    disabled={busy !== null}
+                    onClick={() => setMemberPwShow((v) => !v)}
+                  >
+                    {t(memberPwShow ? 'hide_password' : 'show_password')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    disabled={busy !== null}
+                    onClick={() => { setMemberPw(generatePassword()); setMemberPwShow(true); setMemberPwMsg(null) }}
+                  >
+                    {t('generate_password')}
+                  </button>
+                </div>
+                <button className="btn" disabled={busy !== null || memberPw.length < 8}>
+                  {t('set_member_password_btn')}
+                </button>
+              </form>
+
+              <label className="check-row worker-toggle set-selfchange-toggle">
+                <input
+                  type="checkbox"
+                  checked={canChangePwGranted}
+                  disabled={busy !== null}
+                  onChange={(e) => toggleSelfPasswordChange(e.target.checked)}
+                />
+                <span>
+                  {t('can_change_password_label')}
+                  <span className="muted"> — {t('can_change_password_hint')}</span>
+                </span>
+              </label>
+
+              {memberPwMsg && (
+                <p className={memberPwMsg === 'set_pw_success' || memberPwMsg === 'cap_saved' ? 'ok-msg' : 'error-msg'}>
+                  {t(memberPwMsg)}
+                </p>
+              )}
+            </section>
+          )}
 
           {canManageCapabilities && (
             <section className="card worker-access-card">

@@ -41,6 +41,9 @@ export default function More() {
   const isOwner = profile?.role === 'owner'
   // SET-1: /settings regated to owner/admin only (plain managers no longer see it).
   const isAdminOrOwner = isOwner || profile?.role === 'admin'
+  // ACC-4 (c): пароль выдаёт владелец. Форму смены пароля показываем ТОЛЬКО владельцу ИЛИ сотруднику,
+  // которому владелец выдал право can_change_password (грузится в auth.fetchProfile как capabilities[]).
+  const canChangeOwnPassword = isOwner || (profile?.capabilities?.includes('can_change_password') ?? false)
 
   // NAV-1/NAV-2: «Ещё / More» — три сгруппированные секции (РАБОТА / ФИНАНСЫ / АДМИН).
   // Верхнее меню держим коротким (см. src/components/Nav.tsx); всё остальное — здесь.
@@ -55,10 +58,11 @@ export default function More() {
         <span className="badge amber">{profile?.role}</span>
       </div>
 
-      {/* ACC-1 (a): «Мой аккаунт» — смена пароля для ЛЮБОЙ роли (в т.ч. PIN-работники). */}
+      {/* ACC-4 (c): «Мой аккаунт» — смена пароля только владельцу ИЛИ сотруднику с правом
+          can_change_password. Иначе форму прячем и объясняем, что пароль выдаёт владелец. */}
       <h2>{t('account_section')}</h2>
       <div className="card">
-        <ChangePasswordForm />
+        {canChangeOwnPassword ? <ChangePasswordForm /> : <p className="muted">{t('password_owner_managed')}</p>}
       </div>
 
       {/* РАБОТА / WORK */}

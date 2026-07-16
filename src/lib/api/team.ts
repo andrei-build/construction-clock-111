@@ -539,6 +539,38 @@ export async function inviteAdmin(name: string, email: string, role: InviteAdmin
   return { ok: false, error: 'error' }
 }
 
+// ACC-4: владелец задаёт пароль сотруднику (email-роль) через edge `set-member-password` (verify_jwt).
+// Право и запрет «owner меняет свой пароль» гейтит сама функция; тут только маппим коды ошибок в i18n-ключи.
+// Коды тянем тем же способом, что inviteAdmin: сначала из тела (data.error), иначе из context.json() при error!=null.
+type SetMemberPasswordResult = { ok: boolean; error?: string }
+type SetMemberPasswordEdgeResponse = { ok?: boolean; error?: string }
+
+function setMemberPasswordErrorCode(value?: unknown, status?: number): string {
+  if (value === 'only_owner_can_set_password') return 'only_owner_can_set_password'
+  if (value === 'owner_changes_own_password') return 'owner_changes_own_password'
+  if (value === 'member_not_found') return 'member_not_found'
+  if (value === 'bad_input_password_min_8') return 'bad_input_password_min_8'
+  if (value === 'update_failed') return 'update_failed'
+  if (status === 404) return 'member_not_found'
+  if (status === 400) return 'bad_input_password_min_8'
+  if (status === 409) return 'update_failed'
+  if (status === 403) return 'only_owner_can_set_password'
+  return 'error'
+}
+
+export async function setMemberPassword(profileId: string, newPassword: string): Promise<SetMemberPasswordResult> {
+  const { data, error } = await supabase.functions.invoke<SetMemberPasswordEdgeResponse>('set-member-password', {
+    body: { profile_id: profileId, new_password: newPassword },
+  })
+  if (error) {
+    const errorCode = data?.error ?? await getFunctionErrorCode(error)
+    return { ok: false, error: setMemberPasswordErrorCode(errorCode, getResponseStatus(error)) }
+  }
+  if (data?.error) return { ok: false, error: setMemberPasswordErrorCode(data.error) }
+  if (data?.ok) return { ok: true }
+  return { ok: false, error: 'error' }
+}
+
 // ARCH-1 «Архив» → вкладка «Зарплата / Рабочие»: деактивированные работники (is_active=false, не удалены —
 // удалённые живут в корзине). RLS profiles отдаёт менеджеру org-скоуп.
 export async function getDeactivatedWorkers(): Promise<DeactivatedWorker[]> {
