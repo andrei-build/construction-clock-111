@@ -11,7 +11,6 @@ import {
   IconChart,
   IconChat,
   IconClock,
-  IconDashboard,
   IconDispatch,
   IconFolder,
   IconGrid,
@@ -67,7 +66,7 @@ export default function Nav({ manager }: { manager: boolean }) {
   // навигации менеджера — доска задач живёт внутри Командного центра (маршрут /tasks → редирект).
   const managerItems: NavItem[] = [
     { to: '/overview', Icon: IconGrid, label: t('overview') },
-    { to: '/', end: true, Icon: IconDashboard, label: t('nav_home') },
+    // NAV-5: «Главная» (Dashboard) убрана — свёрнута в «Командный центр» (/dispatch).
     { to: '/dispatch', Icon: IconDispatch, label: t('command_center') },
     { to: '/projects', Icon: IconFolder, label: t('projects') },
     { to: '/team', Icon: IconUsers, label: t('team') },
@@ -108,7 +107,7 @@ export default function Nav({ manager }: { manager: boolean }) {
       title: t('nav_group_main'),
       items: [
         { to: '/overview', Icon: IconGrid, label: t('overview') },
-        { to: '/', end: true, Icon: IconDashboard, label: t('nav_home') },
+        // NAV-5: «Главная» (Dashboard) убрана — свёрнута в «Командный центр» (/dispatch).
         { to: '/dispatch', Icon: IconDispatch, label: t('command_center') },
         { to: '/projects', Icon: IconFolder, label: t('projects') },
         { to: '/team', Icon: IconUsers, label: t('team') },

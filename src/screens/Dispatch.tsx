@@ -40,6 +40,9 @@ import type {
 } from '../lib/types'
 import VoiceMic from '../components/VoiceMic'
 import { useEntityDrawer } from '../components/EntityDrawer'
+// NAV-5: план дня (конструктор бригад/задач + рассылка плана) переехал сюда из убитой «Главной».
+// Самодостаточный блок (свой загрузчик, свой manager-гейт), рендерится как обычная секция ЦК.
+import PlanConstructor from './dashboard/PlanConstructor'
 
 // «Командный центр» (CC-2) — единый пульт управления командой (бывшая «Диспетчерская»).
 // НИКАКИХ финансовых чисел здесь нет by design: экран операционный, поэтому финансовый гейт
@@ -220,6 +223,10 @@ export default function Dispatch() {
             now={now}
             onOpenWorker={openWorker}
           />
+
+          {/* NAV-5: «Конструктор плана» (DISP-1) — единственный уникальный живой блок бывшей
+              «Главной». Ставим перед доской задач: сперва план дня по проектам, затем раздача задач. */}
+          <PlanConstructor />
 
           <TaskBoard
             projects={projects}
