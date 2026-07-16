@@ -1758,6 +1758,23 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_send_failed_reason: { ru: 'Не удалось отправить: {reason}', en: 'Could not send: {reason}', es: 'No se pudo enviar: {reason}' },
   mail_outgoing: { ru: 'Исходящее', en: 'Outgoing', es: 'Saliente' },
   mail_unknown_recipient: { ru: 'Без получателя', en: 'Unknown recipient', es: 'Destinatario desconocido' },
+  // MAIL-3-UI: «Рабочий фильтр» — белый список отправителей (owner-only).
+  mail_add_to_allowlist: { ru: 'В белый список', en: 'Add to allowlist', es: 'Añadir a la lista blanca' },
+  mail_allowlist_added: { ru: 'Письма от {sender} теперь приходят в приложение', en: 'Mail from {sender} now arrives in the app', es: 'Los correos de {sender} ahora llegan a la app' },
+  mail_allowlist_exists: { ru: '{sender} уже в белом списке', en: '{sender} is already in the allowlist', es: '{sender} ya está en la lista blanca' },
+  mail_allowlist_add_failed: { ru: 'Не удалось добавить в белый список', en: 'Could not add to allowlist', es: 'No se pudo añadir a la lista blanca' },
+  mail_allowlist_title: { ru: 'Белый список', en: 'Allowlist', es: 'Lista blanca' },
+  mail_allowlist_open: { ru: 'Белый список', en: 'Allowlist', es: 'Lista blanca' },
+  mail_allowlist_empty: { ru: 'Белый список пуст', en: 'Allowlist is empty', es: 'La lista blanca está vacía' },
+  mail_allowlist_loading: { ru: 'Загружаем список…', en: 'Loading list…', es: 'Cargando lista…' },
+  mail_allowlist_entry: { ru: 'Адрес или домен (@example.com)', en: 'Address or domain (@example.com)', es: 'Dirección o dominio (@example.com)' },
+  mail_allowlist_note: { ru: 'Имя (необязательно)', en: 'Name (optional)', es: 'Nombre (opcional)' },
+  mail_allowlist_add: { ru: 'Добавить', en: 'Add', es: 'Añadir' },
+  mail_allowlist_adding: { ru: 'Добавляем…', en: 'Adding…', es: 'Añadiendo…' },
+  mail_allowlist_delete: { ru: 'Удалить', en: 'Remove', es: 'Eliminar' },
+  mail_allowlist_delete_failed: { ru: 'Не удалось удалить', en: 'Could not remove', es: 'No se pudo eliminar' },
+  mail_allowlist_hint: { ru: 'Клиенты из базы попадают в приложение автоматически', en: 'Clients from your database arrive in the app automatically', es: 'Los clientes de tu base de datos llegan a la app automáticamente' },
+  mail_work_filter_on: { ru: 'Рабочий фильтр включён', en: 'Work filter on', es: 'Filtro de trabajo activado' },
 }
 
 interface I18n {
