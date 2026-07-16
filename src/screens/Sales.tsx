@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { getDeals, updateDealStage } from '../lib/api'
-import type { Deal, DealStage } from '../lib/types'
+import type { Deal, DealStage, DocumentType } from '../lib/types'
+import EstimatesInvoices from './sales/EstimatesInvoices'
 
 const stages: DealStage[] = ['lead', 'contacted', 'measured', 'quoted', 'negotiation', 'signed', 'handed_off', 'lost']
 const nextStage: Partial<Record<DealStage, DealStage>> = {
@@ -14,9 +16,19 @@ const nextStage: Partial<Record<DealStage, DealStage>> = {
   signed: 'handed_off',
 }
 
+// DOCS-2: две вкладки продаж — «Сделки» (канбан) и «Сметы и счета» (перенесённый из «Документов»
+// менеджер смет/счётов). ?tab=estimates|invoices|documents открывает вторую вкладку (и подвкладку).
+type SalesTab = 'deals' | 'documents'
+
 export default function Sales() {
   const { profile } = useAuth()
   const { t } = useI18n()
+  const [searchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const initialTab: SalesTab =
+    tabParam === 'estimates' || tabParam === 'invoices' || tabParam === 'documents' ? 'documents' : 'deals'
+  const initialDocType: DocumentType | undefined = tabParam === 'invoices' ? 'invoice' : tabParam === 'estimates' ? 'estimate' : undefined
+  const [tab, setTab] = useState<SalesTab>(initialTab)
   const [deals, setDeals] = useState<Deal[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
@@ -63,34 +75,50 @@ export default function Sales() {
   return (
     <div className="screen sales-screen">
       <h1>🤝 {t('sales')}</h1>
-      {loading && <div className="card center muted">{t('loading')}</div>}
-      {error && <p className="error-msg">{t('load_error')}</p>}
-      {!loading && deals.length === 0 && <div className="card muted">{t('no_deals')}</div>}
 
-      <div className="sales-board">
-        {stages.map((stage) => (
-          <section className="sales-column" key={stage}>
-            <h2>{t(`deal_stage_${stage}`)}</h2>
-            {(byStage.get(stage) ?? []).length === 0 && <div className="card muted">{t('empty_stage')}</div>}
-            {(byStage.get(stage) ?? []).map((deal) => (
-              <div className="card deal-card" key={deal.id}>
-                <div className="item-title">{deal.title}</div>
-                <div className="deal-amount">{money(deal.expected_amount)}</div>
-                {deal.next_action && <p className="muted">{deal.next_action}</p>}
-                {stage === 'signed' ? (
-                  <button className="btn small" disabled={busy !== null} onClick={() => move(deal, 'handed_off')}>
-                    {t('handoff_to_production')}
-                  </button>
-                ) : nextStage[stage] ? (
-                  <button className="btn ghost small" disabled={busy !== null} onClick={() => move(deal, nextStage[stage]!)}>
-                    {t('next_stage')}
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </section>
-        ))}
+      <div className="tabs sales-tabs">
+        <button type="button" className={tab === 'deals' ? 'active' : ''} onClick={() => setTab('deals')}>
+          {t('sales_tab_deals')}
+        </button>
+        <button type="button" className={tab === 'documents' ? 'active' : ''} onClick={() => setTab('documents')}>
+          {t('sales_tab_documents')}
+        </button>
       </div>
+
+      {tab === 'documents' ? (
+        <EstimatesInvoices initialType={initialDocType} />
+      ) : (
+        <>
+          {loading && <div className="card center muted">{t('loading')}</div>}
+          {error && <p className="error-msg">{t('load_error')}</p>}
+          {!loading && deals.length === 0 && <div className="card muted">{t('no_deals')}</div>}
+
+          <div className="sales-board">
+            {stages.map((stage) => (
+              <section className="sales-column" key={stage}>
+                <h2>{t(`deal_stage_${stage}`)}</h2>
+                {(byStage.get(stage) ?? []).length === 0 && <div className="card muted">{t('empty_stage')}</div>}
+                {(byStage.get(stage) ?? []).map((deal) => (
+                  <div className="card deal-card" key={deal.id}>
+                    <div className="item-title">{deal.title}</div>
+                    <div className="deal-amount">{money(deal.expected_amount)}</div>
+                    {deal.next_action && <p className="muted">{deal.next_action}</p>}
+                    {stage === 'signed' ? (
+                      <button className="btn small" disabled={busy !== null} onClick={() => move(deal, 'handed_off')}>
+                        {t('handoff_to_production')}
+                      </button>
+                    ) : nextStage[stage] ? (
+                      <button className="btn ghost small" disabled={busy !== null} onClick={() => move(deal, nextStage[stage]!)}>
+                        {t('next_stage')}
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </section>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
