@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import Schedule from './Schedule'
 import {
   getProjects, updateProjectDates,
   getTeamCalendarEvents, createCalendarEvent,
@@ -19,7 +21,9 @@ import { getDeadlineInfo, type TrafficStatus } from './project-hub/status'
 //   manager/admin/owner → всё (проекты + события); worker → только СВОИ задачи и события
 //   (assigned_to === profile.id); driver → доставки в первую очередь + свои события.
 
-type CalTab = 'calendar' | 'deliveries'
+// CAL-3: «Расписание (люди×дни)» стало третьей вкладкой (закон Андрея: отдельного экрана
+// «Расписание» нет — всё внутри «Календаря команды»). Тело вкладки — переиспользуемый <Schedule/>.
+type CalTab = 'calendar' | 'deliveries' | 'schedule'
 type EventType = CalendarEvent['event_type']
 type MarkerKind = 'start' | 'deadline'
 
@@ -106,7 +110,13 @@ export default function TeamCalendar() {
   const isDriver = profile?.role === 'driver'
   const myId = profile?.id ?? ''
 
-  const [tab, setTab] = useState<CalTab>('calendar')
+  // CAL-3: начальная вкладка из ?tab= (редирект /schedule → ?tab=schedule сохраняет старые ссылки).
+  const [searchParams] = useSearchParams()
+  const initialTab: CalTab =
+    searchParams.get('tab') === 'schedule' ? 'schedule'
+    : searchParams.get('tab') === 'deliveries' ? 'deliveries'
+    : 'calendar'
+  const [tab, setTab] = useState<CalTab>(initialTab)
   const [projects, setProjects] = useState<Project[]>([])
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
@@ -424,11 +434,15 @@ export default function TeamCalendar() {
       <div className="tabs team-cal-tabs">
         <button className={tab === 'calendar' ? 'active' : ''} onClick={() => setTab('calendar')}>{t('cal_tab_calendar')}</button>
         <button className={tab === 'deliveries' ? 'active' : ''} onClick={() => setTab('deliveries')}>{t('cal_tab_deliveries')}</button>
+        <button className={tab === 'schedule' ? 'active' : ''} onClick={() => setTab('schedule')}>{t('cal_tab_schedule')}</button>
       </div>
 
-      {roleNote && <p className="muted team-cal-rolenote">{roleNote}</p>}
+      {roleNote && tab !== 'schedule' && <p className="muted team-cal-rolenote">{roleNote}</p>}
 
-      {tab === 'deliveries' ? (
+      {tab === 'schedule' ? (
+        // CAL-3: тело третьей вкладки — переиспользуемый экран «Расписание» (роль-сплит внутри него).
+        <Schedule />
+      ) : tab === 'deliveries' ? (
         // CAL-1b: задачи по due_date (+ материалы/доставки), сгруппированные по дню, по роли.
         <div className="team-cal-deliveries">
           {statusErr && <p className="error-msg">{t('cal_status_save_failed')}</p>}

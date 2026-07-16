@@ -1601,6 +1601,8 @@ const dict: Record<string, Record<Lang, string>> = {
     en: 'There are linked records — permanent deletion is not possible, keep them in the archive',
     es: 'Hay registros vinculados — la eliminación permanente no es posible, déjela en el archivo',
   },
+  // CAL-3: третья вкладка «Календаря команды» — сетка «люди×дни» (бывший экран «Расписание»).
+  cal_tab_schedule: { ru: 'Расписание (люди×дни)', en: 'Schedule (people×days)', es: 'Horario (personas×días)' },
 }
 
 interface I18n {

@@ -87,7 +87,10 @@ export default function App() {
             {/* CC-2: standalone «Задачи» retired from manager nav. Managers now land on the
                 Command Center task board; field roles (worker/driver) keep their task list. */}
             <Route path="/tasks" element={manager ? <Navigate to="/dispatch" replace /> : <Tasks />} />
-            <Route path="/schedule" element={<Schedule />} />
+            {/* CAL-3: standalone «Расписание» retired — it's now the 3rd tab of the team calendar.
+                Managers redirect into that tab; non-managers (no /team-calendar access) keep the
+                standalone Schedule so the role-split is preserved exactly. Old /schedule links resolve. */}
+            <Route path="/schedule" element={manager ? <Navigate to="/team-calendar?tab=schedule" replace /> : <Schedule />} />
             <Route path="/dispatch" element={manager ? <Dispatch /> : <Navigate to="/" />} />
             {/* CC-2: /command-center alias for the Командный центр (/dispatch stays canonical). */}
             <Route path="/command-center" element={manager ? <Dispatch /> : <Navigate to="/" />} />
