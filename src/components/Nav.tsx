@@ -116,6 +116,8 @@ export default function Nav({ manager }: { manager: boolean }) {
       items: [
         { to: '/sales', Icon: IconBriefcase, label: t('sales') },
         { to: '/clients', Icon: IconUsers, label: t('clients') },
+        // BROADCAST-1: «Рассылка» — только владелец (сам экран тоже owner-gated).
+        { to: '/broadcast', Icon: IconChat, label: t('broadcast_title'), show: isOwner },
         { to: '/payroll', Icon: IconMoney, label: t('payroll') },
         { to: '/documents', Icon: IconWallet, label: t('documents') },
         { to: '/reports', Icon: IconChart, label: t('reports') },
