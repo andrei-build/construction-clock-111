@@ -571,6 +571,29 @@ export async function setMemberPassword(profileId: string, newPassword: string):
   return { ok: false, error: 'error' }
 }
 
+// TRASH-3: безвозвратное удаление человека — только владелец, через RPC public.purge_profile
+// (SECURITY DEFINER, migration 0046). Все гарантии гейтит сама функция БД: только role=owner;
+// только человек уже в корзине (deleted_at); нельзя удалить себя; ЖЕЛЕЗНЫЙ запрет при оплаченной
+// истории (purge_blocked_paid_history). Тут — только маппинг текста ошибки БД (содержит код) в
+// i18n-ключи, тем же кодом-мапером, что inviteAdmin/setMemberPassword выше.
+type PurgeProfileResult = { ok: boolean; error?: string }
+
+function purgeProfileErrorCode(message?: string): string {
+  const m = message ?? ''
+  if (m.includes('only_owner_can_purge')) return 'only_owner_can_purge'
+  if (m.includes('cannot_purge_self')) return 'cannot_purge_self'
+  if (m.includes('not_in_trash')) return 'not_in_trash'
+  if (m.includes('purge_blocked_paid_history')) return 'purge_blocked_paid_history'
+  if (m.includes('purge_blocked_by_references')) return 'purge_blocked_by_references'
+  return 'error'
+}
+
+export async function purgeProfile(profileId: string): Promise<PurgeProfileResult> {
+  const { error } = await supabase.rpc('purge_profile', { p_profile_id: profileId })
+  if (error) return { ok: false, error: purgeProfileErrorCode(error.message) }
+  return { ok: true }
+}
+
 // ARCH-1 «Архив» → вкладка «Зарплата / Рабочие»: деактивированные работники (is_active=false, не удалены —
 // удалённые живут в корзине). RLS profiles отдаёт менеджеру org-скоуп.
 export async function getDeactivatedWorkers(): Promise<DeactivatedWorker[]> {
