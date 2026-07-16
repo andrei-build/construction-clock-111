@@ -182,6 +182,59 @@ export async function setSupplyStoreActive(p: Profile, id: string, is_active: bo
   await logEvent(p, 'supply_store.updated', 'supply_store', id, { is_active })
 }
 
+// ── SET-1-GPS: owner-only GPS data export + tracking-feed purge ────────────────
+// Both RPCs live in the `app` SCHEMA (NOT public), so they MUST be called through the
+// schema-qualified client: supabase.schema('app').rpc(...). The functions are fail-closed
+// owner-only (non-owner → only_owner). We surface the raw error message to the UI (throw).
+// NB (SET-1 reachability probe, 2026-07-16): the `app` schema is currently NOT exposed to
+// PostgREST (db-schemas = public, graphql_public) → these calls return PGRST106 until the
+// backend exposes `app` OR adds public wrappers. The wiring below is spec-correct and ready.
+
+export type GpsExportSource = 'time_event' | 'live_location' | 'geo_event'
+
+export interface GpsExportRow {
+  source: GpsExportSource
+  profile_id: string | null
+  at: string | null
+  lat: number | null
+  lng: number | null
+  accuracy_m: number | null
+  detail: string | null
+}
+
+// Экспорт GPS за период [from, to). p_profile = null → все работники. Возвращает строки из
+// трёх источников (time_events / live_locations / shift_geo_events) — БД их не трогает, только читает.
+export async function reportGpsExport(from: string, to: string, profileId?: string | null): Promise<GpsExportRow[]> {
+  const { data, error } = await supabase.schema('app').rpc('report_gps_export', {
+    p_from: from,
+    p_to: to,
+    p_profile: profileId ?? null,
+  })
+  if (error) throw error
+  return ((data ?? []) as GpsExportRow[])
+}
+
+// Счётчики удалённого purge_gps_feeds — имена колонок фиксирует БД, поэтому набор держим
+// открытым (Record) и в UI показываем как есть.
+export type PurgeGpsFeedsCounts = Record<string, number>
+
+// Очистка трекинг-фидов: удаляет live_locations старше p_before + РАЗРЕШЁННЫЕ shift_geo_events,
+// пишет событие gps.feeds_purged. time_events НИКОГДА не трогаются. p_profile = null → все работники.
+export async function purgeGpsFeeds(before: string, profileId?: string | null): Promise<PurgeGpsFeedsCounts> {
+  const { data, error } = await supabase.schema('app').rpc('purge_gps_feeds', {
+    p_before: before,
+    p_profile: profileId ?? null,
+  })
+  if (error) throw error
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null
+  const counts: PurgeGpsFeedsCounts = {}
+  for (const [key, value] of Object.entries(row ?? {})) {
+    const n = Number(value)
+    if (Number.isFinite(n)) counts[key] = n
+  }
+  return counts
+}
+
 // Заезды store_visits: строки пишет бэкенд edge-function, экран только читает (может быть пусто).
 export async function getStoreVisits(): Promise<StoreVisit[]> {
   const { data, error } = await supabase.from('store_visits')
