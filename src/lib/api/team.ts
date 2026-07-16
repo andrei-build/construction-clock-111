@@ -722,6 +722,20 @@ export async function getWorkerDayTimeEvents(workerId: string, dayStartISO: stri
   return (data as TimeEvent[]) ?? []
 }
 
+// M11: личное предпочтение «беззвучный режим» (profiles.notif_mode). Само-обновление: RLS
+// разрешает менять СВОЮ строку (id = auth.uid()), а триггер приватных колонок notif_mode не
+// откатывает — бэкенд-изменения не нужны. Значение трактует notifPrefs (off → полная тишина,
+// default → обычный режим); notifications.tsx подхватывает новый режим после refresh() в auth.
+// Без logEvent — это личная UI-настройка, не действие над чужим профилем.
+export async function updateNotifMode(mode: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('not_authenticated')
+  const { error } = await supabase.from('profiles')
+    .update({ notif_mode: mode })
+    .eq('id', user.id)
+  if (error) throw error
+}
+
 // OVR-1: manager force-checkout appends a normal check_out for the worker. History stays immutable.
 export async function managerCheckoutWorker(p: Profile, workerId: string, projectId: string | null): Promise<string> {
   const { data, error } = await supabase.from('time_events')

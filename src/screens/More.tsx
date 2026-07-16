@@ -1,8 +1,9 @@
-import type { ComponentType, SVGProps } from 'react'
+import { useEffect, useRef, useState, type ComponentType, type SVGProps } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { isManagerRole } from '../lib/types'
+import { isManagerRole, notifPrefs } from '../lib/types'
+import { updateNotifMode } from '../lib/api'
 import AboutPanel from '../components/AboutPanel'
 import PushToggle from '../components/PushToggle'
 import ChangePasswordForm from '../components/ChangePasswordForm'
@@ -30,6 +31,57 @@ function MoreLink({ to, Icon, label }: { to: string; Icon: IconType; label: stri
       <span className="more-ico"><Icon /></span>
       <span>{label}</span>
     </Link>
+  )
+}
+
+// M11: «Беззвучный режим» — личное предпочтение уведомлений (profiles.notif_mode) для ЛЮБОЙ роли.
+// ВКЛ = тишина (notif_mode='off', полная тишина по notifPrefs); ВЫКЛ = обычный режим ('default').
+// Текущее состояние читаем из профиля (источник правды) через notifPrefs; после записи зовём
+// refresh(), чтобы notifications.tsx сразу подхватил новый режим. Живёт в секции «Уведомления».
+function SilentModeToggle() {
+  const { profile, refresh } = useAuth()
+  const { t } = useI18n()
+  const [busy, setBusy] = useState(false)
+  const [toast, setToast] = useState<'ok' | 'err' | null>(null)
+  const timer = useRef<number | null>(null)
+  const silent = !notifPrefs(profile?.notif_mode).sound
+
+  const flash = (kind: 'ok' | 'err') => {
+    setToast(kind)
+    if (timer.current !== null) window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => { setToast(null); timer.current = null }, 3000)
+  }
+  useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current) }, [])
+
+  const toggle = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await updateNotifMode(silent ? 'default' : 'off')
+      await refresh()
+      flash('ok')
+    } catch {
+      flash('err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card">
+      <div style={{ fontWeight: 600 }}>{t('silent_mode_toggle')}</div>
+      <p className="muted" style={{ marginTop: 4 }}>{t('silent_mode_hint')}</p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+        <span className={`badge ${silent ? 'amber' : 'green'}`}>
+          {silent ? t('silent_state_on') : t('silent_state_off')}
+        </span>
+        <button className={silent ? 'btn small' : 'btn ghost small'} onClick={toggle} disabled={busy}>
+          {busy ? t('push_working') : silent ? t('silent_disable') : t('silent_enable')}
+        </button>
+      </div>
+      {toast === 'ok' && <p className="muted" style={{ marginTop: 8 }}>{t('silent_saved')}</p>}
+      {toast === 'err' && <p className="error-msg" style={{ marginTop: 8 }}>{t('silent_failed')}</p>}
+    </div>
   )
 }
 
@@ -108,6 +160,7 @@ export default function More() {
 
       <h2>{t('push_section')}</h2>
       <PushToggle />
+      <SilentModeToggle />
 
       <h2>{t('language')}</h2>
       <div className="tabs">
