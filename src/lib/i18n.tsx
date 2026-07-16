@@ -1624,6 +1624,14 @@ const dict: Record<string, Record<Lang, string>> = {
   brand_nw_build_pro: { ru: 'NW Build Pro', en: 'NW Build Pro', es: 'NW Build Pro' },
   brand_nw_custom_homes: { ru: 'NW Custom Homes', en: 'NW Custom Homes', es: 'NW Custom Homes' },
   brand_filter_all: { ru: 'Все компании', en: 'All companies', es: 'Todas las empresas' },
+  // CLIENT-MEDIA-1: «Фотоотчёт клиенту» — флаг задачи + блок ручной видимости на вкладке «Клиент».
+  task_client_report: { ru: 'Отчёт для клиента', en: 'Client report', es: 'Informe para el cliente' },
+  client_visible_block: { ru: 'Видно клиенту', en: 'Visible to client', es: 'Visible para el cliente' },
+  client_visible_show: { ru: 'Показать', en: 'Show', es: 'Mostrar' },
+  client_visible_hide: { ru: 'Скрыть', en: 'Hide', es: 'Ocultar' },
+  client_visible_empty: { ru: 'Пока нет фото или видео для клиента', en: 'No client photos or videos yet', es: 'Aún no hay fotos o videos para el cliente' },
+  client_visible_error: { ru: 'Не удалось изменить видимость', en: 'Could not change visibility', es: 'No se pudo cambiar la visibilidad' },
+  client_access_disabled: { ru: 'Доступ клиента полностью отключён', en: 'Client access is fully off', es: 'El acceso del cliente está totalmente desactivado' },
 }
 
 interface I18n {

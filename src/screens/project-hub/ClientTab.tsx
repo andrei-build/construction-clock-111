@@ -4,11 +4,14 @@ import {
   createProjectGrant,
   getAccountById,
   getAccountRating,
+  getClientAccessEnabled,
+  getProjectClientMedia,
   getProjectGrants,
   revokeProjectGrant,
+  setMediaClientVisible,
 } from '../../lib/api'
 import { isManagerWrite } from '../../lib/types'
-import type { Account, AccountRating, ClientGrant, Profile, Project } from '../../lib/types'
+import type { Account, AccountRating, ClientGrant, ClientMediaItem, Profile, Project } from '../../lib/types'
 
 interface ClientTabProps {
   project: Project
@@ -38,6 +41,12 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
 
+  // CLIENT-MEDIA-1: медиа проекта под ручным управлением видимости + мастер-выключатель доступа.
+  const [media, setMedia] = useState<ClientMediaItem[]>([])
+  const [accessEnabled, setAccessEnabled] = useState(true)
+  const [mediaBusy, setMediaBusy] = useState<string | null>(null)
+  const [mediaError, setMediaError] = useState<string | null>(null)
+
   const [form, setForm] = useState<ToggleState>(EMPTY_FORM)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -54,15 +63,19 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
       setLoading(true)
       setLoadError(false)
       try {
-        const [acc, rat, grantRows] = await Promise.all([
+        const [acc, rat, grantRows, mediaRows, access] = await Promise.all([
           getAccountById(clientId),
           getAccountRating(clientId),
           getProjectGrants(project.id),
+          getProjectClientMedia(project.id),
+          getClientAccessEnabled(clientId),
         ])
         if (!mounted) return
         setAccount(acc)
         setRating(rat)
         setGrants(grantRows)
+        setMedia(mediaRows)
+        setAccessEnabled(access)
       } catch {
         if (mounted) setLoadError(true)
       } finally {
@@ -104,6 +117,22 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
       setRevokeError('hub_grant_revoke_failed')
     } finally {
       setBusy(false)
+    }
+  }
+
+  // CLIENT-MEDIA-1: ручной show/hide одного элемента — flip media.client_visible.
+  const toggleMedia = async (item: ClientMediaItem) => {
+    if (!profile || !canManage || !accessEnabled || mediaBusy) return
+    const next = !item.client_visible
+    setMediaBusy(item.id)
+    setMediaError(null)
+    try {
+      await setMediaClientVisible(profile, item.id, next)
+      setMedia((rows) => rows.map((r) => (r.id === item.id ? { ...r, client_visible: next } : r)))
+    } catch {
+      setMediaError('client_visible_error')
+    } finally {
+      setMediaBusy(null)
     }
   }
 
@@ -214,6 +243,44 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
                 </div>
               )
             })}
+          </div>
+        )}
+      </div>
+
+      {/* CLIENT-MEDIA-1: «Видно клиенту» — превью фото/видео проекта с ручным show/hide */}
+      <div className={`card${accessEnabled ? '' : ' muted'}`}>
+        <h2>{t('client_visible_block')}</h2>
+        {!accessEnabled && <p className="muted">{t('client_access_disabled')}</p>}
+        {mediaError && <p className="error-msg">{t(mediaError)}</p>}
+        {media.length === 0 ? (
+          <p className="muted">{t('client_visible_empty')}</p>
+        ) : (
+          <div className="task-attach-thumbs">
+            {media.map((item) => (
+              <div key={item.id} className="hub-client-media-item" style={{ opacity: item.client_visible ? 1 : 0.5 }}>
+                {item.url ? (
+                  item.media_type === 'video' ? (
+                    <video className="task-attach-thumb" src={item.url} controls preload="metadata" />
+                  ) : (
+                    <a href={item.url} target="_blank" rel="noreferrer">
+                      <img className="task-attach-thumb" src={item.url} alt={item.filename ?? ''} />
+                    </a>
+                  )
+                ) : (
+                  <div className="task-attach-thumb center muted">—</div>
+                )}
+                {canManage && (
+                  <button
+                    className="btn ghost small"
+                    type="button"
+                    disabled={!accessEnabled || mediaBusy === item.id}
+                    onClick={() => toggleMedia(item)}
+                  >
+                    {item.client_visible ? t('client_visible_hide') : t('client_visible_show')}
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>
