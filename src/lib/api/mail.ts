@@ -21,6 +21,9 @@ export interface MailAccount {
   imap_host: string | null
   imap_port: number | null
   work_only: boolean // MAIL-3-UI: «рабочий фильтр» — ящик принимает только адреса из белого списка.
+  // MAIL-4-UI: режим фильтра ящика (миграция 0056). 'off' без фильтра, 'allowlist' только белый
+  // список, 'smart' умный фильтр. Бейдж режима в шапке ящика читается отсюда (не из work_only).
+  filter_mode: 'off' | 'allowlist' | 'smart'
   created_at: string
 }
 
@@ -43,7 +46,7 @@ export interface MailMessage {
 }
 
 const MAIL_ACCOUNT_SELECT =
-  'id, org_id, key, brand, email, display_name, active, last_sync_at, last_uid, last_error, imap_host, imap_port, work_only, created_at'
+  'id, org_id, key, brand, email, display_name, active, last_sync_at, last_uid, last_error, imap_host, imap_port, work_only, filter_mode, created_at'
 const MAIL_MESSAGE_SELECT =
   'id, org_id, account_id, uid, message_id, from_name, from_addr, to_addr, subject, snippet, body_text, sent_at, seen, direction, created_at'
 
@@ -200,15 +203,19 @@ export function emitMailUnreadChanged(): void {
 // RLS owner-only USING+WITH CHECK org_id=app.org_id() AND app.is_owner()). entry = конкретный
 // адрес ('john@x.com') ИЛИ домен в форме '@x.com'; note — свободный текст (имя отправителя).
 // ⚠️ org_id НЕ имеет дефолта: при INSERT его надо передавать ЯВНО (берём из mail_accounts.org_id).
+// MAIL-4-UI: `kind` (миграция 0056) делит записи: 'allow' — белый список (MAIL-3), 'block' —
+// «скрыть навсегда» (чёрный список отправителей). UI сам делит записи по kind. Существующие
+// записи = 'allow' (DEFAULT в БД).
 export interface MailAllowlistEntry {
   id: string
   org_id: string
   entry: string
   note: string | null
+  kind: 'allow' | 'block'
   created_at: string
 }
 
-const MAIL_ALLOWLIST_SELECT = 'id, org_id, entry, note, created_at'
+const MAIL_ALLOWLIST_SELECT = 'id, org_id, entry, note, kind, created_at'
 
 // Читаем белый список (свежие сверху). error → [] через warnReadError — мягкая деградация, как
 // getMailMessages (пустой/недоступный список это НЕ баг для не-владельца или пустого org).
@@ -227,11 +234,14 @@ export async function getMailAllowlist(): Promise<MailAllowlistEntry[]> {
 // Добавить запись. org_id ОБЯЗАТЕЛЕН и явный (у колонки нет дефолта) — источник на фронте это
 // mail_accounts.org_id владельца. Ошибку пробрасываем (throw), чтобы UI показал тост; дубль
 // (unique-constraint) UI ловит отдельно (мягкий тост «уже в белом списке»).
-export async function addMailAllowlist(input: { org_id: string; entry: string; note?: string | null }): Promise<void> {
+// MAIL-4-UI: kind опционален и по умолчанию 'allow' — чтобы не сломать вызов MAIL-3 «В белый
+// список» (он kind не шлёт). «Скрыть навсегда» передаёт kind:'block'.
+export async function addMailAllowlist(input: { org_id: string; entry: string; note?: string | null; kind?: 'allow' | 'block' }): Promise<void> {
   const { error } = await supabase.from('mail_allowlist').insert({
     org_id: input.org_id,
     entry: input.entry,
     note: input.note ?? null,
+    kind: input.kind ?? 'allow',
   })
   if (error) throw error
 }
