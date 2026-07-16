@@ -21,10 +21,11 @@ import {
   markMaterialStatus,
   subscribeToTaskChanges,
   updateAccount,
+  updateClientBrand,
   type MaterialStatusAction,
 } from '../lib/api'
 import { fmtHours, shiftState, weekStartISO, workedMs } from '../lib/time'
-import { isManagerRole, type Account, type AccountInput, type ClientProjectSummary, type Contact, type ContactInput, type Deal, type DocumentRow, type EventRow, type Profile, type Project, type ProjectPhoto, type ProjectProfit, type Task, type TimeEvent } from '../lib/types'
+import { isManagerRole, isManagerWrite, type Account, type AccountInput, type ClientProjectSummary, type Contact, type ContactInput, type Deal, type DocumentRow, type EventRow, type Profile, type Project, type ProjectPhoto, type ProjectProfit, type Task, type TimeEvent } from '../lib/types'
 import MaterialStatusChain, { isMaterialFlowTask } from './MaterialStatusChain'
 
 type DrawerState =
@@ -131,6 +132,14 @@ function money(value: number | null) {
   return value === null ? '—' : new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
 }
 
+// BRAND-1: «Закон двух компаний» — бренд клиента (accounts.brand). Нормализуем к одному из двух
+// известных значений; всё неизвестное/пустое трактуем как дефолт 'nw_build_pro'.
+type BrandKey = 'nw_build_pro' | 'nw_custom_homes'
+const BRAND_KEYS: BrandKey[] = ['nw_build_pro', 'nw_custom_homes']
+function brandKey(value: string | null | undefined): BrandKey {
+  return value === 'nw_custom_homes' ? 'nw_custom_homes' : 'nw_build_pro'
+}
+
 function ClientPanel({ account, onUpdated }: {
   account: Account
   onUpdated?: (account: Account) => void
@@ -147,6 +156,7 @@ function ClientPanel({ account, onUpdated }: {
   const [editing, setEditing] = useState(false)
   const [savingAccount, setSavingAccount] = useState(false)
   const [accountError, setAccountError] = useState(false)
+  const [savingBrand, setSavingBrand] = useState(false)
   const [contactName, setContactName] = useState('')
   const [contactTitle, setContactTitle] = useState('')
   const [contactEmail, setContactEmail] = useState('')
@@ -210,6 +220,22 @@ function ClientPanel({ account, onUpdated }: {
     }
   }
 
+  // BRAND-1: переключить бренд клиента прямо на карточке. Тот же гейт, что у рейтинга (isManagerWrite);
+  // пишем только accounts.brand через updateClientBrand. При ошибке (RLS/сеть) тихо оставляем прежнее.
+  async function saveBrand(brand: BrandKey) {
+    if (!profile || savingBrand || brand === brandKey(current.brand)) return
+    setSavingBrand(true)
+    try {
+      const updated = await updateClientBrand(profile, current.id, brand)
+      setCurrent(updated)
+      onUpdated?.(updated)
+    } catch {
+      /* RLS/сеть — тихо, значение не меняем */
+    } finally {
+      setSavingBrand(false)
+    }
+  }
+
   async function addContact(e: FormEvent) {
     e.preventDefault()
     if (!profile || savingContact || !contactName.trim()) return
@@ -239,6 +265,10 @@ function ClientPanel({ account, onUpdated }: {
   }
 
   const headerLines = [current.phone, current.email, current.address].filter(Boolean)
+  // BRAND-1: редактировать бренд может только owner/admin/manager (RLS дублирует гейт на сервере);
+  // остальные видят read-only пилюлю.
+  const canEditBrand = profile ? isManagerWrite(profile.role) : false
+  const currentBrand = brandKey(current.brand)
 
   return (
     <>
@@ -254,7 +284,25 @@ function ClientPanel({ account, onUpdated }: {
           <div className="client-drawer-tags">
             <span className={`badge ${accountTypeTone(current.account_type)}`}>{accountTypeLabel(t, current.account_type)}</span>
             {current.insurance_status && <span className="badge blue">{current.insurance_status}</span>}
+            <span className={`badge ${currentBrand === 'nw_custom_homes' ? 'blue' : 'green'} client-brand-badge`}>{t(`brand_${currentBrand}`)}</span>
           </div>
+          {/* BRAND-1: переключатель бренда «Компания: NW Build Pro | NW Custom Homes» — только менеджерам. */}
+          {canEditBrand && (
+            <label className="client-drawer-brand" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <span className="muted" style={{ fontSize: '.85rem' }}>{t('brand_label')}</span>
+              <select
+                className="client-brand-select"
+                value={currentBrand}
+                disabled={savingBrand}
+                aria-label={t('brand_label')}
+                onChange={(e) => saveBrand(brandKey(e.target.value))}
+              >
+                {BRAND_KEYS.map((key) => (
+                  <option key={key} value={key}>{t(`brand_${key}`)}</option>
+                ))}
+              </select>
+            </label>
+          )}
           {headerLines.length > 0 && <p className="muted client-detail-lines">{headerLines.join(' · ')}</p>}
         </div>
       </div>

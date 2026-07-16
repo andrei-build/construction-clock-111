@@ -314,6 +314,8 @@ export interface Account {
   updated_at: string | null
   deleted_at: string | null
   archived_at: string | null
+  // BRAND-1: бренд клиента (accounts.brand) — 'nw_build_pro' | 'nw_custom_homes', дефолт 'nw_build_pro'.
+  brand?: string
 }
 
 export interface AccountInput {
