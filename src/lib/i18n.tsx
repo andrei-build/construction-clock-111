@@ -1726,6 +1726,22 @@ const dict: Record<string, Record<Lang, string>> = {
   settings_gps_purging: { ru: 'Очистка…', en: 'Clearing…', es: 'Limpiando…' },
   settings_gps_purge_ok: { ru: 'Трекинг-фиды очищены', en: 'Tracking feeds cleared', es: 'Feeds de rastreo limpiados' },
   settings_gps_purge_before_required: { ru: 'Укажите дату', en: 'Enter a date', es: 'Ingrese una fecha' },
+  // MAIL-2-UI: отправка писем из приложения (модалка «Написать»/«Ответить», исходящие в списке).
+  mail_compose: { ru: 'Написать', en: 'Compose', es: 'Redactar' },
+  mail_compose_title: { ru: 'Новое письмо', en: 'New message', es: 'Nuevo mensaje' },
+  mail_reply: { ru: 'Ответить', en: 'Reply', es: 'Responder' },
+  mail_from_box: { ru: 'От кого', en: 'From', es: 'Remitente' },
+  mail_to: { ru: 'Кому', en: 'To', es: 'Para' },
+  mail_subject: { ru: 'Тема', en: 'Subject', es: 'Asunto' },
+  mail_text: { ru: 'Текст', en: 'Message', es: 'Texto' },
+  mail_send: { ru: 'Отправить', en: 'Send', es: 'Enviar' },
+  mail_sending: { ru: 'Отправляем…', en: 'Sending…', es: 'Enviando…' },
+  mail_cancel: { ru: 'Отмена', en: 'Cancel', es: 'Cancelar' },
+  mail_sent_ok: { ru: 'Письмо отправлено', en: 'Message sent', es: 'Mensaje enviado' },
+  mail_send_failed: { ru: 'Не удалось отправить', en: 'Could not send', es: 'No se pudo enviar' },
+  mail_send_failed_reason: { ru: 'Не удалось отправить: {reason}', en: 'Could not send: {reason}', es: 'No se pudo enviar: {reason}' },
+  mail_outgoing: { ru: 'Исходящее', en: 'Outgoing', es: 'Saliente' },
+  mail_unknown_recipient: { ru: 'Без получателя', en: 'Unknown recipient', es: 'Destinatario desconocido' },
 }
 
 interface I18n {

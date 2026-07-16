@@ -3949,3 +3949,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
   font-size: 14px; line-height: 1.5; word-break: break-word;
 }
+
+/* MAIL-2-UI: исходящие строки в списке + модалка «Написать»/«Ответить». */
+.mail-row.outgoing { border-left: 3px solid rgba(126,160,190,.55); }
+.mail-out-tag {
+  display: inline-block; margin-right: 6px; padding: 0 6px;
+  font-size: 11px; font-weight: 600; line-height: 16px; border-radius: 6px;
+  background: var(--elevated); color: var(--muted);
+}
+.mail-compose { width: min(560px, 100%); text-align: left; }
+.mail-compose select, .mail-compose input, .mail-compose textarea { width: 100%; }
+.mail-compose textarea { resize: vertical; }
