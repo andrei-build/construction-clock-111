@@ -630,3 +630,87 @@ export async function getProjectFileDownloadUrl(file: FileRow): Promise<string> 
   const signed = await r2Sign('download', file.storage_path)
   return signed.url
 }
+
+// === FILE-1: вложения смет/счётов (files.document_id) — содержимое в приватном media bucket. ===
+// Вложение документа: тонкая проекция строки files, привязанной к смете/счёту через document_id.
+// Отдельный тип (не FileRow) — document_id живёт вне FILE_SELECT/FileRow; здесь берём только нужное.
+export interface DocumentFileRow {
+  id: string
+  name: string
+  storage_path: string
+  mime: string | null
+  size_bytes: number | null
+  uploaded_by: string | null
+  created_at: string
+}
+
+const DOCUMENT_FILE_SELECT = 'id, name, storage_path, mime, size_bytes, uploaded_by, created_at'
+
+// Список вложений документа (сметы/счёта): files.document_id = documentId, не удалённые, свежие сверху.
+// RLS files держит org-скоуп и приватность (is_private=true → владелец/менеджер); на ошибке — [].
+export async function getDocumentFiles(documentId: string): Promise<DocumentFileRow[]> {
+  const { data, error } = await supabase.from('files')
+    .select(DOCUMENT_FILE_SELECT)
+    .eq('document_id', documentId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) { warnReadError('getDocumentFiles', error); return [] }
+  return (data as unknown as DocumentFileRow[]) ?? []
+}
+
+// Подписанная ссылка на скачивание вложения из приватного media bucket (переиспользуем mediaUrl).
+export async function getDocumentFileUrl(storagePath: string): Promise<string | null> {
+  return mediaUrl(storagePath)
+}
+
+// Загрузка вложения сметы/счёта: blob → приватный media bucket по неизменяемому пути
+// documents/<document_id>/<uuid>-<filename> (upsert:false), затем строка files с document_id.
+// scope: 'project' если у документа есть project_id, иначе 'company'. account_id наследуем от документа.
+// Заданы все NOT-NULL колонки без БД-дефолта (org_id/scope/folder/name/storage_path/is_private);
+// metadata/version/created_at заполняет БД своими дефолтами (как в uploadFile). RLS INSERT:
+// org_id=app.org_id() и (менеджер ИЛИ uploaded_by=uid) — потому org_id=p.org_id, uploaded_by=p.id.
+export async function uploadDocumentFile(
+  p: Profile,
+  doc: { id: string; project_id: string | null; account_id: string | null },
+  file: File,
+): Promise<DocumentFileRow> {
+  validateUpload(file, 'file')
+  const safeName = safeFileName(file.name, file.type)
+  const storagePath = `documents/${doc.id}/${crypto.randomUUID()}-${safeName}`
+  const { error: uploadError } = await supabase.storage
+    .from(TASK_MEDIA_BUCKET)
+    .upload(storagePath, file, {
+      contentType: inferUploadContentType(file),
+      upsert: false,
+    })
+  if (uploadError) throw uploadError
+
+  const { data, error } = await supabase.from('files').insert({
+    org_id: p.org_id,
+    document_id: doc.id,
+    scope: doc.project_id ? 'project' : 'company',
+    project_id: doc.project_id ?? null,
+    account_id: doc.account_id ?? null,
+    folder: '',
+    name: file.name,
+    storage_path: storagePath,
+    mime: file.type || null,
+    size_bytes: file.size,
+    is_private: true,
+    uploaded_by: p.id,
+  }).select(DOCUMENT_FILE_SELECT).single()
+  if (error) throw error
+  await logEvent(p, 'file.uploaded', 'file', data.id, { document_id: doc.id, name: file.name })
+  return data as unknown as DocumentFileRow
+}
+
+// Детач вложения от документа (мягко): files.document_id = null. Строка files и storage-объект
+// остаются (bucket неизменяемый по политике) — просто снимаем привязку к смете/счёту.
+// RLS UPDATE files: менеджер ИЛИ владелец загрузки; в UI показываем действие только менеджеру+.
+export async function detachDocumentFile(p: Profile, id: string): Promise<void> {
+  const { error } = await supabase.from('files')
+    .update({ document_id: null })
+    .eq('id', id)
+  if (error) throw error
+  await logEvent(p, 'file.detached', 'file', id, {})
+}
