@@ -283,6 +283,22 @@ export async function updateClientRating(
   return data as Account
 }
 
+// CLI-1-полиш (в): owner-мастер-выключатель клиентского доступа (accounts.client_access_enabled, 0045).
+// Пишем ТОЛЬКО client_access_enabled + updated_by (по образцу updateClientRating). RLS is_manager_write
+// пускает owner/admin/manager, но UI-гейт на тумблер — только owner. false → сервер уже гейтит гранты/
+// портал/письма; UI отражает состояние. Возврат void — вызывающий рефетчит getClientAccessEnabled.
+export async function updateClientAccessEnabled(
+  p: Profile,
+  accountId: string,
+  enabled: boolean,
+): Promise<void> {
+  const { error } = await supabase.from('accounts')
+    .update({ client_access_enabled: enabled, updated_by: p.id })
+    .eq('id', accountId)
+  if (error) throw error
+  await logEvent(p, 'account.access_toggled', 'account', accountId, { enabled })
+}
+
 // BRAND-1: «Закон двух компаний» — переключить бренд клиента (accounts.brand:
 // 'nw_build_pro' | 'nw_custom_homes'). Пишем ТОЛЬКО brand (прочие поля не трогаем).
 // Тот же гейт, что у updateClientRating — RLS «is_manager_write» пускает только owner/admin/manager.
@@ -378,6 +394,18 @@ export async function getAccountById(accountId: string): Promise<Account | null>
     .maybeSingle()
   if (error) return null
   return (data as Account | null) ?? null
+}
+
+// CLI-1-полиш: рейтинг клиента для вкладки «Клиент» — светофор (client_rating/rating_note) плюс
+// внутренняя оценка звёздами (rating 1..5) и сложность (difficulty). getAccountRating (projects.ts)
+// проецирует только светофор; здесь тянем и звёзды/сложность. error/нет строки → null.
+export async function getClientRating(accountId: string): Promise<AccountRating | null> {
+  const { data, error } = await supabase.from('accounts')
+    .select('client_rating, rating_note, rating, difficulty')
+    .eq('id', accountId)
+    .maybeSingle()
+  if (error) return null
+  return (data as AccountRating | null) ?? null
 }
 
 // Активные гранты проекта (revoked_at IS NULL), новейшие сверху. error→[].

@@ -665,9 +665,12 @@ export interface ProjectMaterial {
 }
 
 // Рейтинг клиента (accounts.client_rating/rating_note) для «Хаба проекта» — светофор + заметка.
+// CLI-1-полиш: плюс внутренняя оценка — звёзды (accounts.rating 1..5) и сложность (accounts.difficulty).
 export interface AccountRating {
   client_rating: 'green' | 'amber' | 'red' | null
   rating_note: string | null
+  rating: number | null
+  difficulty: ClientDifficulty | null
 }
 
 export interface ProjectHubData {

@@ -3004,6 +3004,31 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+/* CLI-1-полиш: звёзды внутренней оценки (accounts.rating) + бейдж сложности */
+.hub-client-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+}
+.hub-client-stars .hub-star.on {
+  color: var(--accent);
+}
+.badge.hub-difficulty-easy { background: rgba(48,211,154,.15); color: var(--green); }
+.badge.hub-difficulty-normal { background: rgba(107,200,255,.15); color: var(--blue); }
+.badge.hub-difficulty-hard { background: rgba(239,102,116,.15); color: var(--red); }
+/* CLI-1-полиш (в): owner-мастер-выключатель клиентского доступа */
+.hub-client-access-master {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hub-client-access-hint {
+  margin: 0;
 }
 .hub-client-rating-value {
   display: inline-flex;
