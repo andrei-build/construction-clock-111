@@ -2,7 +2,6 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './lib/auth'
 import { isManagerRole, hasFinanceAccess } from './lib/types'
 import Login from './screens/Login'
-import Dashboard from './screens/Dashboard'
 import Overview from './screens/Overview'
 import CheckIn from './screens/CheckIn'
 import Projects from './screens/Projects'
@@ -77,8 +76,9 @@ export default function App() {
           <OfflineFieldSync />
           <BackButton />
           <Routes>
-            {/* NAV-2 (д): продажи приземляются в свою зону, а не на полевую «Отметку». */}
-            <Route path="/" element={manager ? <Dashboard /> : driver ? <DriverRoute /> : salesOnly ? <Sales /> : <CheckIn />} />
+            {/* NAV-2 (д): продажи приземляются в свою зону, а не на полевую «Отметку».
+                NAV-5: «Главная»/Dashboard убрана — менеджер с '/' уезжает в «Командный центр». */}
+            <Route path="/" element={manager ? <Navigate to="/dispatch" replace /> : driver ? <DriverRoute /> : salesOnly ? <Sales /> : <CheckIn />} />
             <Route path="/overview" element={manager ? <Overview /> : <Navigate to="/" />} />
             <Route path="/route" element={manager || driver ? <DriverRoute /> : <Navigate to="/" />} />
             <Route path="/checkin" element={<CheckIn />} />
