@@ -56,7 +56,7 @@ export default function Nav({ manager }: { manager: boolean }) {
     { to: '/dispatch', Icon: IconDispatch, label: t('command_center') },
     { to: '/projects', Icon: IconFolder, label: t('projects') },
     { to: '/team', Icon: IconUsers, label: t('team') },
-    { to: '/schedule', Icon: IconCalendar, label: t('schedule') },
+    // CAL-3: standalone «Расписание» убран — теперь это 3-я вкладка «Календаря команды».
     { to: '/more', Icon: IconSettings, label: t('more') },
   ]
 
@@ -103,8 +103,8 @@ export default function Nav({ manager }: { manager: boolean }) {
       title: t('nav_group_work'),
       // CC-2: пункт «Задачи» убран — доска задач внутри Командного центра (/dispatch).
       items: [
+        // CAL-3: «Расписание» — теперь 3-я вкладка «Календаря команды», отдельного пункта нет.
         { to: '/team-calendar', Icon: IconCalendar, label: t('team_calendar') },
-        { to: '/schedule', Icon: IconCalendar, label: t('schedule') },
         { to: '/map', Icon: IconMap, label: t('map') },
         { to: '/stores', Icon: IconBriefcase, label: t('stores') },
         { to: '/timeline', Icon: IconChart, label: t('timeline') },

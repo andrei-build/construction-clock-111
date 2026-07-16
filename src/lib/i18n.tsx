@@ -1542,6 +1542,8 @@ const dict: Record<string, Record<Lang, string>> = {
   cc_min_ago: { ru: '{n} мин назад', en: '{n} min ago', es: 'hace {n} min' },
   cc_hours_ago: { ru: '{n} ч назад', en: '{n} h ago', es: 'hace {n} h' },
   cc_days_ago: { ru: '{n} дн назад', en: '{n} d ago', es: 'hace {n} d' },
+  // CAL-3: третья вкладка «Календаря команды» — сетка «люди×дни» (бывший экран «Расписание»).
+  cal_tab_schedule: { ru: 'Расписание (люди×дни)', en: 'Schedule (people×days)', es: 'Horario (personas×días)' },
 }
 
 interface I18n {
