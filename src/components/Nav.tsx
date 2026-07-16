@@ -1,5 +1,6 @@
-import type { ComponentType, SVGProps } from 'react'
+import { useEffect, useState, type ComponentType, type SVGProps } from 'react'
 import { NavLink } from 'react-router-dom'
+import { getMailUnreadCount, MAIL_UNREAD_EVENT } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { useNotifications } from '../lib/notifications'
@@ -40,6 +41,20 @@ export default function Nav({ manager }: { manager: boolean }) {
   const isOwner = profile?.role === 'owner'
   // SET-1: /settings — owner/admin; /owner-settings — owner only (то же гейтирование, что в «Ещё»).
   const isAdminOrOwner = isOwner || profile?.role === 'admin'
+  // MAIL-1-UI: бейдж непрочитанных писем на пункте «Почта» (owner/admin). Локальный поллинг +
+  // слушаем MAIL_UNREAD_EVENT (Mail.tsx шлёт после отметки прочитанным / после sync) — так бейдж
+  // реактивен без общего провайдера. RLS отдаёт письма только владельцу → у admin обычно 0.
+  const [mailUnread, setMailUnread] = useState(0)
+  useEffect(() => {
+    if (!isAdminOrOwner) { setMailUnread(0); return }
+    let mounted = true
+    const refresh = () => { void getMailUnreadCount().then((n) => { if (mounted) setMailUnread(n) }) }
+    refresh()
+    const poll = window.setInterval(refresh, 30_000)
+    window.addEventListener(MAIL_UNREAD_EVENT, refresh)
+    return () => { mounted = false; window.clearInterval(poll); window.removeEventListener(MAIL_UNREAD_EVENT, refresh) }
+  }, [isAdminOrOwner])
+  const mailBadge = mailUnread > 99 ? '99+' : String(mailUnread)
   const cls = ({ isActive }: { isActive: boolean }) => (isActive ? 'active' : '')
   const sideCls = ({ isActive }: { isActive: boolean }) => `side-link ${isActive ? 'active' : ''}`
 
@@ -126,6 +141,8 @@ export default function Nav({ manager }: { manager: boolean }) {
     {
       title: t('nav_group_admin'),
       items: [
+        // MAIL-1-UI: «Почта» — owner/admin only (то же гейтирование, что у Settings).
+        { to: '/mail', Icon: IconChat, label: t('mail'), show: isAdminOrOwner },
         { to: '/archive', Icon: IconFolder, label: t('archive') },
         { to: '/consents', Icon: IconTarget, label: t('consents') },
         { to: '/settings', Icon: IconSettings, label: t('settings'), show: isAdminOrOwner },
@@ -186,6 +203,9 @@ export default function Nav({ manager }: { manager: boolean }) {
                       <span>{item.label}</span>
                       {item.to === '/messages' && unreadMessages > 0 && (
                         <span className="badge red nav-unread">{unreadBadge}</span>
+                      )}
+                      {item.to === '/mail' && mailUnread > 0 && (
+                        <span className="badge red nav-unread">{mailBadge}</span>
                       )}
                     </NavLink>
                   ))}

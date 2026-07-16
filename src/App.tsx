@@ -35,6 +35,7 @@ import More from './screens/More'
 import Settings from './screens/Settings'
 import OwnerSettings from './screens/OwnerSettings'
 import Broadcast from './screens/Broadcast'
+import Mail from './screens/Mail'
 import ResetPassword from './screens/ResetPassword'
 import Nav from './components/Nav'
 import BackButton from './components/BackButton'
@@ -112,6 +113,8 @@ export default function App() {
             <Route path="/documents" element={manager ? <Documents /> : <Navigate to="/" />} />
             <Route path="/files" element={manager ? <Files /> : <Navigate to="/" />} />
             <Route path="/daily" element={<DailyReports />} />
+            {/* MAIL-1-UI: «Почта» — owner/admin (RLS дополнительно ограничивает чтение владельцем). */}
+            <Route path="/mail" element={adminOrOwner ? <Mail /> : <Navigate to="/" />} />
             <Route path="/settings" element={adminOrOwner ? <Settings /> : <Navigate to="/" />} />
             {/* SET-1: owner-only page renders its own friendly denied note for non-owners (no crash). */}
             <Route path="/owner-settings" element={<OwnerSettings />} />
