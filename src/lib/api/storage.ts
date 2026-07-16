@@ -714,3 +714,21 @@ export async function detachDocumentFile(p: Profile, id: string): Promise<void> 
   if (error) throw error
   await logEvent(p, 'file.detached', 'file', id, {})
 }
+
+// === DOCS-2: «Документы» = собственные файлы КОМПАНИИ (страховки, лицензии, договоры, шаблоны). ===
+// Строки files со scope='company', НЕ привязанные к проекту (project_id IS NULL) и НЕ являющиеся
+// вложением сметы/счёта (document_id IS NULL); не удалённые, свежие сверху. Отдельный helper (не
+// getFiles) нужен из-за фильтра по document_id, которого нет в FILE_SELECT/FileRow. Загрузка —
+// через существующий uploadFile({scope:'company'}); мягкое удаление — через softDeleteFile.
+// RLS files держит org-скоуп и приватность; на ошибке — [].
+export async function getCompanyFiles(): Promise<FileRow[]> {
+  const { data, error } = await supabase.from('files')
+    .select(FILE_SELECT)
+    .eq('scope', 'company')
+    .is('project_id', null)
+    .is('document_id', null)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) { warnReadError('getCompanyFiles', error); return [] }
+  return (data as FileRow[]) ?? []
+}

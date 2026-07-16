@@ -1604,6 +1604,19 @@ const dict: Record<string, Record<Lang, string>> = {
   },
   // CAL-3: третья вкладка «Календаря команды» — сетка «люди×дни» (бывший экран «Расписание»).
   cal_tab_schedule: { ru: 'Расписание (люди×дни)', en: 'Schedule (people×days)', es: 'Horario (personas×días)' },
+  // DOCS-2: вкладки «Продаж» + «Документы» как собственные файлы компании.
+  sales_tab_deals: { ru: 'Сделки', en: 'Deals', es: 'Negocios' },
+  sales_tab_documents: { ru: 'Сметы и счета', en: 'Estimates & invoices', es: 'Estimados y facturas' },
+  documents_company_subtitle: { ru: 'Документы компании: страховки, лицензии, договоры, шаблоны', en: 'Company documents: insurance, licenses, contracts, templates', es: 'Documentos de la empresa: seguros, licencias, contratos, plantillas' },
+  documents_company_empty: { ru: 'Документов компании пока нет', en: 'No company documents yet', es: 'Aún no hay documentos de la empresa' },
+  documents_company_name: { ru: 'Название (необязательно)', en: 'Name (optional)', es: 'Nombre (opcional)' },
+  documents_company_upload: { ru: 'Загрузить документ', en: 'Upload document', es: 'Subir documento' },
+  documents_company_uploading: { ru: 'Загрузка…', en: 'Uploading…', es: 'Subiendo…' },
+  documents_company_upload_failed: { ru: 'Не удалось загрузить документ', en: 'Could not upload document', es: 'No se pudo subir el documento' },
+  documents_company_file_required: { ru: 'Выберите файл', en: 'Select a file', es: 'Seleccione un archivo' },
+  documents_company_download: { ru: 'Скачать', en: 'Download', es: 'Descargar' },
+  documents_company_delete: { ru: 'Удалить', en: 'Delete', es: 'Eliminar' },
+  documents_company_delete_confirm: { ru: 'Удалить этот документ компании?', en: 'Delete this company document?', es: '¿Eliminar este documento de la empresa?' },
 }
 
 interface I18n {
