@@ -1012,6 +1012,7 @@ const dict: Record<string, Record<Lang, string>> = {
   mat_import_file: { ru: 'Загрузить .csv / .tsv', en: 'Upload .csv / .tsv', es: 'Subir .csv / .tsv' },
   mat_import_run: { ru: 'Импортировать строки', en: 'Import rows', es: 'Importar filas' },
   mat_import_done: { ru: 'Импортировано', en: 'Imported', es: 'Importado' },
+  mat_export: { ru: 'Экспорт', en: 'Export', es: 'Exportar' },
   mat_import_empty: { ru: 'Нет строк для импорта', en: 'No rows to import', es: 'No hay filas para importar' },
   mat_import_failed: { ru: 'Не удалось импортировать', en: 'Import failed', es: 'Error al importar' },
   mat_empty: { ru: 'Спецификация пуста', en: 'Spec is empty', es: 'La especificación está vacía' },

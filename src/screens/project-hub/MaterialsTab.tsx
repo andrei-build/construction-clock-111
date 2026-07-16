@@ -81,6 +81,11 @@ function parseDelimited(text: string): ProjectMaterialInput[] {
   return rows
 }
 
+// CSV-экранирование одного поля: кавычим, если есть запятая/кавычка/перенос строки (RFC 4180).
+function csvEscape(v: string): string {
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
+}
+
 // Живой статус позиции: связанная задача (task_id) — источник правды забора/доставки (MAT-1).
 function derivedStatus(m: ProjectMaterial, taskById: Map<string, Task>): MaterialSpecStatus {
   if (!m.task_id) return m.status === 'requested' ? 'requested' : 'plan'
@@ -272,6 +277,31 @@ export default function MaterialsTab({ project, profile }: MaterialsTabProps) {
     }
   }
 
+  // MAT-4-мини: экспорт спецификации в CSV-файл (без тяжёлых зависимостей). Читаемый для Excel
+  // (BOM + заголовок), колонки как у импорта плюс секция. Доступен любому, кто видит вкладку.
+  const exportSpec = () => {
+    const header = ['Section', 'Name', 'Qty', 'Unit', 'Supplier', 'URL', 'Note']
+    const rows = materials.map((m) => [
+      m.section ?? '',
+      m.name,
+      m.qty != null ? String(m.qty) : '',
+      m.unit ?? '',
+      m.supplier ?? '',
+      m.url ?? '',
+      m.note ?? '',
+    ])
+    const csv = [header, ...rows].map((row) => row.map(csvEscape).join(',')).join('\r\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `materials-${(project.name ?? project.id)}.csv`.replace(/[^\w.-]+/g, '_')
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
   const renderRow = (m: ProjectMaterial) => {
     const status = derivedStatus(m, taskById)
     const isEditing = editId === m.id
@@ -386,6 +416,12 @@ export default function MaterialsTab({ project, profile }: MaterialsTabProps) {
       {loading && <div className="card center muted">{t('loading')}</div>}
       {loadError && <p className="error-msg">{t('load_error')}</p>}
       {!loading && !loadError && materials.length === 0 && <div className="card muted">{t('mat_empty')}</div>}
+
+      {!loading && !loadError && materials.length > 0 && (
+        <div className="row material-list-toolbar">
+          <button className="btn ghost small" type="button" onClick={exportSpec}>{t('mat_export')}</button>
+        </div>
+      )}
 
       {!loading && !loadError && materials.length > 0 && (
         <div className="material-list">
