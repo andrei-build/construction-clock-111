@@ -10,6 +10,9 @@ export const TASK_SELECT = 'id, org_id, project_id, task_type, title, descriptio
 export async function getOpenTasks(): Promise<Task[]> {
   const { data } = await supabase.from('tasks')
     .select(TASK_SELECT)
+    // Явный фильтр soft-delete: после 0042 менеджер видит СВОИ deleted_at-строки (для Корзины),
+    // поэтому больше нельзя полагаться на tasks_select — иначе удалённые задачи текут в списки.
+    .is('deleted_at', null)
     .in('status', ['open', 'in_progress']).order('priority', { ascending: false })
   return (data as Task[]) ?? []
 }
@@ -17,12 +20,14 @@ export async function getOpenTasks(): Promise<Task[]> {
 // Кросс-проектный список задач для глобального экрана «Задачи» (/tasks).
 // Тот же источник, что getOpenTasks, но: (1) без фильтра по status — экран сам фильтрует
 // по всем статусам, (2) более широкий select (due_date/description/assigned_to/created_at)
-// для колонок и сортировки. RLS tasks_select уже держит org-скоуп, прячет deleted_at,
-// не пускает client и ограничивает driver только доставками. Сортировка приоритет→срок.
+// для колонок и сортировки. RLS tasks_select держит org-скоуп, не пускает client и ограничивает
+// driver только доставками; deleted_at фильтруем ЯВНО (после 0042 менеджер видит свои удалённые
+// строки для Корзины — RLS их больше не прячет). Сортировка приоритет→срок.
 const ALL_TASK_SELECT = 'id, org_id, project_id, task_type, title, description, status, priority, assigned_to, urgent_flag, requires_photo, due_date, done_at, done_by, created_at, metadata'
 export async function getAllTasks(): Promise<Task[]> {
   const { data, error } = await supabase.from('tasks')
     .select(ALL_TASK_SELECT)
+    .is('deleted_at', null)
     .order('priority', { ascending: false })
     .order('due_date', { ascending: true, nullsFirst: false })
   if (error) throw error
@@ -111,7 +116,8 @@ export async function markTaskRead(p: Profile, taskId: string): Promise<void> {
 }
 
 // Мягкое удаление задачи: deleted_at = now(). RLS tasks_update (менеджер/исполнитель) —
-// в UI гейтим на менеджера. tasks_select уже прячет deleted_at IS NOT NULL из выборок.
+// в UI гейтим на менеджера. Удалённую строку из активных списков убирают ЯВНЫЕ .is('deleted_at',null)
+// в task-ридах (после 0042 менеджер видит свои удалённые строки для Корзины — RLS их не прячет).
 export async function softDeleteTask(p: Profile, taskId: string): Promise<void> {
   const { error } = await supabase.from('tasks')
     .update({ deleted_at: new Date().toISOString(), updated_by: p.id })
@@ -169,6 +175,7 @@ export async function getDonePhotoTasks(): Promise<Task[]> {
     .select('id, org_id, project_id, task_type, title, status, priority, assigned_to, requires_photo, done_at')
     .eq('status', 'done')
     .eq('requires_photo', true)
+    .is('deleted_at', null)
     .order('done_at', { ascending: false, nullsFirst: false })
     .limit(20)
   if (error) return []
@@ -302,13 +309,15 @@ export async function markTaskDone(p: Profile, task: Task, mediaId: string | nul
 // CC-2 «Командный центр» → виджет «Статус раздачи задач»: МОИ раздачи (created_by = я) с
 // операционным следом — кто ПРОЧИТАЛ (metadata.read_by), кто ВЗЯЛ (picked_up_by/in_progress),
 // кто ЗАКРЫЛ (done_by/done_at). Отдельный select с created_by + picked_up_*: узкие select'ы
-// (getOpenTasks/getAllTasks) этих колонок не тянут. RLS tasks_select держит org-скоуп и
-// прячет deleted_at. Свежие сверху.
+// (getOpenTasks/getAllTasks) этих колонок не тянут. RLS tasks_select держит org-скоуп; deleted_at
+// фильтруем ЯВНО (после 0042 менеджер видит свои удалённые строки — RLS их не прячет), иначе
+// удалённая раздача повисает в виджете «Статус раздачи задач». Свежие сверху.
 const DISPATCH_TASK_SELECT = 'id, org_id, project_id, task_type, title, description, status, priority, assigned_to, urgent_flag, requires_photo, due_date, done_at, done_by, created_at, created_by, metadata, picked_up_at, picked_up_by, delivered_at, delivered_by'
 export async function getTasksCreatedBy(profileId: string): Promise<Task[]> {
   const { data, error } = await supabase.from('tasks')
     .select(DISPATCH_TASK_SELECT)
     .eq('created_by', profileId)
+    .is('deleted_at', null)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data as Task[]) ?? []
