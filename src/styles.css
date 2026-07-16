@@ -20,6 +20,7 @@
   --radius: 14px;
   --radius-panel: 22px;
   --radius-pill: 50px;
+  --app-content-max: 1500px;
   --shadow-card: 0 18px 48px rgba(0,0,0,.28);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -32,7 +33,14 @@ body {
 }
 .app { display: flex; flex-direction: column; min-height: 100dvh; }
 .app-content { flex: 1; min-width: 0; }
-.screen { flex: 1; padding: 16px 16px calc(84px + var(--safe-bottom)); max-width: 640px; margin: 0 auto; width: 100%; }
+.screen {
+  --screen-max: 640px;
+  flex: 1;
+  width: 100%;
+  max-width: var(--screen-max);
+  margin-inline: auto;
+  padding: 16px 16px calc(84px + var(--safe-bottom));
+}
 h1 { font-size: 22px; margin-bottom: 14px; }
 h2 { font-size: 16px; color: var(--muted); margin: 18px 0 8px; text-transform: uppercase; letter-spacing: 0; }
 
@@ -567,7 +575,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   white-space: nowrap;
 }
 
-.dashboard-screen { max-width: 1120px; }
+.dashboard-screen { --screen-max: var(--app-content-max); }
 .dashboard-tiles {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -720,7 +728,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .collapsible-body { padding: 0 14px 12px; display: grid; gap: 10px; }
 
 /* Global in-app back control (non-root screens) */
-.app-back-bar { max-width: 640px; margin: 0 auto; width: 100%; padding: 12px 16px 0; }
+.app-back-bar {
+  --screen-max: 640px;
+  width: 100%;
+  max-width: var(--screen-max);
+  margin-inline: auto;
+  padding: 12px 16px 0;
+}
 .app-back-btn {
   display: inline-flex;
   align-items: center;
@@ -951,7 +965,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .overview-screen > .muted { margin-top: -6px; margin-bottom: 12px; }
 .overview-cta { margin-top: 18px; }
 
-.clients-screen { max-width: 980px; }
+.clients-screen { --screen-max: var(--app-content-max); }
 .clients-head {
   align-items: flex-start;
   margin-bottom: 12px;
@@ -1088,7 +1102,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   }
 }
 
-.payroll-screen { max-width: 980px; }
+.payroll-screen { --screen-max: var(--app-content-max); }
 .payroll-head {
   align-items: flex-start;
   margin-bottom: 12px;
@@ -1172,7 +1186,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .payroll-history-row:last-child { border-bottom: 0; }
 .payroll-history-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
-.documents-screen { max-width: 1180px; }
+.documents-screen { --screen-max: var(--app-content-max); }
 .documents-head {
   align-items: flex-start;
   margin-bottom: 12px;
@@ -1334,7 +1348,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   }
 }
 
-.reports-screen { max-width: 1180px; }
+.reports-screen { --screen-max: var(--app-content-max); }
 .reports-head {
   align-items: flex-start;
   margin-bottom: 12px;
@@ -1388,10 +1402,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-weight: 800;
 }
 
-/* Доска задач организации (TASKS-2): полноширинная таблица на десктопе, карточки на мобайле. */
-.tasks-screen { max-width: none; }
-/* Перебиваем .manager-app .screen{max-width:1180px} — доска на весь экран (Andrey). */
-.manager-app .screen.tasks-screen { max-width: none; }
+/* Доска задач организации (TASKS-2): таблица заполняет единый desktop-контейнер. */
+.tasks-screen { --screen-max: var(--app-content-max); }
 .tasks-table-wrap { padding: 0; overflow-x: auto; }
 .tasks-table {
   width: 100%;
@@ -1433,7 +1445,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .tasks-cards { display: grid; gap: 12px; }
 }
 
-.timeline-screen { max-width: 900px; }
+.timeline-screen { --screen-max: var(--app-content-max); }
 .timeline-head {
   margin-bottom: 12px;
 }
@@ -1518,7 +1530,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin-top: 20px;
 }
 
-.map-screen { max-width: 1180px; }
+.map-screen { --screen-max: var(--app-content-max); }
 .map-head {
   align-items: flex-start;
   margin-bottom: 12px;
@@ -1699,7 +1711,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   }
 }
 
-.messages-screen { max-width: 980px; }
+.messages-screen { --screen-max: var(--app-content-max); }
 .message-compose { margin-bottom: 14px; }
 .locked-field {
   width: 100%;
@@ -1787,7 +1799,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 
 .worker-detail-screen {
-  max-width: 1180px;
+  --screen-max: var(--app-content-max);
 }
 .worker-detail-head {
   display: flex;
@@ -1920,7 +1932,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   min-width: 0;
 }
 
-.dispatch-screen { max-width: 1120px; }
+.dispatch-screen { --screen-max: var(--app-content-max); }
 .dispatch-date { margin: -6px 0 14px; }
 .dispatch-conflicts-card {
   border-radius: var(--radius-panel);
@@ -2009,12 +2021,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   }
 
   .manager-app .screen {
-    max-width: 1180px;
+    --screen-max: var(--app-content-max);
     padding: 24px 28px;
   }
 
   .manager-app .app-back-bar {
-    max-width: 1180px;
+    --screen-max: var(--app-content-max);
     padding: 20px 28px 0;
   }
 
@@ -2175,7 +2187,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   }
 }
 
-.calendar-screen { max-width: 920px; }
+.calendar-screen { --screen-max: var(--app-content-max); }
 .calendar-week { margin: -6px 0 14px; }
 .calendar-nav {
   align-items: flex-start;
@@ -2212,8 +2224,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .calendar-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* CAL-1a: полноэкранный «Календарь команды» — сетка месяца заполняет ширину, без узкого контейнера. */
-.team-calendar-screen { max-width: none; }
+/* CAL-1a: «Календарь команды» заполняет единый desktop-контейнер. */
+.team-calendar-screen { --screen-max: var(--app-content-max); }
 .team-cal-tabs { max-width: 480px; }
 .team-cal-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .team-cal-monthnav { display: flex; flex: 1 1 430px; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: flex-start; }
@@ -2342,7 +2354,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .team-cal-delivery-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .team-cal-delivery-actions { gap: 8px; justify-content: flex-start; flex-wrap: wrap; }
 
-.sales-screen { max-width: 1180px; }
+.sales-screen { --screen-max: var(--app-content-max); }
 .sales-board {
   display: grid;
   grid-auto-flow: column;
@@ -2748,7 +2760,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 
 /* «Хаб проекта»: горизонтальные вкладки, индикаторы обзора, заметки */
 .project-hub-screen {
-  max-width: 1120px;
+  --screen-max: var(--app-content-max);
 }
 .project-hub-head {
   gap: 12px;
