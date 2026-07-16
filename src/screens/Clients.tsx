@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import AccountForm from '../components/AccountForm'
 import { useEntityDrawer } from '../components/EntityDrawer'
 import { createAccount, getClientAccounts, getClientProjectSummaries, updateClientBrand, updateClientRating } from '../lib/api'
@@ -230,9 +231,15 @@ export default function Clients() {
           <h1>👥 {t('clients')}</h1>
           <p className="muted">{t('clients_directory')}</p>
         </div>
-        <button type="button" className="btn ghost small" onClick={() => setAdding((value) => !value)}>
-          {adding ? t('cancel') : `+ ${t('clients_add')}`}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          {/* BROADCAST-1: быстрый переход на экран «Рассылка» — только владелец. */}
+          {profile?.role === 'owner' && (
+            <Link to="/broadcast" className="btn ghost small">📣 {t('broadcast_title')}</Link>
+          )}
+          <button type="button" className="btn ghost small" onClick={() => setAdding((value) => !value)}>
+            {adding ? t('cancel') : `+ ${t('clients_add')}`}
+          </button>
+        </div>
       </div>
 
       {adding && (

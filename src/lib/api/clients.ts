@@ -426,3 +426,66 @@ export async function revokeProjectGrant(p: Profile, grantId: string): Promise<v
   if (error) throw error
   await logEvent(p, 'grant.revoked', 'client_visibility_grant', grantId, {})
 }
+
+// BROADCAST-1: массовая рассылка клиентам через edge `broadcast-clients` (verify_jwt, уже задеплоен).
+// Право (только владелец) и запись журнала client.broadcast гейтит/делает сама функция; здесь —
+// только вызов + маппинг кода ошибки в i18n-ключ, тем же способом, что inviteAdmin в api/team.ts:
+// код тянем из тела ответа (data.error), иначе из context.json() при error!=null, иначе по HTTP-статусу.
+// accountIds не передаём (undefined) => рассылка ВСЕМ клиентам; массив => только этим аккаунтам.
+export interface BroadcastResult {
+  ok: boolean
+  sent: number
+  total: number
+  failures: number
+  error?: string
+}
+
+type BroadcastEdgeResponse = { sent?: number; total?: number; failures?: unknown; error?: string }
+
+function broadcastErrorCode(value?: unknown, status?: number): string {
+  if (value === 'only_owner_can_broadcast') return 'only_owner_can_broadcast'
+  if (value === 'subject_and_message_required') return 'subject_and_message_required'
+  if (status === 403) return 'only_owner_can_broadcast'
+  if (status === 400) return 'subject_and_message_required'
+  return 'error'
+}
+
+function broadcastResponseStatus(error: unknown): number | undefined {
+  const context = (error as { context?: { status?: unknown } } | null)?.context
+  return typeof context?.status === 'number' ? context.status : undefined
+}
+
+async function broadcastFunctionErrorCode(error: unknown): Promise<unknown> {
+  const context = (error as { context?: { json?: () => Promise<unknown> } } | null)?.context
+  if (typeof context?.json !== 'function') return undefined
+  try {
+    const body = await context.json()
+    return (body as { error?: unknown } | null)?.error
+  } catch {
+    return undefined
+  }
+}
+
+// `failures` может прийти массивом или числом — приводим к счётчику для «Ошибок: K».
+function broadcastFailuresCount(failures: unknown): number {
+  if (Array.isArray(failures)) return failures.length
+  if (typeof failures === 'number' && Number.isFinite(failures)) return failures
+  return 0
+}
+
+export async function broadcastClients(subject: string, message: string, accountIds?: string[]): Promise<BroadcastResult> {
+  const body: { subject: string; message: string; account_ids?: string[] } = { subject, message }
+  if (accountIds) body.account_ids = accountIds
+  const { data, error } = await supabase.functions.invoke<BroadcastEdgeResponse>('broadcast-clients', { body })
+  if (error) {
+    const errorCode = data?.error ?? await broadcastFunctionErrorCode(error)
+    return { ok: false, sent: 0, total: 0, failures: 0, error: broadcastErrorCode(errorCode, broadcastResponseStatus(error)) }
+  }
+  if (data?.error) return { ok: false, sent: 0, total: 0, failures: 0, error: broadcastErrorCode(data.error) }
+  return {
+    ok: true,
+    sent: typeof data?.sent === 'number' ? data.sent : 0,
+    total: typeof data?.total === 'number' ? data.total : 0,
+    failures: broadcastFailuresCount(data?.failures),
+  }
+}

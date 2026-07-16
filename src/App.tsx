@@ -34,6 +34,7 @@ import DriverRoute from './screens/Route'
 import More from './screens/More'
 import Settings from './screens/Settings'
 import OwnerSettings from './screens/OwnerSettings'
+import Broadcast from './screens/Broadcast'
 import ResetPassword from './screens/ResetPassword'
 import Nav from './components/Nav'
 import BackButton from './components/BackButton'
@@ -105,6 +106,8 @@ export default function App() {
             <Route path="/trash" element={manager ? <Trash /> : <Navigate to="/" />} />
             <Route path="/stores" element={manager ? <Stores /> : <Navigate to="/" />} />
             <Route path="/clients" element={manager ? <Clients /> : <Navigate to="/" />} />
+            {/* BROADCAST-1: owner-only «Рассылка» — компонент сам рендерит дружелюбный отказ не-владельцу. */}
+            <Route path="/broadcast" element={manager ? <Broadcast /> : <Navigate to="/" />} />
             <Route path="/gallery" element={manager ? <Gallery /> : <Navigate to="/" />} />
             <Route path="/documents" element={manager ? <Documents /> : <Navigate to="/" />} />
             <Route path="/files" element={manager ? <Files /> : <Navigate to="/" />} />

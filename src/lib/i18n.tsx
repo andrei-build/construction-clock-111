@@ -1632,6 +1632,23 @@ const dict: Record<string, Record<Lang, string>> = {
   client_visible_empty: { ru: 'Пока нет фото или видео для клиента', en: 'No client photos or videos yet', es: 'Aún no hay fotos o videos para el cliente' },
   client_visible_error: { ru: 'Не удалось изменить видимость', en: 'Could not change visibility', es: 'No se pudo cambiar la visibilidad' },
   client_access_disabled: { ru: 'Доступ клиента полностью отключён', en: 'Client access is fully off', es: 'El acceso del cliente está totalmente desactivado' },
+  // BROADCAST-1: экран «Рассылка» — владелец шлёт письмо всем/по бренду/выбранным клиентам (edge broadcast-clients).
+  broadcast_title: { ru: 'Рассылка', en: 'Broadcast', es: 'Difusión' },
+  broadcast_subject: { ru: 'Тема', en: 'Subject', es: 'Asunto' },
+  broadcast_message: { ru: 'Текст письма', en: 'Message', es: 'Mensaje' },
+  broadcast_audience: { ru: 'Кому', en: 'Audience', es: 'Destinatarios' },
+  broadcast_audience_all: { ru: 'Все клиенты', en: 'All clients', es: 'Todos los clientes' },
+  broadcast_audience_brand: { ru: 'Только бренд', en: 'By brand', es: 'Por marca' },
+  broadcast_audience_selected: { ru: 'Выбранные клиенты', en: 'Selected clients', es: 'Clientes seleccionados' },
+  broadcast_send: { ru: 'Отправить рассылку', en: 'Send broadcast', es: 'Enviar difusión' },
+  broadcast_sending: { ru: 'Отправка…', en: 'Sending…', es: 'Enviando…' },
+  broadcast_result: { ru: 'Отправлено {sent} из {total}', en: 'Sent {sent} of {total}', es: 'Enviado {sent} de {total}' },
+  broadcast_failures: { ru: 'Ошибок: {count}', en: 'Failures: {count}', es: 'Errores: {count}' },
+  broadcast_owner_only: { ru: 'Доступно только владельцу', en: 'Available to the owner only', es: 'Disponible solo para el dueño' },
+  broadcast_err_only_owner: { ru: 'Рассылку может отправлять только владелец', en: 'Only the owner can send a broadcast', es: 'Solo el dueño puede enviar una difusión' },
+  broadcast_err_subject_message_required: { ru: 'Укажите тему и текст', en: 'Enter a subject and a message', es: 'Indique el asunto y el mensaje' },
+  broadcast_err_generic: { ru: 'Не удалось отправить рассылку', en: 'Could not send the broadcast', es: 'No se pudo enviar la difusión' },
+  broadcast_empty_selection: { ru: 'Не выбран ни один клиент', en: 'No clients selected', es: 'Ningún cliente seleccionado' },
 }
 
 interface I18n {
