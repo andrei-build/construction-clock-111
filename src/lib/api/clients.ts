@@ -1,6 +1,6 @@
 import { supabase } from '../supabase'
 import { logEvent } from './_shared'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, ClientDifficulty, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
 
 
 const DOCUMENT_SELECT = 'id, org_id, account_id, project_id, doc_type, status, number, title, source_document_id, issue_date, due_date, subtotal, tax_rate, tax_amount, total, amount_paid, balance, retainage_pct, margin_pct, client_visible, notes, metadata, created_by, updated_by, version, created_at, updated_at, deleted_at, account:accounts(name), project:projects(name)'
@@ -230,7 +230,7 @@ export async function markDocumentPaid(p: Profile, invoice: DocumentRow): Promis
   await logEvent(p, 'document.paid', 'document', invoice.id, { total })
 }
 
-const ACCOUNT_SELECT = 'id, org_id, name, account_type, email, phone, address, notes, is_taxable, insurance_status, client_rating, rating_note, metadata, created_by, updated_by, version, created_at, updated_at, deleted_at, archived_at'
+const ACCOUNT_SELECT = 'id, org_id, name, account_type, email, phone, address, notes, is_taxable, insurance_status, client_rating, rating_note, rating, difficulty, metadata, created_by, updated_by, version, created_at, updated_at, deleted_at, archived_at'
 const CONTACT_SELECT = 'id, org_id, account_id, name, title, email, phone, is_primary, notes, created_at, updated_at, deleted_at'
 const CLIENT_PROJECT_SELECT = 'id, name, status, client_account_id'
 const CLIENT_DOCUMENT_SELECT = 'id, org_id, account_id, project_id, doc_type, status, number, title, total, balance, issue_date'
@@ -262,6 +262,24 @@ export async function updateAccount(p: Profile, accountId: string, input: Accoun
     .single()
   if (error) throw error
   await logEvent(p, 'account.updated', 'account', accountId, {})
+  return data as Account
+}
+
+// CLI-1: обновить внутреннюю оценку клиента — рейтинг 1..5 звёзд + сложность работы.
+// Пишем только rating/difficulty (не трогаем прочие поля аккаунта). null очищает значение.
+// RLS «is_manager_write» пускает только owner/admin/manager — не-менеджеру придёт ошибка.
+export async function updateClientRating(
+  p: Profile,
+  accountId: string,
+  input: { rating: number | null; difficulty: ClientDifficulty | null },
+): Promise<Account> {
+  const { data, error } = await supabase.from('accounts')
+    .update({ rating: input.rating, difficulty: input.difficulty, updated_by: p.id })
+    .eq('id', accountId)
+    .select(ACCOUNT_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'account.rating_updated', 'account', accountId, { rating: input.rating, difficulty: input.difficulty })
   return data as Account
 }
 
