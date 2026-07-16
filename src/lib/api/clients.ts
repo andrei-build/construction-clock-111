@@ -16,7 +16,7 @@ export interface DocumentLineInput {
 
 export async function getDocumentAccounts(): Promise<Account[]> {
   const { data, error } = await supabase.from('accounts')
-    .select('id, org_id, name')
+    .select('id, org_id, name, brand')
     .order('name')
   if (error) return []
   return (data as Account[]) ?? []
@@ -230,7 +230,7 @@ export async function markDocumentPaid(p: Profile, invoice: DocumentRow): Promis
   await logEvent(p, 'document.paid', 'document', invoice.id, { total })
 }
 
-const ACCOUNT_SELECT = 'id, org_id, name, account_type, email, phone, address, notes, is_taxable, insurance_status, client_rating, rating_note, rating, difficulty, metadata, created_by, updated_by, version, created_at, updated_at, deleted_at, archived_at'
+const ACCOUNT_SELECT = 'id, org_id, name, account_type, email, phone, address, notes, is_taxable, insurance_status, client_rating, rating_note, rating, difficulty, brand, metadata, created_by, updated_by, version, created_at, updated_at, deleted_at, archived_at'
 const CONTACT_SELECT = 'id, org_id, account_id, name, title, email, phone, is_primary, notes, created_at, updated_at, deleted_at'
 const CLIENT_PROJECT_SELECT = 'id, name, status, client_account_id'
 const CLIENT_DOCUMENT_SELECT = 'id, org_id, account_id, project_id, doc_type, status, number, title, total, balance, issue_date'
@@ -280,6 +280,24 @@ export async function updateClientRating(
     .single()
   if (error) throw error
   await logEvent(p, 'account.rating_updated', 'account', accountId, { rating: input.rating, difficulty: input.difficulty })
+  return data as Account
+}
+
+// BRAND-1: «Закон двух компаний» — переключить бренд клиента (accounts.brand:
+// 'nw_build_pro' | 'nw_custom_homes'). Пишем ТОЛЬКО brand (прочие поля не трогаем).
+// Тот же гейт, что у updateClientRating — RLS «is_manager_write» пускает только owner/admin/manager.
+export async function updateClientBrand(
+  p: Profile,
+  accountId: string,
+  brand: string,
+): Promise<Account> {
+  const { data, error } = await supabase.from('accounts')
+    .update({ brand, updated_by: p.id })
+    .eq('id', accountId)
+    .select(ACCOUNT_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'account.brand_updated', 'account', accountId, { brand })
   return data as Account
 }
 

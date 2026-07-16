@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import AccountForm from '../components/AccountForm'
 import { useEntityDrawer } from '../components/EntityDrawer'
-import { createAccount, getClientAccounts, getClientProjectSummaries, updateClientRating } from '../lib/api'
+import { createAccount, getClientAccounts, getClientProjectSummaries, updateClientBrand, updateClientRating } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { isManagerWrite } from '../lib/types'
@@ -24,6 +24,21 @@ function accountTypeTone(type: string | null) {
 
 function sortAccounts(rows: Account[]) {
   return [...rows].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// BRAND-1: «Закон двух компаний» — два бренда клиента (accounts.brand). Нормализуем к одному из
+// двух известных значений; всё неизвестное/пустое трактуем как дефолт 'nw_build_pro'.
+type BrandKey = 'nw_build_pro' | 'nw_custom_homes'
+const BRAND_KEYS: BrandKey[] = ['nw_build_pro', 'nw_custom_homes']
+function brandKey(value: string | null | undefined): BrandKey {
+  return value === 'nw_custom_homes' ? 'nw_custom_homes' : 'nw_build_pro'
+}
+
+// BRAND-1: read-only пилюля бренда рядом с именем клиента.
+function BrandBadge({ account }: { account: Account }) {
+  const { t } = useI18n()
+  const key = brandKey(account.brand)
+  return <span className={`badge ${key === 'nw_custom_homes' ? 'blue' : 'green'} client-brand-badge`}>{t(`brand_${key}`)}</span>
 }
 
 // CLI-1: нормализуем рейтинг к 1..5 или null (защита от мусора из БД).
@@ -126,6 +141,8 @@ export default function Clients() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [projects, setProjects] = useState<ClientProjectSummary[]>([])
   const [search, setSearch] = useState('')
+  const [brandFilter, setBrandFilter] = useState<'all' | BrandKey>('all')
+  const [newBrand, setNewBrand] = useState<BrandKey>('nw_build_pro')
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -170,9 +187,12 @@ export default function Clients() {
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase()
-    if (!needle) return accounts
-    return accounts.filter((account) => account.name.toLowerCase().includes(needle))
-  }, [accounts, search])
+    return accounts.filter((account) => {
+      if (brandFilter !== 'all' && brandKey(account.brand) !== brandFilter) return false
+      if (needle && !account.name.toLowerCase().includes(needle)) return false
+      return true
+    })
+  }, [accounts, search, brandFilter])
 
   // CLI-1: редактировать внутреннюю оценку клиента может только owner/admin/manager; остальные
   // видят read-only бейдж. RLS дублирует этот гейт на сервере.
@@ -187,9 +207,15 @@ export default function Clients() {
     setSaving(true)
     setSaveError(false)
     try {
-      const created = await createAccount(profile, input)
+      let created = await createAccount(profile, input)
+      // BRAND-1: createAccount не принимает brand (AccountInput не трогаем) — если менеджер выбрал
+      // не дефолтный бренд на форме, дописываем его отдельным updateClientBrand по новому id.
+      if (canEditRating && newBrand !== 'nw_build_pro') {
+        created = await updateClientBrand(profile, created.id, newBrand)
+      }
       setAccounts((rows) => sortAccounts([...rows, created]))
       setAdding(false)
+      setNewBrand('nw_build_pro')
     } catch {
       setSaveError(true)
     } finally {
@@ -217,16 +243,50 @@ export default function Clients() {
             submittingLabel={t('clients_saving')}
             onSubmit={addAccount}
           />
+          {/* BRAND-1: выбор бренда на форме создания — только owner/admin/manager (тот же гейт, что рейтинг). */}
+          {canEditRating && (
+            <label className="client-brand-field" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <span className="muted" style={{ fontSize: '.85rem' }}>{t('brand_label')}</span>
+              <select
+                className="client-brand-select"
+                value={newBrand}
+                disabled={saving}
+                aria-label={t('brand_label')}
+                onChange={(e) => setNewBrand(brandKey(e.target.value))}
+              >
+                {BRAND_KEYS.map((key) => (
+                  <option key={key} value={key}>{t(`brand_${key}`)}</option>
+                ))}
+              </select>
+            </label>
+          )}
           {saveError && <p className="error-msg">{t('client_save_failed')}</p>}
         </div>
       )}
 
-      <input
-        className="clients-search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder={t('clients_search')}
-      />
+      <div className="clients-filters" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input
+          className="clients-search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={t('clients_search')}
+        />
+        {/* BRAND-1: фильтр списка по бренду (Все | NW Build Pro | NW Custom Homes). */}
+        <select
+          className="clients-brand-filter"
+          value={brandFilter}
+          aria-label={t('brand_label')}
+          onChange={(e) => {
+            const value = e.target.value
+            setBrandFilter(value === 'nw_build_pro' || value === 'nw_custom_homes' ? value : 'all')
+          }}
+        >
+          <option value="all">{t('brand_filter_all')}</option>
+          {BRAND_KEYS.map((key) => (
+            <option key={key} value={key}>{t(`brand_${key}`)}</option>
+          ))}
+        </select>
+      </div>
 
       {loading && <div className="card center muted">{t('loading')}</div>}
       {error && <p className="error-msg">{t('load_error')}</p>}
@@ -249,7 +309,11 @@ export default function Clients() {
                 >
                   <div className="client-list-main">
                     <div>
-                      <div className="item-title">{account.name}</div>
+                      <div className="item-title" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        {account.name}
+                        {/* BRAND-1: read-only пилюля бренда рядом с именем клиента. */}
+                        <BrandBadge account={account} />
+                      </div>
                       <div className="muted">{contact || t('client_no_contact')}</div>
                     </div>
                     <span className={`badge ${accountTypeTone(account.account_type)}`}>

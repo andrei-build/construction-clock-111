@@ -109,6 +109,14 @@ function statusTone(status: DocumentRow['status']) {
   return 'amber'
 }
 
+// BRAND-1: «Закон двух компаний» — бренд клиента (accounts.brand). Нормализуем к одному из двух
+// известных значений; всё неизвестное/пустое трактуем как дефолт 'nw_build_pro'.
+type BrandKey = 'nw_build_pro' | 'nw_custom_homes'
+const BRAND_KEYS: BrandKey[] = ['nw_build_pro', 'nw_custom_homes']
+function brandKey(value: string | null | undefined): BrandKey {
+  return value === 'nw_custom_homes' ? 'nw_custom_homes' : 'nw_build_pro'
+}
+
 // DOCS-2: смет/счётов менеджер, перенесён из «Документов» в «Продажи» дословно (нумерация, конверт
 // в счёт, отметка оплаты, вложения FILE-1). initialType задаёт стартовую подвкладку из /sales?tab=.
 export default function EstimatesInvoices({ initialType }: { initialType?: DocumentType }) {
@@ -122,6 +130,7 @@ export default function EstimatesInvoices({ initialType }: { initialType?: Docum
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [tab, setTab] = useState<DocumentType>(initialType ?? 'estimate')
+  const [brandFilter, setBrandFilter] = useState<'all' | BrandKey>('all')
   const [showForm, setShowForm] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detailItems, setDetailItems] = useState<DocumentItem[]>([])
@@ -208,7 +217,16 @@ export default function EstimatesInvoices({ initialType }: { initialType?: Docum
   }, [selectedId])
 
   const selected = documents.find((doc) => doc.id === selectedId) ?? null
-  const activeDocuments = documents.filter((doc) => doc.doc_type === tab)
+  // BRAND-1: бренд по account_id — для пилюли в селекторе клиента и фильтра списка документов.
+  const brandByAccount = useMemo(() => {
+    const map = new Map<string, BrandKey>()
+    for (const account of accounts) map.set(account.id, brandKey(account.brand))
+    return map
+  }, [accounts])
+  const docBrand = (doc: DocumentRow) => (doc.account_id ? brandByAccount.get(doc.account_id) ?? 'nw_build_pro' : 'nw_build_pro')
+  const activeDocuments = documents.filter((doc) =>
+    doc.doc_type === tab && (brandFilter === 'all' || docBrand(doc) === brandFilter),
+  )
   const canWriteAttachments = profile ? isManagerWrite(profile.role) : false
   const ownerOrAdmin = profile?.role === 'owner' || profile?.role === 'admin'
   const locked = !loading && !ownerOrAdmin && documents.length === 0 && rates.length === 0
@@ -416,7 +434,8 @@ export default function EstimatesInvoices({ initialType }: { initialType?: Docum
                   <select value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
                     <option value="">{t('documents_choose_client')}</option>
                     {accounts.map((account) => (
-                      <option key={account.id} value={account.id}>{account.name}</option>
+                      // BRAND-1: <option> не может содержать пилюлю — дописываем бренд в текст опции.
+                      <option key={account.id} value={account.id}>{account.name} · {t(`brand_${brandKey(account.brand)}`)}</option>
                     ))}
                   </select>
                 </label>
@@ -517,6 +536,24 @@ export default function EstimatesInvoices({ initialType }: { initialType?: Docum
             </button>
           </div>
 
+          {/* BRAND-1: фильтр списка документов по бренду клиента (Все | NW Build Pro | NW Custom Homes). */}
+          <label className="documents-brand-filter" style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0' }}>
+            <span className="muted" style={{ fontSize: '.85rem' }}>{t('brand_label')}</span>
+            <select
+              value={brandFilter}
+              aria-label={t('brand_label')}
+              onChange={(e) => {
+                const value = e.target.value
+                setBrandFilter(value === 'nw_build_pro' || value === 'nw_custom_homes' ? value : 'all')
+              }}
+            >
+              <option value="all">{t('brand_filter_all')}</option>
+              {BRAND_KEYS.map((key) => (
+                <option key={key} value={key}>{t(`brand_${key}`)}</option>
+              ))}
+            </select>
+          </label>
+
           {activeDocuments.length === 0 && <div className="card muted">{t('documents_empty')}</div>}
           {activeDocuments.length > 0 && (
             <div className="card documents-table-wrap">
@@ -541,7 +578,13 @@ export default function EstimatesInvoices({ initialType }: { initialType?: Docum
                     >
                       <td>{doc.number ?? '-'}</td>
                       <td>{doc.title ?? '-'}</td>
-                      <td>{accountName(doc)}</td>
+                      <td>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          {accountName(doc)}
+                          {/* BRAND-1: read-only пилюля бренда клиента рядом с именем. */}
+                          <span className={`badge ${docBrand(doc) === 'nw_custom_homes' ? 'blue' : 'green'} client-brand-badge`}>{t(`brand_${docBrand(doc)}`)}</span>
+                        </span>
+                      </td>
                       <td>{projectName(doc)}</td>
                       <td>{formatDate(doc.issue_date)}</td>
                       <td><span className={`badge ${statusTone(doc.status)}`}>{t(`document_status_${doc.status}`)}</span></td>
