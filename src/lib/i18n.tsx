@@ -1337,6 +1337,15 @@ const dict: Record<string, Record<Lang, string>> = {
   push_denied_hint: { ru: 'Уведомления заблокированы в браузере. Разрешите их в настройках браузера или устройства.', en: 'Notifications are blocked in the browser. Allow them in your browser or device settings.', es: 'Las notificaciones están bloqueadas en el navegador. Permítalas en los ajustes del navegador o del dispositivo.' },
   push_unsupported_hint: { ru: 'Установите приложение на экран «Домой», чтобы получать уведомления.', en: 'Install the app to your home screen to receive notifications.', es: 'Instale la aplicación en la pantalla de inicio para recibir notificaciones.' },
   push_toggle_failed: { ru: 'Не удалось изменить настройку уведомлений', en: 'Could not change the notification setting', es: 'No se pudo cambiar el ajuste de notificaciones' },
+  // M11: «Беззвучный режим» — личное предпочтение notif_mode (off ↔ default) в секции «Уведомления».
+  silent_mode_toggle: { ru: 'Беззвучный режим', en: 'Silent mode', es: 'Modo silencioso' },
+  silent_mode_hint: { ru: 'Без звука и всплывающих уведомлений о новых сообщениях и задачах на всех устройствах.', en: 'No sound or pop-up alerts for new messages and tasks on all your devices.', es: 'Sin sonido ni alertas emergentes de mensajes y tareas nuevas en todos tus dispositivos.' },
+  silent_state_on: { ru: 'Включён', en: 'On', es: 'Activado' },
+  silent_state_off: { ru: 'Выключен', en: 'Off', es: 'Desactivado' },
+  silent_enable: { ru: 'Включить', en: 'Enable', es: 'Activar' },
+  silent_disable: { ru: 'Выключить', en: 'Disable', es: 'Desactivar' },
+  silent_saved: { ru: 'Настройка сохранена', en: 'Setting saved', es: 'Ajuste guardado' },
+  silent_failed: { ru: 'Не удалось сохранить настройку', en: 'Could not save the setting', es: 'No se pudo guardar el ajuste' },
   // Экран водителя «Маршрут дня» (/route): закупка утром + развоз по объектам (MAT-2)
   route_nav: { ru: 'Маршрут', en: 'Route', es: 'Ruta' },
   route_title: { ru: 'Маршрут дня', en: 'Day route', es: 'Ruta del día' },
