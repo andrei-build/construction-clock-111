@@ -2,29 +2,24 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useI18n } from '../lib/i18n'
 import { IconArrowLeft } from './icons'
 
-// Root screens = every top-level nav destination (bottom tabs + desktop sidebar).
-// Any route not in this set is a sub-screen and gets the back control.
+// Root screens = the per-role bottom-nav LANDING tabs only (see src/components/Nav.tsx).
+// UI-NAV-2: root is narrow by design — just the home + top-level tab destinations. Every screen
+// reached BELOW a tab (detail screens, /documents, /clients, /reports, /payroll, /calendar, /map,
+// /trash, project/worker hubs, settings, …) is a sub-screen and gets the «← Назад» control.
+// The set is the union of all four role tab bars so no role's home tab ever shows a back button.
 const ROOT_PATHS = new Set([
-  '/',
-  '/checkin',
-  '/timeline',
-  '/messages',
-  '/projects',
-  '/daily',
-  '/team',
-  '/consents',
-  '/dispatch',
-  '/calendar',
-  '/map',
-  '/gallery',
-  '/files',
-  '/time',
-  '/payroll',
-  '/documents',
-  '/reports',
-  '/clients',
-  '/sales',
-  '/more',
+  '/',          // home (Dashboard / CheckIn / Sales / Route by role)
+  '/overview',  // manager tab «Обзор»
+  '/dispatch',  // manager tab «Командный центр»
+  '/projects',  // manager tab «Проекты»
+  '/team',      // manager tab «Команда»
+  '/more',      // «Ещё» (every role)
+  '/route',     // driver tab «Маршрут»
+  '/tasks',     // driver/worker tab «Задачи»
+  '/messages',  // driver/sales tab «Сообщения»
+  '/time',      // driver/worker tab «Мои часы»
+  '/sales',     // sales tab «Продажи»
+  '/checkin',   // worker tab «Отметка»
 ])
 
 export default function BackButton() {

@@ -139,14 +139,16 @@ export default function Team() {
             const evs = byWorker.get(w.id) ?? []
             const st = shiftState(evs)
             return (
-              <div key={w.id} className="card row">
+              // UI-NAV-2 (b): вся строка открывает карточку работника (тот же таргет, что ссылка-имя).
+              // Вложенные контролы вызывают stopPropagation, чтобы не срабатывал переход по строке.
+              <div key={w.id} className="card row tap" onClick={() => openWorker(w)}>
                 <div className="team-row-id">
                   {/* TEAM-2: круглый аватар работника (публичный avatar_url) в строке списка. */}
                   <div className="team-avatar sm" aria-hidden="true">
                     {w.avatar_url ? <img src={w.avatar_url} alt="" /> : <span>{initials(w.name)}</span>}
                   </div>
                   <div>
-                    <button className="inline-link item-title" onClick={() => openWorker(w)}>{workerLabels.get(w.id) ?? w.name}</button>
+                    <button className="inline-link item-title" onClick={(e) => { e.stopPropagation(); openWorker(w) }}>{workerLabels.get(w.id) ?? w.name}</button>
                     <span className={`badge ${roleBadge(w.role)}`}>{w.role}</span>
                   </div>
                 </div>
@@ -154,7 +156,7 @@ export default function Team() {
                   <div style={{ fontWeight: 700 }}>{fmtHours(workedMs(evs))}{t('h')}</div>
                   {st.status !== 'off' && <span className="badge green">●</span>}
                   {canManage && (
-                    <label className="checkout-video-toggle" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12 }}>
+                    <label className="checkout-video-toggle" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12 }} onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={Boolean(w.require_checkout_video)}
@@ -163,7 +165,7 @@ export default function Team() {
                       <span className="muted">{t('checkout_video_required')}</span>
                     </label>
                   )}
-                  <button className="btn ghost small team-details-btn" onClick={() => navigate(`/team/${w.id}`)}>
+                  <button className="btn ghost small team-details-btn" onClick={(e) => { e.stopPropagation(); navigate(`/team/${w.id}`) }}>
                     {t('details')}
                   </button>
                 </div>

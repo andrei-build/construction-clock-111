@@ -449,15 +449,17 @@ export default function Projects() {
         const noteFirst = notePrev?.firstLine || (p.notes ? (p.notes.split('\n').map((s) => s.trim()).find(Boolean) ?? '') : '')
         const noteCount = notePrev?.count ?? 0
         return (
-          <div key={p.id} className="card project-card">
+          // UI-NAV-2 (b): вся карточка открывает хаб проекта (тот же таргет, что ссылка-имя).
+          // Вложенные контролы ниже вызывают stopPropagation, чтобы не срабатывал переход по карточке.
+          <div key={p.id} className="card project-card tap" onClick={() => navigate(`/projects/${p.id}`)}>
             {/* Заголовок + 3 светофора (срок / маржа / клиент) + обратный отсчёт. */}
             <div className="project-title-row">
-              <button className="inline-link project-name-link" onClick={() => navigate(`/projects/${p.id}`)}>{p.name}</button>
+              <button className="inline-link project-name-link" onClick={(e) => { e.stopPropagation(); navigate(`/projects/${p.id}`) }}>{p.name}</button>
               {canWrite && (
-                <button className="btn ghost small project-copy-btn" title={t('copy_project')} aria-label={t('copy_project')} onClick={() => copyProject(p)}>📋</button>
+                <button className="btn ghost small project-copy-btn" title={t('copy_project')} aria-label={t('copy_project')} onClick={(e) => { e.stopPropagation(); copyProject(p) }}>📋</button>
               )}
               {canWrite && (
-                <button className="btn ghost small project-copy-btn" title={t('edit_project')} aria-label={t('edit_project')} onClick={() => startEdit(p)}>✏️</button>
+                <button className="btn ghost small project-copy-btn" title={t('edit_project')} aria-label={t('edit_project')} onClick={(e) => { e.stopPropagation(); startEdit(p) }}>✏️</button>
               )}
               {showProfit && (
                 <span className={`profit-badge ${profit.profit_status}`}>
@@ -487,12 +489,15 @@ export default function Projects() {
                 {p.address
                   ? <span className="muted project-card-address">📍 {p.address}</span>
                   : <span className="muted project-card-address">📍 {coords!.lat}, {coords!.lng}</span>}
-                {p.address && <CopyAddressButton address={p.address} />}
+                {p.address && <span onClick={(e) => e.stopPropagation()}><CopyAddressButton address={p.address} /></span>}
               </div>
             )}
 
-            {/* Единая строка навигации (В путь / Apple / Google / Tesla-share / Скопировать точку). */}
-            <ProjectNavActions project={p} profile={profile} projectName={p.name} address={p.address} lat={coords?.lat ?? null} lng={coords?.lng ?? null} />
+            {/* Единая строка навигации (В путь / Apple / Google / Tesla-share / Скопировать точку).
+                UI-NAV-2 (b): обёртка гасит всплытие — эти кнопки/ссылки не открывают карточку. */}
+            <div onClick={(e) => e.stopPropagation()}>
+              <ProjectNavActions project={p} profile={profile} projectName={p.name} address={p.address} lat={coords?.lat ?? null} lng={coords?.lng ?? null} />
+            </div>
 
             {/* GPS OK / нет границы — отдельным бейджем. */}
             <div className="project-gps-line">
@@ -519,7 +524,7 @@ export default function Projects() {
                 type="button"
                 className="project-stat-tile as-button"
                 title={t('projects_card_open_tasks').replace('{n}', String(ptasks.length))}
-                onClick={() => navigate(`/projects/${p.id}`)}
+                onClick={(e) => { e.stopPropagation(); navigate(`/projects/${p.id}`) }}
               >
                 <span className="muted">{t('proj_tile_tasks')}</span>
                 <span className="item-title num-display">{ptasks.length}</span>
@@ -546,10 +551,10 @@ export default function Projects() {
 
             {/* Действия карточки — Подробности / Редактировать / Убрать. */}
             <div className="project-card-actions">
-              <button type="button" className="btn small" onClick={() => navigate(`/projects/${p.id}`)}>{t('proj_action_details')}</button>
-              {canWrite && <button type="button" className="btn ghost small" onClick={() => startEdit(p)}>{t('proj_action_edit')}</button>}
+              <button type="button" className="btn small" onClick={(e) => { e.stopPropagation(); navigate(`/projects/${p.id}`) }}>{t('proj_action_details')}</button>
+              {canWrite && <button type="button" className="btn ghost small" onClick={(e) => { e.stopPropagation(); startEdit(p) }}>{t('proj_action_edit')}</button>}
               {canWrite && (
-                <button type="button" className="btn ghost small project-remove-btn" disabled={removeBusyId === p.id} onClick={() => removeProject(p)}>
+                <button type="button" className="btn ghost small project-remove-btn" disabled={removeBusyId === p.id} onClick={(e) => { e.stopPropagation(); removeProject(p) }}>
                   {t('proj_action_remove')}
                 </button>
               )}

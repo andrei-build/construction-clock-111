@@ -776,7 +776,9 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
     const files = list.filter((a) => a.media_type !== 'photo')
     const uploading = attachBusy === task.id
     return (
-      <div className="task-detail">
+      // UI-NAV-2 (b): развёрнутый блок деталей внутри кликабельной cc-task-card — гасим всплытие,
+      // чтобы клики по вложениям / кнопке удаления / подтверждению не сворачивали карточку.
+      <div className="task-detail" onClick={(e) => e.stopPropagation()}>
         <div className="task-attach-buttons">
           <input id={`cc-gal-${task.id}`} className="photo-input" type="file" accept="image/*" disabled={uploading}
             onChange={(e) => { attach(task, e.target.files?.[0]); e.currentTarget.value = '' }} />
@@ -934,7 +936,9 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
           ) : (
             <div className="cc-tasks">
               {filtered.map((task) => (
-                <div key={task.id} className="cc-task-card">
+                // UI-NAV-2 (b): вся карточка раскрывает детали (тот же toggleExpand, что кнопка «Детали»).
+                // Селект статуса, кнопка «Детали» и весь развёрнутый блок деталей гасят всплытие.
+                <div key={task.id} className="cc-task-card tap" onClick={() => toggleExpand(task)}>
                   <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <span className={`badge ${priorityTone(task.priority)}`}>{t(`task_priority_${task.priority}`)}</span>{' '}
@@ -951,11 +955,12 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
                       className="task-status-select"
                       value={STATUS_OPTIONS.includes(task.status) ? task.status : 'open'}
                       disabled={statusBusy === task.id}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => changeStatus(task, e.target.value as Task['status'])}
                     >
                       {STATUS_OPTIONS.map((st) => <option key={st} value={st}>{t(`task_status_${st}`)}</option>)}
                     </select>
-                    <button className="btn ghost small" onClick={() => toggleExpand(task)}>
+                    <button className="btn ghost small" onClick={(e) => { e.stopPropagation(); toggleExpand(task) }}>
                       {expandedId === task.id ? t('tasks_hide_details') : t('tasks_details')}
                     </button>
                   </div>
