@@ -17,7 +17,6 @@ import LiveMap from './screens/LiveMap'
 import Sales from './screens/Sales'
 import Reports from './screens/Reports'
 import Timeline from './screens/Timeline'
-import Consents from './screens/Consents'
 import Archive from './screens/Archive'
 import Trash from './screens/Trash'
 import Stores from './screens/Stores'
@@ -32,7 +31,6 @@ import Messages from './screens/Messages'
 import DriverRoute from './screens/Route'
 import More from './screens/More'
 import Settings from './screens/Settings'
-import OwnerSettings from './screens/OwnerSettings'
 import Broadcast from './screens/Broadcast'
 import Mail from './screens/Mail'
 import ResetPassword from './screens/ResetPassword'
@@ -102,7 +100,10 @@ export default function App() {
             <Route path="/sales" element={salesAccess ? <Sales /> : <Navigate to="/" />} />
             <Route path="/reports" element={manager ? <Reports /> : <Navigate to="/" />} />
             <Route path="/timeline" element={manager ? <Timeline /> : <Navigate to="/" />} />
-            <Route path="/consents" element={manager ? <Consents /> : <Navigate to="/" />} />
+            {/* SET-2 (ЗАКОН-7): standalone «Согласия» removed from nav — consents live in each
+                person's dossier (/team/:id). Old /consents bookmarks redirect to the team list.
+                Consents data/tables/API untouched. */}
+            <Route path="/consents" element={<Navigate to="/team" replace />} />
             <Route path="/archive" element={manager ? <Archive /> : <Navigate to="/" />} />
             <Route path="/trash" element={manager ? <Trash /> : <Navigate to="/" />} />
             <Route path="/stores" element={manager ? <Stores /> : <Navigate to="/" />} />
@@ -116,8 +117,10 @@ export default function App() {
             {/* MAIL-1-UI: «Почта» — owner/admin (RLS дополнительно ограничивает чтение владельцем). */}
             <Route path="/mail" element={adminOrOwner ? <Mail /> : <Navigate to="/" />} />
             <Route path="/settings" element={adminOrOwner ? <Settings /> : <Navigate to="/" />} />
-            {/* SET-1: owner-only page renders its own friendly denied note for non-owners (no crash). */}
-            <Route path="/owner-settings" element={<OwnerSettings />} />
+            {/* SET-2 (ЗАКОН-6): «Настройки владельца» merged into «Настройки». Old /owner-settings
+                bookmarks redirect to the owner block inside /settings. A plain manager landing on
+                /settings is redirected to '/' by the gate above — that's fine. */}
+            <Route path="/owner-settings" element={<Navigate to="/settings#owner" replace />} />
             <Route path="/time" element={<MyTime />} />
             <Route path="/payroll" element={financeAccess ? <Payroll /> : <Navigate to="/" />} />
             <Route path="/messages" element={<Messages />} />

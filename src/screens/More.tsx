@@ -149,11 +149,10 @@ export default function More() {
         <>
           <h2>{t('more_group_admin')}</h2>
           <div className="more-group">
-            {isOwner && <MoreLink to="/owner-settings" Icon={IconSettings} label={t('owner_settings')} />}
+            {/* SET-2 (ЗАКОН-6): «Настройки владельца» merged into «Настройки» (/settings#owner). */}
             {isAdminOrOwner && <MoreLink to="/settings" Icon={IconSettings} label={t('settings')} />}
             <MoreLink to="/archive" Icon={IconFolder} label={t('archive')} />
-            {/* TODO WF-1: move consents into worker dossier /team/:id. */}
-            <MoreLink to="/consents" Icon={IconTarget} label={t('consents')} />
+            {/* SET-2 (ЗАКОН-7): «Согласия» removed — now inside the person dossier (/team/:id). */}
           </div>
         </>
       )}

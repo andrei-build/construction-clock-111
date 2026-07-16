@@ -55,7 +55,10 @@ function inviteErrorKey(error?: string): string {
   return 'invite_admin_err_generic'
 }
 
-export default function OwnerSettings() {
+// SET-2: was a standalone /owner-settings screen; now merged into /settings as an owner-only
+// block. Rendered by Settings.tsx (gated by role === 'owner'); /owner-settings redirects to
+// /settings#owner. Renders sections (no <h1>/screen wrapper) under a <section id="owner"> anchor.
+export default function OwnerSettingsSections() {
   const { profile } = useAuth()
   const { t } = useI18n()
   const isOwner = profile?.role === 'owner'
@@ -166,22 +169,16 @@ export default function OwnerSettings() {
   const roleBadge = (r: string) =>
     r === 'owner' ? 'red' : r === 'admin' ? 'amber' : 'blue'
 
-  if (!isOwner) {
-    // Дружелюбный отказ — не падаем, показываем понятную заметку.
-    return (
-      <div className="screen">
-        <h1>🔐 {t('owner_settings')}</h1>
-        <div className="card muted">{t('owner_settings_denied')}</div>
-      </div>
-    )
-  }
+  // Owner-only block: the parent (Settings.tsx) already gates on role === 'owner', but keep a
+  // defensive guard so this component never renders owner content for anyone else.
+  if (!isOwner) return null
 
   const msgClass = msg === 'settings_saved' ? 'ok-msg' : 'error-msg'
   const inviteDisabled = !inviteName.trim() || !inviteEmail.trim() || inviteBusy
 
   return (
-    <div className="screen">
-      <h1>🔐 {t('owner_settings')}</h1>
+    <section id="owner">
+      <h2 style={{ marginTop: 24 }}>🔐 {t('owner_settings')}</h2>
       <p className="muted" style={{ marginTop: -6 }}>{t('owner_settings_sub')}</p>
 
       {loading && <div className="card center muted">{t('loading')}</div>}
@@ -313,6 +310,6 @@ export default function OwnerSettings() {
           </div>
         </>
       )}
-    </div>
+    </section>
   )
 }
