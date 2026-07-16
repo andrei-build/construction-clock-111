@@ -3889,3 +3889,38 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 @media (min-width: 1080px) {
   .cc-dispatch-grid, .cc-ops-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+/* MAIL-1-UI: экран «Почта». Вкладки ящиков, список писем, карточка письма. */
+.mail-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+.mail-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-radius: var(--radius-pill);
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+  font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+}
+.mail-tab.active { background: var(--elevated); color: var(--text); border-color: rgba(126,160,190,.4); }
+.mail-tab-badge { min-width: 18px; padding: 1px 6px; font-size: 10px; line-height: 16px; text-align: center; }
+.mail-meta { font-size: 12px; margin-bottom: 8px; }
+.mail-banner { text-align: left; margin: 8px 0; font-weight: 600; }
+.mail-empty { text-align: center; }
+.mail-list { display: grid; gap: 8px; }
+.mail-row {
+  display: grid; gap: 3px; text-align: left; width: 100%;
+  padding: 12px 14px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  font: inherit; cursor: pointer;
+}
+.mail-row.unread { border-color: rgba(107,200,255,.4); }
+.mail-row.unread .mail-row-sender, .mail-row.unread .mail-row-subject { font-weight: 700; }
+.mail-row-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.mail-row-sender { font-size: 14px; }
+.mail-row-date { font-size: 12px; white-space: nowrap; }
+.mail-row-subject { font-size: 14px; }
+.mail-row-snippet { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mail-detail-subject { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+.mail-detail-from { font-size: 13px; }
+.mail-detail-date { font-size: 12px; margin-top: 2px; }
+.mail-body {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+  font-size: 14px; line-height: 1.5; word-break: break-word;
+}

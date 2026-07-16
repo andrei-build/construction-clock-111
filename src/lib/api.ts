@@ -14,6 +14,7 @@ export * from './api/geo'
 export * from './api/calendar'
 export * from './api/messages'
 export * from './api/clients'
+export * from './api/mail'
 
 // OFFLINE-1 (pass 1a): read-through IndexedDB cache. We wrap the domain READ functions here in
 // the shim so the domain modules stay byte-for-byte unchanged (their logic is not rewritten) and
