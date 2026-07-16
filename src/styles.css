@@ -1763,6 +1763,24 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .message-bubble .when {
   font-size: 11px;
 }
+/* M10: ряд действий под сообщением (Прочитано / Отложить / пресеты) */
+.message-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+/* M10: секция «Отложенные» под активной лентой треда */
+.snoozed-section {
+  margin-top: 8px;
+  border-top: 1px solid var(--border, rgba(255, 255, 255, .12));
+  padding-top: 8px;
+}
+.snoozed-toggle {
+  margin-bottom: 6px;
+}
+.message-bubble.snoozed {
+  opacity: .7;
+}
 
 .team-details-btn {
   margin-top: 8px;
