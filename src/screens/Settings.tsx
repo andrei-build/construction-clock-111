@@ -5,6 +5,8 @@ import { getAppSettings, saveAppSettings, getTeam, reportGpsExport, purgeGpsFeed
 import type { AppSettings, Profile } from '../lib/types'
 import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
 import { DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
+// SET-2: «Настройки владельца» merged into «Настройки» — owner-only sections rendered inline below.
+import OwnerSettingsSections from './OwnerSettings'
 
 type OrgLanguage = 'ru' | 'en' | 'es'
 
@@ -290,6 +292,11 @@ export default function Settings() {
       )}
 
       {!loading && !loadError && canEdit && <GpsDataSection />}
+
+      {/* SET-2: owner-only «Настройки владельца» sections (ЗАКОН-6). canEdit === role 'owner',
+          so this is the isOwner gate; the sub-component also guards internally. /owner-settings
+          redirects here to #owner. Non-owner admins keep the read-only view below and never see this. */}
+      {!loading && !loadError && canEdit && <OwnerSettingsSections />}
 
       {!loading && !loadError && !canEdit && (
         <>

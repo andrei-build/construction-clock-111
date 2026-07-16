@@ -143,9 +143,9 @@ export default function Nav({ manager }: { manager: boolean }) {
         // MAIL-1-UI: «Почта» — owner/admin only (то же гейтирование, что у Settings).
         { to: '/mail', Icon: IconChat, label: t('mail'), show: isAdminOrOwner },
         { to: '/archive', Icon: IconFolder, label: t('archive') },
-        { to: '/consents', Icon: IconTarget, label: t('consents') },
+        // SET-2: «Согласия» (ЗАКОН-7) and «Настройки владельца» (ЗАКОН-6) removed —
+        // consents live in the person dossier (/team/:id); owner settings merged into /settings.
         { to: '/settings', Icon: IconSettings, label: t('settings'), show: isAdminOrOwner },
-        { to: '/owner-settings', Icon: IconSettings, label: t('owner_settings'), show: isOwner },
       ],
     },
   ]
