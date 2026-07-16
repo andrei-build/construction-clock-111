@@ -263,6 +263,8 @@ export default function WorkerDetail() {
   const [adjustIn, setAdjustIn] = useState('')
   const [adjustOut, setAdjustOut] = useState('')
   const [adjustReason, setAdjustReason] = useState('')
+  // M6: показать ли комментарий корректировки работнику («Мои часы»). По умолчанию — выключено.
+  const [adjustShowToWorker, setAdjustShowToWorker] = useState(false)
 
   const canView = profile ? isManagerRole(profile.role) : false
   const canEditProfile = profile ? isManagerWrite(profile.role) : false
@@ -782,6 +784,7 @@ export default function WorkerDetail() {
     setAdjustIn(toDatetimeLocal(row.interval.start_at))
     setAdjustOut(toDatetimeLocal(row.interval.end_at ?? new Date(now).toISOString()))
     setAdjustReason('')
+    setAdjustShowToWorker(false)
     setMsg(null)
   }
 
@@ -808,6 +811,7 @@ export default function WorkerDetail() {
         adjustedCheckIn,
         adjustedCheckOut,
         reason: adjustReason.trim(),
+        showToWorker: adjustShowToWorker,
       })
       setMsg('adjustment_saved')
       setEditingKey(null)
@@ -1283,6 +1287,16 @@ export default function WorkerDetail() {
                         ))}
                       </div>
                       <textarea value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} rows={2} />
+                      {/* M6: по умолчанию заметка НЕ видна работнику; галочка отдаёт adjust_reason на «Мои часы». */}
+                      <label className="check-row worker-toggle">
+                        <input
+                          type="checkbox"
+                          checked={adjustShowToWorker}
+                          disabled={busy !== null}
+                          onChange={(e) => setAdjustShowToWorker(e.target.checked)}
+                        />
+                        <span>{t('show_note_to_worker')}</span>
+                      </label>
                       <div className="row adjustment-actions">
                         <button className="btn ghost small" type="button" disabled={busy !== null} onClick={() => setEditingKey(null)}>{t('cancel')}</button>
                         <button className="btn small" disabled={busy !== null || !adjustReason.trim()}>{t('save_adjustment')}</button>

@@ -5,7 +5,9 @@ import { mediaUrl, safeFileName, validateUpload, inferUploadContentType, TASK_ME
 import type { Geo } from './geo'
 import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
 
-const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, metadata'
+// M6: show_to_worker добавлен аддитивно — worker-side (MyTime) показывает комментарий менеджера
+// к корректировке, когда флаг true. adjust_reason уже здесь. Прочие вызовы select не задеты.
+const TIME_EVENT_SELECT = 'id, org_id, profile_id, project_id, event_type, event_time, gps_status, video_status, video_path, adjusts_event_id, adjust_reason, adjusted_by, show_to_worker, metadata'
 
 export async function getTodayEvents(profileId?: string): Promise<TimeEvent[]> {
   let q = supabase.from('time_events')
@@ -269,6 +271,10 @@ export async function createTimeAdjustment(p: Profile, input: {
   adjustedCheckIn: string
   adjustedCheckOut: string
   reason: string
+  // M6: показать ли эту заметку (adjust_reason) работнику на его экране «Мои часы».
+  // Ставится ТОЛЬКО на новой adjustment-строке при INSERT; append-only цепочка не трогается.
+  // Опционально: при отсутствии — false, существующие вызовы сохраняют текущее поведение.
+  showToWorker?: boolean
 }) {
   const { data, error } = await supabase.from('time_events')
     .insert({
@@ -281,6 +287,7 @@ export async function createTimeAdjustment(p: Profile, input: {
       adjusts_event_id: input.originalEventId,
       adjust_reason: input.reason,
       adjusted_by: p.id,
+      show_to_worker: input.showToWorker ?? false,
       metadata: {
         adjusted_check_in: input.adjustedCheckIn,
         adjusted_check_out: input.adjustedCheckOut,

@@ -46,6 +46,15 @@ export default function MyTime() {
   const label = (t2: string) =>
     t2 === 'check_in' ? '🟢' : t2 === 'check_out' ? '🔴' : t2 === 'break_start' ? '⏸️' : t2 === 'break_end' ? '▶️' : '✏️'
 
+  // M6: комментарий менеджера к корректировке. Показываем ТОЛЬКО когда show_to_worker=true И есть текст.
+  // Поле show_to_worker приходит из getEventsSince (аддитивно в select); в общем типе TimeEvent его нет —
+  // читаем через узкий каст, при false/отсутствии возвращаем null (поведение без M6 сохраняется).
+  const managerNote = (e: TimeEvent): string | null => {
+    const showToWorker = (e as TimeEvent & { show_to_worker?: boolean | null }).show_to_worker
+    const reason = e.adjust_reason?.trim()
+    return showToWorker && reason ? reason : null
+  }
+
   return (
     <div className="screen">
       <h1>🕐 {t('my_time')}</h1>
@@ -61,15 +70,23 @@ export default function MyTime() {
         <button className={range === 'today' ? 'active' : ''} onClick={() => setRange('today')}>{t('today')}</button>
         <button className={range === 'week' ? 'active' : ''} onClick={() => setRange('week')}>{t('week')}</button>
       </div>
-      {feed.slice().reverse().map((e) => (
-        <div key={e.id} className="feed-item row">
-          <div>{label(e.event_type)} {e.event_type}</div>
-          <div className="when">
-            {new Date(e.event_time).toLocaleDateString()} {fmtClock(e.event_time)}
-            {e.gps_status && e.gps_status !== 'good' ? ' · GPS?' : ''}
+      {feed.slice().reverse().map((e) => {
+        const note = managerNote(e)
+        return (
+          <div key={e.id} className="feed-item">
+            <div className="row">
+              <div>{label(e.event_type)} {e.event_type}</div>
+              <div className="when">
+                {new Date(e.event_time).toLocaleDateString()} {fmtClock(e.event_time)}
+                {e.gps_status && e.gps_status !== 'good' ? ' · GPS?' : ''}
+              </div>
+            </div>
+            {note && (
+              <div className="manager-note muted">💬 {t('manager_note')}: {note}</div>
+            )}
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

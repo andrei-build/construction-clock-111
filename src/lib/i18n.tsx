@@ -617,6 +617,8 @@ const dict: Record<string, Record<Lang, string>> = {
   adjust_preset_correction: { ru: 'Корректировка', en: 'Correction', es: 'Corrección' },
   adjust_preset_worked_extra: { ru: 'Отработал дополнительно', en: 'Worked extra', es: 'Trabajó adicional' },
   save_adjustment: { ru: 'Сохранить корректировку', en: 'Save adjustment', es: 'Guardar ajuste' },
+  show_note_to_worker: { ru: 'Показать заметку работнику', en: 'Show note to worker', es: 'Mostrar nota al trabajador' },
+  manager_note: { ru: 'Комментарий менеджера', en: 'Manager note', es: 'Nota del gerente' },
   project_access: { ru: 'Доступ к проектам', en: 'Project access', es: 'Acceso a proyectos' },
   selected_projects_only: { ru: 'Только выбранные', en: 'Selected only', es: 'Solo seleccionados' },
   all_active_projects_access: { ru: 'Все активные', en: 'All active', es: 'Todos activos' },
