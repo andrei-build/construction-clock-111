@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import VoiceMic from '../components/VoiceMic'
 import {
+  addMailAllowlist,
   createCalendarEvent,
   createTask,
+  deleteMailAllowlist,
   emitMailUnreadChanged,
   getMailAccounts,
+  getMailAllowlist,
   getMailMessages,
   markMailSeen,
   sendMail,
   triggerMailSync,
 } from '../lib/api'
-import type { MailAccount, MailMessage } from '../lib/api/mail'
+import type { MailAccount, MailAllowlistEntry, MailMessage } from '../lib/api/mail'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 
@@ -53,6 +56,12 @@ function senderLabel(m: MailMessage, unknown: string): string {
   return (m.from_name && m.from_name.trim()) || (m.from_addr && m.from_addr.trim()) || unknown
 }
 
+// MAIL-3-UI: дубль в белом списке — Postgres unique_violation (SQLSTATE 23505). Если constraint
+// есть, ловим мягко (тост «уже в белом списке»); иначе insert просто пройдёт и мы рефетчим.
+function isUniqueViolation(error: unknown): boolean {
+  return String((error as { code?: string | null } | null)?.code ?? '') === '23505'
+}
+
 function fmtRowDate(iso: string | null): string {
   if (!iso) return ''
   const d = new Date(iso)
@@ -78,6 +87,8 @@ export default function Mail() {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
   const isAdminOrOwner = profile?.role === 'owner' || profile?.role === 'admin'
+  // MAIL-3-UI: белый список / «в белый список» — строго owner-only (RLS mail_allowlist owner-only).
+  const isOwner = profile?.role === 'owner'
 
   const [accounts, setAccounts] = useState<MailAccount[]>([])
   const [messages, setMessages] = useState<MailMessage[]>([])
@@ -85,6 +96,13 @@ export default function Mail() {
   const [openMsg, setOpenMsg] = useState<MailMessage | null>(null)
   const [compose, setCompose] = useState<ComposeState | null>(null)
   const [sending, setSending] = useState(false)
+  // MAIL-3-UI: модал «Белый список» + его список/форма (owner-only).
+  const [allowlistOpen, setAllowlistOpen] = useState(false)
+  const [allowlist, setAllowlist] = useState<MailAllowlistEntry[]>([])
+  const [allowlistLoading, setAllowlistLoading] = useState(false)
+  const [alEntry, setAlEntry] = useState('')
+  const [alNote, setAlNote] = useState('')
+  const [alSaving, setAlSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -284,6 +302,67 @@ export default function Mail() {
     }
   }
 
+  // MAIL-3-UI: org_id для INSERT в mail_allowlist (у колонки НЕТ дефолта). Источник — org_id строк
+  // mail_accounts, которые владелец уже загрузил: берём активный ящик, иначе первый аккаунт.
+  const ownerOrgId = (): string | null => activeAccount?.org_id ?? accounts[0]?.org_id ?? null
+
+  const loadAllowlist = useCallback(async () => {
+    setAllowlistLoading(true)
+    setAllowlist(await getMailAllowlist())
+    setAllowlistLoading(false)
+  }, [])
+
+  const openAllowlist = () => {
+    setAllowlistOpen(true)
+    void loadAllowlist()
+  }
+
+  // «В белый список» с открытого письма: entry=from_addr, note=from_name.
+  const addSenderToAllowlist = async (m: MailMessage) => {
+    const orgId = ownerOrgId()
+    const from = (m.from_addr ?? '').trim()
+    if (!orgId || !from) return
+    const label = (m.from_name && m.from_name.trim()) || from
+    try {
+      await addMailAllowlist({ org_id: orgId, entry: from, note: (m.from_name ?? '').trim() || null })
+      flashToast(t('mail_allowlist_added').replace('{sender}', label))
+      if (allowlistOpen) void loadAllowlist()
+    } catch (e) {
+      if (isUniqueViolation(e)) flashToast(t('mail_allowlist_exists').replace('{sender}', label))
+      else flashToast(t('mail_allowlist_add_failed'))
+    }
+  }
+
+  // Форма «Добавить» в модале белого списка: адрес-или-домен + note (опц.).
+  const submitAllowlist = async () => {
+    const orgId = ownerOrgId()
+    const entry = alEntry.trim()
+    if (!orgId || !entry || alSaving) return
+    setAlSaving(true)
+    try {
+      await addMailAllowlist({ org_id: orgId, entry, note: alNote.trim() || null })
+      setAlEntry('')
+      setAlNote('')
+      await loadAllowlist()
+    } catch (e) {
+      if (isUniqueViolation(e)) flashToast(t('mail_allowlist_exists').replace('{sender}', entry))
+      else flashToast(t('mail_allowlist_add_failed'))
+    } finally {
+      setAlSaving(false)
+    }
+  }
+
+  const removeAllowlist = async (id: string) => {
+    const prev = allowlist
+    setAllowlist((xs) => xs.filter((x) => x.id !== id)) // оптимистично убираем строку
+    try {
+      await deleteMailAllowlist(id)
+    } catch {
+      setAllowlist(prev)
+      flashToast(t('mail_allowlist_delete_failed'))
+    }
+  }
+
   const syncLabel = (a: MailAccount): string => {
     if (!a.last_sync_at) return t('mail_never_synced')
     return t('mail_last_sync').replace('{time}', fmtTime(a.last_sync_at))
@@ -294,6 +373,11 @@ export default function Mail() {
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <h1>✉️ {t('mail')}</h1>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          {isOwner && (
+            <button type="button" className="btn ghost small" onClick={openAllowlist}>
+              {t('mail_allowlist_open')}
+            </button>
+          )}
           <button type="button" className="btn small" onClick={openCompose} disabled={loading || accounts.length === 0}>
             {t('mail_compose')}
           </button>
@@ -331,6 +415,9 @@ export default function Mail() {
           {activeAccount && (
             <div className="mail-meta muted">
               {syncLabel(activeAccount)}
+              {activeAccount.work_only && (
+                <span className="badge mail-work-badge">🔒 {t('mail_work_filter_on')}</span>
+              )}
             </div>
           )}
 
@@ -372,6 +459,16 @@ export default function Mail() {
                 <button type="button" className="btn small" onClick={() => makeEvent(openMsg)}>
                   {t('mail_to_event')}
                 </button>
+                {isOwner && (
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => { void addSenderToAllowlist(openMsg) }}
+                    disabled={!(openMsg.from_addr && openMsg.from_addr.trim())}
+                  >
+                    {t('mail_add_to_allowlist')}
+                  </button>
+                )}
               </div>
             </div>
           ) : activeMessages.length === 0 ? (
@@ -472,6 +569,74 @@ export default function Mail() {
                 {sending ? t('mail_sending') : t('mail_send')}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {allowlistOpen && isOwner && (
+        <div
+          className="confirm-backdrop"
+          onClick={() => { if (!alSaving) setAllowlistOpen(false) }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mail-allowlist-title"
+        >
+          <div className="card confirm-modal mail-allowlist" onClick={(e) => e.stopPropagation()}>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="item-title" id="mail-allowlist-title">{t('mail_allowlist_title')}</div>
+              <button type="button" className="btn ghost small" onClick={() => setAllowlistOpen(false)} disabled={alSaving}>
+                {t('mail_close')}
+              </button>
+            </div>
+
+            <div className="mail-allowlist-form">
+              <input
+                type="text"
+                value={alEntry}
+                placeholder={t('mail_allowlist_entry')}
+                onChange={(e) => setAlEntry(e.target.value)}
+                disabled={alSaving}
+              />
+              <input
+                type="text"
+                value={alNote}
+                placeholder={t('mail_allowlist_note')}
+                onChange={(e) => setAlNote(e.target.value)}
+                disabled={alSaving}
+              />
+              <button
+                type="button"
+                className="btn small"
+                onClick={() => { void submitAllowlist() }}
+                disabled={alSaving || alEntry.trim().length === 0}
+              >
+                {alSaving ? t('mail_allowlist_adding') : t('mail_allowlist_add')}
+              </button>
+            </div>
+
+            {allowlistLoading ? (
+              <div className="spinner">{t('mail_allowlist_loading')}</div>
+            ) : allowlist.length === 0 ? (
+              <div className="card muted">{t('mail_allowlist_empty')}</div>
+            ) : (
+              <ul className="mail-allowlist-list">
+                {allowlist.map((a) => (
+                  <li key={a.id} className="mail-allowlist-item">
+                    <span className="mail-allowlist-entry">{a.entry}</span>
+                    {a.note && <span className="mail-allowlist-note muted">{a.note}</span>}
+                    <button
+                      type="button"
+                      className="btn ghost small mail-allowlist-del"
+                      onClick={() => { void removeAllowlist(a.id) }}
+                    >
+                      {t('mail_allowlist_delete')}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="muted mail-allowlist-hint">{t('mail_allowlist_hint')}</div>
           </div>
         </div>
       )}
