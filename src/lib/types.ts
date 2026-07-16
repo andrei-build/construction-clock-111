@@ -286,6 +286,10 @@ export interface ProjectExclusion {
 
 export type AccountType = 'client' | 'gc' | 'supplier' | 'other'
 
+// CLI-1: внутренняя оценка клиента — рейтинг 1..5 звёзд (accounts.rating) и сложность работы
+// (accounts.difficulty). Только для owner/admin/manager; клиенту НИКОГДА не показывается.
+export type ClientDifficulty = 'easy' | 'normal' | 'hard'
+
 export interface Account {
   id: string
   org_id: string
@@ -299,6 +303,9 @@ export interface Account {
   insurance_status: string | null
   client_rating?: 'green' | 'amber' | 'red' | null
   rating_note?: string | null
+  // CLI-1: внутренний рейтинг клиента (1..5, null = без оценки) и сложность работы.
+  rating?: number | null
+  difficulty?: ClientDifficulty | null
   metadata: Record<string, unknown> | null
   created_by: string | null
   updated_by: string | null
