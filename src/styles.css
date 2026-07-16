@@ -3877,6 +3877,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding: 10px; border-radius: var(--radius); background: var(--elevated);
   border: 1px solid var(--line); display: grid; gap: 8px;
 }
+/* UI-NAV-2 (b): вся карточка задачи кликабельна (раскрывает детали); .card.tap покрывает
+   project-card/team-row, а cc-task-card — не .card, поэтому даём ей курсор/ховер отдельно. */
+.cc-task-card.tap { cursor: pointer; }
+.cc-task-card.tap:hover { border-color: rgba(200,169,59,.42); }
 
 @media (min-width: 720px) {
   .cc-dispatch-grid, .cc-ops-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
