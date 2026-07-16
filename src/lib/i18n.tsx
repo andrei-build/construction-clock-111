@@ -1542,6 +1542,56 @@ const dict: Record<string, Record<Lang, string>> = {
   cc_min_ago: { ru: '{n} мин назад', en: '{n} min ago', es: 'hace {n} min' },
   cc_hours_ago: { ru: '{n} ч назад', en: '{n} h ago', es: 'hace {n} h' },
   cc_days_ago: { ru: '{n} дн назад', en: '{n} d ago', es: 'hace {n} d' },
+
+  // TRASH-3: владелец удаляет человека безвозвратно (RPC purge_profile). Двойное подтверждение —
+  // нужно вписать точное имя. Ключи ошибок ниже — коды, которые возвращает purgeProfile (api/team.ts).
+  purge_section: { ru: 'Безвозвратное удаление', en: 'Permanent deletion', es: 'Eliminación permanente' },
+  purge_hint: {
+    ru: 'Только владелец. Человек должен уже быть в корзине. Оплаченную историю удалить нельзя.',
+    en: 'Owner only. The person must already be in trash. Paid history cannot be deleted.',
+    es: 'Solo el dueño. La persona ya debe estar en la papelera. El historial pagado no se puede eliminar.',
+  },
+  purge_delete_forever: { ru: 'Удалить безвозвратно', en: 'Delete permanently', es: 'Eliminar permanentemente' },
+  purge_warning: {
+    ru: 'Удалится ВСЁ: смены, фото, сообщения. Безвозвратно.',
+    en: 'EVERYTHING will be deleted: shifts, photos, messages. Permanently.',
+    es: 'Se eliminará TODO: turnos, fotos, mensajes. De forma permanente.',
+  },
+  purge_type_name_to_confirm: {
+    ru: 'Для подтверждения впишите точное имя человека',
+    en: 'Type the person’s exact name to confirm',
+    es: 'Escriba el nombre exacto de la persona para confirmar',
+  },
+  purge_name_mismatch: {
+    ru: 'Имя не совпадает — удаление не подтверждено',
+    en: 'Name does not match — deletion not confirmed',
+    es: 'El nombre no coincide — eliminación no confirmada',
+  },
+  only_owner_can_purge: {
+    ru: 'Удалять безвозвратно может только владелец',
+    en: 'Only the owner can delete permanently',
+    es: 'Solo el dueño puede eliminar permanentemente',
+  },
+  cannot_purge_self: {
+    ru: 'Нельзя удалить самого себя',
+    en: 'You cannot delete yourself',
+    es: 'No puede eliminarse a sí mismo',
+  },
+  not_in_trash: {
+    ru: 'Сначала переместите человека в корзину',
+    en: 'Move the person to trash first',
+    es: 'Primero mueva a la persona a la papelera',
+  },
+  purge_blocked_paid_history: {
+    ru: 'У человека есть оплаченная история — полное удаление запрещено, оставь в архиве',
+    en: 'This person has paid history — permanent deletion is blocked, keep them in the archive',
+    es: 'Esta persona tiene historial pagado — la eliminación permanente está bloqueada, déjela en el archivo',
+  },
+  purge_blocked_by_references: {
+    ru: 'Есть связанные записи — полное удаление невозможно, оставь в архиве',
+    en: 'There are linked records — permanent deletion is not possible, keep them in the archive',
+    es: 'Hay registros vinculados — la eliminación permanente no es posible, déjela en el archivo',
+  },
 }
 
 interface I18n {

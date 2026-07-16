@@ -28,6 +28,7 @@ import {
   type WorkerLocationConsentRow,
   type WorkerProfileFileRow,
   type WorkerSafetyAckRow,
+  purgeProfile,
   removeProjectExclusion,
   setMemberPassword,
   setProjectAccessMode,
@@ -252,6 +253,12 @@ export default function WorkerDetail() {
   const [profileFiles, setProfileFiles] = useState<WorkerProfileFileRow[]>([])
   const [docsState, setDocsState] = useState<'loading' | 'ready' | 'error'>('loading')
 
+  // TRASH-3: владелец удаляет человека безвозвратно (RPC purge_profile). Двойное подтверждение —
+  // раскрыть панель + вписать точное имя. Гейт клиента ниже (canPurge), финально гейтит БД.
+  const [purgeOpen, setPurgeOpen] = useState(false)
+  const [purgeConfirmName, setPurgeConfirmName] = useState('')
+  const [purgeMsg, setPurgeMsg] = useState<string | null>(null)
+
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [adjustIn, setAdjustIn] = useState('')
   const [adjustOut, setAdjustOut] = useState('')
@@ -259,6 +266,9 @@ export default function WorkerDetail() {
 
   const canView = profile ? isManagerRole(profile.role) : false
   const canEditProfile = profile ? isManagerWrite(profile.role) : false
+  // TRASH-3: кнопку «Удалить безвозвратно» видит ТОЛЬКО владелец и НЕ на самом себе. Прочие гарантии
+  // (человек в корзине, нет оплаченной истории) гейтит RPC purge_profile — коды показываем как i18n.
+  const canPurge = profile?.role === 'owner' && !!worker && worker.id !== profile.id
   // ДНК §1: finance_access выдаёт ТОЛЬКО owner/admin — не manager. Проверяем роль явно.
   const canManageCapabilities = profile ? (profile.role === 'owner' || profile.role === 'admin') : false
   // ACC-4: блок «Доступ» (задать пароль + переключатель самосмены) — ТОЛЬКО владелец И только для
@@ -746,6 +756,27 @@ export default function WorkerDetail() {
     }
   }
 
+  // TRASH-3: безвозвратное удаление. Второй барьер — введённое имя должно ТОЧНО совпасть.
+  // На успех уводим на /team (человека больше нет); ошибку показываем кодом-ключом в панели.
+  const submitPurge = async () => {
+    if (!worker || !canPurge || busy) return
+    if (purgeConfirmName.trim() !== worker.name) { setPurgeMsg('purge_name_mismatch'); return }
+    setBusy('purge')
+    setPurgeMsg(null)
+    try {
+      const res = await purgeProfile(worker.id)
+      if (res.ok) {
+        navigate('/team')
+      } else {
+        setPurgeMsg(res.error ?? 'error')
+      }
+    } catch {
+      setPurgeMsg('error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const openAdjustment = (row: IntervalRow) => {
     setEditingKey(row.key)
     setAdjustIn(toDatetimeLocal(row.interval.start_at))
@@ -899,6 +930,56 @@ export default function WorkerDetail() {
                 </div>
               )}
             </section>
+
+            {/* TRASH-3: владелец удаляет человека безвозвратно. Owner-only; двойное подтверждение
+                (раскрыть панель + вписать точное имя). БД дополнительно гейтит корзину/оплату. */}
+            {canPurge && (
+              <section className="card worker-purge-card">
+                <h2>{t('purge_section')}</h2>
+                <p className="muted">{t('purge_hint')}</p>
+                {!purgeOpen ? (
+                  <button
+                    type="button"
+                    className="btn red small"
+                    disabled={busy !== null}
+                    onClick={() => { setPurgeOpen(true); setPurgeConfirmName(''); setPurgeMsg(null) }}
+                  >
+                    {t('purge_delete_forever')}
+                  </button>
+                ) : (
+                  <div className="purge-confirm">
+                    <p className="error-msg">⚠ {t('purge_warning')}</p>
+                    <label>{t('purge_type_name_to_confirm')}: <strong>{worker.name}</strong></label>
+                    <input
+                      value={purgeConfirmName}
+                      disabled={busy !== null}
+                      placeholder={worker.name}
+                      autoComplete="off"
+                      onChange={(e) => { setPurgeConfirmName(e.target.value); setPurgeMsg(null) }}
+                    />
+                    <div className="row purge-actions">
+                      <button
+                        type="button"
+                        className="btn ghost small"
+                        disabled={busy !== null}
+                        onClick={() => { setPurgeOpen(false); setPurgeConfirmName(''); setPurgeMsg(null) }}
+                      >
+                        {t('cancel')}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn red small"
+                        disabled={busy !== null || purgeConfirmName.trim() !== worker.name}
+                        onClick={submitPurge}
+                      >
+                        {t('purge_delete_forever')}
+                      </button>
+                    </div>
+                    {purgeMsg && <p className="error-msg">{t(purgeMsg)}</p>}
+                  </div>
+                )}
+              </section>
+            )}
 
             <section>
               <h2>{t('hours_tiles')}</h2>
