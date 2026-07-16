@@ -1097,7 +1097,14 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_client_no_rating: { ru: 'Рейтинг не задан', en: 'No rating set', es: 'Sin calificación' },
   hub_client_no_account: { ru: 'Нет клиента для оценки', en: 'No client to rate', es: 'No hay cliente para calificar' },
   hub_client_no_account_explain: { ru: 'У проекта не заполнен client_account_id.', en: 'The project has no client_account_id.', es: 'El proyecto no tiene client_account_id.' },
-  hub_client_no_rating_explain: { ru: 'Клиент выбран, но client_rating пустой.', en: 'A client is selected, but client_rating is empty.', es: 'Hay cliente seleccionado, pero client_rating está vacío.' },
+  hub_client_no_rating_explain: { ru: 'Рейтинг клиенту ещё не выставлен.', en: 'No client rating set yet.', es: 'Aún no hay valoración del cliente.' },
+  // CLI-1-полиш (б): звёзды (accounts.rating) + сложность рядом со светофором.
+  hub_client_stars_unset: { ru: 'не выставлен', en: 'not rated', es: 'sin puntuar' },
+  // CLI-1-полиш (в): owner-мастер-тумблер клиентского доступа (accounts.client_access_enabled).
+  hub_client_access_master: { ru: 'Клиент подключён', en: 'Client connected', es: 'Cliente conectado' },
+  hub_client_access_master_on: { ru: 'Клиент получает гранты, портал и письма.', en: 'Client receives grants, portal and emails.', es: 'El cliente recibe permisos, portal y correos.' },
+  hub_client_access_master_off: { ru: 'Клиент отключён полностью: гранты неактивны, портал закрыт, письма не уходят.', en: 'Client fully disabled: grants inactive, portal closed, no emails sent.', es: 'Cliente desactivado por completo: permisos inactivos, portal cerrado, sin correos.' },
+  hub_client_access_toggle_failed: { ru: 'Не удалось изменить доступ клиента.', en: 'Failed to change client access.', es: 'No se pudo cambiar el acceso del cliente.' },
   hub_overview_quick_facts: { ru: 'Кратко', en: 'Quick facts', es: 'Datos rápidos' },
   hub_budget: { ru: 'Бюджет', en: 'Budget', es: 'Presupuesto' },
   unit_meters: { ru: 'м', en: 'm', es: 'm' },

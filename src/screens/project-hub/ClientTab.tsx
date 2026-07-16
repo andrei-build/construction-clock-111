@@ -3,12 +3,13 @@ import { useI18n } from '../../lib/i18n'
 import {
   createProjectGrant,
   getAccountById,
-  getAccountRating,
   getClientAccessEnabled,
+  getClientRating,
   getProjectClientMedia,
   getProjectGrants,
   revokeProjectGrant,
   setMediaClientVisible,
+  updateClientAccessEnabled,
 } from '../../lib/api'
 import { isManagerWrite } from '../../lib/types'
 import type { Account, AccountRating, ClientGrant, ClientMediaItem, Profile, Project } from '../../lib/types'
@@ -46,6 +47,9 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
   const [accessEnabled, setAccessEnabled] = useState(true)
   const [mediaBusy, setMediaBusy] = useState<string | null>(null)
   const [mediaError, setMediaError] = useState<string | null>(null)
+  // CLI-1-полиш (в): owner-мастер-выключатель клиентского доступа.
+  const [accessBusy, setAccessBusy] = useState(false)
+  const [accessError, setAccessError] = useState<string | null>(null)
 
   const [form, setForm] = useState<ToggleState>(EMPTY_FORM)
   const [note, setNote] = useState('')
@@ -65,7 +69,7 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
       try {
         const [acc, rat, grantRows, mediaRows, access] = await Promise.all([
           getAccountById(clientId),
-          getAccountRating(clientId),
+          getClientRating(clientId),
           getProjectGrants(project.id),
           getProjectClientMedia(project.id),
           getClientAccessEnabled(clientId),
@@ -136,6 +140,23 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
     }
   }
 
+  // CLI-1-полиш (в): мастер-выключатель доступа — только owner. Пишем client_access_enabled,
+  // затем рефетчим фактическое состояние (сервер — источник истины).
+  const toggleAccess = async (next: boolean) => {
+    if (!profile || !clientId || profile.role !== 'owner' || accessBusy) return
+    setAccessBusy(true)
+    setAccessError(null)
+    try {
+      await updateClientAccessEnabled(profile, clientId, next)
+      const fresh = await getClientAccessEnabled(clientId)
+      setAccessEnabled(fresh)
+    } catch {
+      setAccessError('hub_client_access_toggle_failed')
+    } finally {
+      setAccessBusy(false)
+    }
+  }
+
   // Клиент не привязан к проекту — карточку и гранты не показываем.
   if (!clientId) {
     return (
@@ -162,6 +183,9 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
   }
 
   const ratingValue = rating?.client_rating ?? null
+  const starRating = rating?.rating ?? null
+  const difficulty = rating?.difficulty ?? null
+  const isOwner = profile?.role === 'owner'
 
   return (
     <section className="hub-tab-panel hub-client">
@@ -195,6 +219,23 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
           ) : (
             <span className="hub-client-rating-value">
               <span className="badge grey">{t('hub_client_no_rating')}</span>
+            </span>
+          )}
+          {/* CLI-1-полиш (б): звёзды (accounts.rating 1..5) + сложность (accounts.difficulty) */}
+          {starRating != null ? (
+            <span className="hub-client-stars" aria-label={t('client_rating_set').replace('{n}', String(starRating))}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <span key={n} className={n <= starRating ? 'hub-star on' : 'hub-star'} aria-hidden="true">
+                  {n <= starRating ? '★' : '☆'}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span className="badge grey">★ {t('hub_client_stars_unset')}</span>
+          )}
+          {difficulty && (
+            <span className={`badge hub-difficulty hub-difficulty-${difficulty}`}>
+              {t('client_difficulty_label')}: {t(`client_difficulty_${difficulty}`)}
             </span>
           )}
         </div>
@@ -246,6 +287,25 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
           </div>
         )}
       </div>
+
+      {/* CLI-1-полиш (в): owner-мастер-выключатель «Клиент подключён / отключён полностью» */}
+      {isOwner && (
+        <div className={`card hub-client-access-master${accessEnabled ? '' : ' muted'}`}>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={accessEnabled}
+              disabled={accessBusy}
+              onChange={(e) => toggleAccess(e.target.checked)}
+            />
+            <span>{t('hub_client_access_master')}</span>
+          </label>
+          <p className="muted hub-client-access-hint">
+            {accessEnabled ? t('hub_client_access_master_on') : t('hub_client_access_master_off')}
+          </p>
+          {accessError && <p className="error-msg">{t(accessError)}</p>}
+        </div>
+      )}
 
       {/* CLIENT-MEDIA-1: «Видно клиенту» — превью фото/видео проекта с ручным show/hide */}
       <div className={`card${accessEnabled ? '' : ' muted'}`}>
