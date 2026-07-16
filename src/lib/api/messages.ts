@@ -97,12 +97,19 @@ export async function getRecentDispatchPlanSends(): Promise<DispatchPlanSend[]> 
     }))
 }
 
-export async function getMessages(profileId: string): Promise<MessageRow[]> {
+// M10: снуз (отложить) входящее сообщение. snoozed_until (nullable timestamptz) выставляет
+// ПОЛУЧАТЕЛЬ на своей копии — тем же RLS-путём, что и read_at (см. markMessageRead ниже).
+// getMessages отдаёт snoozed_until; компонент партиционирует по (snoozed_until && > now).
+export interface SnoozableMessageRow extends MessageRow {
+  snoozed_until: string | null
+}
+
+export async function getMessages(profileId: string): Promise<SnoozableMessageRow[]> {
   const { data } = await supabase.from('messages')
-    .select('id, sender_id, recipient_id, priority, body, read_at, done_at, created_at')
+    .select('id, sender_id, recipient_id, priority, body, read_at, done_at, created_at, snoozed_until')
     .or(`sender_id.eq.${profileId},recipient_id.eq.${profileId}`)
     .order('created_at', { ascending: false })
-  return (data as MessageRow[]) ?? []
+  return (data as SnoozableMessageRow[]) ?? []
 }
 
 export async function sendMessage(p: Profile, recipientId: string, body: string, priority: MessageRow['priority']) {
@@ -155,4 +162,25 @@ export async function markMessageRead(p: Profile, messageId: string) {
     .eq('recipient_id', p.id)
   if (error) throw error
   await logEvent(p, 'message.read', 'message', messageId)
+}
+
+// M10: отложить входящее до момента `until` (ISO). Как markMessageRead — получатель обновляет
+// СВОЮ копию (recipient_id = p.id), тем же RLS UPDATE-путём. Снуз ортогонален seen (read_at не трогаем).
+export async function snoozeMessage(p: Profile, messageId: string, until: string) {
+  const { error } = await supabase.from('messages')
+    .update({ snoozed_until: until })
+    .eq('id', messageId)
+    .eq('recipient_id', p.id)
+  if (error) throw error
+  await logEvent(p, 'message.snoozed', 'message', messageId, { until })
+}
+
+// M10: снять отложение (snoozed_until → null) — сообщение возвращается в активную ленту.
+export async function unsnoozeMessage(p: Profile, messageId: string) {
+  const { error } = await supabase.from('messages')
+    .update({ snoozed_until: null })
+    .eq('id', messageId)
+    .eq('recipient_id', p.id)
+  if (error) throw error
+  await logEvent(p, 'message.unsnoozed', 'message', messageId)
 }
