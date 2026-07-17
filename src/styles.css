@@ -4020,3 +4020,62 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .mail-hide-menu .btn { white-space: nowrap; text-align: left; }
 .mail-hidden-section { margin-top: 16px; }
 .mail-hidden-title { font-size: 14px; margin-bottom: 8px; }
+
+/* AI-1-UI: «строка-командир» — кнопка «Спроси» в сайдбаре + оверлей-диалог ассистента. */
+.side-ask {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  margin: 4px 0 10px; padding: 9px 12px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(48,211,154,.14), rgba(48,211,154,.06));
+  color: var(--text); font-weight: 600; font-size: 14px; text-align: left;
+}
+.side-ask:hover { border-color: var(--green); }
+.side-ask-ico { color: var(--green); font-size: 15px; }
+.side-ask-kbd {
+  margin-left: auto; padding: 1px 6px; font-size: 11px; font-weight: 600;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--elevated); color: var(--muted);
+}
+
+.ai-backdrop { z-index: 90; background: rgba(0, 0, 0, .58); align-items: stretch; }
+.ai-modal {
+  width: min(680px, 100%); max-height: min(86vh, 820px);
+  margin: auto; display: flex; flex-direction: column; gap: 12px; overflow: hidden;
+}
+.ai-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ai-title { margin: 0; }
+.ai-sub { margin: 2px 0 0; }
+.ai-close { flex: 0 0 auto; padding: 4px 10px; line-height: 1; }
+.ai-history {
+  flex: 1 1 auto; min-height: 120px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px; padding: 4px 2px;
+}
+.ai-empty { margin: auto 0; text-align: center; }
+.ai-bubble {
+  max-width: 84%; padding: 8px 12px; border-radius: 14px;
+  white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4;
+}
+.ai-bubble-user { align-self: flex-end; background: var(--accent, #1f7a3f); color: #fff; border-bottom-right-radius: 4px; }
+.ai-bubble-assistant { align-self: flex-start; background: var(--elevated); color: var(--text); border-bottom-left-radius: 4px; }
+.ai-thinking { opacity: .7; font-style: italic; }
+.ai-proposals { display: flex; flex-direction: column; gap: 8px; max-height: 40vh; overflow-y: auto; }
+.ai-proposals-title { margin: 0; font-size: 14px; }
+.ai-proposal { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.ai-proposal-title { font-weight: 600; }
+.ai-proposal-payload { margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.ai-payload-row { display: flex; gap: 8px; font-size: 13px; }
+.ai-payload-row dt { flex: 0 0 34%; color: var(--muted); overflow-wrap: anywhere; }
+.ai-payload-row dd { flex: 1 1 auto; margin: 0; overflow-wrap: anywhere; }
+.ai-unsupported { margin: 0; }
+.ai-proposal-actions { gap: 8px; }
+.ai-nokey {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px 12px;
+  border: 1px solid var(--amber, #d98a00); border-radius: var(--radius);
+  background: rgba(217, 138, 0, .1);
+}
+.ai-input-row { display: flex; align-items: center; gap: 8px; }
+.ai-input {
+  flex: 1 1 auto; min-width: 0; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); color: var(--text); font-size: 14px;
+}
+.ai-toast { z-index: 95; }
