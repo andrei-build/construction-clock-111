@@ -1889,6 +1889,10 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_wake_toggle: { ru: 'Голосовая активация', en: 'Voice activation', es: 'Activación por voz' },
   ai_wake_hint: { ru: 'Скажите «окей, Клок», чтобы открыть ассистента', en: 'Say “okay, Clock” to open the assistant', es: 'Diga «okay, Clock» para abrir el asistente' },
   ai_wake_listening: { ru: 'Слушаю «окей, Клок»', en: 'Listening for “okay, Clock”', es: 'Escuchando «okay, Clock»' },
+  // PWA-UPDATE-1: ненавязчивый тост о новой сборке (когда тихий reload небезопасен — идёт ввод
+  // или непустая офлайн-очередь).
+  update_available: { ru: 'Вышло обновление', en: 'Update available', es: 'Actualización disponible' },
+  update_reload: { ru: 'Обновить', en: 'Reload', es: 'Actualizar' },
 }
 
 interface I18n {

@@ -5,6 +5,7 @@ import App from './App'
 import { AuthProvider } from './lib/auth'
 import { I18nProvider } from './lib/i18n'
 import { initClientErrorReporting } from './lib/clientErrors'
+import UpdateToast from './components/UpdateToast'
 import './styles.css'
 
 initClientErrorReporting()
@@ -17,6 +18,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <App />
         </BrowserRouter>
       </AuthProvider>
+      {/* PWA-UPDATE-1: сторож свежести версии. Вне AuthProvider/Router — работает на любом экране
+          (включая логин) и в установленной PWA; сам ничего не рендерит, пока не нужен тост. */}
+      <UpdateToast />
     </I18nProvider>
   </React.StrictMode>,
 )
