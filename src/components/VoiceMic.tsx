@@ -52,9 +52,16 @@ export default function VoiceMic({ lang, onResult, title }: { lang: 'ru' | 'en' 
       className={`voice-mic ${listening ? 'listening' : ''}`}
       title={title}
       aria-label={title}
+      aria-pressed={listening}
       onClick={toggle}
     >
-      {listening ? '●' : '🎤'}
+      {/* Современная минималистичная rounded-иконка микрофона (инлайн-SVG, currentColor). */}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true" focusable="false">
+        <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor" />
+        <path d="M6 11a6 6 0 0 0 12 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M12 17v3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M9 20.5h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
     </button>
   )
 }

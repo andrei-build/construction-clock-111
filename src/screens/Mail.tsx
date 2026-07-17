@@ -643,7 +643,14 @@ export default function Mail() {
               disabled={sending}
             />
 
-            <label>{t('mail_subject')}</label>
+            <div className="message-body-label">
+              <label>{t('mail_subject')}</label>
+              <VoiceMic
+                lang={lang}
+                title={t('voice_input')}
+                onResult={(text) => setCompose((c) => (c ? { ...c, subject: c.subject ? `${c.subject} ${text}` : text } : c))}
+              />
+            </div>
             <input
               type="text"
               value={compose.subject}

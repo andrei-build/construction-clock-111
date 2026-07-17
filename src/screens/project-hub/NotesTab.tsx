@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useI18n } from '../../lib/i18n'
+import VoiceMic from '../../components/VoiceMic'
 import { createProjectNote, getProjectNotes, setNotePinned, softDeleteNote } from '../../lib/api'
 import { isManagerWrite } from '../../lib/types'
 import type { Profile, Project, ProjectNote } from '../../lib/types'
@@ -14,7 +15,7 @@ function sortNotes(rows: ProjectNote[]) {
 }
 
 export default function NotesTab({ project, profile }: NotesTabProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [notes, setNotes] = useState<ProjectNote[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
@@ -89,7 +90,10 @@ export default function NotesTab({ project, profile }: NotesTabProps) {
   return (
     <section className="hub-tab-panel hub-notes">
       <form className="card hub-note-form" onSubmit={addNote}>
-        <label>{t('hub_note_new')}</label>
+        <div className="message-body-label">
+          <label>{t('hub_note_new')}</label>
+          <VoiceMic lang={lang} title={t('voice_input')} onResult={(text) => setBody((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))} />
+        </div>
         <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} placeholder={t('hub_note_placeholder')} />
         {error && <p className="error-msg">{t(error)}</p>}
         <button className="btn small" disabled={busy || !body.trim()}>{busy ? t('saving') : t('hub_note_add')}</button>
