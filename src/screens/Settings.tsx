@@ -210,6 +210,7 @@ export default function Settings() {
             <option value="en">{t('settings_language_en')}</option>
             <option value="es">{t('settings_language_es')}</option>
           </select>
+          <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>{t('settings_org_language_hint')}</p>
 
           <label htmlFor="settings-timezone">{t('settings_timezone')}</label>
           <input
