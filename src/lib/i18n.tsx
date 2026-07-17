@@ -1788,6 +1788,28 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_filter_mode_smart: { ru: 'Умный фильтр', en: 'Smart filter', es: 'Filtro inteligente' },
   mail_filter_mode_allowlist: { ru: 'Белый список', en: 'Allowlist', es: 'Lista blanca' },
   mail_filter_mode_off: { ru: 'Без фильтра', en: 'No filter', es: 'Sin filtro' },
+  // AI-1-UI: «строка-командир» — AI-ассистент владельца (кнопка «Спроси» + Ctrl+K → оверлей).
+  ai_ask: { ru: 'Спроси', en: 'Ask', es: 'Pregunta' },
+  ai_title: { ru: 'Ассистент владельца', en: 'Owner assistant', es: 'Asistente del dueño' },
+  ai_subtitle: { ru: 'Спросите или поручите — ИИ предложит действия', en: 'Ask or delegate — the AI proposes actions', es: 'Pregunte o delegue — la IA propone acciones' },
+  ai_placeholder: { ru: 'Спросите ассистента…', en: 'Ask the assistant…', es: 'Pregunte al asistente…' },
+  ai_send: { ru: 'Отправить', en: 'Send', es: 'Enviar' },
+  ai_thinking: { ru: 'Думаю…', en: 'Thinking…', es: 'Pensando…' },
+  ai_empty: { ru: 'Пока пусто. Задайте первый вопрос ассистенту.', en: 'Nothing yet. Ask the assistant your first question.', es: 'Aún vacío. Haga su primera pregunta al asistente.' },
+  ai_voice_hint: { ru: 'Голосовой ввод', en: 'Voice input', es: 'Entrada de voz' },
+  ai_error: { ru: 'Не удалось связаться с ассистентом', en: 'Could not reach the assistant', es: 'No se pudo contactar al asistente' },
+  ai_no_key_title: { ru: 'ИИ-ключ не настроен', en: 'AI key not configured', es: 'Clave de IA no configurada' },
+  ai_no_key_desc: { ru: 'Введи ANTHROPIC_API_KEY в Supabase secrets, чтобы ассистент заработал.', en: 'Add ANTHROPIC_API_KEY to Supabase secrets to enable the assistant.', es: 'Añada ANTHROPIC_API_KEY a los secrets de Supabase para activar el asistente.' },
+  ai_proposals_title: { ru: 'Предложения ИИ', en: 'AI proposals', es: 'Propuestas de IA' },
+  ai_proposal_prefix: { ru: 'ИИ предлагает:', en: 'AI proposes:', es: 'La IA propone:' },
+  ai_execute: { ru: 'Выполнить', en: 'Execute', es: 'Ejecutar' },
+  ai_reject: { ru: 'Отклонить', en: 'Reject', es: 'Rechazar' },
+  ai_executed_ok: { ru: 'Выполнено', en: 'Done', es: 'Hecho' },
+  ai_rejected_ok: { ru: 'Отклонено', en: 'Rejected', es: 'Rechazado' },
+  ai_execute_failed: { ru: 'Не удалось выполнить', en: 'Could not execute', es: 'No se pudo ejecutar' },
+  ai_reject_failed: { ru: 'Не удалось отклонить', en: 'Could not reject', es: 'No se pudo rechazar' },
+  ai_unresolved: { ru: 'Не удалось однозначно распознать исполнителя или проект — создайте вручную.', en: 'Could not unambiguously resolve the assignee or project — create it manually.', es: 'No se pudo resolver sin ambigüedad el responsable o el proyecto — créelo manualmente.' },
+  ai_unsupported: { ru: 'Это действие пока нельзя выполнить автоматически.', en: 'This action cannot be executed automatically yet.', es: 'Esta acción aún no se puede ejecutar automáticamente.' },
 }
 
 interface I18n {

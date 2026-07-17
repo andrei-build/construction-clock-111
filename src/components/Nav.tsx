@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { useNotifications } from '../lib/notifications'
 import ManagerWorkAlertBell from './ManagerWorkAlertBell'
+import { emitAiOpen } from './AiCommandBar'
 import {
   IconBriefcase,
   IconCalendar,
@@ -189,6 +190,21 @@ export default function Nav({ manager }: { manager: boolean }) {
           </NavLink>
 
           <ManagerWorkAlertBell />
+
+          {/* AI-1-UI: «Спроси» — открывает оверлей ассистента (owner-only, как и сам оверлей в
+              App). Диспатчит AI_OPEN_EVENT; оверлей слушает его + Ctrl+K. Не-владельцу не рендерим. */}
+          {isOwner && (
+            <button
+              type="button"
+              className="side-ask"
+              onClick={() => emitAiOpen()}
+              title={`${t('ai_ask')} (Ctrl+K)`}
+            >
+              <span className="side-ask-ico" aria-hidden="true">✦</span>
+              <span>{t('ai_ask')}</span>
+              <kbd className="side-ask-kbd">⌘K</kbd>
+            </button>
+          )}
 
           <div className="side-groups">
             {sideGroups.map((group) => (

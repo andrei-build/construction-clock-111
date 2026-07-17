@@ -43,6 +43,7 @@ import LiveLocationPinger from './components/LiveLocationPinger'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
 import OfflineCacheBanner from './components/OfflineCacheBanner'
 import OfflineFieldSync from './components/OfflineFieldSync'
+import AiCommandBar from './components/AiCommandBar'
 
 export default function App() {
   const { loading, profile } = useAuth()
@@ -59,6 +60,10 @@ export default function App() {
   const salesAccess = manager || salesOnly
   // SET-1: /settings regated to owner/admin only (plain managers/supervisors lose it).
   const adminOrOwner = profile.role === 'owner' || profile.role === 'admin'
+  // AI-1-UI: «строка-командир» — только владелец (RLS ai_messages/ai_proposals гейтятся
+  // app.is_owner(); у admin история пуста, а update молча затрагивает 0 строк). Оверлей + Ctrl+K
+  // монтируем ниже строго для owner; кнопка «Спроси» в Nav тоже owner-only.
+  const isOwner = profile.role === 'owner'
   // A2: доступ к финансам = owner/admin ИЛИ гранта finance_access. Supervisor — manager-роль,
   // но зарплату видеть НЕ должен, поэтому /payroll гейтим финансовым предикатом, а не isManagerRole.
   const financeAccess = hasFinanceAccess(profile)
@@ -129,6 +134,9 @@ export default function App() {
           </Routes>
         </main>
         <Nav manager={manager} />
+        {/* AI-1-UI: оверлей-диалог ассистента + глобальный Ctrl+K. Монтируется ТОЛЬКО владельцу;
+            не автозапускается (open=false), поэтому не влияет на прочие экраны/e2e. */}
+        {isOwner && <AiCommandBar profile={profile} />}
       </div>
     </NotificationsProvider>
     </EntityDrawerProvider>
