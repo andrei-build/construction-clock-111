@@ -2,9 +2,17 @@ import type { ComponentType, FormEvent, SVGProps } from 'react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
-import { useI18n } from '../lib/i18n'
-import { getTeam, getAppSettings, saveAppSettings, inviteAdmin, type AppSettingsInput } from '../lib/api'
+import { useI18n, tx } from '../lib/i18n'
+import { getTeam, getAppSettings, saveAppSettings, updateSafetyDoc, setSafetyGateEnforced, inviteAdmin, type AppSettingsInput } from '../lib/api'
+import { readSafetyDoc, isSafetyGateEnforced, currentSafetyVersion } from '../lib/safety'
 import type { AppSettings, Profile } from '../lib/types'
+
+// SAFETY-2: дефолтный свод ТБ (3 языка) из i18n — префилл редактора и база для сравнения «изменён ли
+// текст» при первом сохранении (неизменённый дефолт остаётся версией v1, старые подписи актуальны).
+function defaultSafetyText(): { ru: string; en: string; es: string } {
+  const d = tx('safety_doc_default')
+  return { ru: d?.ru ?? '', en: d?.en ?? '', es: d?.es ?? '' }
+}
 import {
   STORE_RADIUS_MIN,
   STORE_RADIUS_MAX,
@@ -77,6 +85,25 @@ export default function OwnerSettingsSections() {
   const [errorKey, setErrorKey] = useState<string | null>(null)
   const [inviteCopied, setInviteCopied] = useState(false)
 
+  // SAFETY-2: редактор свода ТБ (3 языка) + версия + тумблер жёсткого гейта. Всё хранится в
+  // app_settings.settings (jsonb) через updateSafetyDoc/setSafetyGateEnforced (MERGE, без новой таблицы).
+  const [safetyRu, setSafetyRu] = useState('')
+  const [safetyEn, setSafetyEn] = useState('')
+  const [safetyEs, setSafetyEs] = useState('')
+  const [safetyEnforced, setSafetyEnforced] = useState(false)
+  const [safetyBusy, setSafetyBusy] = useState(false)
+  const [safetyDocMsg, setSafetyDocMsg] = useState<string | null>(null)
+
+  // Заполняет поля редактора из строки настроек (свой свод или дефолт) + состояние тумблера.
+  function seedSafetyForm(row: AppSettings | null) {
+    const doc = readSafetyDoc(row)
+    const def = defaultSafetyText()
+    setSafetyRu(doc?.text_ru ?? def.ru)
+    setSafetyEn(doc?.text_en ?? def.en)
+    setSafetyEs(doc?.text_es ?? def.es)
+    setSafetyEnforced(isSafetyGateEnforced(row))
+  }
+
   useEffect(() => {
     if (!isOwner) { setLoading(false); return }
     let mounted = true
@@ -88,6 +115,7 @@ export default function OwnerSettingsSections() {
       setTeam(tm)
       setSettings(row)
       setStoreRadius(clampStoreRadius(Number(row?.store_visit_radius_m ?? STORE_RADIUS_DEFAULT)))
+      seedSafetyForm(row)
       setLoading(false)
     }
     load().catch(() => { if (mounted) setLoading(false) })
@@ -126,6 +154,45 @@ export default function OwnerSettingsSections() {
       setMsg('settings_save_failed')
     } finally {
       setSaving(false)
+    }
+  }
+
+  // SAFETY-2: сохранить текст свода ТБ. Изменённый текст → новая версия (updateSafetyDoc решает),
+  // что потребует переподписи у всех (реестры покажут «Устарело» до новой подписи).
+  async function handleSaveSafetyDoc() {
+    if (!profile || !isOwner || safetyBusy) return
+    setSafetyBusy(true)
+    setSafetyDocMsg(null)
+    try {
+      const saved = await updateSafetyDoc(
+        profile,
+        { ru: safetyRu, en: safetyEn, es: safetyEs },
+        defaultSafetyText(),
+      )
+      setSettings(saved)
+      seedSafetyForm(saved)
+      setSafetyDocMsg('safety_doc_saved')
+    } catch {
+      setSafetyDocMsg('safety_doc_save_failed')
+    } finally {
+      setSafetyBusy(false)
+    }
+  }
+
+  // SAFETY-2: тумблер жёсткого гейта. Оптимистично меняем UI, при ошибке откатываем.
+  async function handleToggleEnforced(next: boolean) {
+    if (!profile || !isOwner || safetyBusy) return
+    setSafetyEnforced(next)
+    setSafetyBusy(true)
+    setSafetyDocMsg(null)
+    try {
+      const saved = await setSafetyGateEnforced(profile, next)
+      setSettings(saved)
+    } catch {
+      setSafetyEnforced(!next)
+      setSafetyDocMsg('safety_doc_save_failed')
+    } finally {
+      setSafetyBusy(false)
     }
   }
 
@@ -295,6 +362,56 @@ export default function OwnerSettingsSections() {
             <button className="btn" disabled={saving} onClick={handleSave}>
               {saving ? t('settings_saving') : t('owner_save_settings')}
             </button>
+          </div>
+
+          {/* SAFETY-2: свод по технике безопасности (редактор 3 языков + версия) и жёсткий гейт */}
+          <h2 style={{ marginTop: 24 }}>🦺 {t('safety_doc_title')}</h2>
+          <div className="card">
+            <p className="muted" style={{ marginTop: 0 }}>{t('safety_doc_hint')}</p>
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+              <span>{t('safety_doc_version')}</span>
+              <strong>{currentSafetyVersion(settings)}</strong>
+            </div>
+            <label htmlFor="safety-doc-ru">{t('safety_doc_lang_ru')}</label>
+            <textarea
+              id="safety-doc-ru"
+              rows={8}
+              value={safetyRu}
+              disabled={safetyBusy}
+              onChange={(e) => setSafetyRu(e.target.value)}
+            />
+            <label htmlFor="safety-doc-en">{t('safety_doc_lang_en')}</label>
+            <textarea
+              id="safety-doc-en"
+              rows={8}
+              value={safetyEn}
+              disabled={safetyBusy}
+              onChange={(e) => setSafetyEn(e.target.value)}
+            />
+            <label htmlFor="safety-doc-es">{t('safety_doc_lang_es')}</label>
+            <textarea
+              id="safety-doc-es"
+              rows={8}
+              value={safetyEs}
+              disabled={safetyBusy}
+              onChange={(e) => setSafetyEs(e.target.value)}
+            />
+            <button className="btn" disabled={safetyBusy} onClick={handleSaveSafetyDoc}>
+              {safetyBusy ? t('settings_saving') : t('safety_doc_save')}
+            </button>
+            {safetyDocMsg && (
+              <p className={safetyDocMsg === 'safety_doc_saved' ? 'ok-msg' : 'error-msg'}>{t(safetyDocMsg)}</p>
+            )}
+            <label className="consent-agree" style={{ marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={safetyEnforced}
+                disabled={safetyBusy}
+                onChange={(e) => handleToggleEnforced(e.target.checked)}
+              />
+              <span>{t('safety_gate_toggle')}</span>
+            </label>
+            <p className="muted" style={{ marginTop: 4 }}>{t('safety_gate_hint')}</p>
           </div>
 
           {/* Данные геолокации (экспорт/удаление для юр. запросов) */}

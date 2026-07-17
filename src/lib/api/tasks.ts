@@ -81,6 +81,33 @@ export async function createTask(p: Profile, input: NewTaskInput, clientId?: str
   return String(data.id)
 }
 
+// SAFETY-2 «Заказать СИЗ»: материальная заявка с пометкой СИЗ/PPE — уйдёт в «Доставки» как обычная
+// задача task_type='material' (тот же контракт, что createTask/createMaterialRequest). projectId может
+// быть null (заказ из профиля работника, вне объекта — project_id nullable). metadata.ppe=true метит
+// заявку как СИЗ. title приходит уже локализованным из UI (строка хранится в БД и показывается как есть).
+export async function createPpeRequest(p: Profile, input: {
+  projectId: string | null
+  title: string
+  description?: string | null
+}): Promise<string> {
+  const row: Record<string, unknown> = {
+    org_id: p.org_id,
+    created_by: p.id,
+    project_id: input.projectId ?? null,
+    task_type: 'material',
+    title: input.title,
+    priority: 'urgent',
+    urgent_flag: true,
+    metadata: { ppe: true },
+  }
+  const description = input.description?.trim()
+  if (description) row.description = description
+  const { data, error } = await supabase.from('tasks').insert(row).select('id').single()
+  if (error) throw error
+  await logEvent(p, 'task.ppe_requested', 'task', data.id, { project_id: input.projectId ?? null, title: input.title })
+  return String(data.id)
+}
+
 // Смена статуса задачи из дропдауна карточки (ожидает/в работе/готово) глобального экрана.
 // Прямой UPDATE — RLS tasks_update пускает менеджера, назначенного исполнителя, либо
 // (задача без исполнителя И доступ к проекту). При переводе в done проставляем done_at/done_by

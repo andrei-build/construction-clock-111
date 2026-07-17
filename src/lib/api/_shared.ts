@@ -1,4 +1,5 @@
 import { supabase } from '../supabase'
+import { nextSafetyVersion, type SafetyDocData } from '../safety'
 import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
 
 
@@ -51,6 +52,59 @@ export async function saveAppSettings(p: Profile, values: AppSettingsInput): Pro
   if (error) throw error
   await logEvent(p, 'settings.updated', 'org', p.org_id, { ...values })
   return data as AppSettings
+}
+
+// === SAFETY-2: свод ТБ, его версия и флаг жёсткого гейта в app_settings.settings (jsonb) — без
+// новой таблицы/колонки. Пишем MERGE-ом поверх текущего settings, чтобы не затирать другие ключи
+// (safety_doc/safety_gate_enforced и любые будущие). upsert передаёт ТОЛЬКО settings+updated_by:
+// на конфликте org_id обновляются лишь эти колонки (прочие пороги/язык не трогаются), при первой
+// вставке остальные NOT NULL колонки берут дефолты БД. updated_by = кто менял (владелец).
+async function writeSettingsBag(
+  p: Profile,
+  settings: Record<string, unknown>,
+  event: string,
+  data: Record<string, unknown>,
+): Promise<AppSettings> {
+  const { data: row, error } = await supabase.from('app_settings')
+    .upsert({ org_id: p.org_id, settings, updated_by: p.id }, { onConflict: 'org_id' })
+    .select(APP_SETTINGS_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, event, 'org', p.org_id, data)
+  return row as AppSettings
+}
+
+// Сохранение текста свода ТБ (3 языка). Изменение текста = НОВАЯ версия свода → потребует
+// переподписи у всех (актуальность подписи в safety.ts сверяет doc_version с текущей версией).
+// defaultText — дефолтный свод из i18n: нужен, чтобы при ПЕРВОМ сохранении отличить «оставили
+// дефолт» (версия остаётся v1, старые подписи актуальны) от «отредактировали» (версия → v2).
+export async function updateSafetyDoc(
+  p: Profile,
+  text: { ru: string; en: string; es: string },
+  defaultText: { ru: string; en: string; es: string },
+): Promise<AppSettings> {
+  const current = await getAppSettings()
+  const settings = { ...((current?.settings ?? {}) as Record<string, unknown>) }
+  const doc = settings.safety_doc as SafetyDocData | undefined
+  const prev = doc ? { ru: doc.text_ru, en: doc.text_en, es: doc.text_es } : defaultText
+  const changed = text.ru !== prev.ru || text.en !== prev.en || text.es !== prev.es
+  const version = nextSafetyVersion(doc?.version ?? null, changed)
+  settings.safety_doc = {
+    version,
+    text_ru: text.ru,
+    text_en: text.en,
+    text_es: text.es,
+    updated_at: new Date().toISOString(),
+  }
+  return writeSettingsBag(p, settings, 'safety.doc_updated', { version, changed })
+}
+
+// Тумблер «Требовать подпись ТБ перед сменой» (жёсткий гейт clock-in). По умолчанию ключа нет → false.
+export async function setSafetyGateEnforced(p: Profile, enforced: boolean): Promise<AppSettings> {
+  const current = await getAppSettings()
+  const settings = { ...((current?.settings ?? {}) as Record<string, unknown>) }
+  settings.safety_gate_enforced = enforced
+  return writeSettingsBag(p, settings, 'safety.gate_toggled', { enforced })
 }
 
 export function subscribeToOrgEvents(orgId: string, onChange: () => void, channelName = 'events') {

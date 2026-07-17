@@ -270,7 +270,10 @@ export async function uploadCheckoutVideo(p: Profile, eventId: string, file: Fil
   return storagePath
 }
 
-export async function uploadSafetySignature(p: Profile, projectId: string, eventId: string, signature: Blob) {
+// SAFETY-2: docVersion — текущая версия свода ТБ (из app_settings.settings.safety_doc.version).
+// Пишется в doc_version, чтобы недельный ритм мог сверить «подписана ли ТЕКУЩАЯ версия». По умолчанию
+// 'v1' — исторический хардкод: сохраняет поведение любого офлайн/легаси-вызова без версии.
+export async function uploadSafetySignature(p: Profile, projectId: string, eventId: string, signature: Blob, docVersion = 'v1') {
   // A5: неизменяемая улика — уникальный путь + upsert:false; авторитет — safety_acknowledgements.signature_path.
   const storagePath = `signatures/${p.org_id}/${eventId}-${Date.now()}-${crypto.randomUUID()}.png`
   const { error: uploadError } = await supabase.storage
@@ -287,7 +290,7 @@ export async function uploadSafetySignature(p: Profile, projectId: string, event
     project_id: projectId,
     time_event_id: eventId,
     signature_path: storagePath,
-    doc_version: 'v1',
+    doc_version: docVersion,
   })
   if (error) throw error
   await logEvent(p, 'safety.acknowledged', 'project', projectId, { time_event_id: eventId, signature_path: storagePath })

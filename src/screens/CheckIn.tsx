@@ -4,6 +4,9 @@ import { useI18n } from '../lib/i18n'
 import {
   getProjects,
   getTodayEvents,
+  getAppSettings,
+  getWorkerSafetyAcks,
+  createPpeRequest,
   addTimeEvent,
   captureGPS,
   startProjectTravel,
@@ -11,7 +14,15 @@ import {
   uploadSafetySignature,
   validateUpload,
   uploadErrorCode,
+  type WorkerSafetyAckRow,
 } from '../lib/api'
+import {
+  currentSafetyVersion,
+  isSafetyGateEnforced,
+  readSafetyDoc,
+  safetyDocText,
+  isAckCurrent,
+} from '../lib/safety'
 import {
   flushQueuedTimeEvents,
   getQueuedTimeEvents,
@@ -22,7 +33,7 @@ import {
 import { saveSnapshot, readSnapshot } from '../lib/offlineFieldCache'
 import OfflineCacheNotice from '../components/OfflineCacheNotice'
 import { shiftState, workedMs, fmtHours, fmtClock } from '../lib/time'
-import type { Project, TimeEvent } from '../lib/types'
+import type { AppSettings, Project, TimeEvent } from '../lib/types'
 
 interface TravelState {
   projectId: string
@@ -71,9 +82,12 @@ function canvasToBlob(canvas: HTMLCanvasElement) {
 
 export default function CheckIn() {
   const { profile } = useAuth()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [projects, setProjects] = useState<Project[]>([])
   const [events, setEvents] = useState<TimeEvent[]>([])
+  const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [safetyAcks, setSafetyAcks] = useState<WorkerSafetyAckRow[]>([])
+  const [ppeBusy, setPpeBusy] = useState(false)
   const [queued, setQueued] = useState<QueuedTimeEvent[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -116,6 +130,14 @@ export default function CheckIn() {
       }
     }
     setQueued(await getQueuedTimeEvents(profile.id))
+    // SAFETY-2: конфиг ТБ (свод/версия/флаг гейта) + подписи этого работника — для недельного
+    // ритма и жёсткого гейта. Best-effort: ошибка/офлайн → пустые значения = гейт неактивен
+    // (safe default), поведение clock-in не меняется.
+    try {
+      const [row, acks] = await Promise.all([getAppSettings(), getWorkerSafetyAcks(profile.id)])
+      setSettings(row)
+      setSafetyAcks(acks)
+    } catch { /* keep prior safe defaults */ }
   }, [profile])
 
   const syncQueue = useCallback(async () => {
@@ -157,8 +179,21 @@ export default function CheckIn() {
   const selectedProject = useMemo(() => projects.find((p) => p.id === selected) ?? null, [projects, selected])
   const safetyProject = useMemo(() => projects.find((p) => p.id === safetyProjectId) ?? null, [projects, safetyProjectId])
   const checkoutRequiresVideo = Boolean(profile?.require_checkout_video)
-  const selectedNeedsSafety = Boolean(selected && !visibleEvents.some((event) =>
-    event.event_type === 'check_in' && event.project_id === selected
+  // SAFETY-2: текущая версия свода + флаг жёсткого гейта из настроек. Нет своего свода → версия 'v1'
+  // (исторический дефолт), флаг отсутствует → false → поведение clock-in НЕ меняется (e2e/бригада).
+  const currentVersion = useMemo(() => currentSafetyVersion(settings), [settings])
+  const gateEnforced = useMemo(() => isSafetyGateEnforced(settings), [settings])
+  const hasSafetyDoc = useMemo(() => readSafetyDoc(settings) != null, [settings])
+  // Есть ли АКТУАЛЬНАЯ недельная подпись: текущая версия свода И свежее 7 дней.
+  const hasCurrentWeeklySafety = useMemo(
+    () => safetyAcks.some((ack) => isAckCurrent(ack, currentVersion, Date.now())),
+    [safetyAcks, currentVersion],
+  )
+  // Существующая логика (нет входа сегодня по проекту) СОХРАНЕНА как есть. Жёсткий гейт добавляет
+  // ветку ТОЛЬКО когда флаг включён И нет актуальной недельной подписи — тогда экран подписи не обойти.
+  const selectedNeedsSafety = Boolean(selected && (
+    !visibleEvents.some((event) => event.event_type === 'check_in' && event.project_id === selected)
+    || (gateEnforced && !hasCurrentWeeklySafety)
   ))
 
   const completeOnlineTimeEvent = async (
@@ -175,7 +210,8 @@ export default function CheckIn() {
     }
     if (options.signatureBlob && projectId) {
       setMsg('safety_uploading')
-      await uploadSafetySignature(profile, projectId, eventId, options.signatureBlob)
+      // SAFETY-2: пишем ТЕКУЩУЮ версию свода в doc_version, чтобы недельный ритм её сверял.
+      await uploadSafetySignature(profile, projectId, eventId, options.signatureBlob, currentVersion)
     }
     return eventId
   }
@@ -344,6 +380,24 @@ export default function CheckIn() {
     }
   }
 
+  // SAFETY-2 «Заказать СИЗ»: с экрана подписи ТБ создаёт материальную заявку (уйдёт в Доставки).
+  // Требует онлайн (createPpeRequest пишет в БД); ошибка → общий 'error'. Не блокирует подпись.
+  const orderPpe = async () => {
+    if (!profile || ppeBusy) return
+    setPpeBusy(true)
+    try {
+      await createPpeRequest(profile, {
+        projectId: safetyProjectId,
+        title: `${t('ppe_order_title')} — ${profile.name}`,
+      })
+      setMsg('ppe_ordered')
+    } catch {
+      setMsg('error')
+    } finally {
+      setPpeBusy(false)
+    }
+  }
+
   const startTravel = async (project: Project) => {
     if (!profile || travelBusy || !project.address) return
     const startedAt = new Date()
@@ -403,18 +457,26 @@ export default function CheckIn() {
         <div className="card safety-card">
           <div className="item-title">{safetyProject.name}</div>
           <p className="muted">{t('safety_intro')}</p>
-          <ol className="safety-list">
-            <li>{t('safety_rule_1')}</li>
-            <li>{t('safety_rule_2')}</li>
-            <li>{t('safety_rule_3')}</li>
-            <li>{t('safety_rule_4')}</li>
-            <li>{t('safety_rule_5')}</li>
-            <li>{t('safety_rule_6')}</li>
-            <li>{t('safety_rule_7')}</li>
-            <li>{t('safety_rule_8')}</li>
-            <li>{t('safety_rule_9')}</li>
-            <li>{t('safety_rule_10')}</li>
-          </ol>
+          {/* SAFETY-2: если владелец сохранил свой свод ТБ — показываем его текст (pre-wrap); иначе
+              оставляем прежний хардкод-список правил (без конфига поведение не меняется — e2e/бригада). */}
+          {hasSafetyDoc ? (
+            <div className="safety-doc-text" style={{ whiteSpace: 'pre-wrap' }}>
+              {safetyDocText(settings, lang, t('safety_doc_default'))}
+            </div>
+          ) : (
+            <ol className="safety-list">
+              <li>{t('safety_rule_1')}</li>
+              <li>{t('safety_rule_2')}</li>
+              <li>{t('safety_rule_3')}</li>
+              <li>{t('safety_rule_4')}</li>
+              <li>{t('safety_rule_5')}</li>
+              <li>{t('safety_rule_6')}</li>
+              <li>{t('safety_rule_7')}</li>
+              <li>{t('safety_rule_8')}</li>
+              <li>{t('safety_rule_9')}</li>
+              <li>{t('safety_rule_10')}</li>
+            </ol>
+          )}
           <div className="safety-refs">
             <div className="safety-refs-title">{t('safety_refs_title')}</div>
             <ul className="safety-refs-list">
@@ -426,6 +488,10 @@ export default function CheckIn() {
               <li>{t('safety_ref_876')}</li>
             </ul>
           </div>
+          {/* SAFETY-2: заказать недостающие СИЗ прямо с экрана подписи → материальная заявка в Доставки. */}
+          <button className="btn ghost small" type="button" disabled={busy || ppeBusy} onClick={orderPpe}>
+            🦺 {ppeBusy ? t('loading') : t('ppe_order_btn')}
+          </button>
           <label>{t('signature')}</label>
           <canvas
             ref={signatureCanvasRef}
@@ -526,6 +592,12 @@ export default function CheckIn() {
               )}
             </div>
           ))}
+          {/* SAFETY-2 мягкая подсказка: свод настроен, но актуальной недельной подписи нет. Показываем
+              только когда есть свой свод ТБ (без конфига/в e2e — ничего). НЕ блокирует (жёсткий гейт —
+              через selectedNeedsSafety, который открывает экран подписи при включённом флаге). */}
+          {hasSafetyDoc && !hasCurrentWeeklySafety && (
+            <p className="warn-msg" style={{ marginTop: 8 }}>{t('safety_weekly_due')}</p>
+          )}
           <button className="btn green" style={{ marginTop: 12 }} disabled={!selected || busy} onClick={() => act('check_in')}>
             {t('check_in')}
           </button>
