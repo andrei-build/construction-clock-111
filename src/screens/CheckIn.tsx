@@ -26,6 +26,7 @@ import {
 import {
   flushQueuedTimeEvents,
   getQueuedTimeEvents,
+  getTimeQueuePersistError,
   queuedTimeEventToTimeEvent,
   queueTimeEvent,
   type QueuedTimeEvent,
@@ -44,6 +45,14 @@ function isOnline() {
   return typeof navigator === 'undefined' || navigator.onLine
 }
 
+// OFFLINE-FIX-1 (а): один стабильный client_id на отметку — генерится ДО первой онлайн-попытки и
+// переиспользуется в офлайн-фолбэке, чтобы повторная вставка после обрыва ловилась 23505, а не
+// плодила дубль смены. Фолбэк без crypto.randomUUID — для старых webview.
+function newClientId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 function isNetworkError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? '')
   return /failed to fetch|networkerror|network|fetch|load failed/i.test(message)
@@ -60,7 +69,7 @@ function checkoutVideoErrorMsg(error: unknown): string {
 
 function messageClass(msg: string) {
   if (['error', 'checkout_video_write_once', 'checkout_video_forbidden', 'checkout_video_save_failed'].includes(msg)) return 'error-msg'
-  if (['offline_saved', 'checkout_video_needed', 'checkout_video_online_required', 'safety_signature_required', 'safety_online_required', 'consent_agree_required', 'file_too_large', 'file_type_not_allowed'].includes(msg)) return 'warn-msg'
+  if (['offline_saved', 'offline_quota_warn', 'checkout_video_needed', 'checkout_video_online_required', 'safety_signature_required', 'safety_online_required', 'consent_agree_required', 'file_too_large', 'file_type_not_allowed'].includes(msg)) return 'warn-msg'
   return 'ok-msg'
 }
 
@@ -133,11 +142,25 @@ export default function CheckIn() {
     // SAFETY-2: конфиг ТБ (свод/версия/флаг гейта) + подписи этого работника — для недельного
     // ритма и жёсткого гейта. Best-effort: ошибка/офлайн → пустые значения = гейт неактивен
     // (safe default), поведение clock-in не меняется.
+    // OFFLINE-FIX-1 (г): кэшируем свод ТБ + подписи, чтобы экран подписи открылся без сети
+    // (текст свода и «есть ли актуальная недельная подпись» доступны офлайн).
+    const safetyCacheKey = `safety-config:${profile.org_id}`
     try {
       const [row, acks] = await Promise.all([getAppSettings(), getWorkerSafetyAcks(profile.id)])
       setSettings(row)
       setSafetyAcks(acks)
-    } catch { /* keep prior safe defaults */ }
+      saveSnapshot(safetyCacheKey, { settings: row, acks })
+    } catch {
+      // Офлайн/ошибка: поднимаем последний слепок свода, чтобы экран подписи работал без сети.
+      if (!isOnline()) {
+        const snap = readSnapshot<{ settings: AppSettings | null; acks: WorkerSafetyAckRow[] }>(safetyCacheKey)
+        if (snap) {
+          setSettings(snap.data.settings)
+          setSafetyAcks(snap.data.acks)
+        }
+      }
+      /* keep prior safe defaults otherwise */
+    }
   }, [profile])
 
   const syncQueue = useCallback(async () => {
@@ -201,9 +224,11 @@ export default function CheckIn() {
     projectId: string | null,
     geo: Awaited<ReturnType<typeof captureGPS>>,
     options: { checkoutVideo?: File | null; signatureBlob?: Blob | null } = {},
+    // OFFLINE-FIX-1 (а): стабильный client_id, сгенерённый ДО этой попытки; тот же уйдёт в офлайн-очередь.
+    clientId?: string,
   ) => {
     if (!profile) throw new Error('missing_profile')
-    const eventId = await addTimeEvent(profile, type, projectId, geo)
+    const eventId = await addTimeEvent(profile, type, projectId, geo, undefined, {}, clientId)
     if (options.checkoutVideo) {
       setMsg('checkout_video_uploading')
       await uploadCheckoutVideo(profile, eventId, options.checkoutVideo)
@@ -240,11 +265,15 @@ export default function CheckIn() {
     setMsg(geo.status === 'good' ? 'gps_ok' : 'gps_fail')
     setGpsWarnM(lowGpsAccuracy(geo))
     const projectId = type === 'check_in' ? selected : state.projectId
+    // OFFLINE-FIX-1 (а): один client_id на всю отметку — и для онлайн-попытки, и для офлайн-фолбэка.
+    const clientId = newClientId()
     const saveOffline = async () => {
-      const row = await queueTimeEvent(profile, type, projectId, geo)
+      const row = await queueTimeEvent(profile, type, projectId, geo, clientId)
       setQueued((rows) => [...rows.filter((item) => item.id !== row.id), row].sort((a, b) => a.queuedAt.localeCompare(b.queuedAt)))
       if (type === 'check_in') setTravel(null)
-      setMsg('offline_saved')
+      // OFFLINE-FIX-1 (в): если IndexedDB отказал (квота/приватный режим) — отметка только в памяти,
+      // предупреждаем, а не рапортуем «сохранено».
+      setMsg(getTimeQueuePersistError() ? 'offline_quota_warn' : 'offline_saved')
     }
 
     try {
@@ -256,7 +285,7 @@ export default function CheckIn() {
         await saveOffline()
         return
       }
-      await completeOnlineTimeEvent(type, projectId, geo, { checkoutVideo: videoFile })
+      await completeOnlineTimeEvent(type, projectId, geo, { checkoutVideo: videoFile }, clientId)
       await load()
       if (type === 'check_in') setTravel(null)
       if (type === 'check_out') setCheckoutVideo(null)
@@ -340,6 +369,7 @@ export default function CheckIn() {
 
   const submitSafetyCheckIn = async () => {
     if (!profile || !safetyProjectId || busy) return
+    const projectId = safetyProjectId
     const canvas = signatureCanvasRef.current
     if (!canvas || !signatureTouched) {
       setMsg('safety_signature_required')
@@ -350,31 +380,68 @@ export default function CheckIn() {
       setMsg('consent_agree_required')
       return
     }
-    if (!isOnline()) {
-      setMsg('safety_online_required')
-      return
-    }
 
     setBusy(true)
-    try {
-      const signatureBlob = await canvasToBlob(canvas)
-      setMsg('gps_wait')
-      setGpsWarnM(null)
-      const geo = await captureGPS()
-      setMsg(geo.status === 'good' ? 'gps_ok' : 'gps_fail')
-      setGpsWarnM(lowGpsAccuracy(geo))
-      await completeOnlineTimeEvent('check_in', safetyProjectId, geo, { signatureBlob })
-      await load()
+    const resetSafetyForm = () => {
       setTravel(null)
       setSafetyProjectId(null)
       setSignatureTouched(false)
       setConsentName('')
       setConsentAgreed(false)
+    }
+    // OFFLINE-FIX-1 (г): офлайн/обрыв больше НЕ блокирует первый вход дня жёстким safety-гейтом.
+    // Подпись (PNG) + текущая версия свода кладутся в офлайн-очередь тем же client_id, что и онлайн-
+    // попытка — на реконнекте replay вставит check_in (дубль после обрыва ловится 23505) и зальёт
+    // подпись через uploadSafetySignature. Свод ТБ доступен без сети из кэша (см. load()).
+    const queueSafetyOffline = async (
+      geo: Awaited<ReturnType<typeof captureGPS>>,
+      clientId: string,
+      signatureBlob: Blob,
+    ) => {
+      const row = await queueTimeEvent(profile, 'check_in', projectId, geo, clientId, {
+        signature: signatureBlob,
+        docVersion: currentVersion,
+      })
+      setQueued((rows) => [...rows.filter((item) => item.id !== row.id), row].sort((a, b) => a.queuedAt.localeCompare(b.queuedAt)))
+      resetSafetyForm()
+      setMsg(getTimeQueuePersistError() ? 'offline_quota_warn' : 'offline_saved')
+      setTimeout(() => setMsg(null), 2500)
+    }
+
+    // Стабильный client_id + подпись живут до catch: если онлайн-попытка оборвётся уже после серверной
+    // вставки, тот же client_id в очереди даст 23505 на реплее — без дубля смены.
+    const clientId = newClientId()
+    let signatureBlob: Blob | null = null
+    let geo: Awaited<ReturnType<typeof captureGPS>> | null = null
+    try {
+      signatureBlob = await canvasToBlob(canvas)
+      setMsg('gps_wait')
+      setGpsWarnM(null)
+      geo = await captureGPS()
+      setMsg(geo.status === 'good' ? 'gps_ok' : 'gps_fail')
+      setGpsWarnM(lowGpsAccuracy(geo))
+      if (!isOnline()) {
+        await queueSafetyOffline(geo, clientId, signatureBlob)
+        return
+      }
+      await completeOnlineTimeEvent('check_in', projectId, geo, { signatureBlob }, clientId)
+      await load()
+      resetSafetyForm()
       setMsg('safety_saved')
       setTimeout(() => setMsg(null), 2500)
     } catch (error) {
-      if (isNetworkError(error)) setMsg('safety_online_required')
-      else setMsg('error')
+      if (isNetworkError(error) && signatureBlob && geo) {
+        // Обрыв на онлайн-попытке — не блокируем работника, кладём подпись в офлайн-очередь.
+        try {
+          await queueSafetyOffline(geo, clientId, signatureBlob)
+        } catch {
+          setMsg('safety_online_required')
+        }
+      } else if (isNetworkError(error)) {
+        setMsg('safety_online_required')
+      } else {
+        setMsg('error')
+      }
     } finally {
       setBusy(false)
     }

@@ -1,4 +1,4 @@
-import { addTimeEvent, type Geo } from './api'
+import { addTimeEvent, uploadSafetySignature, type Geo } from './api'
 import type { Profile, TimeEvent, TimeEventType } from './types'
 
 type QueueableTimeEventType = Exclude<TimeEventType, 'adjustment'>
@@ -11,14 +11,30 @@ export interface QueuedTimeEvent {
   projectId: string | null
   geo: Geo
   queuedAt: string
+  // OFFLINE-FIX-1 (б): счётчик попыток реплея и карантин «ядовитой» строки — после N провалов
+  // строку перестаём ретраить и НЕ удаляем данные, чтобы она не блокировала остальную очередь.
+  attempts?: number
+  quarantined?: boolean
+  // OFFLINE-FIX-1 (г): офлайн-подпись ТБ. Подпись (PNG Blob) и версия свода едут в очереди вместе
+  // с check_in; при реплее заливаются через uploadSafetySignature. sentEventId проставляется после
+  // успешной вставки time_event, чтобы повторная заливка подписи НЕ пересоздавала событие смены.
+  signature?: Blob
+  docVersion?: string
+  sentEventId?: string
 }
 
 const DB_NAME = 'construction-clock-offline'
 const DB_VERSION = 1
 const STORE_NAME = 'time-events'
+// OFFLINE-FIX-1 (б): после стольких провальных попыток реплея строка уходит в карантин.
+const MAX_FLUSH_ATTEMPTS = 5
 
 let dbPromise: Promise<IDBDatabase> | null = null
 let memoryQueue: QueuedTimeEvent[] | null = null
+// OFFLINE-FIX-1 (в): последняя запись в IndexedDB упала (квота/приватный режим/недоступно).
+// Раньше catch в saveToDb молча проглатывал — теперь флаг поднимается, чтобы баннер/CheckIn
+// предупредили пользователя, что отметка держится только в памяти и может пропасть.
+let persistError = false
 
 function isBrowser() {
   return typeof window !== 'undefined' && 'indexedDB' in window
@@ -103,10 +119,33 @@ async function ensureMemoryQueue() {
   return memoryQueue
 }
 
+// OFFLINE-FIX-1 (б/г): обновить одну строку очереди на месте (attempts/quarantined/sentEventId).
+// Память обновляем всегда (реплей это видит), IndexedDB — best-effort (как и остальная очередь).
+async function updateQueuedTimeEvent(row: QueuedTimeEvent) {
+  const rows = await ensureMemoryQueue()
+  memoryQueue = sortQueue([...rows.filter((r) => r.id !== row.id), row])
+  try {
+    await saveToDb(row)
+  } catch {
+    // Persistence is best-effort; the in-memory copy still drives this session's replay.
+  }
+}
+
 export async function getQueuedTimeEvents(profileId?: string) {
   const rows = await ensureMemoryQueue()
   const filtered = profileId ? rows.filter((row) => row.profileId === profileId) : rows
   return sortQueue(filtered)
+}
+
+// OFFLINE-FIX-1 (в): true, если последняя попытка сохранить отметку в IndexedDB упала (квота и т.п.).
+export function getTimeQueuePersistError() {
+  return persistError
+}
+
+// OFFLINE-FIX-1 (б): сколько строк ушло в карантин (провалили реплей MAX_FLUSH_ATTEMPTS раз).
+export async function getQuarantinedCount(profileId?: string) {
+  const rows = await getQueuedTimeEvents(profileId)
+  return rows.filter((row) => row.quarantined).length
 }
 
 export async function queueTimeEvent(
@@ -114,23 +153,32 @@ export async function queueTimeEvent(
   type: QueueableTimeEventType,
   projectId: string | null,
   geo: Geo,
+  // OFFLINE-FIX-1 (а): стабильный client_id, сгенерённый в CheckIn ДО онлайн-попытки. row.id === он,
+  // поэтому реплей шлёт client_id: row.id — тот же, что пытались отправить онлайн → дубль ловится 23505.
+  clientId?: string,
+  // OFFLINE-FIX-1 (г): офлайн-подпись ТБ (Blob) и версия свода — едут с офлайн check_in.
+  options: { signature?: Blob; docVersion?: string } = {},
 ) {
   const row: QueuedTimeEvent = {
-    id: queueId(),
+    id: clientId ?? queueId(),
     orgId: profile.org_id,
     profileId: profile.id,
     type,
     projectId,
     geo,
     queuedAt: new Date().toISOString(),
+    ...(options.signature ? { signature: options.signature, docVersion: options.docVersion } : {}),
   }
 
   const rows = await ensureMemoryQueue()
   memoryQueue = sortQueue([...rows, row])
   try {
     await saveToDb(row)
+    persistError = false
   } catch {
-    // Keep the in-memory queue alive even if the browser refuses persistent storage.
+    // OFFLINE-FIX-1 (в): квота/приватный режим/недоступно. Строка остаётся в памяти (реплей этой
+    // сессии не теряется), но при перезагрузке пропадёт — поднимаем флаг, чтобы UI предупредил.
+    persistError = true
   }
   return row
 }
@@ -167,6 +215,31 @@ export function queuedTimeEventToTimeEvent(row: QueuedTimeEvent): TimeEvent {
   }
 }
 
+// OFFLINE-FIX-1: доставка одной строки очереди — вставка time_event и (если есть) заливка подписи ТБ.
+// sentEventId кэшируется сразу после успешной вставки, чтобы повторная попытка залить подпись НЕ
+// пересоздавала событие смены (иначе на второй заход поймали бы 23505 и потеряли подпись).
+async function sendQueuedRow(profile: Profile, row: QueuedTimeEvent) {
+  let eventId = row.sentEventId
+  if (!eventId) {
+    // F13: offline_pending_sync — контекст, что событие пришло из очереди; gps_error_kind/needs_review
+    // проставит addTimeEvent из row.geo (errorKind сохранился в очереди как поле Geo).
+    eventId = await addTimeEvent(
+      profile,
+      row.type,
+      row.projectId,
+      row.geo,
+      row.queuedAt,
+      { offline_queued: true, offline_pending_sync: true, client_id: row.id },
+    )
+    if (row.signature && row.projectId) {
+      await updateQueuedTimeEvent({ ...row, sentEventId: eventId })
+    }
+  }
+  if (row.signature && row.projectId) {
+    await uploadSafetySignature(profile, row.projectId, eventId, row.signature, row.docVersion ?? 'v1')
+  }
+}
+
 export async function flushQueuedTimeEvents(
   profile: Profile,
   onSent?: (row: QueuedTimeEvent) => void,
@@ -178,14 +251,22 @@ export async function flushQueuedTimeEvents(
 
   for (const row of rows) {
     if (typeof navigator !== 'undefined' && !navigator.onLine) break
+    // OFFLINE-FIX-1 (б): карантинную строку не ретраим — она не должна блокировать остальные.
+    if (row.quarantined) continue
     try {
-      // F13: offline_pending_sync — контекст, что событие пришло из очереди; gps_error_kind/needs_review
-      // проставит addTimeEvent из row.geo (errorKind сохранился в очереди как поле Geo).
-      await addTimeEvent(profile, row.type, row.projectId, row.geo, row.queuedAt, { offline_queued: true, offline_pending_sync: true, client_id: row.id })
+      await sendQueuedRow(profile, row)
     } catch (err) {
       const code = (err as { code?: string } | null)?.code
-      if (code !== '23505') throw err
-      // 23505: this exact event already landed on a previous flush — safe to drop from queue
+      if (code === '23505') {
+        // 23505: это событие уже легло на прошлом реплее — безопасно убрать из очереди.
+      } else {
+        // OFFLINE-FIX-1 (б): не-23505 больше НЕ роняет весь цикл (раньше `throw err` навсегда
+        // блокировал реплей остальных строк). Считаем попытки, после MAX — карантин, и продолжаем
+        // сливать остальные строки. Данные строки не удаляем — уходят в карантин с пометкой.
+        const attempts = (row.attempts ?? 0) + 1
+        await updateQueuedTimeEvent({ ...row, attempts, quarantined: attempts >= MAX_FLUSH_ATTEMPTS })
+        continue
+      }
     }
     await removeQueuedTimeEvent(row.id)
     sent += 1

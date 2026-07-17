@@ -9,7 +9,7 @@
 // dedup and retry rules; this module only fans a count/flush across all three and tolerates any
 // one of them being unreachable (no IndexedDB, quota, private mode) without breaking the others.
 import type { Profile } from './types'
-import { getQueuedTimeEvents, flushQueuedTimeEvents } from './offlineTimeQueue'
+import { getQueuedTimeEvents, flushQueuedTimeEvents, getQuarantinedCount, getTimeQueuePersistError } from './offlineTimeQueue'
 import { getQueuedFieldActions, flushFieldActions } from './offlineFieldActions'
 import { getQueuedMediaUploads, flushMediaUploads } from './offlineMediaQueue'
 
@@ -29,6 +29,21 @@ export async function getPendingOutboxCount(): Promise<number> {
     field = 0
   }
   return time.length + media.length + field
+}
+
+// OFFLINE-FIX-1 (б/в): всплывающие тревоги офлайн-очереди для баннера, которые НЕ выражаются
+// простым «в очереди N»: карантинные строки отметок (провалили реплей и больше не ретраятся) и
+// отказ персиста (IndexedDB/квота — отметка держится только в памяти). Best-effort: любой сбой
+// чтения → нейтральные значения, баннер не ломается.
+export async function getOutboxAlerts(): Promise<{ quarantined: number; persistError: boolean }> {
+  const quarantined = await getQuarantinedCount().catch(() => 0)
+  let persistError = false
+  try {
+    persistError = getTimeQueuePersistError()
+  } catch {
+    persistError = false
+  }
+  return { quarantined, persistError }
 }
 
 // Replay every queue while online and return how many items were sent. Each underlying flush
