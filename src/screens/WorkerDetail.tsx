@@ -41,6 +41,9 @@ import {
   updateWorkerSkills,
   uploadAvatar,
   updateWorkerPublicProfile,
+  updateWorkerDossier,
+  getSubcontractorDetails,
+  upsertSubcontractorDetails,
   uploadErrorCode,
 } from '../lib/api'
 import { fmtClock, fmtHours, computeTravelGaps, intervalsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
@@ -242,6 +245,23 @@ export default function WorkerDetail() {
   const [publicBio, setPublicBio] = useState('')
   const avatarInputRef = useRef<HTMLInputElement>(null)
 
+  // TEAM-DOSSIER-1: контактные/кадровые поля досье (profiles). Редактирует manager+.
+  // dossier_notes («заметки владельца») — только manager+ (экран уже гейтит canView).
+  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
+  const [homeAddress, setHomeAddress] = useState('')
+  const [emergencyContact, setEmergencyContact] = useState('')
+  const [hireDate, setHireDate] = useState('')
+  const [dossierNotes, setDossierNotes] = useState('')
+  const [dossierLang, setDossierLang] = useState('')
+
+  // TEAM-DOSSIER-1: реквизиты субподрядчика (subcontractor_details) — только owner, role=subcontractor.
+  const [subTrade, setSubTrade] = useState('')
+  const [subLicense, setSubLicense] = useState('')
+  const [subInsurance, setSubInsurance] = useState('')
+  const [subPaymentTerms, setSubPaymentTerms] = useState('')
+  const [subNotes, setSubNotes] = useState('')
+
   // TEAM-1: показатели за неделю (GPS/без GPS, закрытые задачи) + текущий период оплаты (только чтение).
   const [gpsWeek, setGpsWeek] = useState<{ withGps: number; withoutGps: number } | null>(null)
   const [weekTaskCount, setWeekTaskCount] = useState<number | null>(null)
@@ -279,6 +299,9 @@ export default function WorkerDetail() {
   const canSetMemberPassword = profile?.role === 'owner' && !!worker && EMAIL_ROLES.includes(worker.role)
   // ACC-4: текущее состояние права самосмены пароля (грузится вместе с прочими capabilities для owner/admin).
   const canChangePwGranted = capabilities.some((row) => row.capability === 'can_change_password' && row.granted)
+  // TEAM-DOSSIER-1: секция реквизитов субподрядчика — ТОЛЬКО owner и ТОЛЬКО для role='subcontractor'.
+  // RLS sub_write дублирует гейт на сервере; UI показывает секцию лишь владельцу.
+  const canViewSubcontractor = profile?.role === 'owner' && worker?.role === 'subcontractor'
 
   // F3: гейт назначения ролей. Показываем только роли, которые актёр вправе назначить,
   // плюс всегда оставляем видимой ТЕКУЩУЮ роль работника (иначе <select> её не отрендерит),
@@ -325,6 +348,14 @@ export default function WorkerDetail() {
         // TEAM-2: клиент-facing поля.
         setAvatarUrl(workerRow.avatar_url ?? null)
         setPublicBio(workerRow.public_bio ?? '')
+        // TEAM-DOSSIER-1: контактные/кадровые поля досье.
+        setPhone(workerRow.phone ?? '')
+        setEmail(workerRow.email ?? '')
+        setHomeAddress(workerRow.home_address ?? '')
+        setEmergencyContact(workerRow.emergency_contact ?? '')
+        setHireDate(workerRow.hire_date ?? '')
+        setDossierNotes(workerRow.dossier_notes ?? '')
+        setDossierLang(workerRow.language ?? '')
         const rate = rateRows.find((row) => row.profile_id === workerRow.id)
         setRateInput(rate?.hourly_rate === null || rate?.hourly_rate === undefined ? '' : String(rate.hourly_rate))
       }
@@ -413,6 +444,24 @@ export default function WorkerDetail() {
       })
     return () => { active = false }
   }, [id])
+
+  // TEAM-DOSSIER-1: реквизиты субподрядчика — грузим только когда гейт пройден (owner + subcontractor).
+  useEffect(() => {
+    if (!id || !canViewSubcontractor) {
+      setSubTrade(''); setSubLicense(''); setSubInsurance(''); setSubPaymentTerms(''); setSubNotes('')
+      return
+    }
+    let active = true
+    getSubcontractorDetails(id).then((row) => {
+      if (!active) return
+      setSubTrade(row?.trade ?? '')
+      setSubLicense(row?.license_number ?? '')
+      setSubInsurance(row?.insurance_expires ?? '')
+      setSubPaymentTerms(row?.payment_terms ?? '')
+      setSubNotes(row?.notes ?? '')
+    })
+    return () => { active = false }
+  }, [id, canViewSubcontractor])
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000)
@@ -741,6 +790,68 @@ export default function WorkerDetail() {
     }
   }
 
+  // TEAM-DOSSIER-1: сохранение контактных/кадровых полей досье (manager+). Пустые → null, кроме
+  // language (колонка NOT NULL) — пустое значение пропускаем (undefined), не пытаясь записать null.
+  const saveDossier = async () => {
+    if (!profile || !worker || !canEditProfile || busy) return
+    setBusy('dossier')
+    setMsg(null)
+    const phoneV = phone.trim()
+    const emailV = email.trim()
+    const homeV = homeAddress.trim()
+    const emergV = emergencyContact.trim()
+    const hireV = hireDate.trim()
+    const notesV = dossierNotes.trim()
+    const langV = dossierLang.trim()
+    try {
+      await updateWorkerDossier(profile, worker.id, {
+        phone: phoneV === '' ? null : phoneV,
+        email: emailV === '' ? null : emailV,
+        home_address: homeV === '' ? null : homeV,
+        emergency_contact: emergV === '' ? null : emergV,
+        hire_date: hireV === '' ? null : hireV,
+        dossier_notes: notesV === '' ? null : notesV,
+        language: langV === '' ? undefined : langV,
+      })
+      setWorker((prev) => (prev ? {
+        ...prev,
+        phone: phoneV || null,
+        email: emailV || null,
+        home_address: homeV || null,
+        emergency_contact: emergV || null,
+        hire_date: hireV || null,
+        dossier_notes: notesV || null,
+        language: langV || prev.language,
+      } : prev))
+      setMsg('dossier_saved')
+    } catch {
+      setMsg('dossier_save_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // TEAM-DOSSIER-1: сохранение реквизитов субподрядчика (owner-only). Пустые поля → null.
+  const saveSubcontractor = async () => {
+    if (!profile || !worker || !canViewSubcontractor || busy) return
+    setBusy('subcontractor')
+    setMsg(null)
+    try {
+      await upsertSubcontractorDetails(profile, worker.id, {
+        trade: subTrade.trim() === '' ? null : subTrade.trim(),
+        license_number: subLicense.trim() === '' ? null : subLicense.trim(),
+        insurance_expires: subInsurance.trim() === '' ? null : subInsurance.trim(),
+        payment_terms: subPaymentTerms.trim() === '' ? null : subPaymentTerms.trim(),
+        notes: subNotes.trim() === '' ? null : subNotes.trim(),
+      })
+      setMsg('subcontractor_saved')
+    } catch {
+      setMsg('subcontractor_save_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   // TEAM-1: активация/деактивация работника (profiles.is_active).
   const toggleActive = async () => {
     if (!profile || !worker || !canEditProfile || busy) return
@@ -1020,6 +1131,105 @@ export default function WorkerDetail() {
               ))}
             </div>
           </section>
+
+          {/* TEAM-DOSSIER-1: единая карточка-досье (ЗАКОН ДНК §10: ЧЕЛОВЕК = ДОСЬЕ). Контакты,
+              кадровые данные, язык + сводка навыков/ставки в одном месте. Редактирует manager+.
+              dossier_notes («заметки владельца») показываем только manager+ — экран уже canView. */}
+          <section className="card worker-dossier-card">
+            <h2>{t('dossier_section')}</h2>
+            <p className="muted">{t('dossier_hint')}</p>
+
+            <div className="dossier-fields">
+              <label>{t('dossier_phone')}</label>
+              <input value={phone} disabled={!canEditProfile || busy !== null} onChange={(e) => setPhone(e.target.value)} />
+
+              <label>{t('dossier_email')}</label>
+              <input type="email" value={email} disabled={!canEditProfile || busy !== null} onChange={(e) => setEmail(e.target.value)} />
+
+              <label>{t('dossier_home_address')}</label>
+              <input value={homeAddress} disabled={!canEditProfile || busy !== null} onChange={(e) => setHomeAddress(e.target.value)} />
+
+              <label>{t('dossier_emergency_contact')}</label>
+              <input value={emergencyContact} disabled={!canEditProfile || busy !== null} onChange={(e) => setEmergencyContact(e.target.value)} />
+
+              <label>{t('dossier_hire_date')}</label>
+              <input type="date" value={hireDate} disabled={!canEditProfile || busy !== null} onChange={(e) => setHireDate(e.target.value)} />
+
+              <label>{t('language')}</label>
+              <select value={dossierLang} disabled={!canEditProfile || busy !== null} onChange={(e) => setDossierLang(e.target.value)}>
+                <option value="">—</option>
+                <option value="ru">Русский</option>
+                <option value="en">English</option>
+                <option value="es">Español</option>
+              </select>
+            </div>
+
+            {/* dossier_notes — «заметки владельца», ВИДНЫ ТОЛЬКО manager+ (сам работник этот экран не видит). */}
+            <label>{t('dossier_notes_label')}</label>
+            <div className="row public-bio-row">
+              <textarea
+                value={dossierNotes}
+                disabled={!canEditProfile || busy !== null}
+                rows={3}
+                onChange={(e) => setDossierNotes(e.target.value)}
+              />
+              {canEditProfile && (
+                <VoiceMic
+                  lang={lang}
+                  title={t('voice_input')}
+                  onResult={(text) => setDossierNotes((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))}
+                />
+              )}
+            </div>
+            <p className="muted">{t('dossier_notes_caption')}</p>
+
+            {/* Сводка: навыки (profiles.skills), ставка (finance-gated, verbatim — read-only). */}
+            <div className="dossier-summary">
+              <div className="dossier-summary-item">
+                <span className="muted">{t('skills_section')}</span>
+                <div className="skills-chip-list">
+                  {skillsChips.length === 0
+                    ? <span className="muted">{t('skills_empty')}</span>
+                    : skillsChips.map((s) => <span key={s} className="skills-chip">{s}</span>)}
+                </div>
+              </div>
+              {ratesVisible && (
+                <div className="dossier-summary-item">
+                  <span className="muted">{t('rate')}</span>
+                  <strong className="num-display">{rateValue === null ? '—' : `$${rateValue}`}</strong>
+                </div>
+              )}
+            </div>
+
+            {canEditProfile && (
+              <button type="button" className="btn" disabled={busy !== null} onClick={saveDossier}>{t('save')}</button>
+            )}
+          </section>
+
+          {/* TEAM-DOSSIER-1: реквизиты субподрядчика — ТОЛЬКО owner и ТОЛЬКО role='subcontractor'. */}
+          {canViewSubcontractor && (
+            <section className="card worker-subcontractor-card">
+              <h2>{t('subcontractor_section')}</h2>
+              <p className="muted">{t('subcontractor_hint')}</p>
+
+              <label>{t('sub_trade')}</label>
+              <input value={subTrade} disabled={busy !== null} onChange={(e) => setSubTrade(e.target.value)} />
+
+              <label>{t('sub_license_number')}</label>
+              <input value={subLicense} disabled={busy !== null} onChange={(e) => setSubLicense(e.target.value)} />
+
+              <label>{t('sub_insurance_expires')}</label>
+              <input type="date" value={subInsurance} disabled={busy !== null} onChange={(e) => setSubInsurance(e.target.value)} />
+
+              <label>{t('sub_payment_terms')}</label>
+              <input value={subPaymentTerms} disabled={busy !== null} onChange={(e) => setSubPaymentTerms(e.target.value)} />
+
+              <label>{t('sub_notes')}</label>
+              <textarea value={subNotes} disabled={busy !== null} rows={3} onChange={(e) => setSubNotes(e.target.value)} />
+
+              <button type="button" className="btn" disabled={busy !== null} onClick={saveSubcontractor}>{t('save')}</button>
+            </section>
+          )}
 
           {/* TEAM-2: Публичный профиль — ЕДИНСТВЕННОЕ, что видит клиент (avatar_url + public_bio).
               Контакты работника и навыки НИКОГДА сюда не попадают — они внутренние. */}

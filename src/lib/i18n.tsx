@@ -1409,6 +1409,42 @@ const dict: Record<string, Record<Lang, string>> = {
   avatar_saved: { ru: 'Фото сохранено', en: 'Photo saved', es: 'Foto guardada' },
   avatar_save_failed: { ru: 'Не удалось загрузить фото', en: 'Could not upload photo', es: 'No se pudo subir la foto' },
 
+  // TEAM-DOSSIER-1: единая карточка-досье — контакты, кадровые данные, заметки владельца.
+  dossier_section: { ru: 'Досье работника', en: 'Worker dossier', es: 'Expediente del trabajador' },
+  dossier_hint: {
+    ru: 'Всё о человеке в одном месте. Контакты и кадровые данные видит только руководитель.',
+    en: 'Everything about the person in one place. Contacts and HR data are visible to managers only.',
+    es: 'Todo sobre la persona en un solo lugar. Los contactos y datos de RR. HH. solo los ve el responsable.',
+  },
+  dossier_phone: { ru: 'Телефон', en: 'Phone', es: 'Teléfono' },
+  dossier_email: { ru: 'Эл. почта', en: 'Email', es: 'Correo electrónico' },
+  dossier_home_address: { ru: 'Домашний адрес', en: 'Home address', es: 'Dirección de casa' },
+  dossier_emergency_contact: { ru: 'Экстренный контакт', en: 'Emergency contact', es: 'Contacto de emergencia' },
+  dossier_hire_date: { ru: 'Дата найма', en: 'Hire date', es: 'Fecha de contratación' },
+  dossier_notes_label: { ru: 'Заметки владельца', en: 'Owner notes', es: 'Notas del propietario' },
+  dossier_notes_caption: {
+    ru: 'Приватные заметки. Видит только руководитель, работнику не показываются.',
+    en: 'Private notes. Visible to managers only, never shown to the worker.',
+    es: 'Notas privadas. Solo las ve el responsable; nunca se muestran al trabajador.',
+  },
+  dossier_saved: { ru: 'Досье сохранено', en: 'Dossier saved', es: 'Expediente guardado' },
+  dossier_save_failed: { ru: 'Не удалось сохранить досье', en: 'Could not save dossier', es: 'No se pudo guardar el expediente' },
+
+  // TEAM-DOSSIER-1: реквизиты субподрядчика (owner-only, role=subcontractor).
+  subcontractor_section: { ru: 'Реквизиты субподрядчика', en: 'Subcontractor details', es: 'Datos del subcontratista' },
+  subcontractor_hint: {
+    ru: 'Ремесло, лицензия, страховка и условия оплаты. Видит и меняет только владелец.',
+    en: 'Trade, license, insurance and payment terms. Only the owner can see and edit this.',
+    es: 'Oficio, licencia, seguro y condiciones de pago. Solo el propietario puede verlo y editarlo.',
+  },
+  sub_trade: { ru: 'Ремесло / специализация', en: 'Trade / specialty', es: 'Oficio / especialidad' },
+  sub_license_number: { ru: 'Номер лицензии', en: 'License number', es: 'Número de licencia' },
+  sub_insurance_expires: { ru: 'Страховка действует до', en: 'Insurance expires', es: 'El seguro vence' },
+  sub_payment_terms: { ru: 'Условия оплаты', en: 'Payment terms', es: 'Condiciones de pago' },
+  sub_notes: { ru: 'Заметки', en: 'Notes', es: 'Notas' },
+  subcontractor_saved: { ru: 'Реквизиты сохранены', en: 'Details saved', es: 'Datos guardados' },
+  subcontractor_save_failed: { ru: 'Не удалось сохранить реквизиты', en: 'Could not save details', es: 'No se pudieron guardar los datos' },
+
   worker_stats: { ru: 'Показатели', en: 'Stats', es: 'Indicadores' },
   stat_with_gps: { ru: 'с GPS (неделя)', en: 'with GPS (week)', es: 'con GPS (semana)' },
   stat_without_gps: { ru: 'без GPS (неделя)', en: 'without GPS (week)', es: 'sin GPS (semana)' },

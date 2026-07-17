@@ -3,7 +3,7 @@ import { todayStartISO } from '../time'
 import { logEvent, warnReadError } from './_shared'
 import { mediaUrl, safeFileName, validateUpload, inferUploadContentType, TASK_MEDIA_BUCKET, AVATARS_BUCKET, FILE_SELECT } from './storage'
 import type { Geo } from './geo'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, SubcontractorDetails, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
 
 // M6: show_to_worker добавлен аддитивно — worker-side (MyTime) показывает комментарий менеджера
 // к корректировке, когда флаг true. adjust_reason уже здесь. Прочие вызовы select не задеты.
@@ -140,11 +140,64 @@ export async function getTeam(): Promise<Profile[]> {
 
 export async function getWorkerProfile(workerId: string): Promise<Profile | null> {
   const { data, error } = await supabase.from('profiles')
-    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, skills, skills_note, avatar_url, public_bio')
+    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, skills, skills_note, avatar_url, public_bio, phone, email, home_address, emergency_contact, hire_date, dossier_notes')
     .eq('id', workerId)
     .maybeSingle()
   if (error) throw error
   return (data as Profile | null) ?? null
+}
+
+// TEAM-DOSSIER-1: контактные/кадровые поля досье (profiles.phone/email/home_address/
+// emergency_contact/hire_date/dossier_notes/language). Редактирует manager+ (RLS profiles_update:
+// is_manager_write() ИЛИ сам; UI гейтит canEditProfile). Триггер protect_profile_privileged_cols
+// эти колонки НЕ трогает (защищает только role/pin/org/is_active/access_mode/checkout_video), так
+// что update проходит. Аддитивно к updateWorkerSkills/updateWorkerPublicProfile — не смешиваем.
+export async function updateWorkerDossier(p: Profile, workerId: string, input: {
+  phone?: string | null
+  email?: string | null
+  home_address?: string | null
+  emergency_contact?: string | null
+  hire_date?: string | null
+  dossier_notes?: string | null
+  language?: string | null
+}) {
+  const payload = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined))
+  if (Object.keys(payload).length === 0) return
+  const { error } = await supabase.from('profiles')
+    .update(payload)
+    .eq('id', workerId)
+  if (error) throw error
+  await logEvent(p, 'team.dossier_updated', 'profile', workerId, payload)
+}
+
+// TEAM-DOSSIER-1: реквизиты субподрядчика (subcontractor_details). Только чтение полей,
+// видимых владельцу (RLS sub_select: менеджер ИЛИ сам). UI показывает секцию лишь owner.
+export async function getSubcontractorDetails(profileId: string): Promise<SubcontractorDetails | null> {
+  const { data, error } = await supabase.from('subcontractor_details')
+    .select('profile_id, trade, license_number, insurance_expires, payment_terms, notes')
+    .eq('profile_id', profileId)
+    .maybeSingle()
+  if (error) { warnReadError('getSubcontractorDetails', error); return null }
+  return (data as SubcontractorDetails | null) ?? null
+}
+
+// TEAM-DOSSIER-1: upsert реквизитов субподрядчика. PK = profile_id (onConflict). RLS sub_write:
+// org_id=app.org_id() И is_manager_write() (UI гейтит owner). org_id пишем из p; metadata/
+// company_account_id не трогаем (company_accounts в схеме нет — company_account_id опущен в v1).
+export async function upsertSubcontractorDetails(p: Profile, profileId: string, input: {
+  trade?: string | null
+  license_number?: string | null
+  insurance_expires?: string | null
+  payment_terms?: string | null
+  notes?: string | null
+}) {
+  const { error } = await supabase.from('subcontractor_details')
+    .upsert(
+      { org_id: p.org_id, profile_id: profileId, ...input },
+      { onConflict: 'profile_id' },
+    )
+  if (error) throw error
+  await logEvent(p, 'team.subcontractor_updated', 'profile', profileId, input)
 }
 
 // TEAM-1: пишем ТОЛЬКО навыки для ИИ-распределения (profiles.skills — text) и заметку

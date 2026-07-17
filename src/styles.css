@@ -3870,6 +3870,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .skills-chip-remove:hover:not(:disabled) { color: var(--red); }
 .skills-add-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .skills-add-row input { flex: 1; margin: 0; }
+/* TEAM-DOSSIER-1: единая карточка-досье + реквизиты субподрядчика. */
+.worker-dossier-card label, .worker-subcontractor-card label { margin-top: 12px; }
+.dossier-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 16px; }
+.dossier-fields label { margin-top: 10px; }
+.dossier-fields input, .dossier-fields select { margin: 0; }
+.dossier-summary { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; margin: 14px 0 4px; padding-top: 12px; border-top: 1px solid var(--border); }
+.dossier-summary-item { display: flex; flex-direction: column; gap: 6px; }
 .add-shift-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .add-shift-row p { margin: 0; font-size: 12px; flex: 1 1 100%; }
 .worker-pay-period-card .pay-period-window { font-weight: 700; margin-bottom: 10px; }

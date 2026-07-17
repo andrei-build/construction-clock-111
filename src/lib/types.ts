@@ -21,6 +21,14 @@ export interface Profile {
   // видны клиенту; контакты и skills/skills_note остаются внутренними.
   avatar_url?: string | null
   public_bio?: string | null
+  // TEAM-DOSSIER-1: личное досье (migration 0059) — контактные/кадровые поля, редактирует manager+.
+  // dossier_notes («заметки владельца») ВИДНЫ ТОЛЬКО manager+ (работнику/самому не показываем).
+  phone?: string | null
+  email?: string | null
+  home_address?: string | null
+  emergency_contact?: string | null
+  hire_date?: string | null
+  dossier_notes?: string | null
   // A2: гибкие права (user_capabilities), где granted=true, подгружаются в auth.fetchProfile.
   // Пусто/undefined = прав нет. Читать через hasFinanceAccess и т.п., не по строке напрямую.
   capabilities?: string[] | null
@@ -241,6 +249,18 @@ export interface TimelineEventRow {
 export interface ProfileRate {
   profile_id: string
   hourly_rate: number | null
+}
+
+// TEAM-DOSSIER-1: реквизиты субподрядчика (таблица subcontractor_details). Видны/редактируются
+// только владельцем и только для profiles.role='subcontractor'. company_account_id опущен в v1
+// (таблицы company_accounts в схеме нет). org_id/metadata заполняет API, здесь — редактируемые поля.
+export interface SubcontractorDetails {
+  profile_id: string
+  trade: string | null
+  license_number: string | null
+  insurance_expires: string | null
+  payment_terms: string | null
+  notes: string | null
 }
 
 export interface PayPeriod {
