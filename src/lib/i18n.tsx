@@ -602,7 +602,10 @@ const dict: Record<string, Record<Lang, string>> = {
   worker_not_found: { ru: 'Работник не найден', en: 'Worker not found', es: 'Trabajador no encontrado' },
   profile_settings: { ru: 'Настройки профиля', en: 'Profile settings', es: 'Ajustes del perfil' },
   pin_login_allowed: { ru: 'Разрешить вход по PIN', en: 'Allow PIN login', es: 'Permitir entrada por PIN' },
-  pin_backend_pending: { ru: 'Нужна backend-колонка для управления PIN-доступом.', en: 'Backend column is needed to manage PIN access.', es: 'Se necesita una columna backend para gestionar el acceso por PIN.' },
+  // TEAM-PIN-UI: подсказка под тумблером + тосты вкл/выкл входа по PIN.
+  pin_login_hint: { ru: 'Работник входит в приложение по PIN. Выключите — вход по PIN будет запрещён.', en: 'The worker signs in with a PIN. Turn off to block PIN login.', es: 'El trabajador entra con un PIN. Desactívelo para bloquear el acceso por PIN.' },
+  pin_access_updated: { ru: 'Настройка входа по PIN сохранена', en: 'PIN login setting saved', es: 'Ajuste de entrada por PIN guardado' },
+  pin_access_failed: { ru: 'Не удалось изменить вход по PIN', en: 'Could not change PIN login', es: 'No se pudo cambiar la entrada por PIN' },
   hours_tiles: { ru: 'Часы', en: 'Hours', es: 'Horas' },
   daily_totals_7: { ru: 'Дневные итоги за 7 дней', en: 'Daily totals for 7 days', es: 'Totales diarios de 7 días' },
   over_11h: { ru: 'СВЕРХ 11Ч', en: 'OVER 11H', es: 'MÁS DE 11H' },
@@ -1464,11 +1467,18 @@ const dict: Record<string, Record<Lang, string>> = {
   worker_activated: { ru: 'Работник активирован', en: 'Worker activated', es: 'Trabajador activado' },
   worker_active_toggle_failed: { ru: 'Не удалось изменить статус', en: 'Could not change status', es: 'No se pudo cambiar el estado' },
   reset_pin: { ru: 'Сбросить PIN', en: 'Reset PIN', es: 'Restablecer PIN' },
-  reset_pin_backend_pending: {
-    ru: 'Сброс PIN требует поддержки на сервере',
-    en: 'PIN reset needs backend support',
-    es: 'Restablecer PIN requiere soporte del servidor',
+  // TEAM-PIN-UI: строки модалки «Сбросить PIN» + результаты вызова edge set-worker-pin.
+  reset_pin_modal_hint: {
+    ru: 'Введите новый PIN (4–8 цифр) или сгенерируйте его. Сообщите PIN работнику лично.',
+    en: 'Enter a new PIN (4–8 digits) or generate one. Share the PIN with the worker in person.',
+    es: 'Ingrese un nuevo PIN (4–8 dígitos) o genérelo. Comparta el PIN con el trabajador en persona.',
   },
+  new_pin_label: { ru: 'Новый PIN (4–8 цифр)', en: 'New PIN (4–8 digits)', es: 'Nuevo PIN (4–8 dígitos)' },
+  generate_pin: { ru: 'Сгенерировать', en: 'Generate', es: 'Generar' },
+  pin_updated: { ru: 'PIN обновлён', en: 'PIN updated', es: 'PIN actualizado' },
+  pin_invalid: { ru: 'PIN должен состоять из 4–8 цифр', en: 'PIN must be 4–8 digits', es: 'El PIN debe tener 4–8 dígitos' },
+  pin_taken_choose_another: { ru: 'Такой PIN уже занят, выберите другой', en: 'That PIN is already taken, choose another', es: 'Ese PIN ya está en uso, elija otro' },
+  pin_update_failed: { ru: 'Не удалось обновить PIN', en: 'Could not update PIN', es: 'No se pudo actualizar el PIN' },
 
   add_shift_manual: { ru: 'Добавить смену вручную', en: 'Add shift manually', es: 'Agregar turno manualmente' },
   add_shift_backend_pending: {
