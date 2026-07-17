@@ -25,6 +25,7 @@ import {
   subscribeToTaskChanges,
   subscribeToMyMessages,
   subscribeToLiveLocations,
+  getDeliveryProgress,
 } from '../lib/api'
 import { shiftState, workedMs, fmtHours, fmtClock } from '../lib/time'
 import { isManagerWrite } from '../lib/types'
@@ -39,7 +40,11 @@ import type {
   TimeEvent,
 } from '../lib/types'
 import VoiceMic from '../components/VoiceMic'
+import DeliveryInvoice from '../components/DeliveryInvoice'
 import { useEntityDrawer } from '../components/EntityDrawer'
+
+// DELIVERY-2: доставка = задача task_type 'delivery' | 'material' (накладная с позициями).
+const isDeliveryTask = (task: Task) => task.task_type === 'delivery' || task.task_type === 'material'
 // NAV-5: план дня (конструктор бригад/задач + рассылка плана) переехал сюда из убитой «Главной».
 // Самодостаточный блок (свой загрузчик, свой manager-гейт), рендерится как обычная секция ЦК.
 import PlanConstructor from './dashboard/PlanConstructor'
@@ -666,6 +671,18 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
   const [cardError, setCardError] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
+  // DELIVERY-2: прогресс позиций «N/M» по доставкам + открытая накладная (модал).
+  const [deliveryProgress, setDeliveryProgress] = useState<Record<string, { total: number; delivered: number }>>({})
+  const [invoiceTask, setInvoiceTask] = useState<Task | null>(null)
+
+  useEffect(() => {
+    const ids = tasks.filter(isDeliveryTask).map((tk) => tk.id)
+    if (ids.length === 0) { setDeliveryProgress({}); return }
+    let alive = true
+    getDeliveryProgress(ids).then((p) => { if (alive) setDeliveryProgress(p) }).catch(() => { /* карточка деградирует без прогресса */ })
+    return () => { alive = false }
+  }, [tasks])
+
   const assignableTeam = useMemo(() => team.filter((p) => p.id !== profile?.id && p.role !== 'client'), [team, profile?.id])
 
   const submit = async (e: React.FormEvent) => {
@@ -951,6 +968,10 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
                       <span className={`badge ${priorityTone(task.priority)}`}>{t(`task_priority_${task.priority}`)}</span>{' '}
                       <span className="task-title">{task.title}</span>
                       {task.requires_photo && <span className="badge amber" style={{ marginLeft: 6 }}>📷</span>}
+                      {isDeliveryTask(task) && <span className="badge delivery-badge" style={{ marginLeft: 6 }}>🚚 {t('delivery_badge')}</span>}
+                      {isDeliveryTask(task) && deliveryProgress[task.id]?.total ? (
+                        <span className="badge blue" style={{ marginLeft: 6 }}>{deliveryProgress[task.id].delivered}/{deliveryProgress[task.id].total} {t('delivery_positions')}</span>
+                      ) : null}
                     </div>
                   </div>
                   <div className="muted">
@@ -967,6 +988,11 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
                     >
                       {STATUS_OPTIONS.map((st) => <option key={st} value={st}>{t(`task_status_${st}`)}</option>)}
                     </select>
+                    {isDeliveryTask(task) && (
+                      <button className="btn ghost small delivery-open-btn" onClick={(e) => { e.stopPropagation(); setInvoiceTask(task) }}>
+                        🚚 {t('delivery_open')}
+                      </button>
+                    )}
                     <button className="btn ghost small" onClick={(e) => { e.stopPropagation(); toggleExpand(task) }}>
                       {expandedId === task.id ? t('tasks_hide_details') : t('tasks_details')}
                     </button>
@@ -978,6 +1004,16 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
           )}
         </div>
       </div>
+
+      {invoiceTask && (
+        <DeliveryInvoice
+          task={invoiceTask}
+          profile={profile}
+          team={team}
+          onClose={() => setInvoiceTask(null)}
+          onProgressChange={(taskId, p) => setDeliveryProgress((cur) => ({ ...cur, [taskId]: p }))}
+        />
+      )}
     </section>
   )
 }

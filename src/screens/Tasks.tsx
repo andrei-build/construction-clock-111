@@ -5,11 +5,16 @@ import {
   getAllTasks, getProjects, getTeam, createTask, createMaterialRequest,
   updateTaskStatus, softDeleteTask, markTaskRead,
   uploadTaskAttachment, getTaskAttachments, mediaUrl,
-  validateUpload, uploadErrorCode,
+  validateUpload, uploadErrorCode, getDeliveryProgress,
 } from '../lib/api'
 import { isManagerRole, isManagerWrite } from '../lib/types'
 import type { Profile, Project, Task, TaskAttachment } from '../lib/types'
 import VoiceMic from '../components/VoiceMic'
+import DeliveryInvoice from '../components/DeliveryInvoice'
+
+// DELIVERY-2: доставка = задача task_type 'delivery' | 'material' (накладная с позициями).
+// «Задачи» и «Доставки» — РАЗНЫЕ вкладки (закон Андрея): Задачи = work; Доставки = delivery+material.
+const isDeliveryTask = (task: Task) => task.task_type === 'delivery' || task.task_type === 'material'
 
 // Глобальный экран «Задачи» — паритет с «Доской задач организации» Check Time (TASKS-2):
 // создание с голосовым вводом + вложения, дропдаун статуса, доказательства выполнения,
@@ -68,6 +73,12 @@ export default function Tasks() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS)
+  // DELIVERY-2: верхний переключатель «Задачи / Доставки» — два разных списка.
+  const [view, setView] = useState<'tasks' | 'deliveries'>('tasks')
+  // Прогресс позиций доставок «N/M» по task_id (delivered/total). Живёт для delivery/material задач.
+  const [progress, setProgress] = useState<Record<string, { total: number; delivered: number }>>({})
+  // Открытая накладная (модал позиций) — null, когда закрыта.
+  const [invoiceTask, setInvoiceTask] = useState<Task | null>(null)
 
   // Форма создания (только менеджер — RLS tasks_insert требует is_manager_write).
   const canCreate = profile ? isManagerWrite(profile.role) : false
@@ -113,12 +124,39 @@ export default function Tasks() {
       setTasks(taskRows)
       setProjects(projectRows)
       setTeam(teamRows)
+      // Прогресс позиций только для доставок/материалов (у остальных задач позиций нет).
+      const deliveryIds = taskRows.filter(isDeliveryTask).map((tk) => tk.id)
+      try { setProgress(await getDeliveryProgress(deliveryIds)) } catch { /* карточка деградирует без прогресса */ }
     } catch {
       setLoadError(true)
     } finally {
       setLoading(false)
     }
   }
+
+  // Живой прогресс из открытой накладной — обновляем плитку «N/M» без перезагрузки.
+  const handleProgressChange = (taskId: string, p: { total: number; delivered: number }) => {
+    setProgress((cur) => ({ ...cur, [taskId]: p }))
+  }
+
+  const progressBadge = (task: Task) => {
+    if (!isDeliveryTask(task)) return null
+    const p = progress[task.id]
+    if (!p || p.total === 0) return null
+    return <span className="badge blue" style={{ marginLeft: 6 }}>{p.delivered}/{p.total} {t('delivery_positions')}</span>
+  }
+
+  // Явный бейдж-заголовок «🚚 ДОСТАВКА» для задач-накладных (delivery/material) — их отличие
+  // от обычных задач видно сразу в списке (закон Андрея: доставки — отдельная вещь).
+  const deliveryBadge = (task: Task) =>
+    isDeliveryTask(task) ? <span className="badge delivery-badge" style={{ marginLeft: 6 }}>🚚 {t('delivery_badge')}</span> : null
+
+  const invoiceButton = (task: Task) =>
+    isDeliveryTask(task) ? (
+      <button className="btn ghost small delivery-open-btn" onClick={(e) => { e.stopPropagation(); setInvoiceTask(task) }}>
+        🚚 {t('delivery_open')}
+      </button>
+    ) : null
 
   useEffect(() => { load() }, [profile?.id])
 
@@ -137,9 +175,20 @@ export default function Tasks() {
   // Роль-гейт (паритет со списками поля): менеджер/супервайзер видят все задачи,
   // работник — только назначенные ему. RLS уже держит org-скоуп и прячет чужие орг-данные.
   const visibleTasks = useMemo(() => {
-    if (isManager) return tasks
+    // DELIVERY-2: базовое расщепление по вкладке — Задачи=work, Доставки=delivery+material.
+    const byView = tasks.filter((task) => (view === 'deliveries' ? isDeliveryTask(task) : task.task_type === 'work'))
+    if (isManager) return byView
     if (!profile) return []
-    return tasks.filter((task) => task.assigned_to === profile.id)
+    return byView.filter((task) => task.assigned_to === profile.id)
+  }, [tasks, isManager, profile, view])
+
+  // Счётчики для табов — сколько задач/доставок доступно роли (без учёта прочих фильтров).
+  const viewCounts = useMemo(() => {
+    const base = isManager ? tasks : (profile ? tasks.filter((tk) => tk.assigned_to === profile.id) : [])
+    return {
+      tasks: base.filter((tk) => tk.task_type === 'work').length,
+      deliveries: base.filter(isDeliveryTask).length,
+    }
   }, [tasks, isManager, profile])
 
   const filtered = useMemo(() => {
@@ -436,6 +485,26 @@ export default function Tasks() {
     <div className="screen tasks-screen">
       <h1>✅ {t('tasks_all_title')}</h1>
 
+      {/* DELIVERY-2: переключатель «Задачи / Доставки» — два разных списка (закон Андрея). */}
+      <div className="task-view-tabs" role="tablist">
+        <button
+          role="tab"
+          aria-selected={view === 'tasks'}
+          className={`btn small ${view === 'tasks' ? '' : 'ghost'}`}
+          onClick={() => { setView('tasks'); setFilters((f) => ({ ...f, type: 'all' })) }}
+        >
+          🔨 {t('tasks_tab_tasks')} ({viewCounts.tasks})
+        </button>
+        <button
+          role="tab"
+          aria-selected={view === 'deliveries'}
+          className={`btn small ${view === 'deliveries' ? '' : 'ghost'}`}
+          onClick={() => { setView('deliveries'); setFilters((f) => ({ ...f, type: 'all' })) }}
+        >
+          🚚 {t('tasks_tab_deliveries')} ({viewCounts.deliveries})
+        </button>
+      </div>
+
       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
         {canCreate && !adding && (
           <button className="btn ghost small" onClick={() => setAdding(true)}>+ {t('tasks_new')}</button>
@@ -562,13 +631,15 @@ export default function Tasks() {
               {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
-          <div>
-            <label>{t('col_type')}</label>
-            <select value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value }))}>
-              <option value="all">{t('filter_all')}</option>
-              {TASK_TYPES.map((tp) => <option key={tp} value={tp}>{t(`task_type_${tp}`)}</option>)}
-            </select>
-          </div>
+          {view === 'deliveries' && (
+            <div>
+              <label>{t('col_type')}</label>
+              <select value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value }))}>
+                <option value="all">{t('filter_all')}</option>
+                {(['delivery', 'material'] as Task['task_type'][]).map((tp) => <option key={tp} value={tp}>{t(`task_type_${tp}`)}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label>{t('col_status')}</label>
             <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
@@ -622,6 +693,9 @@ export default function Tasks() {
                       <span className="task-caret">{expandedId === task.id ? '▾' : '▸'}</span>{' '}
                       <span className="task-title">{task.title}</span>
                       {task.requires_photo && <span className="badge amber" style={{ marginLeft: 6 }}>📷</span>}
+                      {deliveryBadge(task)}
+                      {progressBadge(task)}
+                      {isDeliveryTask(task) && <div style={{ marginTop: 6 }}>{invoiceButton(task)}</div>}
                     </td>
                     <td>{task.project_id ? projectName.get(task.project_id) ?? '—' : t('tasks_general')}</td>
                     <td>{typeIcon(task.task_type)} {t(`task_type_${task.task_type}`)}</td>
@@ -652,6 +726,8 @@ export default function Tasks() {
                   <span className={`badge ${priorityTone(task.priority)}`}>{typeIcon(task.task_type)}</span>{' '}
                   <span className="task-title">{task.title}</span>
                   {task.requires_photo && <span className="badge amber" style={{ marginLeft: 6 }}>📷</span>}
+                  {deliveryBadge(task)}
+                  {progressBadge(task)}
                 </div>
               </div>
               <div className="muted task-card-meta">
@@ -661,6 +737,7 @@ export default function Tasks() {
               </div>
               <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 {statusSelect(task)}
+                {invoiceButton(task)}
                 <button className="btn ghost small" onClick={() => toggleExpand(task)}>
                   {expandedId === task.id ? t('tasks_hide_details') : t('tasks_details')}
                 </button>
@@ -669,6 +746,16 @@ export default function Tasks() {
             </div>
           ))}
         </div>
+      )}
+
+      {invoiceTask && (
+        <DeliveryInvoice
+          task={invoiceTask}
+          profile={profile}
+          team={team}
+          onClose={() => setInvoiceTask(null)}
+          onProgressChange={handleProgressChange}
+        />
       )}
     </div>
   )

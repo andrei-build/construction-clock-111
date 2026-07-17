@@ -4218,3 +4218,53 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .manager-alert-reminder-body { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .manager-alert-reminders { border-bottom: 1px solid var(--line); }
+
+/* ── DELIVERY-2: доставки как накладная с позициями (delivery_items) ──────────────── */
+/* Переключатель «Задачи / Доставки» над списком. */
+.task-view-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
+.task-view-tabs .btn { width: auto; }
+
+/* Бейдж-заголовок «🚚 ДОСТАВКА» + кнопка открытия накладной в списках/КЦ. */
+.badge.delivery-badge { background: rgba(105,231,255,.15); color: var(--cyan); }
+.delivery-open-btn { width: auto; }
+
+/* Модал-накладная: затемнённый фон (переиспользует .confirm-backdrop) + прокручиваемая карточка. */
+.delivery-backdrop { z-index: 70; }
+.delivery-invoice {
+  width: min(640px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+}
+.delivery-sub { margin-top: 2px; overflow-wrap: anywhere; }
+.delivery-progress { font-size: 13px; }
+
+.delivery-items { display: flex; flex-direction: column; gap: 8px; }
+.delivery-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel2);
+}
+.delivery-item-main { flex: 1; min-width: 180px; }
+.delivery-item-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.delivery-item-details { margin-top: 2px; overflow-wrap: anywhere; }
+.delivery-item-meta { margin-top: 4px; font-size: 12px; }
+.delivery-item-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.delivery-item-actions .btn { width: auto; }
+.delivery-del { padding: 4px 8px; }
+
+/* Построчный ввод (как Check Time): название + детали + «+». */
+.delivery-add-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+.delivery-add-title { flex: 2; min-width: 140px; margin-bottom: 0; }
+.delivery-add-details { flex: 1; min-width: 120px; margin-bottom: 0; }
+.delivery-add-btn { width: auto; flex: 0 0 auto; font-size: 20px; line-height: 1; padding: 10px 16px; }
+.delivery-add-hint { margin: 2px 0 0; font-size: 12px; }
