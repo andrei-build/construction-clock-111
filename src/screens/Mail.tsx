@@ -62,6 +62,21 @@ function isUniqueViolation(error: unknown): boolean {
   return String((error as { code?: string | null } | null)?.code ?? '') === '23505'
 }
 
+// MAIL-4-UI: домен из адреса (часть после последнего '@'); '' если '@' нет.
+function domainOf(addr: string): string {
+  const at = addr.lastIndexOf('@')
+  return at >= 0 ? addr.slice(at + 1).trim() : ''
+}
+
+// MAIL-4-UI: клиентский предикат «письмо скрыто». blocks — нормализованные (trim+lower) entry
+// block-записей: точный адрес ('john@x.com') ИЛИ домен в форме '@x.com'. Письмо скрыто, если
+// from_addr точно равен адресной block-записи ИЛИ заканчивается на '@domain' (регистронезависимо).
+function isBlockedAddr(fromAddr: string | null, blocks: string[]): boolean {
+  const addr = (fromAddr ?? '').trim().toLowerCase()
+  if (!addr) return false
+  return blocks.some((b) => (b.startsWith('@') ? addr.endsWith(b) : addr === b))
+}
+
 function fmtRowDate(iso: string | null): string {
   if (!iso) return ''
   const d = new Date(iso)
@@ -103,6 +118,8 @@ export default function Mail() {
   const [alEntry, setAlEntry] = useState('')
   const [alNote, setAlNote] = useState('')
   const [alSaving, setAlSaving] = useState(false)
+  // MAIL-4-UI: мини-меню «Скрыть навсегда» на открытом письме (owner-only).
+  const [hideMenuOpen, setHideMenuOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -121,22 +138,43 @@ export default function Mail() {
   const load = useCallback(async () => {
     if (!isAdminOrOwner) return
     setLoading(true)
-    const [accs, msgs] = await Promise.all([getMailAccounts(), getMailMessages()])
+    // MAIL-4-UI: block-список тянем сразу (owner-only) — он нужен клиентскому фильтру ленты, а не
+    // только модалу. Не-владельцу RLS отдаст [] (мягко); ему фильтр скрытых и не адресован.
+    const [accs, msgs, al] = await Promise.all([
+      getMailAccounts(),
+      getMailMessages(),
+      isOwner ? getMailAllowlist() : Promise.resolve([] as MailAllowlistEntry[]),
+    ])
     setAccounts(accs)
     setMessages(msgs)
+    setAllowlist(al)
     setActiveId((prev) => (prev && accs.some((a) => a.id === prev) ? prev : accs[0]?.id ?? null))
     setLoading(false)
-  }, [isAdminOrOwner])
+  }, [isAdminOrOwner, isOwner])
 
   useEffect(() => { void load() }, [load])
+  // MAIL-4-UI: закрываем мини-меню «Скрыть навсегда» при смене/закрытии открытого письма.
+  useEffect(() => { setHideMenuOpen(false) }, [openMsg])
 
   const activeAccount = useMemo(
     () => accounts.find((a) => a.id === activeId) ?? null,
     [accounts, activeId],
   )
+  // MAIL-4-UI: записи белого/чёрного списков делим по kind. allow — секция белого списка (MAIL-3),
+  // block — секция «Скрытые» + источник клиентского фильтра ленты. Неизвестный kind считаем allow.
+  const allowEntries = useMemo(() => allowlist.filter((a) => a.kind !== 'block'), [allowlist])
+  const blockEntries = useMemo(() => allowlist.filter((a) => a.kind === 'block'), [allowlist])
+  // Нормализованные block-entry для предиката (trim+lower, пустые отброшены).
+  const blockKeys = useMemo(
+    () => blockEntries.map((b) => b.entry.trim().toLowerCase()).filter(Boolean),
+    [blockEntries],
+  )
   const activeMessages = useMemo(
-    () => (activeId ? messages.filter((m) => m.account_id === activeId) : []),
-    [messages, activeId],
+    () =>
+      activeId
+        ? messages.filter((m) => m.account_id === activeId && !isBlockedAddr(m.from_addr, blockKeys))
+        : [],
+    [messages, activeId, blockKeys],
   )
   const unreadByAccount = useMemo(() => {
     // MAIL-2-UI: непрочитанные считаем ТОЛЬКО по входящим (direction='in') — исходящие письма
@@ -333,6 +371,29 @@ export default function Mail() {
     }
   }
 
+  // MAIL-4-UI: «Скрыть навсегда» с открытого письма. scope='sender' → entry=from_addr; 'domain' →
+  // entry='@'+домен. Вставляем block-запись (kind='block'). НЕ удаляем письмо из mail_messages
+  // (у него нет RLS DELETE — тихо не сработает): после insert рефетчим block-список, и клиентский
+  // фильтр ленты сам убирает письма отправителя/домена. Открытое письмо закрываем (оно скрыто).
+  const hideSender = async (m: MailMessage, scope: 'sender' | 'domain') => {
+    const orgId = ownerOrgId()
+    const from = (m.from_addr ?? '').trim()
+    if (!orgId || !from) return
+    const domain = domainOf(from)
+    const entry = scope === 'domain' ? (domain ? `@${domain}` : '') : from
+    if (!entry) return
+    setHideMenuOpen(false)
+    try {
+      await addMailAllowlist({ org_id: orgId, entry, kind: 'block', note: (m.from_name ?? '').trim() || null })
+      flashToast(scope === 'domain' ? t('mail_domain_hidden') : t('mail_sender_hidden'))
+      await loadAllowlist() // рефетч block-списка → лента перерисуется без этих писем
+      setOpenMsg(null)
+    } catch (e) {
+      if (isUniqueViolation(e)) flashToast(t('mail_already_hidden'))
+      else flashToast(t('mail_hide_failed'))
+    }
+  }
+
   // Форма «Добавить» в модале белого списка: адрес-или-домен + note (опц.).
   const submitAllowlist = async () => {
     const orgId = ownerOrgId()
@@ -366,6 +427,13 @@ export default function Mail() {
   const syncLabel = (a: MailAccount): string => {
     if (!a.last_sync_at) return t('mail_never_synced')
     return t('mail_last_sync').replace('{time}', fmtTime(a.last_sync_at))
+  }
+
+  // MAIL-4-UI: подпись бейджа режима фильтра ящика — читаем из filter_mode (не из work_only).
+  const filterModeLabel = (a: MailAccount): string => {
+    if (a.filter_mode === 'smart') return t('mail_filter_mode_smart')
+    if (a.filter_mode === 'allowlist') return t('mail_filter_mode_allowlist')
+    return t('mail_filter_mode_off')
   }
 
   return (
@@ -415,9 +483,12 @@ export default function Mail() {
           {activeAccount && (
             <div className="mail-meta muted">
               {syncLabel(activeAccount)}
-              {activeAccount.work_only && (
-                <span className="badge mail-work-badge">🔒 {t('mail_work_filter_on')}</span>
-              )}
+              {/* MAIL-4-UI: единый бейдж режима фильтра из filter_mode (smart/allowlist/off) —
+                  заменяет прежний work_only-бейдж, чтобы не показывать ложный «фильтр включён». */}
+              <span className={`badge mail-filter-badge mode-${activeAccount.filter_mode}`}>
+                {activeAccount.filter_mode !== 'off' && '🔒 '}
+                {filterModeLabel(activeAccount)}
+              </span>
             </div>
           )}
 
@@ -468,6 +539,40 @@ export default function Mail() {
                   >
                     {t('mail_add_to_allowlist')}
                   </button>
+                )}
+                {isOwner && (
+                  <div className="mail-hide-wrap">
+                    <button
+                      type="button"
+                      className="btn small"
+                      onClick={() => setHideMenuOpen((v) => !v)}
+                      disabled={!(openMsg.from_addr && openMsg.from_addr.trim())}
+                      aria-expanded={hideMenuOpen}
+                    >
+                      {t('mail_hide_forever')}
+                    </button>
+                    {hideMenuOpen && (
+                      <div className="mail-hide-menu" role="menu">
+                        <button
+                          type="button"
+                          className="btn ghost small"
+                          role="menuitem"
+                          onClick={() => { void hideSender(openMsg, 'sender') }}
+                        >
+                          {t('mail_hide_sender')}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn ghost small"
+                          role="menuitem"
+                          onClick={() => { void hideSender(openMsg, 'domain') }}
+                          disabled={!domainOf((openMsg.from_addr ?? '').trim())}
+                        >
+                          {t('mail_hide_domain')}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -616,24 +721,54 @@ export default function Mail() {
 
             {allowlistLoading ? (
               <div className="spinner">{t('mail_allowlist_loading')}</div>
-            ) : allowlist.length === 0 ? (
-              <div className="card muted">{t('mail_allowlist_empty')}</div>
             ) : (
-              <ul className="mail-allowlist-list">
-                {allowlist.map((a) => (
-                  <li key={a.id} className="mail-allowlist-item">
-                    <span className="mail-allowlist-entry">{a.entry}</span>
-                    {a.note && <span className="mail-allowlist-note muted">{a.note}</span>}
-                    <button
-                      type="button"
-                      className="btn ghost small mail-allowlist-del"
-                      onClick={() => { void removeAllowlist(a.id) }}
-                    >
-                      {t('mail_allowlist_delete')}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <>
+                {/* Секция белого списка (kind='allow'). */}
+                {allowEntries.length === 0 ? (
+                  <div className="card muted">{t('mail_allowlist_empty')}</div>
+                ) : (
+                  <ul className="mail-allowlist-list">
+                    {allowEntries.map((a) => (
+                      <li key={a.id} className="mail-allowlist-item">
+                        <span className="mail-allowlist-entry">{a.entry}</span>
+                        {a.note && <span className="mail-allowlist-note muted">{a.note}</span>}
+                        <button
+                          type="button"
+                          className="btn ghost small mail-allowlist-del"
+                          onClick={() => { void removeAllowlist(a.id) }}
+                        >
+                          {t('mail_allowlist_delete')}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {/* MAIL-4-UI: секция «Скрытые» (kind='block'). Удаление block-записи → отправитель
+                    снова виден в ленте (removeAllowlist рефетчит state, лента перерисуется). */}
+                <div className="mail-hidden-section">
+                  <div className="item-title mail-hidden-title">{t('mail_hidden_section')}</div>
+                  {blockEntries.length === 0 ? (
+                    <div className="card muted">{t('mail_hidden_empty')}</div>
+                  ) : (
+                    <ul className="mail-allowlist-list">
+                      {blockEntries.map((a) => (
+                        <li key={a.id} className="mail-allowlist-item">
+                          <span className="mail-allowlist-entry">{a.entry}</span>
+                          {a.note && <span className="mail-allowlist-note muted">{a.note}</span>}
+                          <button
+                            type="button"
+                            className="btn ghost small mail-allowlist-del"
+                            onClick={() => { void removeAllowlist(a.id) }}
+                          >
+                            {t('mail_allowlist_delete')}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </>
             )}
 
             <div className="muted mail-allowlist-hint">{t('mail_allowlist_hint')}</div>

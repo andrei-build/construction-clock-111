@@ -4006,3 +4006,17 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .mail-allowlist-note { font-size: 12px; }
 .mail-allowlist-del { margin-left: auto; flex: none; }
 .mail-allowlist-hint { font-size: 12px; margin-top: 12px; }
+
+/* MAIL-4-UI: бейдж режима фильтра, «скрыть навсегда» мини-меню, секция «Скрытые». */
+.mail-filter-badge { margin-left: 8px; background: rgba(48,211,154,.15); color: var(--green); }
+.mail-filter-badge.mode-off { background: var(--elevated); color: var(--muted); }
+.mail-hide-wrap { position: relative; display: inline-block; }
+.mail-hide-menu {
+  position: absolute; z-index: 5; top: calc(100% + 4px); left: 0;
+  display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); box-shadow: 0 4px 16px rgba(0,0,0,.2);
+}
+.mail-hide-menu .btn { white-space: nowrap; text-align: left; }
+.mail-hidden-section { margin-top: 16px; }
+.mail-hidden-title { font-size: 14px; margin-bottom: 8px; }

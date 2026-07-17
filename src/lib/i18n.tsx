@@ -1775,6 +1775,19 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_allowlist_delete_failed: { ru: 'Не удалось удалить', en: 'Could not remove', es: 'No se pudo eliminar' },
   mail_allowlist_hint: { ru: 'Клиенты из базы попадают в приложение автоматически', en: 'Clients from your database arrive in the app automatically', es: 'Los clientes de tu base de datos llegan a la app automáticamente' },
   mail_work_filter_on: { ru: 'Рабочий фильтр включён', en: 'Work filter on', es: 'Filtro de trabajo activado' },
+  // MAIL-4-UI: «умный фильтр» — «скрыть навсегда» (чёрный список) + бейдж режима фильтра.
+  mail_hide_forever: { ru: 'Скрыть навсегда', en: 'Hide forever', es: 'Ocultar para siempre' },
+  mail_hide_sender: { ru: 'Этого отправителя', en: 'This sender', es: 'Este remitente' },
+  mail_hide_domain: { ru: 'Весь домен', en: 'Entire domain', es: 'Todo el dominio' },
+  mail_sender_hidden: { ru: 'Отправитель скрыт', en: 'Sender hidden', es: 'Remitente ocultado' },
+  mail_domain_hidden: { ru: 'Домен скрыт', en: 'Domain hidden', es: 'Dominio ocultado' },
+  mail_already_hidden: { ru: 'Уже скрыт', en: 'Already hidden', es: 'Ya está oculto' },
+  mail_hide_failed: { ru: 'Не удалось скрыть', en: 'Could not hide', es: 'No se pudo ocultar' },
+  mail_hidden_section: { ru: 'Скрытые', en: 'Hidden', es: 'Ocultados' },
+  mail_hidden_empty: { ru: 'Нет скрытых отправителей', en: 'No hidden senders', es: 'Sin remitentes ocultos' },
+  mail_filter_mode_smart: { ru: 'Умный фильтр', en: 'Smart filter', es: 'Filtro inteligente' },
+  mail_filter_mode_allowlist: { ru: 'Белый список', en: 'Allowlist', es: 'Lista blanca' },
+  mail_filter_mode_off: { ru: 'Без фильтра', en: 'No filter', es: 'Sin filtro' },
 }
 
 interface I18n {
