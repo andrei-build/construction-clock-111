@@ -1871,6 +1871,14 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_filter_mode_smart: { ru: 'Умный фильтр', en: 'Smart filter', es: 'Filtro inteligente' },
   mail_filter_mode_allowlist: { ru: 'Белый список', en: 'Allowlist', es: 'Lista blanca' },
   mail_filter_mode_off: { ru: 'Без фильтра', en: 'No filter', es: 'Sin filtro' },
+  // MAIL-5-UI: треды (цепочки писем), тело письма (HTML/картинки), вложения.
+  mail_thread_count: { ru: '{n} писем', en: '{n} messages', es: '{n} mensajes' },
+  mail_thread_subject: { ru: 'Цепочка', en: 'Thread', es: 'Cadena' },
+  mail_show_images: { ru: 'Показать изображения', en: 'Show images', es: 'Mostrar imágenes' },
+  mail_images_hidden: { ru: 'Изображения скрыты для приватности', en: 'Images hidden for privacy', es: 'Imágenes ocultas por privacidad' },
+  mail_attachments: { ru: 'Вложения', en: 'Attachments', es: 'Adjuntos' },
+  mail_attachment_photo: { ru: 'фото', en: 'photo', es: 'foto' },
+  mail_attachment_later: { ru: 'файл появится позже', en: 'file will appear later', es: 'el archivo aparecerá más tarde' },
   // AI-1-UI: «строка-командир» — AI-ассистент владельца (кнопка «Спроси» + Ctrl+K → оверлей).
   ai_ask: { ru: 'Спроси', en: 'Ask', es: 'Pregunta' },
   ai_title: { ru: 'Ассистент владельца', en: 'Owner assistant', es: 'Asistente del dueño' },

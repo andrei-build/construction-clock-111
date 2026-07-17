@@ -8,12 +8,13 @@ import {
   emitMailUnreadChanged,
   getMailAccounts,
   getMailAllowlist,
+  getMailAttachments,
   getMailMessages,
   markMailSeen,
   sendMail,
   triggerMailSync,
 } from '../lib/api'
-import type { MailAccount, MailAllowlistEntry, MailMessage } from '../lib/api/mail'
+import type { MailAccount, MailAllowlistEntry, MailAttachment, MailMessage } from '../lib/api/mail'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { useLiveRefresh } from '../lib/useLiveRefresh'
@@ -99,6 +100,104 @@ function fmtFullDate(iso: string | null): string {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+// MAIL-5-UI: размер вложения человекочитаемо (B/KB/MB). null/некорректный → ''.
+function fmtBytes(n: number | null): string {
+  if (n === null || !Number.isFinite(n) || n < 0) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+// MAIL-5-UI: ТРЕДЫ. Ключ цепочки письма: thread_key (если есть), иначе одиночная цепочка по id —
+// письма без thread_key показываем как тред из одного письма (fallback), не теряем их.
+function threadKeyOf(m: MailMessage): string {
+  const k = (m.thread_key ?? '').trim()
+  return k || `id:${m.id}`
+}
+
+// Дата письма для сортировки внутри треда (sent_at приоритетно, иначе created_at).
+function msgTime(m: MailMessage): number {
+  const t = Date.parse(m.sent_at ?? m.created_at ?? '')
+  return Number.isNaN(t) ? 0 : t
+}
+
+// Цепочка писем (одна строка в списке): messages в порядке от API (свежие сверху), last — самое
+// свежее письмо цепочки (для строки списка), unread — есть ли непрочитанное входящее в цепочке.
+interface MailThread {
+  key: string
+  messages: MailMessage[]
+  last: MailMessage
+  unread: boolean
+}
+
+// MAIL-5-UI: КОНСЕРВАТИВНЫЙ САНИТАЙЗЕР HTML-тела письма — без npm-зависимостей. Парсим HTML в
+// ИНЕРТНЫЙ документ через DOMParser (скрипты НЕ выполняются, ресурсы НЕ грузятся до вставки в DOM),
+// затем удаляем опасные узлы/атрибуты и возвращаем очищенный innerHTML для dangerouslySetInnerHTML.
+// Вырезаем: <script>/<style>/<iframe>/<object>/<embed> (+ <link>/<meta>/<base>/<form>/<noscript>);
+// все on*-атрибуты; javascript:-URL в href/src/action. Картинки по умолчанию НЕ грузим (приватность):
+// реальный src уходит в data-src, реальный src подставляется только когда showImages=true (кнопка
+// «Показать изображения»). Ссылки открываем безопасно (target=_blank, rel=noopener).
+const MAIL_BLOCKED_TAGS = new Set([
+  'script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'noscript', 'title',
+])
+const JS_URL_RE = /^\s*javascript:/i
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'background', 'poster'])
+
+function sanitizeMailHtml(html: string, showImages: boolean): string {
+  if (typeof window === 'undefined' || typeof window.DOMParser === 'undefined') return ''
+  let doc: Document
+  try {
+    doc = new DOMParser().parseFromString(html, 'text/html')
+  } catch {
+    return ''
+  }
+  const walk = (node: Element): void => {
+    for (const el of Array.from(node.children)) {
+      const tag = el.tagName.toLowerCase()
+      if (MAIL_BLOCKED_TAGS.has(tag)) {
+        el.remove()
+        continue
+      }
+      for (const attr of Array.from(el.attributes)) {
+        const name = attr.name.toLowerCase()
+        if (name.startsWith('on')) {
+          el.removeAttribute(attr.name)
+          continue
+        }
+        if (URL_ATTRS.has(name) && JS_URL_RE.test(attr.value)) {
+          el.removeAttribute(attr.name)
+          continue
+        }
+        if (name === 'style' && /expression\s*\(|javascript:/i.test(attr.value)) {
+          el.removeAttribute(attr.name)
+        }
+      }
+      if (tag === 'img') {
+        const raw = el.getAttribute('src') ?? el.getAttribute('data-src') ?? ''
+        const safe = JS_URL_RE.test(raw) ? '' : raw
+        el.removeAttribute('src')
+        el.removeAttribute('srcset') // адаптивные источники тоже гейтим
+        if (safe) el.setAttribute('data-src', safe)
+        else el.removeAttribute('data-src')
+        if (showImages && safe) el.setAttribute('src', safe)
+        el.setAttribute('data-mail-img', '1')
+      }
+      if (tag === 'a') {
+        el.setAttribute('target', '_blank')
+        el.setAttribute('rel', 'noopener noreferrer nofollow')
+      }
+      walk(el)
+    }
+  }
+  walk(doc.body)
+  return doc.body.innerHTML
+}
+
+// Есть ли в HTML-теле картинки (решаем, показывать ли кнопку «Показать изображения»).
+function htmlHasImages(html: string | null): boolean {
+  return !!html && /<img[\s/>]/i.test(html)
+}
+
 export default function Mail() {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
@@ -109,7 +208,12 @@ export default function Mail() {
   const [accounts, setAccounts] = useState<MailAccount[]>([])
   const [messages, setMessages] = useState<MailMessage[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [openMsg, setOpenMsg] = useState<MailMessage | null>(null)
+  // MAIL-5-UI: открыт ТРЕД (по thread_key/fallback-id), а не одно письмо — раскрываем цепочку целиком.
+  const [openKey, setOpenKey] = useState<string | null>(null)
+  // Вложения раскрытого треда: message_id → строки mail_attachments (грузим по требованию на раскрытие).
+  const [attachmentsByMsg, setAttachmentsByMsg] = useState<Record<string, MailAttachment[]>>({})
+  // Письма, для которых пользователь нажал «Показать изображения» (по умолчанию картинки не грузим).
+  const [imagesShownIds, setImagesShownIds] = useState<Set<string>>(() => new Set())
   const [compose, setCompose] = useState<ComposeState | null>(null)
   const [sending, setSending] = useState(false)
   // MAIL-3-UI: модал «Белый список» + его список/форма (owner-only).
@@ -119,8 +223,8 @@ export default function Mail() {
   const [alEntry, setAlEntry] = useState('')
   const [alNote, setAlNote] = useState('')
   const [alSaving, setAlSaving] = useState(false)
-  // MAIL-4-UI: мини-меню «Скрыть навсегда» на открытом письме (owner-only).
-  const [hideMenuOpen, setHideMenuOpen] = useState(false)
+  // MAIL-4-UI: мини-меню «Скрыть навсегда» — открыто для конкретного письма треда (owner-only).
+  const [hideMenuMsgId, setHideMenuMsgId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -161,8 +265,9 @@ export default function Mail() {
   // LIVE-REFRESH-1: дашборд «Почта» — мягкий 60с-поллинг (только пока вкладка видима) + рефетч на
   // возврат/фокус. Почта приходит по mail-sync без realtime-канала, поэтому поллинг здесь основной.
   useLiveRefresh(() => { void load(true).catch(() => {}) }, 60000)
-  // MAIL-4-UI: закрываем мини-меню «Скрыть навсегда» при смене/закрытии открытого письма.
-  useEffect(() => { setHideMenuOpen(false) }, [openMsg])
+  // MAIL-5-UI: при смене/закрытии открытого треда — закрываем мини-меню «Скрыть навсегда» и
+  // сбрасываем «показанные картинки» (следующий тред снова открывается с приватным гейтом картинок).
+  useEffect(() => { setHideMenuMsgId(null); setImagesShownIds(new Set()) }, [openKey])
 
   const activeAccount = useMemo(
     () => accounts.find((a) => a.id === activeId) ?? null,
@@ -184,6 +289,39 @@ export default function Mail() {
         : [],
     [messages, activeId, blockKeys],
   )
+  // MAIL-5-UI: группируем письма активного ящика в ТРЕДЫ по threadKeyOf. activeMessages уже
+  // отсортированы свежие-сверху (из API), поэтому первый встреченный ключ = самый свежий тред, а
+  // messages[0] внутри треда = самое свежее письмо — порядок цепочек в списке сохраняется (по дате
+  // последнего письма, свежие сверху), как требует закон Андрея.
+  const threads = useMemo<MailThread[]>(() => {
+    const map = new Map<string, MailMessage[]>()
+    const order: string[] = []
+    for (const m of activeMessages) {
+      const k = threadKeyOf(m)
+      const bucket = map.get(k)
+      if (bucket) bucket.push(m)
+      else { map.set(k, [m]); order.push(k) }
+    }
+    return order.map((k) => {
+      const msgs = map.get(k) as MailMessage[]
+      return {
+        key: k,
+        messages: msgs,
+        last: msgs[0],
+        unread: msgs.some((m) => m.direction !== 'out' && !m.seen),
+      }
+    })
+  }, [activeMessages])
+  // Открытый тред (если его письма не отфильтровались, например после «Скрыть навсегда»). Раскрытие —
+  // от старого к новому (asc по дате), как читается переписка.
+  const activeThread = useMemo(
+    () => (openKey ? threads.find((th) => th.key === openKey) ?? null : null),
+    [openKey, threads],
+  )
+  const activeThreadMessages = useMemo(
+    () => (activeThread ? [...activeThread.messages].sort((a, b) => msgTime(a) - msgTime(b)) : []),
+    [activeThread],
+  )
   const unreadByAccount = useMemo(() => {
     // MAIL-2-UI: непрочитанные считаем ТОЛЬКО по входящим (direction='in') — исходящие письма
     // (seen=true) не должны раздувать бейдж вкладки. Совпадает с фильтром getMailUnreadCount.
@@ -204,18 +342,33 @@ export default function Mail() {
     )
   }
 
-  const openMessage = async (m: MailMessage) => {
-    setOpenMsg(m)
-    if (!m.seen) {
-      // Оптимистично помечаем прочитанным локально + пересчитываем бейдж навигации.
-      setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, seen: true } : x)))
+  // MAIL-5-UI: раскрыть ТРЕД. Помечаем прочитанными все непрочитанные входящие цепочки (markMailSeen
+  // по каждому — существующую логику отметки НЕ трогаем, вызываем её для каждого письма) и подгружаем
+  // вложения писем треда одним запросом (только те, у кого has_attachments). Всё best-effort: ошибки
+  // markMailSeen откатываем локально, вложения деградируют в [] (RLS/не-владелец → пусто).
+  const openThread = async (th: MailThread) => {
+    setOpenKey(th.key)
+    const unread = th.messages.filter((m) => m.direction !== 'out' && !m.seen)
+    if (unread.length > 0) {
+      const ids = new Set(unread.map((m) => m.id))
+      setMessages((prev) => prev.map((x) => (ids.has(x.id) ? { ...x, seen: true } : x)))
       try {
-        await markMailSeen(m.id)
+        await Promise.all(unread.map((m) => markMailSeen(m.id)))
         emitMailUnreadChanged()
       } catch {
         // best-effort: если update не прошёл (например, RLS), возвращаем как было
-        setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, seen: false } : x)))
+        setMessages((prev) => prev.map((x) => (ids.has(x.id) ? { ...x, seen: false } : x)))
       }
+    }
+    const attIds = th.messages.filter((m) => m.has_attachments).map((m) => m.id)
+    if (attIds.length > 0) {
+      const atts = await getMailAttachments(attIds)
+      setAttachmentsByMsg((prev) => {
+        const next = { ...prev }
+        for (const id of attIds) next[id] = [] // помеченные has_attachments, но без строк (напр. RLS) → пустой список
+        for (const a of atts) (next[a.message_id] ??= []).push(a)
+        return next
+      })
     }
   }
 
@@ -390,12 +543,12 @@ export default function Mail() {
     const domain = domainOf(from)
     const entry = scope === 'domain' ? (domain ? `@${domain}` : '') : from
     if (!entry) return
-    setHideMenuOpen(false)
+    setHideMenuMsgId(null)
     try {
       await addMailAllowlist({ org_id: orgId, entry, kind: 'block', note: (m.from_name ?? '').trim() || null })
       flashToast(scope === 'domain' ? t('mail_domain_hidden') : t('mail_sender_hidden'))
       await loadAllowlist() // рефетч block-списка → лента перерисуется без этих писем
-      setOpenMsg(null)
+      setOpenKey(null)
     } catch (e) {
       if (isUniqueViolation(e)) flashToast(t('mail_already_hidden'))
       else flashToast(t('mail_hide_failed'))
@@ -444,6 +597,153 @@ export default function Mail() {
     return t('mail_filter_mode_off')
   }
 
+  // MAIL-5-UI: показать реальные картинки в теле письма (по клику «Показать изображения»).
+  const showMessageImages = (id: string) =>
+    setImagesShownIds((prev) => {
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+
+  // MAIL-5-UI: тело письма. body_html → консервативно санитайзим и рендерим в изолированном
+  // контейнере (картинки под приватным гейтом); иначе body_text ПЛОСКИМ ТЕКСТОМ (как MAIL-1).
+  const renderMessageBody = (m: MailMessage) => {
+    if (m.body_html) {
+      const showImages = imagesShownIds.has(m.id)
+      const hasImages = htmlHasImages(m.body_html)
+      const safe = sanitizeMailHtml(m.body_html, showImages)
+      return (
+        <>
+          {hasImages && !showImages && (
+            <div className="mail-img-gate">
+              <span className="muted">{t('mail_images_hidden')}</span>
+              <button type="button" className="btn ghost small" onClick={() => showMessageImages(m.id)}>
+                {t('mail_show_images')}
+              </button>
+            </div>
+          )}
+          {/* Санитизированный HTML в изолированном контейнере (.mail-html ограничивает влияние на layout). */}
+          <div className="mail-body mail-html" dangerouslySetInnerHTML={{ __html: safe }} />
+        </>
+      )
+    }
+    return (
+      <div className="mail-body" style={{ whiteSpace: 'pre-wrap' }}>
+        {m.body_text ?? m.snippet ?? ''}
+      </div>
+    )
+  }
+
+  // MAIL-5-UI: вложения письма. Контент пока НЕ качаем (r2_key null → «файл появится позже», без
+  // ссылки; скачивание/миниатюры — MAIL-6). Для image/* — пометка «фото». Пусто/ещё грузится → null.
+  const renderAttachments = (m: MailMessage) => {
+    if (!m.has_attachments) return null
+    const atts = attachmentsByMsg[m.id]
+    if (!atts || atts.length === 0) return null
+    return (
+      <div className="mail-attachments">
+        <div className="mail-attachments-title muted">{t('mail_attachments')} · {atts.length}</div>
+        <ul className="mail-attachment-list">
+          {atts.map((a) => {
+            const isImg = !!a.mime && a.mime.toLowerCase().startsWith('image/')
+            const size = fmtBytes(a.size_bytes)
+            return (
+              <li key={a.id} className="mail-attachment">
+                <span className="mail-att-name">📎 {a.filename}</span>
+                {isImg && <span className="badge mail-att-photo">{t('mail_attachment_photo')}</span>}
+                {size && <span className="mail-att-size muted">{size}</span>}
+                {!a.r2_key && <span className="mail-att-later muted">{t('mail_attachment_later')}</span>}
+              </li>
+            )
+          })}
+        </ul>
+      </div>
+    )
+  }
+
+  // MAIL-5-UI: одно письмо внутри раскрытого треда — шапка (кто/адрес/дата), тело, вложения и
+  // действия (Ответить / → Задача / → Событие / В белый список / Скрыть навсегда). Действия per-письмо
+  // работают ровно как в MAIL-1..4, только теперь по конкретному письму цепочки.
+  const renderThreadMessage = (m: MailMessage) => {
+    const isOut = m.direction === 'out'
+    const who = isOut
+      ? ((m.to_addr && m.to_addr.trim()) || t('mail_unknown_recipient'))
+      : senderLabel(m, t('mail_unknown_sender'))
+    const addr = isOut ? (m.to_addr ?? '').trim() : (m.from_addr ?? '').trim()
+    const hasFromAddr = !!(m.from_addr && m.from_addr.trim())
+    return (
+      <div key={m.id} className={`mail-msg${isOut ? ' outgoing' : ''}`}>
+        <div className="mail-msg-head">
+          <div className="mail-msg-who">
+            {isOut && <span className="mail-out-tag">↑ {t('mail_outgoing')}</span>}
+            <span className="mail-msg-name">{who}</span>
+            {addr && <span className="muted mail-msg-addr"> · {addr}</span>}
+          </div>
+          <span className="muted mail-msg-date">{fmtFullDate(m.sent_at ?? m.created_at)}</span>
+        </div>
+
+        {renderMessageBody(m)}
+        {renderAttachments(m)}
+
+        <div className="mail-actions row" style={{ gap: 8, marginTop: 12 }}>
+          <button type="button" className="btn small" onClick={() => openReply(m)}>
+            {t('mail_reply')}
+          </button>
+          <button type="button" className="btn small" onClick={() => makeTask(m)}>
+            {t('mail_to_task')}
+          </button>
+          <button type="button" className="btn small" onClick={() => makeEvent(m)}>
+            {t('mail_to_event')}
+          </button>
+          {isOwner && (
+            <button
+              type="button"
+              className="btn small"
+              onClick={() => { void addSenderToAllowlist(m) }}
+              disabled={!hasFromAddr}
+            >
+              {t('mail_add_to_allowlist')}
+            </button>
+          )}
+          {isOwner && (
+            <div className="mail-hide-wrap">
+              <button
+                type="button"
+                className="btn small"
+                onClick={() => setHideMenuMsgId((cur) => (cur === m.id ? null : m.id))}
+                disabled={!hasFromAddr}
+                aria-expanded={hideMenuMsgId === m.id}
+              >
+                {t('mail_hide_forever')}
+              </button>
+              {hideMenuMsgId === m.id && (
+                <div className="mail-hide-menu" role="menu">
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    role="menuitem"
+                    onClick={() => { void hideSender(m, 'sender') }}
+                  >
+                    {t('mail_hide_sender')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    role="menuitem"
+                    onClick={() => { void hideSender(m, 'domain') }}
+                    disabled={!domainOf((m.from_addr ?? '').trim())}
+                  >
+                    {t('mail_hide_domain')}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="screen mail-screen">
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
@@ -479,7 +779,7 @@ export default function Mail() {
                   role="tab"
                   aria-selected={a.id === activeId}
                   className={`mail-tab${a.id === activeId ? ' active' : ''}`}
-                  onClick={() => { setActiveId(a.id); setOpenMsg(null) }}
+                  onClick={() => { setActiveId(a.id); setOpenKey(null) }}
                 >
                   {a.display_name}
                   {unread > 0 && <span className="badge red mail-tab-badge">{unread > 99 ? '99+' : unread}</span>}
@@ -506,106 +806,56 @@ export default function Mail() {
             </div>
           )}
 
-          {openMsg ? (
+          {activeThread ? (
             <div className="card mail-detail">
+              {/* MAIL-5-UI: раскрытый ТРЕД — шапка (тема + счётчик писем + «Закрыть»), затем письма
+                  цепочки от старого к новому (каждое со своим телом, вложениями и действиями). */}
               <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                 <div>
-                  <div className="mail-detail-subject">{openMsg.subject?.trim() || t('mail_no_subject')}</div>
-                  <div className="muted mail-detail-from">
-                    {senderLabel(openMsg, t('mail_unknown_sender'))}
-                    {openMsg.from_addr ? ` · ${openMsg.from_addr}` : ''}
-                  </div>
-                  <div className="muted mail-detail-date">{fmtFullDate(openMsg.sent_at ?? openMsg.created_at)}</div>
+                  <div className="mail-detail-subject">{activeThread.last.subject?.trim() || t('mail_no_subject')}</div>
+                  {activeThread.messages.length > 1 && (
+                    <div className="muted mail-detail-count">
+                      {t('mail_thread_count').replace('{n}', String(activeThread.messages.length))}
+                    </div>
+                  )}
                 </div>
-                <button type="button" className="btn ghost small" onClick={() => setOpenMsg(null)}>
+                <button type="button" className="btn ghost small" onClick={() => setOpenKey(null)}>
                   {t('mail_close')}
                 </button>
               </div>
 
-              {/* body_text как ПЛОСКИЙ ТЕКСТ — только текстовый узел, без dangerouslySetInnerHTML.
-                  white-space:pre-wrap сохраняет переводы строк письма. */}
-              <div className="mail-body" style={{ whiteSpace: 'pre-wrap' }}>
-                {openMsg.body_text ?? openMsg.snippet ?? ''}
-              </div>
-
-              <div className="mail-actions row" style={{ gap: 8, marginTop: 12 }}>
-                <button type="button" className="btn small" onClick={() => openReply(openMsg)}>
-                  {t('mail_reply')}
-                </button>
-                <button type="button" className="btn small" onClick={() => makeTask(openMsg)}>
-                  {t('mail_to_task')}
-                </button>
-                <button type="button" className="btn small" onClick={() => makeEvent(openMsg)}>
-                  {t('mail_to_event')}
-                </button>
-                {isOwner && (
-                  <button
-                    type="button"
-                    className="btn small"
-                    onClick={() => { void addSenderToAllowlist(openMsg) }}
-                    disabled={!(openMsg.from_addr && openMsg.from_addr.trim())}
-                  >
-                    {t('mail_add_to_allowlist')}
-                  </button>
-                )}
-                {isOwner && (
-                  <div className="mail-hide-wrap">
-                    <button
-                      type="button"
-                      className="btn small"
-                      onClick={() => setHideMenuOpen((v) => !v)}
-                      disabled={!(openMsg.from_addr && openMsg.from_addr.trim())}
-                      aria-expanded={hideMenuOpen}
-                    >
-                      {t('mail_hide_forever')}
-                    </button>
-                    {hideMenuOpen && (
-                      <div className="mail-hide-menu" role="menu">
-                        <button
-                          type="button"
-                          className="btn ghost small"
-                          role="menuitem"
-                          onClick={() => { void hideSender(openMsg, 'sender') }}
-                        >
-                          {t('mail_hide_sender')}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn ghost small"
-                          role="menuitem"
-                          onClick={() => { void hideSender(openMsg, 'domain') }}
-                          disabled={!domainOf((openMsg.from_addr ?? '').trim())}
-                        >
-                          {t('mail_hide_domain')}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
+              <div className="mail-thread">
+                {activeThreadMessages.map((m) => renderThreadMessage(m))}
               </div>
             </div>
-          ) : activeMessages.length === 0 ? (
+          ) : threads.length === 0 ? (
             <div className="card muted mail-empty">{t('mail_empty')}</div>
           ) : (
             <div className="mail-list">
-              {activeMessages.map((m) => {
-                // MAIL-2-UI: исходящие (direction='out') — собеседник это to_addr, не bold (не «непрочитано»),
-                // с меткой «↑ Исходящее». Порядок сортировки не трогаем (по sent_at, затем created_at из API).
+              {threads.map((th) => {
+                // MAIL-5-UI: одна строка = ЦЕПОЧКА. Показываем последнее письмо (th.last) + счётчик
+                // «N писем», если писем больше одного. Исходящее последнее письмо → собеседник это
+                // to_addr и метка «↑ Исходящее»; unread — есть ли непрочитанное входящее в цепочке.
+                const m = th.last
                 const isOut = m.direction === 'out'
                 const counterparty = isOut
                   ? ((m.to_addr && m.to_addr.trim()) || t('mail_unknown_recipient'))
                   : senderLabel(m, t('mail_unknown_sender'))
+                const count = th.messages.length
                 return (
                   <button
-                    key={m.id}
+                    key={th.key}
                     type="button"
-                    className={`mail-row${!isOut && !m.seen ? ' unread' : ''}${isOut ? ' outgoing' : ''}`}
-                    onClick={() => { void openMessage(m) }}
+                    className={`mail-row${th.unread ? ' unread' : ''}${isOut ? ' outgoing' : ''}`}
+                    onClick={() => { void openThread(th) }}
                   >
                     <div className="mail-row-top">
                       <span className="mail-row-sender">
                         {isOut && <span className="mail-out-tag">↑ {t('mail_outgoing')}</span>}
                         {counterparty}
+                        {count > 1 && (
+                          <span className="badge mail-thread-count">{t('mail_thread_count').replace('{n}', String(count))}</span>
+                        )}
                       </span>
                       <span className="mail-row-date muted">{fmtRowDate(m.sent_at ?? m.created_at)}</span>
                     </div>
