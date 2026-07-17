@@ -7,6 +7,7 @@ import {
   approveShiftReview,
   createTimeAdjustment,
   getAppSettings,
+  getDueClientReminders,
   getLiveLastLocations,
   getMaterialsSpendTotal,
   getOpenGeoEvents,
@@ -19,6 +20,7 @@ import {
   getTodayEvents,
   getUnpaidWorkSummary,
   managerCheckoutWorker,
+  markClientReminderDone,
   subscribeToLiveLocations,
   subscribeToOrgEvents,
   subscribeToTaskChanges,
@@ -33,7 +35,7 @@ import {
   workedMs,
 } from '../lib/time'
 import { hasFinanceAccess, isManagerWrite } from '../lib/types'
-import type { EventRow, LiveLastLocation, Profile, Project, ShiftGeoEvent, SuspiciousShift, Task, TimeEvent } from '../lib/types'
+import type { DueClientReminder, EventRow, LiveLastLocation, Profile, Project, ShiftGeoEvent, SuspiciousShift, Task, TimeEvent } from '../lib/types'
 
 type MetricTone = 'green' | 'amber' | 'red' | 'blue' | 'grey'
 
@@ -138,6 +140,12 @@ function formatDurationHours(hours: number, h: string, m: string): string {
   return `${Math.floor(totalMinutes / 60)}${h} ${totalMinutes % 60}${m}`
 }
 
+// CLIENT-DOSSIER-2: локальная «сегодня» (YYYY-MM-DD) для сравнения с remind_on (date без времени).
+function todayDateISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export default function Overview() {
   const { profile } = useAuth()
   const { t } = useI18n()
@@ -153,6 +161,8 @@ export default function Overview() {
   const [weekHoursByProject, setWeekHoursByProject] = useState<Map<string, number>>(() => new Map())
   const [unpaid, setUnpaid] = useState<{ hours: number; amount: number } | null>(null)
   const [materials, setMaterials] = useState<number | null>(null)
+  const [clientReminders, setClientReminders] = useState<DueClientReminder[]>([])
+  const [reminderBusyId, setReminderBusyId] = useState<string | null>(null)
   const [timezone, setTimezone] = useState<string | null>(null)
   const [alertHours, setAlertHours] = useState(DEFAULT_PAID_GAP_ALERT_HOURS)
   const [loading, setLoading] = useState(true)
@@ -193,6 +203,7 @@ export default function Overview() {
         projectWeekHours,
         unpaidSummary,
         materialTotal,
+        dueReminders,
       ] = await Promise.all([
         getTodayEvents(),
         getTeam(),
@@ -206,6 +217,7 @@ export default function Overview() {
         getProjectWeekHours(),
         financeAccess ? getUnpaidWorkSummary() : Promise.resolve(null),
         financeAccess ? getMaterialsSpendTotal() : Promise.resolve(null),
+        getDueClientReminders(),
       ])
       if (!mountedRef.current) return
       setEvents(todayEvents)
@@ -219,6 +231,7 @@ export default function Overview() {
       setWeekHoursByProject(projectWeekHours)
       setUnpaid(unpaidSummary)
       setMaterials(materialTotal)
+      setClientReminders(dueReminders)
       const tz = settings?.timezone?.trim()
       setTimezone(tz ? tz : null)
       const gapAlert = Number(settings?.paid_gap_alert_hours)
@@ -334,7 +347,7 @@ export default function Overview() {
     return rows.sort((a, b) => b.startMs - a.startMs)
   }, [alertHours, eventsByWorker, team, timezone])
 
-  const riskCount = travelGaps.length + geoEvents.length + priorityTasks.length
+  const riskCount = travelGaps.length + geoEvents.length + priorityTasks.length + clientReminders.length
 
   const activityToday = useMemo(() => {
     const start = new Date(todayStartISO()).getTime()
@@ -549,6 +562,20 @@ export default function Overview() {
     }
   }
 
+  // CLIENT-DOSSIER-2: отметить напоминание клиента выполненным прямо из КЦ → убрать из списка.
+  async function completeReminder(id: string) {
+    if (!profile || reminderBusyId) return
+    setReminderBusyId(id)
+    try {
+      await markClientReminderDone(profile, id)
+      setClientReminders((rows) => rows.filter((row) => row.id !== id))
+    } catch {
+      setMsg('overview_reminder_done_failed')
+    } finally {
+      setReminderBusyId(null)
+    }
+  }
+
   const eventLabel = (eventType: string) => {
     const key = eventLabelKeys[eventType]
     return key ? t(key) : eventType
@@ -571,6 +598,7 @@ export default function Overview() {
   const visibleReviews = showAllReviews ? unreviewedSuspicious : unreviewedSuspicious.slice(0, REVIEW_COLLAPSE_COUNT)
   const hiddenReviews = Math.max(0, unreviewedSuspicious.length - REVIEW_COLLAPSE_COUNT)
   const msgClass = msg?.includes('failed') || msg?.includes('invalid') || msg?.includes('required') ? 'error-msg' : 'ok-msg'
+  const today = todayDateISO()
 
   if (loading) {
     return (
@@ -647,6 +675,32 @@ export default function Overview() {
       </section>
 
       <div className="dashboard-strips">
+        {/* CLIENT-DOSSIER-2: наступившие/просроченные напоминания по клиентам с кнопкой «Сделано». */}
+        <CollapsibleSection title={t('client_reminders')} count={clientReminders.length} defaultOpen={clientReminders.length > 0}>
+          {clientReminders.length === 0 ? (
+            <div className="card muted">{t('client_reminders_none')}</div>
+          ) : (
+            clientReminders.map((reminder) => {
+              const overdue = reminder.remind_on < today
+              return (
+                <div key={reminder.id} className={`card row dashboard-row client-reminder-row ${overdue ? 'overdue' : ''}`}>
+                  <div>
+                    <div className="item-title">{reminder.client_name ?? t('client')}</div>
+                    <div className="muted">{reminder.note}</div>
+                    <div className="muted">
+                      {new Date(`${reminder.remind_on}T00:00:00`).toLocaleDateString()}
+                      {overdue && <span className="badge red client-reminder-badge">{t('client_reminder_overdue')}</span>}
+                    </div>
+                  </div>
+                  <button className="btn small" disabled={reminderBusyId === reminder.id} onClick={() => completeReminder(reminder.id)}>
+                    {t('client_reminder_done')}
+                  </button>
+                </div>
+              )
+            })
+          )}
+        </CollapsibleSection>
+
         <CollapsibleSection title={t('suspicious_shifts_title')} count={unreviewedSuspicious.length} defaultOpen={unreviewedSuspicious.length > 0}>
           {unreviewedSuspicious.length === 0 ? (
             <div className="card muted">{t('suspicious_none')}</div>

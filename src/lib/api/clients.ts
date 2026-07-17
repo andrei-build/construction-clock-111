@@ -1,6 +1,6 @@
 import { supabase } from '../supabase'
 import { logEvent } from './_shared'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, ClientDifficulty, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, ClientDifficulty, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment, ClientReminder, DueClientReminder } from '../types'
 
 
 const DOCUMENT_SELECT = 'id, org_id, account_id, project_id, doc_type, status, number, title, source_document_id, issue_date, due_date, subtotal, tax_rate, tax_amount, total, amount_paid, balance, retainage_pct, margin_pct, client_visible, notes, metadata, created_by, updated_by, version, created_at, updated_at, deleted_at, account:accounts(name), project:projects(name)'
@@ -365,6 +365,92 @@ export async function getClientDocuments(accountId: string): Promise<DocumentRow
     .order('issue_date', { ascending: false, nullsFirst: false })
   if (error) return []
   return (data as DocumentRow[]) ?? []
+}
+
+// === CLIENT-DOSSIER-2: напоминания по клиенту (client_reminders) ===
+// Схема (проверена живьём): org_id/client_account_id/remind_on/note NOT NULL, done_at NULL=активно.
+// RLS manager+. done_at IS NULL = активное напоминание.
+const CLIENT_REMINDER_SELECT = 'id, org_id, client_account_id, remind_on, note, done_at, created_by, created_at'
+
+// Активные напоминания одного клиента (done_at IS NULL), ближайшие сверху. error → [].
+export async function getClientReminders(accountId: string): Promise<ClientReminder[]> {
+  const { data, error } = await supabase.from('client_reminders')
+    .select(CLIENT_REMINDER_SELECT)
+    .eq('client_account_id', accountId)
+    .is('done_at', null)
+    .order('remind_on', { ascending: true })
+  if (error) return []
+  return (data as ClientReminder[]) ?? []
+}
+
+// Наступившие/просроченные напоминания по ВСЕМ клиентам org (remind_on <= сегодня, done_at IS NULL) —
+// для всплытия в «Оповещениях» и КЦ. Имя клиента тянем embed-ом client:accounts(name). RLS скоупит org.
+// Сравнение по локальной «сегодня» (remind_on — date без времени): просрочка = remind_on < today.
+export async function getDueClientReminders(): Promise<DueClientReminder[]> {
+  const today = new Date()
+  const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const { data, error } = await supabase.from('client_reminders')
+    .select(`${CLIENT_REMINDER_SELECT}, client:accounts!client_reminders_client_account_id_fkey(name)`)
+    .is('done_at', null)
+    .lte('remind_on', todayISO)
+    .order('remind_on', { ascending: true })
+  if (error) return []
+  return ((data ?? []) as unknown as Array<ClientReminder & { client?: { name: string | null } | null }>)
+    .map(({ client, ...row }) => ({ ...(row as ClientReminder), client_name: client?.name ?? null }))
+}
+
+// Создать напоминание. org_id шлём ЯВНО из account.org_id (дефолта нет), created_by = auth.uid() = p.id.
+// RLS manager+ (INSERT). Возвращаем вставленную строку; на ошибке/отказе бросаем — вызывающий покажет ошибку.
+export async function createClientReminder(
+  p: Profile,
+  account: { id: string; org_id: string },
+  input: { remind_on: string; note: string },
+): Promise<ClientReminder> {
+  const { data, error } = await supabase.from('client_reminders')
+    .insert({
+      org_id: account.org_id,
+      client_account_id: account.id,
+      remind_on: input.remind_on,
+      note: input.note,
+      created_by: p.id,
+    })
+    .select(CLIENT_REMINDER_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'client.reminder_created', 'account', account.id, { remind_on: input.remind_on })
+  return data as ClientReminder
+}
+
+// Отметить напоминание выполненным: done_at = now(). RLS manager+ (UPDATE). Пустой апдейт (0 строк из-за
+// RLS) вернёт data=null без error → бросаем, чтобы вызывающий не считал операцию успешной.
+export async function markClientReminderDone(p: Profile, id: string): Promise<void> {
+  const { data, error } = await supabase.from('client_reminders')
+    .update({ done_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('id, client_account_id')
+    .maybeSingle()
+  if (error) throw error
+  if (!data) throw new Error('reminder_update_blocked')
+  await logEvent(p, 'client.reminder_done', 'account', (data as { client_account_id?: string } | null)?.client_account_id ?? null, { reminder_id: id })
+}
+
+// CLIENT-DOSSIER-2: логотип/фото клиента. У accounts НЕТ колонки под аватар — храним публичный URL
+// (из bucket 'avatars') в accounts.metadata.avatar_url. Мержим поверх текущего metadata, чтобы не
+// затереть прочие ключи. Пишем ТОЛЬКО metadata + updated_by. RLS is_manager_write (owner/admin/manager).
+export async function updateClientAvatar(
+  p: Profile,
+  account: { id: string; metadata: Record<string, unknown> | null },
+  avatarUrl: string,
+): Promise<Account> {
+  const metadata = { ...(account.metadata ?? {}), avatar_url: avatarUrl }
+  const { data, error } = await supabase.from('accounts')
+    .update({ metadata, updated_by: p.id })
+    .eq('id', account.id)
+    .select(ACCOUNT_SELECT)
+    .single()
+  if (error) throw error
+  await logEvent(p, 'account.avatar_updated', 'account', account.id, {})
+  return data as Account
 }
 
 export async function getDeals(): Promise<Deal[]> {

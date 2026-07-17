@@ -1,16 +1,20 @@
-import { createContext, useContext, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AccountForm from './AccountForm'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import {
+  createClientReminder,
   createContact,
   getAccountContacts,
+  getAccountFiles,
   getClientDeals,
   getClientDocuments,
   getClientProjectSummaries,
+  getClientReminders,
   getEventsSince,
   getOpenTasks,
+  getProjectFileDownloadUrl,
   getProjectProfit,
   getProjectRecentPhotos,
   getProjectShiftEvents,
@@ -18,15 +22,21 @@ import {
   getRecentActivityForActor,
   getTeam,
   getTodayEvents,
+  markClientReminderDone,
   markMaterialStatus,
   subscribeToTaskChanges,
   updateAccount,
+  updateClientAvatar,
   updateClientBrand,
+  uploadAccountFileToR2,
+  uploadClientLogo,
+  uploadErrorCode,
   type MaterialStatusAction,
 } from '../lib/api'
 import { fmtHours, shiftState, weekStartISO, workedMs } from '../lib/time'
-import { isManagerRole, isManagerWrite, type Account, type AccountInput, type ClientProjectSummary, type Contact, type ContactInput, type Deal, type DocumentRow, type EventRow, type Profile, type Project, type ProjectPhoto, type ProjectProfit, type Task, type TimeEvent } from '../lib/types'
+import { isManagerRole, isManagerWrite, type Account, type AccountInput, type ClientProjectSummary, type ClientReminder, type Contact, type ContactInput, type Deal, type DocumentRow, type EventRow, type FileRow, type Profile, type Project, type ProjectPhoto, type ProjectProfit, type Task, type TimeEvent } from '../lib/types'
 import MaterialStatusChain, { isMaterialFlowTask } from './MaterialStatusChain'
+import VoiceMic from './VoiceMic'
 
 type DrawerState =
   | { type: 'worker'; worker: Profile }
@@ -94,6 +104,28 @@ function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'CC'
 }
 
+// CLIENT-DOSSIER-2: логотип клиента живёт в accounts.metadata.avatar_url (колонки под аватар нет).
+function accountAvatarUrl(account: Account): string | null {
+  const meta = account.metadata as Record<string, unknown> | null
+  const url = meta && typeof meta === 'object' ? meta.avatar_url : null
+  return typeof url === 'string' && url.trim() ? url : null
+}
+
+// CLIENT-DOSSIER-2: локальная «сегодня» (YYYY-MM-DD) для сравнения с remind_on (date без времени).
+function todayDateISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function fmtBytes(bytes: number | null): string {
+  if (!bytes || bytes <= 0) return ''
+  const units = ['B', 'KB', 'MB', 'GB']
+  let n = bytes
+  let i = 0
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1 }
+  return `${Math.round(n * 10) / 10} ${units[i]}`
+}
+
 function roleTone(role: string) {
   return role === 'owner' || role === 'admin' ? 'red' : role === 'manager' || role === 'supervisor' ? 'amber' : role === 'driver' ? 'blue' : 'green'
 }
@@ -144,13 +176,15 @@ function ClientPanel({ account, onUpdated }: {
   account: Account
   onUpdated?: (account: Account) => void
 }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const { profile } = useAuth()
   const [current, setCurrent] = useState(account)
   const [contacts, setContacts] = useState<Contact[]>([])
   const [deals, setDeals] = useState<Deal[]>([])
   const [projects, setProjects] = useState<ClientProjectSummary[]>([])
   const [documents, setDocuments] = useState<DocumentRow[]>([])
+  const [reminders, setReminders] = useState<ClientReminder[]>([])
+  const [files, setFiles] = useState<FileRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -164,6 +198,19 @@ function ClientPanel({ account, onUpdated }: {
   const [contactPrimary, setContactPrimary] = useState(false)
   const [savingContact, setSavingContact] = useState(false)
   const [contactError, setContactError] = useState(false)
+  // CLIENT-DOSSIER-2: напоминания
+  const [reminderDate, setReminderDate] = useState('')
+  const [reminderNote, setReminderNote] = useState('')
+  const [savingReminder, setSavingReminder] = useState(false)
+  const [reminderError, setReminderError] = useState(false)
+  const [reminderBusyId, setReminderBusyId] = useState<string | null>(null)
+  // CLIENT-DOSSIER-2: логотип + файлы
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [avatarError, setAvatarError] = useState<string | null>(null)
+  const [uploadingFile, setUploadingFile] = useState(false)
+  const [fileError, setFileError] = useState<string | null>(null)
+
+  const canManageClient = profile ? isManagerWrite(profile.role) : false
 
   useEffect(() => {
     setCurrent(account)
@@ -177,23 +224,29 @@ function ClientPanel({ account, onUpdated }: {
       setLoading(true)
       setError(false)
       try {
-        const [contactRows, dealRows, projectRows, documentRows] = await Promise.all([
+        const [contactRows, dealRows, projectRows, documentRows, reminderRows, fileRows] = await Promise.all([
           getAccountContacts(current.id),
           getClientDeals(current.id),
           getClientProjectSummaries(current.id),
           getClientDocuments(current.id),
+          getClientReminders(current.id),
+          getAccountFiles(current.id),
         ])
         if (!mounted) return
         setContacts(contactRows)
         setDeals(dealRows)
         setProjects(projectRows)
         setDocuments(documentRows)
+        setReminders(reminderRows)
+        setFiles(fileRows)
       } catch {
         if (mounted) {
           setContacts([])
           setDeals([])
           setProjects([])
           setDocuments([])
+          setReminders([])
+          setFiles([])
           setError(true)
         }
       } finally {
@@ -264,6 +317,85 @@ function ClientPanel({ account, onUpdated }: {
     }
   }
 
+  // CLIENT-DOSSIER-2: добавить напоминание (client_reminders). org_id шлём явно из current.org_id.
+  async function addReminder(e: FormEvent) {
+    e.preventDefault()
+    if (!profile || savingReminder || !reminderDate || !reminderNote.trim()) return
+    setSavingReminder(true)
+    setReminderError(false)
+    try {
+      const created = await createClientReminder(profile, current, { remind_on: reminderDate, note: reminderNote.trim() })
+      setReminders((rows) => [...rows, created].sort((a, b) => a.remind_on.localeCompare(b.remind_on)))
+      setReminderDate('')
+      setReminderNote('')
+    } catch {
+      setReminderError(true)
+    } finally {
+      setSavingReminder(false)
+    }
+  }
+
+  // CLIENT-DOSSIER-2: отметить напоминание выполненным → убрать из активного списка.
+  async function completeReminder(id: string) {
+    if (!profile || reminderBusyId) return
+    setReminderBusyId(id)
+    try {
+      await markClientReminderDone(profile, id)
+      setReminders((rows) => rows.filter((row) => row.id !== id))
+    } catch {
+      setReminderError(true)
+    } finally {
+      setReminderBusyId(null)
+    }
+  }
+
+  // CLIENT-DOSSIER-2: логотип клиента → публичный bucket avatars → metadata.avatar_url.
+  async function onLogoPick(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!profile || !canManageClient || uploadingAvatar || !file) return
+    setUploadingAvatar(true)
+    setAvatarError(null)
+    try {
+      const url = await uploadClientLogo(profile, current.id, file)
+      const updated = await updateClientAvatar(profile, current, url)
+      setCurrent(updated)
+      onUpdated?.(updated)
+    } catch (err) {
+      setAvatarError(uploadErrorCode(err) ?? 'client_avatar_failed')
+    } finally {
+      setUploadingAvatar(false)
+    }
+  }
+
+  // CLIENT-DOSSIER-2: файл клиента (files.account_id) через существующий R2-паттерн.
+  async function onFilePick(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!profile || !canManageClient || uploadingFile || !file) return
+    setUploadingFile(true)
+    setFileError(null)
+    try {
+      const row = await uploadAccountFileToR2(profile, current.id, file)
+      setFiles((rows) => [row, ...rows])
+    } catch (err) {
+      setFileError(uploadErrorCode(err) ?? 'client_file_failed')
+    } finally {
+      setUploadingFile(false)
+    }
+  }
+
+  async function downloadFile(file: FileRow) {
+    try {
+      const url = await getProjectFileDownloadUrl(file)
+      window.open(url, '_blank', 'noopener')
+    } catch {
+      setFileError('client_file_failed')
+    }
+  }
+
+  const today = todayDateISO()
+  const avatarUrl = accountAvatarUrl(current)
   const headerLines = [current.phone, current.email, current.address].filter(Boolean)
   // BRAND-1: редактировать бренд может только owner/admin/manager (RLS дублирует гейт на сервере);
   // остальные видят read-only пилюлю.
@@ -273,7 +405,18 @@ function ClientPanel({ account, onUpdated }: {
   return (
     <>
       <div className="drawer-hero client-drawer-hero">
-        <div className="drawer-avatar client">{initials(current.name)}</div>
+        {/* CLIENT-DOSSIER-2: логотип/фото клиента (accounts.metadata.avatar_url); пусто → инициалы. */}
+        <div className="client-avatar-wrap">
+          <div className="drawer-avatar client">
+            {avatarUrl ? <img src={avatarUrl} alt="" /> : initials(current.name)}
+          </div>
+          {canManageClient && (
+            <label className={`client-avatar-pick ${uploadingAvatar ? 'busy' : ''}`} title={t('client_logo_upload')}>
+              <input type="file" accept="image/*" hidden disabled={uploadingAvatar} onChange={onLogoPick} />
+              <span aria-hidden="true">{uploadingAvatar ? '…' : '📷'}</span>
+            </label>
+          )}
+        </div>
         <div className="client-drawer-heading">
           <div className="client-drawer-title-row">
             <h1>{current.name}</h1>
@@ -306,6 +449,7 @@ function ClientPanel({ account, onUpdated }: {
           {headerLines.length > 0 && <p className="muted client-detail-lines">{headerLines.join(' · ')}</p>}
         </div>
       </div>
+      {avatarError && <p className="error-msg">{t(avatarError)}</p>}
 
       {editing && (
         <section className="drawer-section">
@@ -329,6 +473,91 @@ function ClientPanel({ account, onUpdated }: {
 
       {!loading && (
         <>
+          {/* CLIENT-DOSSIER-2: напоминания по клиенту (client_reminders) */}
+          <section className="drawer-section">
+            <h2>{t('client_reminders')}</h2>
+            {reminders.length === 0 && <div className="card muted">{t('client_reminders_empty')}</div>}
+            <div className="client-detail-list">
+              {reminders.map((reminder) => {
+                const overdue = reminder.remind_on < today
+                const due = overdue || reminder.remind_on === today
+                return (
+                  <div className={`client-detail-card client-reminder-row ${overdue ? 'overdue' : ''}`} key={reminder.id}>
+                    <div className="row">
+                      <div>
+                        <span className="item-title">{reminder.note}</span>
+                        <div className="muted">
+                          {new Date(`${reminder.remind_on}T00:00:00`).toLocaleDateString()}
+                          {overdue && <span className="badge red client-reminder-badge">{t('client_reminder_overdue')}</span>}
+                          {!overdue && due && <span className="badge amber client-reminder-badge">{t('client_reminder_due')}</span>}
+                        </div>
+                      </div>
+                      {canManageClient && (
+                        <button
+                          type="button"
+                          className="btn small"
+                          disabled={reminderBusyId === reminder.id}
+                          onClick={() => completeReminder(reminder.id)}
+                        >
+                          {t('client_reminder_done')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {canManageClient && (
+              <form className="card client-reminder-form" onSubmit={addReminder}>
+                <label>{t('client_reminder_date')}</label>
+                <input type="date" value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} required />
+                <label>{t('client_reminder_note')}</label>
+                <div className="voice-field-row" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <textarea
+                    value={reminderNote}
+                    onChange={(e) => setReminderNote(e.target.value)}
+                    rows={2}
+                    style={{ flex: 1 }}
+                    required
+                  />
+                  <VoiceMic lang={lang} title={t('voice_input')} onResult={(text) => setReminderNote((v) => v ? `${v} ${text}` : text)} />
+                </div>
+                {reminderError && <p className="error-msg">{t('client_reminder_failed')}</p>}
+                <button type="submit" className="btn small" disabled={savingReminder || !reminderDate || !reminderNote.trim()}>
+                  {savingReminder ? t('clients_saving') : t('client_reminder_add')}
+                </button>
+              </form>
+            )}
+          </section>
+
+          {/* CLIENT-DOSSIER-2: файлы клиента (files.account_id / R2) */}
+          <section className="drawer-section">
+            <h2>{t('client_files')}</h2>
+            {files.length === 0 && <div className="card muted">{t('client_files_empty')}</div>}
+            <div className="client-detail-list">
+              {files.map((file) => (
+                <button type="button" className="client-detail-card row client-file-row" key={file.id} onClick={() => downloadFile(file)}>
+                  <div>
+                    <span className="item-title">{file.name}</span>
+                    <div className="muted">
+                      {new Date(file.created_at).toLocaleDateString()}
+                      {fmtBytes(file.size_bytes) && ` · ${fmtBytes(file.size_bytes)}`}
+                    </div>
+                  </div>
+                  <span className="badge blue">{t('client_file_download')}</span>
+                </button>
+              ))}
+            </div>
+            {fileError && <p className="error-msg">{t(fileError)}</p>}
+            {canManageClient && (
+              <label className={`btn small client-file-upload ${uploadingFile ? 'busy' : ''}`} style={{ marginTop: 8, display: 'inline-block' }}>
+                <input type="file" hidden disabled={uploadingFile} onChange={onFilePick} />
+                {uploadingFile ? t('clients_saving') : t('client_file_upload')}
+              </label>
+            )}
+          </section>
+
           <section className="drawer-section">
             <h2>{t('contacts')}</h2>
             {contacts.length === 0 && <div className="card muted">{t('contacts_empty')}</div>}

@@ -347,6 +347,25 @@ export interface AccountInput {
   notes: string | null
 }
 
+// CLIENT-DOSSIER-2: напоминание по клиенту (таблица client_reminders). done_at IS NULL = активно,
+// timestamptz = выполнено. Схема проверена живьём: org_id/client_account_id/remind_on/note NOT NULL.
+export interface ClientReminder {
+  id: string
+  org_id: string
+  client_account_id: string
+  remind_on: string
+  note: string
+  done_at: string | null
+  created_by: string | null
+  created_at: string
+}
+
+// CLIENT-DOSSIER-2: наступившее/просроченное напоминание с именем клиента — для всплытия в
+// «Оповещениях» (ManagerWorkAlertBell) и КЦ «Требует внимания» (Overview).
+export interface DueClientReminder extends ClientReminder {
+  client_name: string | null
+}
+
 export interface Contact {
   id: string
   org_id: string
