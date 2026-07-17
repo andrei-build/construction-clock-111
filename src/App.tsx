@@ -1,39 +1,44 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './lib/auth'
 import { isManagerRole, hasFinanceAccess } from './lib/types'
+// PERF-1: критический путь работника/водителя грузится сразу (вход, навигация, полевые экраны).
 import Login from './screens/Login'
-import Overview from './screens/Overview'
 import CheckIn from './screens/CheckIn'
 import Projects from './screens/Projects'
-import ProjectHub from './screens/ProjectHub'
-import Team from './screens/Team'
 import Tasks from './screens/Tasks'
 import Schedule from './screens/Schedule'
-import WorkerDetail from './screens/WorkerDetail'
-import Dispatch from './screens/Dispatch'
-import Calendar from './screens/Calendar'
-import TeamCalendar from './screens/TeamCalendar'
-import LiveMap from './screens/LiveMap'
-import Sales from './screens/Sales'
-import Reports from './screens/Reports'
-import Timeline from './screens/Timeline'
-import Archive from './screens/Archive'
-import Trash from './screens/Trash'
-import Stores from './screens/Stores'
-import Clients from './screens/Clients'
-import Gallery from './screens/Gallery'
-import Documents from './screens/Documents'
-import Files from './screens/Files'
 import DailyReports from './screens/DailyReports'
 import MyTime from './screens/MyTime'
-import Payroll from './screens/Payroll'
 import Messages from './screens/Messages'
 import DriverRoute from './screens/Route'
 import More from './screens/More'
-import Settings from './screens/Settings'
-import Broadcast from './screens/Broadcast'
-import Mail from './screens/Mail'
 import ResetPassword from './screens/ResetPassword'
+// PERF-1: тяжёлые экраны владельца/менеджера — ленивые чанки, грузятся по требованию,
+// чтобы полевой работник не перекачивал их после каждого деплоя (route-splitting).
+const Overview = lazy(() => import('./screens/Overview'))
+const ProjectHub = lazy(() => import('./screens/ProjectHub'))
+const Team = lazy(() => import('./screens/Team'))
+const WorkerDetail = lazy(() => import('./screens/WorkerDetail'))
+const Dispatch = lazy(() => import('./screens/Dispatch'))
+const Calendar = lazy(() => import('./screens/Calendar'))
+const TeamCalendar = lazy(() => import('./screens/TeamCalendar'))
+const LiveMap = lazy(() => import('./screens/LiveMap'))
+const Sales = lazy(() => import('./screens/Sales'))
+const Reports = lazy(() => import('./screens/Reports'))
+const Timeline = lazy(() => import('./screens/Timeline'))
+const Archive = lazy(() => import('./screens/Archive'))
+const Trash = lazy(() => import('./screens/Trash'))
+const Stores = lazy(() => import('./screens/Stores'))
+const Clients = lazy(() => import('./screens/Clients'))
+const Gallery = lazy(() => import('./screens/Gallery'))
+const Documents = lazy(() => import('./screens/Documents'))
+const Files = lazy(() => import('./screens/Files'))
+const Payroll = lazy(() => import('./screens/Payroll'))
+const Settings = lazy(() => import('./screens/Settings'))
+const Broadcast = lazy(() => import('./screens/Broadcast'))
+const Mail = lazy(() => import('./screens/Mail'))
+import ScreenFallback from './components/ScreenFallback'
 import Nav from './components/Nav'
 import BackButton from './components/BackButton'
 import { EntityDrawerProvider } from './components/EntityDrawer'
@@ -78,6 +83,7 @@ export default function App() {
           <OfflineCacheBanner />
           <OfflineFieldSync />
           <BackButton />
+          <Suspense fallback={<ScreenFallback />}>
           <Routes>
             {/* NAV-2 (д): продажи приземляются в свою зону, а не на полевую «Отметку».
                 NAV-5: «Главная»/Dashboard убрана — менеджер с '/' уезжает в «Командный центр». */}
@@ -132,6 +138,7 @@ export default function App() {
             <Route path="/more" element={<More />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
+          </Suspense>
         </main>
         <Nav manager={manager} />
         {/* AI-1-UI: оверлей-диалог ассистента + глобальный Ctrl+K. Монтируется ТОЛЬКО владельцу;
