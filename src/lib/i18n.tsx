@@ -1883,6 +1883,13 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_attachments: { ru: 'Вложения', en: 'Attachments', es: 'Adjuntos' },
   mail_attachment_photo: { ru: 'фото', en: 'photo', es: 'foto' },
   mail_attachment_later: { ru: 'файл появится позже', en: 'file will appear later', es: 'el archivo aparecerá más tarde' },
+  // MAIL-FIX-1: пагинация ленты, догрузка тела, состояние ошибки загрузки.
+  mail_load_more: { ru: 'Показать ещё', en: 'Show more', es: 'Mostrar más' },
+  mail_loading_more: { ru: 'Загружаем…', en: 'Loading…', es: 'Cargando…' },
+  mail_load_more_failed: { ru: 'Не удалось загрузить ещё письма', en: 'Failed to load more mail', es: 'No se pudieron cargar más correos' },
+  mail_load_error: { ru: 'Не удалось загрузить письма', en: 'Failed to load mail', es: 'No se pudo cargar el correo' },
+  mail_retry: { ru: 'Повторить', en: 'Retry', es: 'Reintentar' },
+  mail_body_loading: { ru: 'Загружаем письмо…', en: 'Loading message…', es: 'Cargando mensaje…' },
   // AI-1-UI: «строка-командир» — AI-ассистент владельца (кнопка «Спроси» + Ctrl+K → оверлей).
   ai_ask: { ru: 'Спроси', en: 'Ask', es: 'Pregunta' },
   ai_title: { ru: 'Ассистент владельца', en: 'Owner assistant', es: 'Asistente del dueño' },
