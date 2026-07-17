@@ -156,6 +156,26 @@ export interface TaskMedia {
   storage_path: string
 }
 
+// DELIVERY-2: позиция накладной-доставки (delivery_items, миграция 0061). Привязана к задаче
+// task_type 'delivery'|'material' (task_id). Статус позиции (needed→bought→have→delivered)
+// НЕЗАВИСИМ от статуса всей доставки (MaterialStatusChain Заказано→Взял→Доставлено) — это
+// детализация ВНУТРИ. claimed_by ставится при отметке 'have' («есть у меня — завезу»);
+// updated_by/updated_at — кто и когда трогал отметку (показываем «имя + время»).
+export interface DeliveryItem {
+  id: string
+  org_id: string
+  task_id: string
+  position: number
+  title: string
+  details: string | null
+  status: 'needed' | 'bought' | 'have' | 'delivered'
+  claimed_by: string | null
+  updated_by: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 // Вложение задачи для карточки глобального экрана «Задачи»: строка media, привязанная к task_id.
 export interface TaskAttachment {
   id: string

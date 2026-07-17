@@ -2,7 +2,7 @@ import { supabase } from '../supabase'
 import { notifyMessagePush } from '../push'
 import { logEvent, warnReadError } from './_shared'
 import { inferMediaType, TASK_MEDIA_BUCKET, safeFileName, inferUploadContentType, validateUpload, taskWantsClientReport } from './storage'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment, DeliveryItem } from '../types'
 
 
 export const TASK_SELECT = 'id, org_id, project_id, task_type, title, description, status, priority, assigned_to, urgent_flag, requires_photo, done_at, created_at, picked_up_at, picked_up_by, delivered_at, delivered_by'
@@ -330,4 +330,102 @@ export async function getArchivedTasks(): Promise<ArchivedTask[]> {
     .order('deleted_at', { ascending: false })
   if (error) return []
   return (data as unknown as ArchivedTask[]) ?? []
+}
+
+// ── DELIVERY-2: позиции накладной-доставки (delivery_items, миграция 0061) ────────
+// Позиции привязаны к задаче task_type 'delivery'|'material' (это накладная). RLS
+// delivery_items_members: читать/добавлять/менять может любой активный член орг КРОМЕ client;
+// удаление в UI гейтим на менеджера+/создателя (закон Андрея, RLS шире не мешает). org_id
+// NOT NULL без дефолта — шлём ЯВНО из задачи/профиля при insert. Эти функции экспортируются
+// через barrel `export * from './api/tasks'` в src/lib/api.ts — сам barrel НЕ трогаем.
+const DELIVERY_ITEM_SELECT = 'id, org_id, task_id, position, title, details, status, claimed_by, updated_by, created_by, created_at, updated_at'
+
+// Позиции одной доставки (открытая накладная). Порядок: position, затем время создания.
+export async function getDeliveryItems(taskId: string): Promise<DeliveryItem[]> {
+  const { data, error } = await supabase.from('delivery_items')
+    .select(DELIVERY_ITEM_SELECT)
+    .eq('task_id', taskId)
+    .order('position', { ascending: true })
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data as DeliveryItem[]) ?? []
+}
+
+export interface NewDeliveryItemInput {
+  title: string
+  details?: string | null
+  position?: number
+}
+
+// Добавить позицию в накладную. org_id берём из задачи (fallback — профиль), created_by/updated_by=я.
+export async function addDeliveryItem(p: Profile, task: Task, input: NewDeliveryItemInput): Promise<DeliveryItem> {
+  const row: Record<string, unknown> = {
+    org_id: task.org_id ?? p.org_id,
+    task_id: task.id,
+    title: input.title,
+    created_by: p.id,
+    updated_by: p.id,
+  }
+  const details = input.details?.trim()
+  if (details) row.details = details
+  if (input.position !== undefined) row.position = input.position
+  const { data, error } = await supabase.from('delivery_items').insert(row).select(DELIVERY_ITEM_SELECT).single()
+  if (error) throw error
+  return data as DeliveryItem
+}
+
+export type DeliveryItemStatus = DeliveryItem['status']
+
+// Отметка водителя по позиции: bought (купил) / have (есть у меня — завезу) / delivered (привезено) /
+// needed (сброс). updated_by/updated_at ставим всегда (кто и когда трогал). claimed_by = я ТОЛЬКО
+// при 'have'; на любом другом статусе снимаем притязание (NULL), чтобы «завезу» не висело после купил/сброс.
+export async function setDeliveryItemStatus(p: Profile, item: DeliveryItem, status: DeliveryItemStatus): Promise<DeliveryItem> {
+  const patch: Record<string, unknown> = {
+    status,
+    updated_by: p.id,
+    updated_at: new Date().toISOString(),
+    claimed_by: status === 'have' ? p.id : null,
+  }
+  const { data, error } = await supabase.from('delivery_items').update(patch).eq('id', item.id).select(DELIVERY_ITEM_SELECT).single()
+  if (error) throw error
+  return data as DeliveryItem
+}
+
+// Удаление позиции. RLS пускает всех не-client; в UI кнопку показываем только менеджеру+/создателю.
+export async function deleteDeliveryItem(id: string): Promise<void> {
+  const { error } = await supabase.from('delivery_items').delete().eq('id', id)
+  if (error) throw error
+}
+
+// Прогресс «N/M позиций» для карточек списка/КЦ: тянем (task_id, status) по набору доставок
+// и агрегируем клиентски (delivered из total). Пусто/ошибка → пустая карта (карточка деградирует
+// без прогресса, не падает). Пустой вход — без запроса.
+export async function getDeliveryProgress(taskIds: string[]): Promise<Record<string, { total: number; delivered: number }>> {
+  if (taskIds.length === 0) return {}
+  const { data, error } = await supabase.from('delivery_items')
+    .select('task_id, status')
+    .in('task_id', taskIds)
+  if (error) return {}
+  const out: Record<string, { total: number; delivered: number }> = {}
+  for (const row of (data ?? []) as Array<{ task_id: string; status: string }>) {
+    const bucket = out[row.task_id] ?? (out[row.task_id] = { total: 0, delivered: 0 })
+    bucket.total += 1
+    if (row.status === 'delivered') bucket.delivered += 1
+  }
+  return out
+}
+
+// Реалтайм по позициям ОДНОЙ доставки: два водителя в разных магазинах видят отметки друг друга
+// сразу. Фильтр task_id (RLS всё равно держит org-скоуп). Возвращаем отписку — зовём при закрытии
+// накладной. Стиль зеркалит subscribeToTaskChanges.
+export function subscribeToDeliveryItems(taskId: string, onChange: () => void, channelName = 'delivery'): () => void {
+  const channel = supabase
+    .channel(`${channelName}:${taskId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'delivery_items', filter: `task_id=eq.${taskId}` },
+      () => onChange(),
+    )
+    .subscribe()
+  return () => { void supabase.removeChannel(channel) }
 }
