@@ -9,12 +9,13 @@ import {
   getMailAccounts,
   getMailAllowlist,
   getMailAttachments,
-  getMailMessages,
+  getMailMessageBodies,
+  getMailMessagesPage,
   markMailSeen,
   sendMail,
   triggerMailSync,
 } from '../lib/api'
-import type { MailAccount, MailAllowlistEntry, MailAttachment, MailMessage } from '../lib/api/mail'
+import type { MailAccount, MailAllowlistEntry, MailAttachment, MailListMessage, MailMessageBody } from '../lib/api/mail'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { useLiveRefresh } from '../lib/useLiveRefresh'
@@ -40,9 +41,11 @@ function replySubject(subject: string | null): string {
   return base ? `Re: ${base}` : 'Re:'
 }
 
-// Цитата оригинала для тела ответа: каждая строка с префиксом «> ».
-function quoteBody(m: MailMessage): string {
-  const orig = (m.body_text ?? m.snippet ?? '').trim()
+// Цитата оригинала для тела ответа: каждая строка с префиксом «> ». MAIL-FIX-1: тело письма теперь
+// живёт не в строке списка, а в отдельно догруженной карте тел — принимаем текст явно (fallback на
+// snippet, если тело ещё не подтянулось).
+function quoteBody(bodyText: string | null, snippet: string | null): string {
+  const orig = (bodyText ?? snippet ?? '').trim()
   if (!orig) return ''
   return `\n\n${orig.split('\n').map((l) => `> ${l}`).join('\n')}`
 }
@@ -54,7 +57,7 @@ function quoteBody(m: MailMessage): string {
 // показываем аккуратные пустые/ошибочные состояния. Глобальный «← Назад» уже рендерит App.tsx —
 // свой back-кнопки НЕ добавляем; в карточке письма — обычный «Закрыть» (это не навигация).
 
-function senderLabel(m: MailMessage, unknown: string): string {
+function senderLabel(m: MailListMessage, unknown: string): string {
   return (m.from_name && m.from_name.trim()) || (m.from_addr && m.from_addr.trim()) || unknown
 }
 
@@ -110,13 +113,13 @@ function fmtBytes(n: number | null): string {
 
 // MAIL-5-UI: ТРЕДЫ. Ключ цепочки письма: thread_key (если есть), иначе одиночная цепочка по id —
 // письма без thread_key показываем как тред из одного письма (fallback), не теряем их.
-function threadKeyOf(m: MailMessage): string {
+function threadKeyOf(m: MailListMessage): string {
   const k = (m.thread_key ?? '').trim()
   return k || `id:${m.id}`
 }
 
 // Дата письма для сортировки внутри треда (sent_at приоритетно, иначе created_at).
-function msgTime(m: MailMessage): number {
+function msgTime(m: MailListMessage): number {
   const t = Date.parse(m.sent_at ?? m.created_at ?? '')
   return Number.isNaN(t) ? 0 : t
 }
@@ -125,8 +128,8 @@ function msgTime(m: MailMessage): number {
 // свежее письмо цепочки (для строки списка), unread — есть ли непрочитанное входящее в цепочке.
 interface MailThread {
   key: string
-  messages: MailMessage[]
-  last: MailMessage
+  messages: MailListMessage[]
+  last: MailListMessage
   unread: boolean
 }
 
@@ -140,8 +143,87 @@ interface MailThread {
 const MAIL_BLOCKED_TAGS = new Set([
   'script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'noscript', 'title',
 ])
-const JS_URL_RE = /^\s*javascript:/i
-const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'background', 'poster'])
+// MAIL-FIX-1: URL-атрибуты делим на два класса:
+//  • навигационные (ссылки/действия) — чистим по ALLOWLIST схем (всё вне списка вырезаем);
+//  • ресурсные (грузят внешний контент) — ГЕЙТИМ за «показать изображения»: до нажатия реальный URL
+//    в DOM не попадает (уходит в data-*), после — подставляется провалидированным.
+const NAV_URL_ATTRS = new Set(['href', 'action', 'formaction', 'xlink:href'])
+const RES_URL_ATTRS = new Set(['src', 'srcset', 'poster', 'background'])
+// ALLOWLIST схем. Навигация: пользователь кликает ссылку (открывается в новой вкладке) — http/https/
+// mailto/tel безопасны; всё остальное (javascript:, data:, vbscript:, file: …) вырезаем. Ресурсы:
+// только http/https (внешние картинки) — data:image разрешаем отдельно (инлайн-картинки писем).
+const NAV_SCHEMES = new Set(['http', 'https', 'mailto', 'tel'])
+const RES_SCHEMES = new Set(['http', 'https'])
+
+// MAIL-FIX-1: нормализация URL перед проверкой схемы — вырезаем управляющие/невидимые символы
+// (\x00-\x20, DEL/C1, zero-width, разделители строк), которыми маскируют схему (напр. «java\x00script:»
+// или «java script:» → после чистки «javascript:», ловится allowlist'ом). '' для пустого.
+function normalizeUrl(raw: string): string {
+  return raw.replace(/[\u0000-\u0020\u007F-\u00A0\u200B-\u200D\u2028\u2029\uFEFF]/g, '').trim()
+}
+
+// Схема URL в нижнем регистре ('' если относительный/якорь/без схемы). '//host' (протокол-относительный)
+// трактуем как https (браузер догрузит по текущему протоколу).
+function urlScheme(normalized: string): string {
+  if (normalized.startsWith('//')) return 'https'
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(normalized)
+  return m ? m[1].toLowerCase() : ''
+}
+
+// Навигационный URL по allowlist. Относительные/якорные (без схемы) пропускаем — внешних ресурсов
+// они не грузят. Возвращает нормализованный URL или null (атрибут вырезать).
+function safeNavUrl(raw: string): string | null {
+  const norm = normalizeUrl(raw)
+  if (!norm) return null
+  const scheme = urlScheme(norm)
+  if (scheme === '') return norm
+  return NAV_SCHEMES.has(scheme) ? norm : null
+}
+
+// Ресурсный (картиночный) URL по allowlist. data:image разрешён (инлайн-картинки писем); прочие data:
+// (например data:text/html) вырезаем. Относительные — пропускаем (внешний ресурс не грузят).
+function safeImageUrl(raw: string): string | null {
+  const norm = normalizeUrl(raw)
+  if (!norm) return null
+  const scheme = urlScheme(norm)
+  if (scheme === 'data') return /^data:image\//i.test(norm) ? norm : null
+  if (scheme === '') return norm
+  return RES_SCHEMES.has(scheme) ? norm : null
+}
+
+// srcset — список «url дескриптор, url дескриптор». Валидируем каждый URL через safeImageUrl,
+// невалидные кандидаты выкидываем. Пусто → ''.
+function sanitizeSrcset(value: string): string {
+  return value
+    .split(',')
+    .map((part) => {
+      const trimmed = part.trim()
+      if (!trimmed) return ''
+      const bits = trimmed.split(/\s+/)
+      const safe = safeImageUrl(bits[0])
+      if (!safe) return ''
+      return bits.length > 1 ? `${safe} ${bits.slice(1).join(' ')}` : safe
+    })
+    .filter(Boolean)
+    .join(', ')
+}
+
+// Инлайн-style. Опасные конструкции (expression()/js:/vbscript:) → выкинуть весь style (null).
+// url(...) — это внешний фон/картинка: ДО «показать изображения» вырезаем ВСЕ url(...) (ни один
+// ресурс не грузится), ПОСЛЕ — оставляем только url() с разрешённой схемой. Возвращает очищенный
+// style, либо null если весь атрибут надо удалить.
+function sanitizeStyle(value: string, showImages: boolean): string | null {
+  if (/expression\s*\(|javascript:|vbscript:/i.test(value)) return null
+  if (!/url\s*\(/i.test(value)) return value
+  if (!showImages) {
+    const stripped = value.replace(/url\s*\([^)]*\)/gi, '')
+    return stripped.trim() ? stripped : null
+  }
+  return value.replace(/url\s*\(\s*(['"]?)([^)'"]*)\1\s*\)/gi, (_full, _q, u) => {
+    const safe = safeImageUrl(String(u))
+    return safe ? `url("${safe}")` : ''
+  })
+}
 
 function sanitizeMailHtml(html: string, showImages: boolean): string {
   if (typeof window === 'undefined' || typeof window.DOMParser === 'undefined') return ''
@@ -150,6 +232,19 @@ function sanitizeMailHtml(html: string, showImages: boolean): string {
     doc = new DOMParser().parseFromString(html, 'text/html')
   } catch {
     return ''
+  }
+  // Ресурсный URL-атрибут (src/srcset/poster/background): реальный URL до showImages НЕ оставляем в
+  // DOM (сохраняем в data-<name>), после — подставляем провалидированный. srcset валидируем поштучно.
+  const gateResourceAttr = (el: Element, name: string): void => {
+    const raw = el.getAttribute(name) ?? el.getAttribute(`data-${name}`) ?? ''
+    el.removeAttribute(name)
+    const safe = name === 'srcset' ? sanitizeSrcset(raw) : (raw ? safeImageUrl(raw) : null)
+    if (safe) {
+      el.setAttribute(`data-${name}`, safe)
+      if (showImages) el.setAttribute(name, safe)
+    } else {
+      el.removeAttribute(`data-${name}`)
+    }
   }
   const walk = (node: Element): void => {
     for (const el of Array.from(node.children)) {
@@ -164,24 +259,24 @@ function sanitizeMailHtml(html: string, showImages: boolean): string {
           el.removeAttribute(attr.name)
           continue
         }
-        if (URL_ATTRS.has(name) && JS_URL_RE.test(attr.value)) {
-          el.removeAttribute(attr.name)
+        if (name === 'style') {
+          const clean = sanitizeStyle(attr.value, showImages)
+          if (clean === null) el.removeAttribute(attr.name)
+          else if (clean !== attr.value) el.setAttribute('style', clean)
           continue
         }
-        if (name === 'style' && /expression\s*\(|javascript:/i.test(attr.value)) {
-          el.removeAttribute(attr.name)
+        if (NAV_URL_ATTRS.has(name)) {
+          const safe = safeNavUrl(attr.value)
+          if (!safe) el.removeAttribute(attr.name)
+          else if (safe !== attr.value) el.setAttribute(attr.name, safe)
+          continue
+        }
+        if (RES_URL_ATTRS.has(name)) {
+          gateResourceAttr(el, name)
+          continue
         }
       }
-      if (tag === 'img') {
-        const raw = el.getAttribute('src') ?? el.getAttribute('data-src') ?? ''
-        const safe = JS_URL_RE.test(raw) ? '' : raw
-        el.removeAttribute('src')
-        el.removeAttribute('srcset') // адаптивные источники тоже гейтим
-        if (safe) el.setAttribute('data-src', safe)
-        else el.removeAttribute('data-src')
-        if (showImages && safe) el.setAttribute('src', safe)
-        el.setAttribute('data-mail-img', '1')
-      }
+      if (tag === 'img') el.setAttribute('data-mail-img', '1')
       if (tag === 'a') {
         el.setAttribute('target', '_blank')
         el.setAttribute('rel', 'noopener noreferrer nofollow')
@@ -198,6 +293,9 @@ function htmlHasImages(html: string | null): boolean {
   return !!html && /<img[\s/>]/i.test(html)
 }
 
+// MAIL-FIX-1: размер страницы ленты (писем на «страницу»/«показать ещё»).
+const MAIL_PAGE_SIZE = 50
+
 export default function Mail() {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
@@ -206,12 +304,17 @@ export default function Mail() {
   const isOwner = profile?.role === 'owner'
 
   const [accounts, setAccounts] = useState<MailAccount[]>([])
-  const [messages, setMessages] = useState<MailMessage[]>([])
+  // MAIL-FIX-1: лента держит ТОЛЬКО лёгкие строки (без тел) — тела догружаем при открытии треда.
+  const [messages, setMessages] = useState<MailListMessage[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   // MAIL-5-UI: открыт ТРЕД (по thread_key/fallback-id), а не одно письмо — раскрываем цепочку целиком.
   const [openKey, setOpenKey] = useState<string | null>(null)
   // Вложения раскрытого треда: message_id → строки mail_attachments (грузим по требованию на раскрытие).
   const [attachmentsByMsg, setAttachmentsByMsg] = useState<Record<string, MailAttachment[]>>({})
+  // MAIL-FIX-1: тела писем (body_html/body_text) по id — накапливаем при открытии тредов, переживают
+  // silent-рефетч (лента их не хранит). bodyLoadingKey — ключ треда, чьи тела сейчас грузятся.
+  const [bodiesById, setBodiesById] = useState<Record<string, MailMessageBody>>({})
+  const [bodyLoadingKey, setBodyLoadingKey] = useState<string | null>(null)
   // Письма, для которых пользователь нажал «Показать изображения» (по умолчанию картинки не грузим).
   const [imagesShownIds, setImagesShownIds] = useState<Set<string>>(() => new Set())
   const [compose, setCompose] = useState<ComposeState | null>(null)
@@ -226,6 +329,14 @@ export default function Mail() {
   // MAIL-4-UI: мини-меню «Скрыть навсегда» — открыто для конкретного письма треда (owner-only).
   const [hideMenuMsgId, setHideMenuMsgId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  // MAIL-FIX-1: ошибка загрузки ленты (показываем сообщение + «повторить»); спиннер снимается всегда.
+  const [loadError, setLoadError] = useState(false)
+  // MAIL-FIX-1: пагинация ленты. Пагинируем на уровне ПИСЕМ по PAGE_SIZE; треды группируются поверх
+  // всех загруженных страниц. pageCountRef — сколько страниц сейчас в ленте (для silent-рефетча тем же
+  // окном, чтобы «показать ещё» не схлопывалось при фоновом обновлении). hasMore — есть ли ещё страницы.
+  const pageCountRef = useRef(1)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<number | null>(null)
@@ -246,21 +357,56 @@ export default function Mail() {
   const load = useCallback(async (silent = false) => {
     if (!isAdminOrOwner) return
     if (!silent) setLoading(true)
-    // MAIL-4-UI: block-список тянем сразу (owner-only) — он нужен клиентскому фильтру ленты, а не
-    // только модалу. Не-владельцу RLS отдаст [] (мягко); ему фильтр скрытых и не адресован.
-    const [accs, msgs, al] = await Promise.all([
-      getMailAccounts(),
-      getMailMessages(),
-      isOwner ? getMailAllowlist() : Promise.resolve([] as MailAllowlistEntry[]),
-    ])
-    setAccounts(accs)
-    setMessages(msgs)
-    setAllowlist(al)
-    setActiveId((prev) => (prev && accs.some((a) => a.id === prev) ? prev : accs[0]?.id ?? null))
-    if (!silent) setLoading(false)
+    // MAIL-FIX-1: тянем ПЕРВУЮ пачку писем лёгким select'ом (без тел). На silent-рефетче сохраняем
+    // текущее окно (pageCountRef*PAGE_SIZE), чтобы уже раскрытая «показать ещё» не схлопнулась.
+    const wanted = Math.max(1, silent ? pageCountRef.current : 1) * MAIL_PAGE_SIZE
+    try {
+      // MAIL-4-UI: block-список тянем сразу (owner-only) — он нужен клиентскому фильтру ленты, а не
+      // только модалу. Не-владельцу RLS отдаст [] (мягко); ему фильтр скрытых и не адресован.
+      const [accs, msgs, al] = await Promise.all([
+        getMailAccounts(),
+        getMailMessagesPage({ offset: 0, limit: wanted }),
+        isOwner ? getMailAllowlist() : Promise.resolve([] as MailAllowlistEntry[]),
+      ])
+      setAccounts(accs)
+      setMessages(msgs)
+      setAllowlist(al)
+      if (!silent) pageCountRef.current = 1
+      setHasMore(msgs.length >= wanted) // полное окно ⇒ вероятно есть ещё страницы
+      setActiveId((prev) => (prev && accs.some((a) => a.id === prev) ? prev : accs[0]?.id ?? null))
+      setLoadError(false)
+    } catch {
+      // MAIL-FIX-1: ошибка загрузки ленты. На первичной загрузке показываем состояние ошибки с
+      // кнопкой «повторить»; на silent-рефетче не рушим уже показанные данные (тихо оставляем как есть).
+      if (!silent) setLoadError(true)
+    } finally {
+      // MAIL-FIX-1: спиннер снимаем ВСЕГДА (в т.ч. после ошибки/при silent) — чтобы не висел вечно.
+      setLoading(false)
+    }
   }, [isAdminOrOwner, isOwner])
 
   useEffect(() => { void load() }, [load])
+
+  // MAIL-FIX-1: «показать ещё» — дотягиваем следующую страницу писем и дописываем в ленту (дедуп по id
+  // на случай сдвига окна фоновым рефетчем). Старые письма/треды становятся достижимы без потери свежих.
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return
+    setLoadingMore(true)
+    try {
+      const offset = pageCountRef.current * MAIL_PAGE_SIZE
+      const more = await getMailMessagesPage({ offset, limit: MAIL_PAGE_SIZE })
+      setMessages((prev) => {
+        const seen = new Set(prev.map((x) => x.id))
+        return [...prev, ...more.filter((m) => !seen.has(m.id))]
+      })
+      pageCountRef.current += 1
+      setHasMore(more.length >= MAIL_PAGE_SIZE)
+    } catch {
+      flashToast(t('mail_load_more_failed'))
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [loadingMore, flashToast, t])
 
   // LIVE-REFRESH-1: дашборд «Почта» — мягкий 60с-поллинг (только пока вкладка видима) + рефетч на
   // возврат/фокус. Почта приходит по mail-sync без realtime-канала, поэтому поллинг здесь основной.
@@ -294,7 +440,7 @@ export default function Mail() {
   // messages[0] внутри треда = самое свежее письмо — порядок цепочек в списке сохраняется (по дате
   // последнего письма, свежие сверху), как требует закон Андрея.
   const threads = useMemo<MailThread[]>(() => {
-    const map = new Map<string, MailMessage[]>()
+    const map = new Map<string, MailListMessage[]>()
     const order: string[] = []
     for (const m of activeMessages) {
       const k = threadKeyOf(m)
@@ -303,7 +449,7 @@ export default function Mail() {
       else { map.set(k, [m]); order.push(k) }
     }
     return order.map((k) => {
-      const msgs = map.get(k) as MailMessage[]
+      const msgs = map.get(k) as MailListMessage[]
       return {
         key: k,
         messages: msgs,
@@ -348,6 +494,30 @@ export default function Mail() {
   // markMailSeen откатываем локально, вложения деградируют в [] (RLS/не-владелец → пусто).
   const openThread = async (th: MailThread) => {
     setOpenKey(th.key)
+    // MAIL-FIX-1: тела писем треда догружаем отдельным запросом (лента их не держит). Тянем только
+    // те id, которых ещё нет в bodiesById (повторное открытие не перезапрашивает). Ставим loading
+    // СРАЗУ (до отметки прочитанным), чтобы под телом не мелькал snippet. best-effort: при ошибке
+    // getMailMessageBodies отдаёт [] — тело просто не покажется, тред не падает.
+    const needBodies = th.messages.map((m) => m.id).filter((id) => !bodiesById[id])
+    const loadBodies = needBodies.length > 0
+      ? (async () => {
+        setBodyLoadingKey(th.key)
+        try {
+          const bodies = await getMailMessageBodies(needBodies)
+          setBodiesById((prev) => {
+            const next = { ...prev }
+            // Заглушка по каждому запрошенному id (даже если тело не пришло) — чтобы не дёргать запрос
+            // повторно и корректно показать «пустое тело» (fallback на snippet).
+            for (const id of needBodies) next[id] = next[id] ?? { id, body_text: null, body_html: null }
+            for (const b of bodies) next[b.id] = b
+            return next
+          })
+        } finally {
+          setBodyLoadingKey((k) => (k === th.key ? null : k))
+        }
+      })()
+      : Promise.resolve()
+
     const unread = th.messages.filter((m) => m.direction !== 'out' && !m.seen)
     if (unread.length > 0) {
       const ids = new Set(unread.map((m) => m.id))
@@ -370,6 +540,7 @@ export default function Mail() {
         return next
       })
     }
+    await loadBodies
   }
 
   const doSync = async () => {
@@ -402,7 +573,7 @@ export default function Mail() {
     }
   }
 
-  const makeTask = async (m: MailMessage) => {
+  const makeTask = async (m: MailListMessage) => {
     if (!profile) return
     const from = senderLabel(m, t('mail_unknown_sender'))
     const snippet = (m.snippet ?? '').trim()
@@ -421,7 +592,7 @@ export default function Mail() {
     }
   }
 
-  const makeEvent = async (m: MailMessage) => {
+  const makeEvent = async (m: MailListMessage) => {
     if (!profile) return
     const from = senderLabel(m, t('mail_unknown_sender'))
     const snippet = (m.snippet ?? '').trim()
@@ -451,14 +622,15 @@ export default function Mail() {
     setCompose({ accountKey: defaultComposeKey(), to: '', subject: '', body: '', inReplyTo: null })
   }
 
-  const openReply = (m: MailMessage) => {
+  const openReply = (m: MailListMessage) => {
     // Отправитель ответа = ящик самого письма; собеседник = from_addr; тема «Re: …»; цитата в теле.
+    // MAIL-FIX-1: тело для цитаты берём из догруженной карты тел (тред уже открыт), fallback на snippet.
     const acct = accounts.find((a) => a.id === m.account_id)
     setCompose({
       accountKey: (acct?.active ? acct.key : '') || defaultComposeKey(),
       to: (m.from_addr ?? '').trim(),
       subject: replySubject(m.subject),
-      body: quoteBody(m),
+      body: quoteBody(bodiesById[m.id]?.body_text ?? null, m.snippet),
       inReplyTo: m.message_id,
     })
   }
@@ -517,7 +689,7 @@ export default function Mail() {
   }
 
   // «В белый список» с открытого письма: entry=from_addr, note=from_name.
-  const addSenderToAllowlist = async (m: MailMessage) => {
+  const addSenderToAllowlist = async (m: MailListMessage) => {
     const orgId = ownerOrgId()
     const from = (m.from_addr ?? '').trim()
     if (!orgId || !from) return
@@ -536,7 +708,7 @@ export default function Mail() {
   // entry='@'+домен. Вставляем block-запись (kind='block'). НЕ удаляем письмо из mail_messages
   // (у него нет RLS DELETE — тихо не сработает): после insert рефетчим block-список, и клиентский
   // фильтр ленты сам убирает письма отправителя/домена. Открытое письмо закрываем (оно скрыто).
-  const hideSender = async (m: MailMessage, scope: 'sender' | 'domain') => {
+  const hideSender = async (m: MailListMessage, scope: 'sender' | 'domain') => {
     const orgId = ownerOrgId()
     const from = (m.from_addr ?? '').trim()
     if (!orgId || !from) return
@@ -605,13 +777,26 @@ export default function Mail() {
       return next
     })
 
-  // MAIL-5-UI: тело письма. body_html → консервативно санитайзим и рендерим в изолированном
-  // контейнере (картинки под приватным гейтом); иначе body_text ПЛОСКИМ ТЕКСТОМ (как MAIL-1).
-  const renderMessageBody = (m: MailMessage) => {
-    if (m.body_html) {
+  // MAIL-5-UI/FIX-1: тело письма. Тело живёт в отдельно догруженной карте bodiesById (лента его не
+  // держит). Пока тело не пришло: показываем «загрузка тела…» (если грузится) или snippet (fallback).
+  // body_html → консервативно санитайзим и рендерим в изолированном контейнере (картинки под приватным
+  // гейтом); иначе body_text ПЛОСКИМ ТЕКСТОМ (как MAIL-1).
+  const renderMessageBody = (m: MailListMessage) => {
+    const body = bodiesById[m.id]
+    if (!body) {
+      if (bodyLoadingKey === openKey) {
+        return <div className="mail-body muted">{t('mail_body_loading')}</div>
+      }
+      return (
+        <div className="mail-body" style={{ whiteSpace: 'pre-wrap' }}>
+          {m.snippet ?? ''}
+        </div>
+      )
+    }
+    if (body.body_html) {
       const showImages = imagesShownIds.has(m.id)
-      const hasImages = htmlHasImages(m.body_html)
-      const safe = sanitizeMailHtml(m.body_html, showImages)
+      const hasImages = htmlHasImages(body.body_html)
+      const safe = sanitizeMailHtml(body.body_html, showImages)
       return (
         <>
           {hasImages && !showImages && (
@@ -629,14 +814,14 @@ export default function Mail() {
     }
     return (
       <div className="mail-body" style={{ whiteSpace: 'pre-wrap' }}>
-        {m.body_text ?? m.snippet ?? ''}
+        {body.body_text ?? m.snippet ?? ''}
       </div>
     )
   }
 
   // MAIL-5-UI: вложения письма. Контент пока НЕ качаем (r2_key null → «файл появится позже», без
   // ссылки; скачивание/миниатюры — MAIL-6). Для image/* — пометка «фото». Пусто/ещё грузится → null.
-  const renderAttachments = (m: MailMessage) => {
+  const renderAttachments = (m: MailListMessage) => {
     if (!m.has_attachments) return null
     const atts = attachmentsByMsg[m.id]
     if (!atts || atts.length === 0) return null
@@ -664,7 +849,7 @@ export default function Mail() {
   // MAIL-5-UI: одно письмо внутри раскрытого треда — шапка (кто/адрес/дата), тело, вложения и
   // действия (Ответить / → Задача / → Событие / В белый список / Скрыть навсегда). Действия per-письмо
   // работают ровно как в MAIL-1..4, только теперь по конкретному письму цепочки.
-  const renderThreadMessage = (m: MailMessage) => {
+  const renderThreadMessage = (m: MailListMessage) => {
     const isOut = m.direction === 'out'
     const who = isOut
       ? ((m.to_addr && m.to_addr.trim()) || t('mail_unknown_recipient'))
@@ -765,6 +950,14 @@ export default function Mail() {
 
       {loading ? (
         <div className="spinner">{t('mail_loading')}</div>
+      ) : loadError ? (
+        // MAIL-FIX-1: ошибка загрузки ленты — сообщение + «повторить» (спиннер не висит вечно).
+        <div className="card muted mail-error" role="alert">
+          <div>{t('mail_load_error')}</div>
+          <button type="button" className="btn small" style={{ marginTop: 8 }} onClick={() => { void load() }}>
+            {t('mail_retry')}
+          </button>
+        </div>
       ) : accounts.length === 0 ? (
         <div className="card muted">{t('mail_no_accounts')}</div>
       ) : (
@@ -831,6 +1024,7 @@ export default function Mail() {
           ) : threads.length === 0 ? (
             <div className="card muted mail-empty">{t('mail_empty')}</div>
           ) : (
+            <>
             <div className="mail-list">
               {threads.map((th) => {
                 // MAIL-5-UI: одна строка = ЦЕПОЧКА. Показываем последнее письмо (th.last) + счётчик
@@ -865,6 +1059,16 @@ export default function Mail() {
                 )
               })}
             </div>
+            {/* MAIL-FIX-1: пагинация — «показать ещё» дотягивает следующую страницу писем (старые
+                треды/письма достижимы, не пропадают после ~1000). Кнопка видна, пока в БД есть ещё. */}
+            {hasMore && (
+              <div className="mail-load-more">
+                <button type="button" className="btn ghost small" onClick={() => { void loadMore() }} disabled={loadingMore}>
+                  {loadingMore ? t('mail_loading_more') : t('mail_load_more')}
+                </button>
+              </div>
+            )}
+            </>
           )}
         </>
       )}

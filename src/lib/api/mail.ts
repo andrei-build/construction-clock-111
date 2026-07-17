@@ -52,10 +52,26 @@ export interface MailMessage {
   created_at: string
 }
 
+// MAIL-FIX-1: лёгкая строка СПИСКА писем — БЕЗ body_html/body_text. Список тредов рендерится только
+// по snippet (превью), полные тела не тянем при загрузке ленты (иначе на 1000+ писем это мегабайты
+// HTML в одном запросе). Тело догружаем отдельным запросом при открытии треда (getMailMessageBodies).
+export type MailListMessage = Omit<MailMessage, 'body_html' | 'body_text'>
+
+// MAIL-FIX-1: тело одного письма (догружаем по требованию). id — первичный ключ mail_messages
+// (тот же, по которому mail_attachments.message_id ссылается в getMailAttachments).
+export interface MailMessageBody {
+  id: string
+  body_text: string | null
+  body_html: string | null
+}
+
 const MAIL_ACCOUNT_SELECT =
   'id, org_id, key, brand, email, display_name, active, last_sync_at, last_uid, last_error, imap_host, imap_port, work_only, filter_mode, created_at'
 const MAIL_MESSAGE_SELECT =
   'id, org_id, account_id, uid, message_id, from_name, from_addr, to_addr, subject, snippet, body_text, sent_at, seen, direction, thread_key, body_html, has_attachments, created_at'
+// MAIL-FIX-1: лёгкий select для СПИСКА — как MAIL_MESSAGE_SELECT, но без body_html/body_text.
+const MAIL_LIST_SELECT =
+  'id, org_id, account_id, uid, message_id, from_name, from_addr, to_addr, subject, snippet, sent_at, seen, direction, thread_key, has_attachments, created_at'
 
 // Оба почтовых ящика (buildpro / customhomes) для вкладок. RLS отдаёт строки только владельцу;
 // admin/иные роли получат [] — это ожидаемо (мягкий пустой экран). error → [] (не роняем экран).
@@ -86,6 +102,44 @@ export async function getMailMessages(accountId?: string): Promise<MailMessage[]
     return []
   }
   return (data as MailMessage[]) ?? []
+}
+
+// MAIL-FIX-1: СТРАНИЦА писем для ленты — лёгкий select (без тел) + .range() для пагинации.
+// Пагинируем на уровне ПИСЕМ (не тредов): каждая страница — следующие `limit` писем свежие-сверху,
+// фронт группирует их в треды по thread_key поверх ВСЕХ уже загруженных страниц. Тред может
+// охватывать границу страниц — тогда «показать ещё» дотягивает его старые письма; старые письма
+// всегда достижимы (раньше без limit после ~1000 они молча пропадали). offset/limit — от фронта.
+// ВАЖНО: ошибку НЕ глотаем в [] (в отличие от getMailMessages) — пробрасываем, чтобы экран показал
+// состояние ошибки с кнопкой «повторить», а не вечный спиннер/ложно-пустую ленту.
+export async function getMailMessagesPage(opts: { offset: number; limit: number; accountId?: string }): Promise<MailListMessage[]> {
+  const from = Math.max(0, opts.offset)
+  const to = from + Math.max(1, opts.limit) - 1
+  let query = supabase
+    .from('mail_messages')
+    .select(MAIL_LIST_SELECT)
+    .order('sent_at', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: false })
+    .range(from, to)
+  if (opts.accountId) query = query.eq('account_id', opts.accountId)
+  const { data, error } = await query
+  if (error) throw error
+  return (data as MailListMessage[]) ?? []
+}
+
+// MAIL-FIX-1: тела писем по требованию (при открытии треда) — отдельным запросом по первичным ключам.
+// Пустой вход → [] без запроса. error → [] (мягкая деградация, как getMailAttachments): тело просто
+// не покажется, но лента/тред не падают. Возвращает body_text/body_html по каждому id.
+export async function getMailMessageBodies(messageIds: string[]): Promise<MailMessageBody[]> {
+  if (messageIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('mail_messages')
+    .select('id, body_text, body_html')
+    .in('id', messageIds)
+  if (error) {
+    warnReadError('getMailMessageBodies', error)
+    return []
+  }
+  return (data as MailMessageBody[]) ?? []
 }
 
 // Счётчик непрочитанных для бейджа в навигации. head+count — не тянем строки. error → 0.
