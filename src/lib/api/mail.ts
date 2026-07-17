@@ -42,13 +42,20 @@ export interface MailMessage {
   sent_at: string | null
   seen: boolean
   direction: 'in' | 'out' // MAIL-2-UI: 'in' входящее (DEFAULT), 'out' исходящее (отправлено из приложения).
+  // MAIL-5-UI: наполняет mail-sync (backend готов). thread_key — ключ цепочки (группируем письма в
+  // треды; может быть null у старых писем → fallback на id). body_html — HTML-тело (санитайзим на
+  // фронте перед рендером; может быть null → показываем body_text). has_attachments — есть ли строки
+  // в mail_attachments (грузим список вложений по требованию на раскрытие треда).
+  thread_key: string | null
+  body_html: string | null
+  has_attachments: boolean
   created_at: string
 }
 
 const MAIL_ACCOUNT_SELECT =
   'id, org_id, key, brand, email, display_name, active, last_sync_at, last_uid, last_error, imap_host, imap_port, work_only, filter_mode, created_at'
 const MAIL_MESSAGE_SELECT =
-  'id, org_id, account_id, uid, message_id, from_name, from_addr, to_addr, subject, snippet, body_text, sent_at, seen, direction, created_at'
+  'id, org_id, account_id, uid, message_id, from_name, from_addr, to_addr, subject, snippet, body_text, sent_at, seen, direction, thread_key, body_html, has_attachments, created_at'
 
 // Оба почтовых ящика (buildpro / customhomes) для вкладок. RLS отдаёт строки только владельцу;
 // admin/иные роли получат [] — это ожидаемо (мягкий пустой экран). error → [] (не роняем экран).
@@ -101,6 +108,41 @@ export async function getMailUnreadCount(): Promise<number> {
 export async function markMailSeen(id: string): Promise<void> {
   const { error } = await supabase.from('mail_messages').update({ seen: true }).eq('id', id)
   if (error) throw error
+}
+
+// MAIL-5-UI: вложение письма (таблица mail_attachments; backend наполняет через mail-sync). RLS —
+// как у самих писем (видно владельцу письма). r2_key пока часто null (контент в R2 появится в
+// MAIL-6) — UI при null НЕ даёт ссылку на скачивание, а показывает «файл появится позже».
+export interface MailAttachment {
+  id: string
+  org_id: string
+  message_id: string
+  filename: string
+  mime: string | null
+  size_bytes: number | null // bigint приходит числом; у крупных вложений теоретически может терять точность, но для UI-подписи это некритично
+  r2_key: string | null
+  is_inline: boolean
+  created_at: string
+}
+
+const MAIL_ATTACHMENT_SELECT =
+  'id, org_id, message_id, filename, mime, size_bytes, r2_key, is_inline, created_at'
+
+// Вложения для набора писем (обычно письма одного раскрытого треда) — одним запросом
+// `.in('message_id', ids)`. Пустой вход → [] без запроса. error → [] (мягкая деградация, паттерн
+// warnReadError, как getMailMessages): для не-владельца RLS отдаст [] — это ожидаемо, не баг.
+export async function getMailAttachments(messageIds: string[]): Promise<MailAttachment[]> {
+  if (messageIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('mail_attachments')
+    .select(MAIL_ATTACHMENT_SELECT)
+    .in('message_id', messageIds)
+    .order('created_at', { ascending: true })
+  if (error) {
+    warnReadError('getMailAttachments', error)
+    return []
+  }
+  return (data as MailAttachment[]) ?? []
 }
 
 // Результат одного ящика из edge `mail-sync`. Форму читаем защитно (ключи могут отличаться) —

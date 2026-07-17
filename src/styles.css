@@ -4114,6 +4114,50 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .mail-hidden-section { margin-top: 16px; }
 .mail-hidden-title { font-size: 14px; margin-bottom: 8px; }
 
+/* MAIL-5-UI: треды (счётчик писем в строке), раскрытый тред, HTML-тело, гейт картинок, вложения. */
+.mail-thread-count {
+  margin-left: 8px; padding: 1px 7px; font-size: 11px; font-weight: 600; line-height: 16px;
+  background: var(--elevated); color: var(--muted);
+}
+.mail-detail-count { font-size: 12px; margin-top: 2px; }
+.mail-thread { display: grid; gap: 14px; margin-top: 12px; }
+.mail-msg {
+  padding: 12px 14px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--panel); text-align: left;
+}
+.mail-msg.outgoing { border-left: 3px solid rgba(126,160,190,.55); }
+.mail-msg-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.mail-msg-who { font-size: 14px; font-weight: 600; }
+.mail-msg-name { word-break: break-word; }
+.mail-msg-addr { font-weight: 400; font-size: 12px; word-break: break-all; }
+.mail-msg-date { font-size: 12px; white-space: nowrap; }
+/* .mail-html: изолированный контейнер санитизированного письма — ограничиваем влияние на layout. */
+.mail-html { overflow-x: auto; }
+.mail-html img, .mail-html table, .mail-html * { max-width: 100%; }
+.mail-html img { height: auto; }
+.mail-html a { color: var(--accent); word-break: break-word; }
+.mail-html [data-mail-img] {
+  min-width: 24px; min-height: 24px;
+  border: 1px dashed var(--line); border-radius: 6px; background: var(--elevated);
+}
+.mail-img-gate {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 12px; padding: 8px 12px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--elevated); font-size: 12px;
+}
+.mail-attachments { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.mail-attachments-title { font-size: 12px; margin-bottom: 6px; }
+.mail-attachment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.mail-attachment {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--panel);
+}
+.mail-att-name { font-size: 14px; font-weight: 600; word-break: break-all; }
+.mail-att-photo { background: rgba(126,160,190,.18); color: var(--text); }
+.mail-att-size { font-size: 12px; }
+.mail-att-later { font-size: 12px; margin-left: auto; font-style: italic; }
+
 /* AI-1-UI: «строка-командир» — кнопка «Спроси» в сайдбаре + оверлей-диалог ассистента. */
 .side-ask {
   display: flex; align-items: center; gap: 8px; width: 100%;
