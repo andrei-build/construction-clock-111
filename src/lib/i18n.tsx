@@ -1917,6 +1917,11 @@ const dict: Record<string, Record<Lang, string>> = {
   delivery_action_bought: { ru: 'Купил', en: 'Bought', es: 'Comprado' },
   delivery_action_have: { ru: 'Есть у меня — завезу', en: 'I have it — will bring', es: 'Lo tengo — lo traeré' },
   delivery_action_delivered: { ru: 'Привезено', en: 'Delivered', es: 'Entregado' },
+
+  // PWA-UPDATE-1: ненавязчивый тост о новой сборке (когда тихий reload небезопасен — идёт ввод
+  // или непустая офлайн-очередь).
+  update_available: { ru: 'Вышло обновление', en: 'Update available', es: 'Actualización disponible' },
+  update_reload: { ru: 'Обновить', en: 'Reload', es: 'Actualizar' },
 }
 
 interface I18n {
