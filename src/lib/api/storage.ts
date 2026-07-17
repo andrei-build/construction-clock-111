@@ -712,6 +712,58 @@ export async function uploadAccountFileToR2(p: Profile, accountId: string, file:
   return data as unknown as FileRow
 }
 
+// === TEAM-DOSSIER-1-files: файлы работника (страховки/сертификаты/документы) — files.profile_id ===
+// Скоуп 'worker' — единственное значение files.scope check-constraint'а для файлов человека (миграция
+// 0003_work_and_communications: scope in ('org','project','worker','client','subcontractor'); значения
+// 'profile'/'account' constraint НЕ разрешает). Фильтр scope='worker'+profile_id отделяет их от прочих
+// файлов, несущих profile_id. Свежие сверху. По образцу getAccountFiles.
+export async function getProfileFiles(profileId: string): Promise<FileRow[]> {
+  const { data, error } = await supabase.from('files')
+    .select(FILE_SELECT)
+    .eq('scope', 'worker')
+    .eq('profile_id', profileId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data as FileRow[]) ?? []
+}
+
+// Загрузка файла работника в R2 (тот же паттерн, что uploadAccountFileToR2): подпись → PUT в R2 → строка
+// files со scope='worker' и profile_id. RLS INSERT: org_id=app.org_id() и (менеджер ИЛИ uploaded_by=uid) —
+// потому org_id=p.org_id, uploaded_by=p.id. is_private=false: файл виден manager+ и самому работнику
+// (RLS files_select: is_manager() OR profile_id=uid OR uploaded_by=uid); доступ не расширяем.
+export async function uploadProfileFileToR2(p: Profile, profileId: string, file: File): Promise<FileRow> {
+  validateUpload(file, 'file')
+  const key = `files/${crypto.randomUUID()}-${safeFileName(file.name, file.type)}`
+  const signed = await r2Sign('upload', key)
+  const putRes = await fetch(signed.url, {
+    method: 'PUT',
+    body: file,
+    headers: { 'Content-Type': inferUploadContentType(file) },
+  })
+  if (!putRes.ok) throw new Error(`R2 upload failed: ${putRes.status}`)
+
+  const { data, error } = await supabase.from('files').insert({
+    org_id: p.org_id,
+    scope: 'worker',
+    profile_id: profileId,
+    folder: '',
+    name: file.name,
+    storage_path: signed.key,
+    mime: file.type || null,
+    size_bytes: file.size,
+    doc_kind: null,
+    expires_at: null,
+    is_private: false,
+    uploaded_by: p.id,
+    project_id: null,
+    account_id: null,
+  }).select(FILE_SELECT).single()
+  if (error) throw error
+  await logEvent(p, 'file.uploaded', 'file', data.id, { profile_id: profileId })
+  return data as unknown as FileRow
+}
+
 // === FILE-1: вложения смет/счётов (files.document_id) — содержимое в приватном media bucket. ===
 // Вложение документа: тонкая проекция строки files, привязанной к смете/счёту через document_id.
 // Отдельный тип (не FileRow) — document_id живёт вне FILE_SELECT/FileRow; здесь берём только нужное.
