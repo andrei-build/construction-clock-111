@@ -447,9 +447,10 @@ export default function PlanConstructor() {
                     </button>
                   )}
 
-                  <button className="btn" disabled={busy !== null || workers.length === 0} onClick={() => sendPlan(project)}>
+                  <button className="btn" title={t('send_plan_hint')} disabled={busy !== null || workers.length === 0} onClick={() => sendPlan(project)}>
                     {t('send_plan')}
                   </button>
+                  <p className="muted" style={{ marginTop: 4 }}>{t('send_plan_hint')}</p>
                   {sentProject === project.id && <p className="ok-msg">{t('plan_sent')}</p>}
                 </section>
               )
