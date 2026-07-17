@@ -21,6 +21,7 @@ import { isManagerWrite } from '../../lib/types'
 import type { Profile, Project, Task, TaskMedia } from '../../lib/types'
 import MediaComments from '../../components/MediaComments'
 import MaterialStatusChain, { isMaterialFlowTask } from '../../components/MaterialStatusChain'
+import VoiceMic from '../../components/VoiceMic'
 
 interface TasksTabProps {
   project: Project
@@ -51,7 +52,7 @@ function priorityTone(priority: Task['priority']) {
 }
 
 export default function TasksTab({ project, profile }: TasksTabProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
@@ -257,7 +258,10 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
             <form className="hub-task-create-form" onSubmit={createHubTask}>
               <h2>{t('hub_task_new')}</h2>
               <label>{t('task_title_label')}</label>
-              <input value={fTitle} onChange={(e) => setFTitle(e.target.value)} />
+              <div className="row" style={{ gap: 8 }}>
+                <input value={fTitle} onChange={(e) => setFTitle(e.target.value)} style={{ flex: 1 }} />
+                <VoiceMic lang={lang} title={t('voice_input')} onResult={(text) => setFTitle((v) => (v ? `${v} ${text}` : text))} />
+              </div>
 
               <div className="row coord-row">
                 <div className="coord-field">
@@ -316,17 +320,25 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
             <form className="material-request-form" onSubmit={createMaterial}>
               <h2>{t('material_request_title')}</h2>
               <label>{t('material_request_item')}</label>
-              <input
-                value={materialTitle}
-                placeholder={t('material_request_item_placeholder')}
-                onChange={(e) => setMaterialTitle(e.target.value)}
-              />
+              <div className="row" style={{ gap: 8 }}>
+                <input
+                  value={materialTitle}
+                  placeholder={t('material_request_item_placeholder')}
+                  onChange={(e) => setMaterialTitle(e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                <VoiceMic lang={lang} title={t('voice_input')} onResult={(text) => setMaterialTitle((v) => (v ? `${v} ${text}` : text))} />
+              </div>
               <label>{t('material_request_details')}</label>
-              <textarea
-                value={materialDetails}
-                placeholder={t('material_request_details_placeholder')}
-                onChange={(e) => setMaterialDetails(e.target.value)}
-              />
+              <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+                <textarea
+                  value={materialDetails}
+                  placeholder={t('material_request_details_placeholder')}
+                  onChange={(e) => setMaterialDetails(e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                <VoiceMic lang={lang} title={t('voice_input')} onResult={(text) => setMaterialDetails((v) => (v ? `${v} ${text}` : text))} />
+              </div>
               <div className="row material-request-actions">
                 <button className="btn small" disabled={materialBusy || !materialTitle.trim()}>
                   {materialBusy ? t('saving') : t('material_request_create')}

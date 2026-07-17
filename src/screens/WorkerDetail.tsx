@@ -1225,7 +1225,10 @@ export default function WorkerDetail() {
               <input value={subPaymentTerms} disabled={busy !== null} onChange={(e) => setSubPaymentTerms(e.target.value)} />
 
               <label>{t('sub_notes')}</label>
-              <textarea value={subNotes} disabled={busy !== null} rows={3} onChange={(e) => setSubNotes(e.target.value)} />
+              <div className="row public-bio-row">
+                <textarea value={subNotes} disabled={busy !== null} rows={3} onChange={(e) => setSubNotes(e.target.value)} />
+                <VoiceMic lang={lang} title={t('voice_input')} onResult={(text) => setSubNotes((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))} />
+              </div>
 
               <button type="button" className="btn" disabled={busy !== null} onClick={saveSubcontractor}>{t('save')}</button>
             </section>
