@@ -777,6 +777,19 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .material-request-form h2 {
   margin-top: 0;
 }
+/* HUB-TASK-ADD-1: форма создания задачи из Хаба (переиспользует раскладку заявки на материал). */
+.hub-task-create-card {
+  display: grid;
+  gap: 10px;
+}
+.hub-task-create-form h2 {
+  margin-top: 0;
+}
+.hub-task-crew-hint {
+  display: block;
+  font-size: 0.8em;
+  margin-top: 2px;
+}
 .material-request-actions {
   justify-content: flex-start;
 }
