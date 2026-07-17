@@ -81,6 +81,45 @@ function summarizePayload(payload: Record<string, unknown>): Array<[string, stri
     .map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)] as [string, string])
 }
 
+// --- AI-2-front: браузерные голосовые фичи (Web Speech API). Ничего не отправляем на сервер:
+// озвучка через window.speechSynthesis, wake-word — локальный webkitSpeechRecognition. ---
+
+// Локаль голоса/распознавания по языку интерфейса.
+const SPEECH_LOCALE: Record<'ru' | 'en' | 'es', string> = { ru: 'ru-RU', en: 'en-US', es: 'es-ES' }
+
+// Минимальный тип SpeechRecognition (тот же движок, что в VoiceMic, но нужны continuous/interim/resultIndex).
+type SpeechResult = { isFinal?: boolean; 0: { transcript: string } }
+type SpeechRecInstance = {
+  lang: string
+  continuous: boolean
+  interimResults: boolean
+  maxAlternatives: number
+  onresult: ((e: { resultIndex?: number; results: ArrayLike<SpeechResult> }) => void) | null
+  onend: (() => void) | null
+  onerror: (() => void) | null
+  start: () => void
+  stop: () => void
+  abort?: () => void
+}
+type SpeechRecCtor = new () => SpeechRecInstance
+
+const SpeechRecognitionImpl: SpeechRecCtor | undefined =
+  typeof window !== 'undefined'
+    ? ((window as unknown as { SpeechRecognition?: SpeechRecCtor; webkitSpeechRecognition?: SpeechRecCtor }).SpeechRecognition
+      || (window as unknown as { webkitSpeechRecognition?: SpeechRecCtor }).webkitSpeechRecognition)
+    : undefined
+
+const TTS_SUPPORTED =
+  typeof window !== 'undefined' && 'speechSynthesis' in window && typeof window.SpeechSynthesisUtterance !== 'undefined'
+
+// Фразы-триггеры «окей, Клок» (нормализованные: нижний регистр, ё→е, без пунктуации, схлопнутые пробелы).
+// Сравниваем по вхождению подстроки — распознавалка может дать разную транскрипцию слова «clock».
+const WAKE_PHRASES = ['окей клок', 'окей клак', 'ок клок', 'ok clock', 'okay clock', 'hey clock', 'эй клок', 'хей клок']
+
+function normalizeWake(s: string): string {
+  return s.toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim()
+}
+
 export default function AiCommandBar({ profile }: { profile: Profile }) {
   const { t, lang } = useI18n()
   const [open, setOpen] = useState(false)
@@ -97,6 +136,73 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const toastTimer = useRef<number | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const historyEndRef = useRef<HTMLDivElement | null>(null)
+
+  // AI-2-front: тумблеры (по умолчанию ВЫКЛ, состояние в localStorage). Мягкая деградация — см. флаги support.
+  const [speakOn, setSpeakOn] = useState<boolean>(() => {
+    try { return localStorage.getItem('ai_speak') === '1' } catch { return false }
+  })
+  const [wakeOn, setWakeOn] = useState<boolean>(() => {
+    try { return localStorage.getItem('ai_wake') === '1' } catch { return false }
+  })
+  const [wakeListening, setWakeListening] = useState(false)
+  const dictationRef = useRef<SpeechRecInstance | null>(null)
+  const lastSpokenIdRef = useRef<string | null>(null)
+  const ttsPrimedRef = useRef(false)
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+
+  useEffect(() => { try { localStorage.setItem('ai_speak', speakOn ? '1' : '0') } catch { /* ignore */ } }, [speakOn])
+  useEffect(() => { try { localStorage.setItem('ai_wake', wakeOn ? '1' : '0') } catch { /* ignore */ } }, [wakeOn])
+
+  // Озвучка ответа: язык голоса = язык интерфейса, voice подбираем по локали, иначе дефолтный.
+  const speak = useCallback((text: string) => {
+    if (!TTS_SUPPORTED || !text) return
+    const synth = window.speechSynthesis
+    try {
+      synth.cancel()
+      const u = new SpeechSynthesisUtterance(text)
+      const locale = SPEECH_LOCALE[lang]
+      u.lang = locale
+      const voices = synth.getVoices()
+      const voice =
+        voices.find((v) => v.lang === locale) ||
+        voices.find((v) => v.lang?.toLowerCase().startsWith(lang)) ||
+        null
+      if (voice) u.voice = voice
+      synth.speak(u)
+    } catch { /* ignore — мягкая деградация */ }
+  }, [lang])
+
+  const cancelSpeech = useCallback(() => {
+    if (!TTS_SUPPORTED) return
+    try { window.speechSynthesis.cancel() } catch { /* ignore */ }
+  }, [])
+
+  // Диктовка вопроса после wake-word: локальный распознаватель, interim+final → в поле ввода.
+  const startDictation = useCallback(() => {
+    if (!SpeechRecognitionImpl || !mountedRef.current) return
+    try { dictationRef.current?.stop() } catch { /* ignore */ }
+    const rec = new SpeechRecognitionImpl()
+    rec.lang = SPEECH_LOCALE[lang]
+    rec.continuous = false
+    rec.interimResults = true
+    rec.maxAlternatives = 1
+    let finalText = ''
+    rec.onresult = (e) => {
+      let interim = ''
+      for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
+        const r = e.results[i]
+        const transcript = r?.[0]?.transcript ?? ''
+        if (r?.isFinal) finalText += transcript
+        else interim += transcript
+      }
+      setInput((finalText + interim).trim())
+    }
+    rec.onend = () => { if (dictationRef.current === rec) dictationRef.current = null }
+    rec.onerror = () => { if (dictationRef.current === rec) dictationRef.current = null }
+    dictationRef.current = rec
+    try { rec.start(); inputRef.current?.focus() } catch { dictationRef.current = null }
+  }, [lang])
 
   const flashToast = useCallback((text: string) => {
     setToast(text)
@@ -169,10 +275,91 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     if (open) historyEndRef.current?.scrollIntoView({ block: 'end' })
   }, [messages, open])
 
+  // AI-2-front: при открытии сбрасываем «прайм» озвучки (историю вслух не читаем), при закрытии — глушим речь.
+  useEffect(() => {
+    if (open) ttsPrimedRef.current = false
+    else cancelSpeech()
+  }, [open, cancelSpeech])
+
+  // AI-2-front: озвучиваем ТОЛЬКО новые ответы ассистента. Первый проход после открытия «праймит»
+  // последнее сообщение из истории как уже сказанное — иначе при открытии зачитали бы старый ответ.
+  useEffect(() => {
+    if (!open || !speakOn || !TTS_SUPPORTED) return
+    const last = messages[messages.length - 1]
+    if (!last || last.role !== 'assistant') return
+    if (!ttsPrimedRef.current) { lastSpokenIdRef.current = last.id; ttsPrimedRef.current = true; return }
+    if (lastSpokenIdRef.current === last.id) return
+    lastSpokenIdRef.current = last.id
+    speak(last.content)
+  }, [messages, open, speakOn, speak])
+
+  // AI-2-front: непрерывное локальное распознавание wake-word «окей, Клок». Активно только пока тумблер
+  // включён И панель закрыта — пока панель открыта, микрофон нужен VoiceMic/диктовке (один инстанс за раз).
+  // onerror/onend → перезапуск с backoff, но только пока смонтированы и тумблер включён.
+  useEffect(() => {
+    if (!wakeOn || !SpeechRecognitionImpl || open) { setWakeListening(false); return }
+    let active = true
+    let rec: SpeechRecInstance | null = null
+    let restartTimer: number | null = null
+
+    const clearTimer = () => { if (restartTimer !== null) { window.clearTimeout(restartTimer); restartTimer = null } }
+    const scheduleRestart = (delay: number) => {
+      clearTimer()
+      if (!active) return
+      restartTimer = window.setTimeout(() => { restartTimer = null; if (active) start() }, delay)
+    }
+
+    const start = () => {
+      if (!active || !SpeechRecognitionImpl) return
+      const r = new SpeechRecognitionImpl()
+      r.lang = SPEECH_LOCALE[lang]
+      r.continuous = true
+      r.interimResults = true
+      r.maxAlternatives = 1
+      r.onresult = (e) => {
+        for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
+          const transcript = e.results[i]?.[0]?.transcript
+          if (!transcript) continue
+          if (WAKE_PHRASES.some((p) => normalizeWake(String(transcript)).includes(p))) {
+            // Триггер: открываем панель (эффект сам остановит wake-распознавание) и запускаем диктовку,
+            // когда микрофон освободится.
+            setOpen(true)
+            window.setTimeout(() => { if (mountedRef.current) startDictation() }, 450)
+            return
+          }
+        }
+      }
+      r.onerror = () => { setWakeListening(false); scheduleRestart(800) }
+      r.onend = () => { setWakeListening(false); if (active) scheduleRestart(400) }
+      rec = r
+      try { r.start(); setWakeListening(true) } catch { setWakeListening(false); scheduleRestart(800) }
+    }
+
+    start()
+
+    return () => {
+      active = false
+      clearTimer()
+      setWakeListening(false)
+      if (rec) {
+        rec.onresult = null; rec.onerror = null; rec.onend = null
+        try { rec.stop() } catch { /* ignore */ }
+      }
+      rec = null
+    }
+  }, [wakeOn, open, lang, startDictation])
+
+  // AI-2-front: подчистка на unmount — гасим диктовку и любую озвучку (нет утечек/зависшей речи).
+  useEffect(() => () => {
+    try { dictationRef.current?.stop() } catch { /* ignore */ }
+    cancelSpeech()
+  }, [cancelSpeech])
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     const msg = input.trim()
     if (!msg || thinking) return
+    cancelSpeech() // прерываем текущую озвучку при новом вопросе
     setThinking(true)
     setNoKey(false)
     const res = await askAssistant(msg)
@@ -300,26 +487,62 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     }
   }
 
-  if (!open) return null
+  const wakeSupported = !!SpeechRecognitionImpl
 
   return (
-    <div
-      className="confirm-backdrop ai-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="ai-cmd-title"
-      onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
-    >
-      <div className="card ai-modal">
-        <div className="ai-head">
-          <div>
-            <h2 id="ai-cmd-title" className="ai-title">{t('ai_title')}</h2>
-            <p className="muted small ai-sub">{t('ai_subtitle')}</p>
-          </div>
-          <button type="button" className="btn ghost ai-close" onClick={() => setOpen(false)} aria-label={t('close')}>
-            ✕
-          </button>
+    <>
+      {/* AI-2-front: ненавязчивый индикатор «слушаю» — fixed-бейдж от AiCommandBar (без правки App/Nav),
+          виден только когда голосовая активация включена. */}
+      {wakeOn && wakeSupported && (
+        <div className="ai-listening-badge" role="status" aria-live="polite" title={t('ai_wake_hint')}>
+          <span className={`ai-listening-dot ${wakeListening ? 'on' : ''}`} aria-hidden="true" />
+          <span className="ai-listening-text">{t('ai_wake_listening')}</span>
         </div>
+      )}
+
+      {open && (
+        <div
+          className="confirm-backdrop ai-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ai-cmd-title"
+          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
+        >
+          <div className="card ai-modal">
+            <div className="ai-head">
+              <div>
+                <h2 id="ai-cmd-title" className="ai-title">{t('ai_title')}</h2>
+                <p className="muted small ai-sub">{t('ai_subtitle')}</p>
+              </div>
+              <button type="button" className="btn ghost ai-close" onClick={() => setOpen(false)} aria-label={t('close')}>
+                ✕
+              </button>
+            </div>
+
+            {(TTS_SUPPORTED || wakeSupported) && (
+              <div className="ai-toggles">
+                {TTS_SUPPORTED && (
+                  <label className="ai-toggle">
+                    <input
+                      type="checkbox"
+                      checked={speakOn}
+                      onChange={(e) => { setSpeakOn(e.target.checked); if (!e.target.checked) cancelSpeech() }}
+                    />
+                    <span>{t('ai_speak_toggle')}</span>
+                  </label>
+                )}
+                {wakeSupported && (
+                  <label className="ai-toggle" title={t('ai_wake_hint')}>
+                    <input
+                      type="checkbox"
+                      checked={wakeOn}
+                      onChange={(e) => setWakeOn(e.target.checked)}
+                    />
+                    <span>{t('ai_wake_toggle')}</span>
+                  </label>
+                )}
+              </div>
+            )}
 
         <div className="ai-history">
           {loading ? (
@@ -410,14 +633,16 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           <button type="submit" className="btn primary" disabled={thinking || !input.trim()}>
             {thinking ? t('ai_thinking') : t('ai_send')}
           </button>
-        </form>
-      </div>
+            </form>
+          </div>
 
-      {toast && (
-        <div className="travel-toast ai-toast" role="status" aria-live="polite">
-          {toast}
+          {toast && (
+            <div className="travel-toast ai-toast" role="status" aria-live="polite">
+              {toast}
+            </div>
+          )}
         </div>
       )}
-    </div>
+    </>
   )
 }
