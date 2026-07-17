@@ -1227,6 +1227,11 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_note_save_failed: { ru: 'Не удалось сохранить заметку', en: 'Could not save note', es: 'No se pudo guardar la nota' },
   hub_note_delete_failed: { ru: 'Не удалось удалить заметку', en: 'Could not delete note', es: 'No se pudo eliminar la nota' },
   hub_tasks_load_error: { ru: 'Не удалось загрузить задачи', en: 'Could not load tasks', es: 'No se pudieron cargar las tareas' },
+  // HUB-TASK-ADD-1: создание задачи прямо из Хаба проекта (таб «Задачи»).
+  hub_task_add: { ru: '+ Задача', en: '+ Task', es: '+ Tarea' },
+  hub_task_new: { ru: 'Новая задача', en: 'New task', es: 'Nueva tarea' },
+  hub_task_created: { ru: 'Задача создана', en: 'Task created', es: 'Tarea creada' },
+  hub_task_crew_only: { ru: 'Только участники проекта', en: 'Project crew only', es: 'Solo el equipo del proyecto' },
   material_status_chain: { ru: 'Статус материала', en: 'Material status', es: 'Estado del material' },
   material_status_ordered: { ru: 'Заказано', en: 'Ordered', es: 'Pedido' },
   material_status_picked_up: { ru: 'Взял', en: 'Picked up', es: 'Recogido' },

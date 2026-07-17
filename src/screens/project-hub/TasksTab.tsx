@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useI18n } from '../../lib/i18n'
 import {
   createMaterialRequest,
+  createTask,
   getOpenTasks,
+  getProjectAssignments,
   getTeam,
   markMaterialStatus,
   markTaskDone,
@@ -15,6 +17,7 @@ import {
 import { enqueueFieldAction } from '../../lib/offlineFieldActions'
 import { enqueueMediaUpload } from '../../lib/offlineMediaQueue'
 import { isEffectiveOpenTask } from '../../lib/task-status'
+import { isManagerWrite } from '../../lib/types'
 import type { Profile, Project, Task, TaskMedia } from '../../lib/types'
 import MediaComments from '../../components/MediaComments'
 import MaterialStatusChain, { isMaterialFlowTask } from '../../components/MaterialStatusChain'
@@ -23,6 +26,10 @@ interface TasksTabProps {
   project: Project
   profile: Profile | null
 }
+
+// Тот же набор типов/приоритетов, что у КЦ (Диспетчер) и глобального экрана «Задачи».
+const TASK_TYPES: Task['task_type'][] = ['work', 'material', 'delivery']
+const TASK_PRIORITIES: Task['priority'][] = ['low', 'medium', 'high', 'urgent']
 
 function isOnline() {
   return typeof navigator === 'undefined' || navigator.onLine
@@ -59,13 +66,27 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
   const [materialDetails, setMaterialDetails] = useState('')
   const [materialBusy, setMaterialBusy] = useState(false)
 
+  // HUB-TASK-ADD-1: создание задачи прямо из Хаба (reuse createTask КЦ, project_id авто).
+  // Гейт менеджера, как в КЦ/Задачах — RLS tasks_insert требует is_manager_write.
+  const canCreate = profile ? isManagerWrite(profile.role) : false
+  const [crewIds, setCrewIds] = useState<Set<string>>(new Set())
+  const [taskFormOpen, setTaskFormOpen] = useState(false)
+  const [fTitle, setFTitle] = useState('')
+  const [fType, setFType] = useState<Task['task_type']>('work')
+  const [fPriority, setFPriority] = useState<Task['priority']>('medium')
+  const [fAssignee, setFAssignee] = useState('')
+  const [fDue, setFDue] = useState('')
+  const [fRequiresPhoto, setFRequiresPhoto] = useState(false)
+  const [taskBusyCreate, setTaskBusyCreate] = useState(false)
+
   const load = async (showLoading = true) => {
     if (showLoading) setLoading(true)
     setLoadError(false)
     try {
-      const [rows, people] = await Promise.all([getOpenTasks(), getTeam()])
+      const [rows, people, assignments] = await Promise.all([getOpenTasks(), getTeam(), getProjectAssignments([project.id])])
       setTasks(rows.filter((task) => task.project_id === project.id && isEffectiveOpenTask(task)))
       setTeam(people)
+      setCrewIds(new Set(assignments.map((a) => a.profile_id)))
     } catch {
       setLoadError(true)
     } finally {
@@ -80,6 +101,45 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
   }, [profile?.org_id, project.id])
 
   const peopleById = useMemo(() => new Map(team.map((person) => [person.id, person.name])), [team])
+
+  // Исполнитель — только СОСТАВ проекта (участники project_assignments), без клиентов.
+  const crew = useMemo(
+    () => team.filter((person) => crewIds.has(person.id) && person.role !== 'client'),
+    [team, crewIds],
+  )
+
+  const resetTaskForm = () => {
+    setFTitle(''); setFType('work'); setFPriority('medium')
+    setFAssignee(''); setFDue(''); setFRequiresPhoto(false)
+    setTaskFormOpen(false)
+  }
+
+  const createHubTask = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!profile || taskBusyCreate || !fTitle.trim()) return
+    setTaskBusyCreate(true)
+    setTaskError(null)
+    setTaskNotice(null)
+    try {
+      // project_id подставляется автоматически из текущего проекта Хаба (reuse api КЦ).
+      await createTask(profile, {
+        project_id: project.id,
+        title: fTitle.trim(),
+        task_type: fType,
+        priority: fPriority,
+        assigned_to: fAssignee || null,
+        due_date: fDue || null,
+        requires_photo: fRequiresPhoto,
+      })
+      resetTaskForm()
+      setTaskNotice('hub_task_created')
+      await load(false)
+    } catch (err) {
+      setTaskError(err instanceof Error ? err.message : 'tasks_create_error')
+    } finally {
+      setTaskBusyCreate(false)
+    }
+  }
 
   const done = async (task: Task) => {
     if (!profile || isMaterialFlowTask(task)) return
@@ -187,6 +247,65 @@ export default function TasksTab({ project, profile }: TasksTabProps) {
     <section className="hub-tab-panel hub-tasks">
       {taskError && <p className="error-msg">{t(taskError)}</p>}
       {taskNotice && <p className="warn-msg">{t(taskNotice)}</p>}
+      {canCreate && (
+        <div className="card hub-task-create-card">
+          {!taskFormOpen ? (
+            <button type="button" className="btn ghost small" onClick={() => setTaskFormOpen(true)}>
+              {t('hub_task_add')}
+            </button>
+          ) : (
+            <form className="hub-task-create-form" onSubmit={createHubTask}>
+              <h2>{t('hub_task_new')}</h2>
+              <label>{t('task_title_label')}</label>
+              <input value={fTitle} onChange={(e) => setFTitle(e.target.value)} />
+
+              <div className="row coord-row">
+                <div className="coord-field">
+                  <label>{t('col_type')}</label>
+                  <select value={fType} onChange={(e) => setFType(e.target.value as Task['task_type'])}>
+                    {TASK_TYPES.map((tp) => <option key={tp} value={tp}>{t(`task_type_${tp}`)}</option>)}
+                  </select>
+                </div>
+                <div className="coord-field">
+                  <label>{t('col_priority')}</label>
+                  <select value={fPriority} onChange={(e) => setFPriority(e.target.value as Task['priority'])}>
+                    {TASK_PRIORITIES.map((pr) => <option key={pr} value={pr}>{t(`task_priority_${pr}`)}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="row coord-row">
+                <div className="coord-field">
+                  <label>{t('col_assignee')}</label>
+                  <select value={fAssignee} onChange={(e) => setFAssignee(e.target.value)}>
+                    <option value="">{t('task_unassigned')}</option>
+                    {crew.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  <span className="muted hub-task-crew-hint">{t('hub_task_crew_only')}</span>
+                </div>
+                <div className="coord-field">
+                  <label>{t('col_due')}</label>
+                  <input type="date" value={fDue} onChange={(e) => setFDue(e.target.value)} />
+                </div>
+              </div>
+
+              <label className="row" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
+                <input type="checkbox" checked={fRequiresPhoto} onChange={(e) => setFRequiresPhoto(e.target.checked)} style={{ width: 'auto' }} />
+                <span>{t('task_requires_photo')}</span>
+              </label>
+
+              <div className="row material-request-actions">
+                <button className="btn small" disabled={taskBusyCreate || !fTitle.trim()}>
+                  {taskBusyCreate ? t('saving') : t('create')}
+                </button>
+                <button type="button" className="btn ghost small" disabled={taskBusyCreate} onClick={resetTaskForm}>
+                  {t('cancel')}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
       {profile && (
         <div className="card material-request-card">
           {!materialFormOpen ? (
