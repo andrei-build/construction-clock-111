@@ -452,7 +452,7 @@ export async function getActiveWorkerConsents(workerIds: string[]): Promise<Work
 export async function getSafetyAcknowledgements(workerIds: string[]): Promise<SafetyAckRow[]> {
   if (workerIds.length === 0) return []
   const { data, error } = await supabase.from('safety_acknowledgements')
-    .select('worker_id, signed_at')
+    .select('worker_id, signed_at, doc_version')
     .in('worker_id', workerIds)
   if (error) return []
   return (data as SafetyAckRow[]) ?? []

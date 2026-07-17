@@ -43,11 +43,13 @@ import {
   updateWorkerDossier,
   getSubcontractorDetails,
   upsertSubcontractorDetails,
+  createPpeRequest,
   uploadErrorCode,
 } from '../lib/api'
+import { currentSafetyVersion, isAckCurrent } from '../lib/safety'
 import { fmtClock, fmtHours, computeTravelGaps, intervalsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 import { computeTransferGaps } from '../lib/shift-gaps'
-import { canAssignRole, isManagerRole, isManagerWrite, type PayPeriod, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type TimeEvent, type UserCapability, type WorkInterval } from '../lib/types'
+import { canAssignRole, isManagerRole, isManagerWrite, type AppSettings, type PayPeriod, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type TimeEvent, type UserCapability, type WorkInterval } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
 import VoiceMic from '../components/VoiceMic'
 
@@ -283,6 +285,10 @@ export default function WorkerDetail() {
   const [safetyAcks, setSafetyAcks] = useState<WorkerSafetyAckRow[]>([])
   const [profileFiles, setProfileFiles] = useState<WorkerProfileFileRow[]>([])
   const [docsState, setDocsState] = useState<'loading' | 'ready' | 'error'>('loading')
+  // SAFETY-2: текущая версия свода ТБ (для метки «Актуально/Устарело») + заказ СИЗ работнику.
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
+  const [ppeBusy, setPpeBusy] = useState(false)
+  const [ppeMsg, setPpeMsg] = useState<string | null>(null)
 
   // TRASH-3: владелец удаляет человека безвозвратно (RPC purge_profile). Двойное подтверждение —
   // раскрыть панель + вписать точное имя. Гейт клиента ниже (canPurge), финально гейтит БД.
@@ -403,17 +409,35 @@ export default function WorkerDetail() {
       getWorkerLocationConsents(id),
       getWorkerSafetyAcks(id),
       getWorkerProfileFiles(id),
+      getAppSettings(),
     ])
-      .then(([consentRows, ackRows, fileRows]) => {
+      .then(([consentRows, ackRows, fileRows, settingsRow]) => {
         if (!active) return
         setConsents(consentRows)
         setSafetyAcks(ackRows)
         setProfileFiles(fileRows)
+        setAppSettings(settingsRow)
         setDocsState('ready')
       })
       .catch(() => { if (active) setDocsState('error') })
     return () => { active = false }
   }, [id])
+
+  // SAFETY-2 «Заказать СИЗ»: менеджер/владелец из досье заводит материальную заявку на СИЗ этому
+  // работнику (без объекта — projectId null) → уйдёт в Доставки. Best-effort, не блокирует экран.
+  const orderPpeForWorker = async () => {
+    if (!profile || !worker || ppeBusy) return
+    setPpeBusy(true)
+    setPpeMsg(null)
+    try {
+      await createPpeRequest(profile, { projectId: null, title: `${t('ppe_order_title')} — ${worker.name}` })
+      setPpeMsg('ppe_ordered')
+    } catch {
+      setPpeMsg('error')
+    } finally {
+      setPpeBusy(false)
+    }
+  }
 
   // TEAM-1: показатели за неделю (GPS/без GPS по отметкам входа) + закрытые задачи недели
   // + текущий период оплаты. Только чтение; считаем один раз при смене работника.
@@ -1636,6 +1660,14 @@ export default function WorkerDetail() {
                 )}
 
                 <h3>{t('safety_acks')}</h3>
+                {canEditProfile && (
+                  <div style={{ marginBottom: 8 }}>
+                    <button className="btn ghost small" type="button" disabled={ppeBusy} onClick={orderPpeForWorker}>
+                      🦺 {ppeBusy ? t('loading') : t('ppe_order_btn')}
+                    </button>
+                    {ppeMsg && <p className={ppeMsg === 'ppe_ordered' ? 'ok-msg' : 'error-msg'}>{t(ppeMsg)}</p>}
+                  </div>
+                )}
                 {safetyAcks.length === 0 ? (
                   <p className="muted">{t('no_records')}</p>
                 ) : (
@@ -1643,7 +1675,13 @@ export default function WorkerDetail() {
                     {safetyAcks.map((row) => (
                       <div className="worker-doc-row" key={row.id}>
                         <div className="worker-doc-main">
-                          <div className="item-title">{row.signed_at ? dateLabel(row.signed_at) : '—'}</div>
+                          <div className="item-title">
+                            {row.signed_at ? dateLabel(row.signed_at) : '—'}
+                            {' '}
+                            {isAckCurrent(row, currentSafetyVersion(appSettings), Date.now())
+                              ? <span className="badge green">{t('safety_ack_current')}</span>
+                              : <span className="badge grey">{t('safety_ack_outdated')}</span>}
+                          </div>
                           <div className="muted">{t('doc_version')}: {row.doc_version ?? '—'}</div>
                         </div>
                         {row.signature_url && (

@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getConsentWorkers, getActiveWorkerConsents, getSafetyAcknowledgements } from '../lib/api'
+import { getConsentWorkers, getActiveWorkerConsents, getSafetyAcknowledgements, getAppSettings } from '../lib/api'
+import { currentSafetyVersion, isAckCurrent } from '../lib/safety'
 import type { Profile } from '../lib/types'
+
+// SAFETY-2: статус подписи ТБ работника для реестра. current — есть актуальная недельная подпись
+// (текущая версия свода + свежее 7 дней) → зелёным; иначе date есть → подписывал, но устарело;
+// нет date → не подписывал вовсе.
+interface SafetyStatus { date: string; current: boolean }
 
 const localeByLang = {
   ru: 'ru-RU',
@@ -15,7 +21,8 @@ export default function Consents() {
   const { t, lang } = useI18n()
   const [workers, setWorkers] = useState<Profile[]>([])
   const [consentByWorker, setConsentByWorker] = useState<Map<string, string>>(new Map())
-  const [safetyByWorker, setSafetyByWorker] = useState<Map<string, string>>(new Map())
+  const [safetyByWorker, setSafetyByWorker] = useState<Map<string, SafetyStatus>>(new Map())
+  const [safetyVersion, setSafetyVersion] = useState('v1')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [onlyMissing, setOnlyMissing] = useState(false)
@@ -28,10 +35,13 @@ export default function Consents() {
       try {
         const team = await getConsentWorkers()
         const ids = team.map((w) => w.id)
-        const [consents, acks] = await Promise.all([
+        const [consents, acks, appSettings] = await Promise.all([
           getActiveWorkerConsents(ids),
           getSafetyAcknowledgements(ids),
+          getAppSettings(),
         ])
+        const version = currentSafetyVersion(appSettings)
+        const now = Date.now()
         // Активное согласие: дата подписи (signed_at ?? created_at), самая свежая на работника
         const consentMap = new Map<string, string>()
         for (const row of consents) {
@@ -40,17 +50,22 @@ export default function Consents() {
           const prev = consentMap.get(row.worker_id)
           if (!prev || date > prev) consentMap.set(row.worker_id, date)
         }
-        // Подпись ТБ: самая свежая signed_at на работника
-        const safetyMap = new Map<string, string>()
+        // Подпись ТБ: самая свежая дата на работника + флаг «есть актуальная подпись текущей версии»
+        const safetyMap = new Map<string, SafetyStatus>()
         for (const row of acks) {
           if (!row.signed_at) continue
+          const cur = isAckCurrent(row, version, now)
           const prev = safetyMap.get(row.worker_id)
-          if (!prev || row.signed_at > prev) safetyMap.set(row.worker_id, row.signed_at)
+          safetyMap.set(row.worker_id, {
+            date: !prev || row.signed_at > prev.date ? row.signed_at : prev.date,
+            current: (prev?.current ?? false) || cur,
+          })
         }
         if (mounted) {
           setWorkers(team)
           setConsentByWorker(consentMap)
           setSafetyByWorker(safetyMap)
+          setSafetyVersion(version)
         }
       } catch {
         if (mounted) {
@@ -100,7 +115,7 @@ export default function Consents() {
 
       {!loading && !error && visible.map((w) => {
         const consentDate = consentByWorker.get(w.id)
-        const safetyDate = safetyByWorker.get(w.id)
+        const safety = safetyByWorker.get(w.id)
         return (
           <div key={w.id} className="card row">
             <div>
@@ -115,8 +130,12 @@ export default function Consents() {
                     : <span className="badge red">{t('consents_none')}</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span className="muted" style={{ fontSize: 12 }}>{t('consents_safety')}</span>
-                  <span>{safetyDate ? formatDate(safetyDate) : '—'}</span>
+                  <span className="muted" style={{ fontSize: 12 }}>{t('consents_safety')} · {safetyVersion}</span>
+                  {safety?.current
+                    ? <span className="badge green">{formatDate(safety.date)}</span>
+                    : safety
+                      ? <span className="badge red">{formatDate(safety.date)}</span>
+                      : <span className="badge red">{t('consents_none')}</span>}
                 </div>
               </div>
             </div>

@@ -1925,6 +1925,31 @@ const dict: Record<string, Record<Lang, string>> = {
   // или непустая офлайн-очередь).
   update_available: { ru: 'Вышло обновление', en: 'Update available', es: 'Actualización disponible' },
   update_reload: { ru: 'Обновить', en: 'Reload', es: 'Actualizar' },
+  // === SAFETY-2: недельный ритм подписи ТБ + жёсткий гейт + редактор свода + «Заказать СИЗ» + реестр.
+  // Дефолтный свод ТБ (префилл редактора и текст на экране подписи, пока владелец не сохранил свой).
+  // Юр-оговорка: формулировки «ознакомлен/обязуюсь/уведомлён о праве заказать СИЗ» — дефолт для юриста.
+  safety_doc_default: {
+    ru: 'Правила безопасности на объекте:\n1. Немедленно сообщайте о травмах и небезопасных условиях.\n2. Держите рабочую зону и проходы чистыми и свободными.\n3. Используйте требуемые СИЗ (каска, очки, перчатки, защита от падения и др.).\n4. Не используйте повреждённый инструмент и небезопасное оборудование.\n5. Соблюдайте правила работы с лестницами, электробезопасности и защиты от падения.\n6. При обнаружении опасности остановите работу и сообщите менеджеру.\n\nСредства индивидуальной защиты (СИЗ):\n• Работодатель предоставляет все необходимые СИЗ бесплатно.\n• Запрещено приступать к работе без требуемых СИЗ и рисковать своим здоровьем.\n• Если СИЗ отсутствует или повреждено — вы обязаны заказать его кнопкой «Заказать СИЗ», мы доставим.\n\nЯ ознакомлен с правилами безопасности, обязуюсь их соблюдать и уведомлён о праве заказать недостающие СИЗ.',
+    en: 'Site safety rules:\n1. Report injuries and unsafe conditions immediately.\n2. Keep your work area and walkways clean and clear.\n3. Use the required PPE (hard hat, eye protection, gloves, fall protection, etc.).\n4. Do not use damaged tools or unsafe equipment.\n5. Follow ladder, electrical and fall-protection rules.\n6. If you find a hazard, stop work and notify your manager.\n\nPersonal protective equipment (PPE):\n• The employer provides all required PPE at no cost.\n• You must not start work without the required PPE or put your health at risk.\n• If PPE is missing or damaged, you must order it with the “Order PPE” button — we will deliver it.\n\nI have read these safety rules, agree to follow them, and am informed of my right to order missing PPE.',
+    es: 'Reglas de seguridad en la obra:\n1. Reporte lesiones y condiciones inseguras de inmediato.\n2. Mantenga su área de trabajo y los pasillos limpios y despejados.\n3. Use el EPP requerido (casco, protección ocular, guantes, protección contra caídas, etc.).\n4. No use herramientas dañadas ni equipo inseguro.\n5. Siga las reglas de escaleras, seguridad eléctrica y protección contra caídas.\n6. Si encuentra un peligro, detenga el trabajo y avise a su gerente.\n\nEquipo de protección personal (EPP):\n• El empleador proporciona todo el EPP requerido sin costo.\n• No debe comenzar a trabajar sin el EPP requerido ni poner en riesgo su salud.\n• Si falta EPP o está dañado, debe pedirlo con el botón “Pedir EPP” — se lo entregaremos.\n\nHe leído estas reglas de seguridad, me comprometo a cumplirlas y estoy informado de mi derecho a pedir el EPP faltante.',
+  },
+  safety_weekly_due: { ru: 'Пора подписать свод ТБ на эту неделю.', en: 'Time to sign this week’s safety briefing.', es: 'Es hora de firmar la seguridad de esta semana.' },
+  ppe_order_btn: { ru: 'Заказать СИЗ', en: 'Order PPE', es: 'Pedir EPP' },
+  ppe_order_title: { ru: 'Заявка на СИЗ', en: 'PPE request', es: 'Solicitud de EPP' },
+  ppe_ordered: { ru: 'Заявка на СИЗ создана — уйдёт в Доставки.', en: 'PPE request created — sent to Deliveries.', es: 'Solicitud de EPP creada — enviada a Entregas.' },
+  safety_doc_title: { ru: 'Свод по технике безопасности', en: 'Safety briefing document', es: 'Documento de seguridad' },
+  safety_doc_hint: { ru: 'Текст, который работник подписывает перед сменой. Сохранение изменённого текста создаёт новую версию — потребуется переподпись у всех.', en: 'The text a worker signs before a shift. Saving changed text creates a new version — everyone must re-sign.', es: 'El texto que el trabajador firma antes del turno. Guardar texto cambiado crea una nueva versión — todos deben volver a firmar.' },
+  safety_doc_version: { ru: 'Текущая версия', en: 'Current version', es: 'Versión actual' },
+  safety_doc_lang_ru: { ru: 'Текст (русский)', en: 'Text (Russian)', es: 'Texto (ruso)' },
+  safety_doc_lang_en: { ru: 'Текст (английский)', en: 'Text (English)', es: 'Texto (inglés)' },
+  safety_doc_lang_es: { ru: 'Текст (испанский)', en: 'Text (Spanish)', es: 'Texto (español)' },
+  safety_doc_save: { ru: 'Сохранить свод ТБ', en: 'Save safety briefing', es: 'Guardar seguridad' },
+  safety_doc_saved: { ru: 'Свод ТБ сохранён', en: 'Safety briefing saved', es: 'Seguridad guardada' },
+  safety_doc_save_failed: { ru: 'Не удалось сохранить свод ТБ', en: 'Failed to save safety briefing', es: 'No se pudo guardar la seguridad' },
+  safety_gate_toggle: { ru: 'Требовать подпись ТБ перед сменой', en: 'Require safety signature before shift', es: 'Exigir firma de seguridad antes del turno' },
+  safety_gate_hint: { ru: 'Пока выключено — работник может начать смену без свежей подписи (мягкая подсказка). Включено — смену нельзя начать без актуальной подписи ТБ и GPS-согласия.', en: 'While off, a worker can start a shift without a fresh signature (soft nudge). When on, a shift cannot start without a current safety signature and GPS consent.', es: 'Apagado: el trabajador puede iniciar turno sin firma reciente (aviso suave). Encendido: no se puede iniciar turno sin firma de seguridad vigente y consentimiento de GPS.' },
+  safety_ack_current: { ru: 'Актуально', en: 'Current', es: 'Vigente' },
+  safety_ack_outdated: { ru: 'Устарело', en: 'Outdated', es: 'Vencido' },
 }
 
 interface I18n {
@@ -1943,3 +1968,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 }
 
 export const useI18n = () => useContext(I18nCtx)
+
+// SAFETY-2: доступ ко ВСЕМ трём языкам ключа сразу (не только к текущему) — редактору свода ТБ
+// нужны русский/английский/испанский дефолты одновременно для префилла трёх полей. undefined —
+// если ключа нет. Только чтение словаря; UI-строки по-прежнему живут здесь, в dict.
+export function tx(k: string): Record<Lang, string> | undefined {
+  return dict[k]
+}

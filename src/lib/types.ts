@@ -492,6 +492,8 @@ export interface WorkerConsentRow {
 export interface SafetyAckRow {
   worker_id: string
   signed_at: string | null
+  // SAFETY-2: версия свода ТБ, под которой подписано (реестр сверяет её с текущей версией).
+  doc_version?: string | null
 }
 
 export interface AppSettings {
