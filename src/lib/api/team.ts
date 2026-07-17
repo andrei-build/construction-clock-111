@@ -140,7 +140,7 @@ export async function getTeam(): Promise<Profile[]> {
 
 export async function getWorkerProfile(workerId: string): Promise<Profile | null> {
   const { data, error } = await supabase.from('profiles')
-    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, skills, skills_note, avatar_url, public_bio, phone, email, home_address, emergency_contact, hire_date, dossier_notes')
+    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, pin_enabled, skills, skills_note, avatar_url, public_bio, phone, email, home_address, emergency_contact, hire_date, dossier_notes')
     .eq('id', workerId)
     .maybeSingle()
   if (error) throw error
@@ -306,6 +306,39 @@ export async function setWorkerPinEnabled(p: Profile, workerId: string, enabled:
     .eq('id', workerId)
   if (error) throw error
   await logEvent(p, 'team.pin_access_updated', 'profile', workerId, { pin_enabled: enabled })
+}
+
+// TEAM-PIN-UI: ставит/сбрасывает PIN и вкл/выкл вход по PIN через edge `set-worker-pin`
+// (v1 ACTIVE, verify_jwt=false → supabase.functions.invoke() сам прикрепляет Bearer сессии).
+// Колонки profiles.pin_hash/pin_enabled защищены триггером privileged-cols — писать их НАПРЯМУЮ
+// нельзя, только через эту функцию (manager+ гейтит сама edge). Тело: { profile_id, pin?, pin_enabled? }.
+// Занятый PIN → HTTP 409 { error: 'pin_taken' }. Коды ошибок маппим в i18n-ключи как inviteAdmin/
+// setMemberPassword выше (сначала из тела data.error, иначе из context.json() при error!=null).
+type SetWorkerPinResult = { ok: boolean; error?: string }
+type SetWorkerPinEdgeResponse = { ok?: boolean; error?: string }
+
+function setWorkerPinErrorCode(value?: unknown, status?: number): string {
+  if (value === 'pin_taken') return 'pin_taken'
+  if (value === 'bad_pin') return 'bad_pin'
+  if (status === 409) return 'pin_taken'
+  return 'error'
+}
+
+export async function setWorkerPin(input: {
+  profileId: string
+  pin?: string
+  pinEnabled?: boolean
+}): Promise<SetWorkerPinResult> {
+  const body: Record<string, unknown> = { profile_id: input.profileId }
+  if (input.pin !== undefined) body.pin = input.pin
+  if (input.pinEnabled !== undefined) body.pin_enabled = input.pinEnabled
+  const { data, error } = await supabase.functions.invoke<SetWorkerPinEdgeResponse>('set-worker-pin', { body })
+  if (error) {
+    const errorCode = data?.error ?? await getFunctionErrorCode(error)
+    return { ok: false, error: setWorkerPinErrorCode(errorCode, getResponseStatus(error)) }
+  }
+  if (data?.error) return { ok: false, error: setWorkerPinErrorCode(data.error) }
+  return { ok: true }
 }
 
 // Требование видео при уходе живёт на профиле работника; триггер БД пускает менять только менеджеров.

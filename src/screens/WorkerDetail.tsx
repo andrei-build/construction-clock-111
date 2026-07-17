@@ -16,7 +16,6 @@ import {
   getWorkerDayTimeEvents,
   getWorkerIntervals,
   getWorkerLocationConsents,
-  getWorkerPinAccess,
   getAppSettings,
   getCurrentPayPeriod,
   getWorkerProfile,
@@ -34,7 +33,7 @@ import {
   setProjectAccessMode,
   setUserCapability,
   setWorkerActive,
-  setWorkerPinEnabled,
+  setWorkerPin,
   setWorkerRate,
   unassignWorkerFromProject,
   updateWorkerProfileSettings,
@@ -71,6 +70,14 @@ function generatePassword(): string {
   const arr = new Uint32Array(12)
   crypto.getRandomValues(arr)
   return Array.from(arr, (n) => chars[n % chars.length]).join('')
+}
+
+// TEAM-PIN-UI: случайный 6-значный PIN через crypto для кнопки-генератора в модалке сброса PIN.
+// PIN — строка цифр (ведущий 0 допустим); длину 4–8 гейтит валидация ввода.
+function generatePin(): string {
+  const arr = new Uint32Array(6)
+  crypto.getRandomValues(arr)
+  return Array.from(arr, (n) => String(n % 10)).join('')
 }
 
 // Гибкие права (capabilities), которые владелец/админ выдаёт поверх роли. Пока только доступ к финансам.
@@ -220,8 +227,12 @@ export default function WorkerDetail() {
   const [role, setRole] = useState<Role>('worker')
   const [rateInput, setRateInput] = useState('')
   const [requireVideo, setRequireVideo] = useState(false)
-  const [pinSupported, setPinSupported] = useState(false)
   const [pinEnabled, setPinEnabled] = useState(false)
+  // TEAM-PIN-UI: модалка «Сбросить PIN» — новый PIN (4–8 цифр) + генератор; pinMsg — ошибка/успех
+  // внутри модалки (в т.ч. 409 pin_taken, при котором модалку НЕ закрываем).
+  const [pinModalOpen, setPinModalOpen] = useState(false)
+  const [pinInput, setPinInput] = useState('')
+  const [pinMsg, setPinMsg] = useState<string | null>(null)
   const [accessMode, setAccessMode] = useState<Profile['project_access_mode']>('assigned')
   const [exclusions, setExclusions] = useState<ProjectExclusion[]>([])
   const [excludePick, setExcludePick] = useState('')
@@ -316,12 +327,11 @@ export default function WorkerDetail() {
     setLoading(true)
     setError(false)
     try {
-      const [workerRow, projectRows, intervalRowsData, rateRows, pinAccess, settings] = await Promise.all([
+      const [workerRow, projectRows, intervalRowsData, rateRows, settings] = await Promise.all([
         getWorkerProfile(id),
         getProjects(),
         getWorkerIntervals(id),
         getVisibleProfileRates(),
-        getWorkerPinAccess(id),
         getAppSettings(),
       ])
       const assignmentRows = await getProjectAssignments(projectRows.map((project) => project.id))
@@ -335,12 +345,12 @@ export default function WorkerDetail() {
       const gapAlert = Number(settings?.paid_gap_alert_hours)
       setAlertHours(Number.isFinite(gapAlert) && gapAlert > 0 ? gapAlert : DEFAULT_PAID_GAP_ALERT_HOURS)
       setAssignments(assignmentRows)
-      setPinSupported(pinAccess.supported)
-      setPinEnabled(Boolean(pinAccess.enabled))
       if (workerRow) {
         setName(workerRow.name)
         setRole(workerRow.role)
         setRequireVideo(Boolean(workerRow.require_checkout_video))
+        // TEAM-PIN-UI: значение тумблера «вход по PIN» читаем прямо из профиля (profiles.pin_enabled).
+        setPinEnabled(Boolean(workerRow.pin_enabled))
         setAccessMode(workerRow.project_access_mode ?? 'assigned')
         // TEAM-1: skills — text-колонка; чипы через запятую. Пустые токены отбрасываем.
         setSkillsChips((workerRow.skills ?? '').split(',').map((s) => s.trim()).filter(Boolean))
@@ -595,7 +605,6 @@ export default function WorkerDetail() {
         require_checkout_video: requireVideo,
       })
       if (ratesVisible) await setWorkerRate(profile, worker.id, hourlyRate)
-      if (pinSupported) await setWorkerPinEnabled(profile, worker.id, pinEnabled)
       setMsg('worker_profile_saved')
       await load()
     } catch {
@@ -869,6 +878,70 @@ export default function WorkerDetail() {
     }
   }
 
+  // TEAM-PIN-UI: тумблер «Разрешить вход по PIN» — живое переключение через edge set-worker-pin
+  // ({ profile_id, pin_enabled }). Колонку profiles.pin_enabled напрямую не пишем (защищена триггером).
+  // Флажок двигаем ТОЛЬКО после успеха; на ошибке состояние не рушим, показываем тост.
+  const togglePinEnabled = async (next: boolean) => {
+    if (!worker || !canEditProfile || busy) return
+    setBusy('pin_enabled')
+    setMsg(null)
+    try {
+      const res = await setWorkerPin({ profileId: worker.id, pinEnabled: next })
+      if (res.ok) {
+        setPinEnabled(next)
+        setWorker((prev) => (prev ? { ...prev, pin_enabled: next } : prev))
+        setMsg('pin_access_updated')
+      } else {
+        setMsg('pin_access_failed')
+      }
+    } catch {
+      setMsg('pin_access_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const openPinModal = () => {
+    setPinInput('')
+    setPinMsg(null)
+    setPinModalOpen(true)
+  }
+  const closePinModal = () => {
+    if (busy) return
+    setPinModalOpen(false)
+    setPinInput('')
+    setPinMsg(null)
+  }
+
+  // TEAM-PIN-UI: сохранить новый PIN через edge set-worker-pin ({ profile_id, pin }). Успех — тост
+  // «PIN обновлён» + закрыть модалку. 409 pin_taken — показать «занят, выберите другой», модалку НЕ
+  // закрывать. Прочие ошибки — понятный текст в модалке, состояние не рушим.
+  const submitPin = async () => {
+    if (!worker || !canEditProfile || busy) return
+    if (!/^\d{4,8}$/.test(pinInput)) { setPinMsg('pin_invalid'); return }
+    setBusy('pin')
+    setPinMsg(null)
+    try {
+      const res = await setWorkerPin({ profileId: worker.id, pin: pinInput })
+      if (res.ok) {
+        setPinModalOpen(false)
+        setPinInput('')
+        setPinMsg(null)
+        setMsg('pin_updated')
+      } else if (res.error === 'pin_taken') {
+        setPinMsg('pin_taken_choose_another')
+      } else if (res.error === 'bad_pin') {
+        setPinMsg('pin_invalid')
+      } else {
+        setPinMsg('pin_update_failed')
+      }
+    } catch {
+      setPinMsg('pin_update_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   // TRASH-3: безвозвратное удаление. Второй барьер — введённое имя должно ТОЧНО совпасть.
   // На успех уводим на /team (человека больше нет); ошибку показываем кодом-ключом в панели.
   const submitPurge = async () => {
@@ -1008,32 +1081,31 @@ export default function WorkerDetail() {
                   <span>{t('checkout_video_required')}</span>
                 </label>
 
-                <label className={`check-row worker-toggle ${!pinSupported ? 'disabled' : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={pinEnabled}
-                    disabled={!canEditProfile || !pinSupported || busy !== null}
-                    onChange={(e) => setPinEnabled(e.target.checked)}
-                  />
-                  <span>{t('pin_login_allowed')}</span>
-                </label>
-                {!pinSupported && <p className="muted">{t('pin_backend_pending')}</p>}
-
                 <button className="btn" disabled={!canEditProfile || busy !== null}>{t('save')}</button>
               </form>
 
-              {/* TEAM-1: сброс PIN и деактивация. Сброс PIN пока без серверной поддержки — показываем подсказку. */}
+              {/* TEAM-PIN-UI: вход по PIN (edge set-worker-pin) — тумблер «Разрешить вход по PIN» +
+                  «Сбросить PIN» (модалка). Плюс деактивация. Всё видит/меняет manager+ (canEditProfile). */}
               {canEditProfile && (
                 <div className="worker-danger-actions">
+                  <label className="check-row worker-toggle">
+                    <input
+                      type="checkbox"
+                      checked={pinEnabled}
+                      disabled={busy !== null}
+                      onChange={(e) => togglePinEnabled(e.target.checked)}
+                    />
+                    <span>{t('pin_login_allowed')}</span>
+                  </label>
+                  <p className="muted">{t('pin_login_hint')}</p>
                   <button
                     type="button"
                     className="btn ghost small"
-                    disabled
-                    title={t('reset_pin_backend_pending')}
+                    disabled={busy !== null}
+                    onClick={openPinModal}
                   >
                     {t('reset_pin')}
                   </button>
-                  <p className="muted">{t('reset_pin_backend_pending')}</p>
                   <button
                     type="button"
                     className={`btn small ${worker.is_active ? 'red' : 'green'}`}
@@ -1832,6 +1904,51 @@ export default function WorkerDetail() {
             </section>
           </div>
         </>
+      )}
+
+      {/* TEAM-PIN-UI: модалка «Сбросить PIN». Ввод только цифр (4–8) + кнопка-генератор. «Сохранить»
+          шлёт edge set-worker-pin. 409 pin_taken держит модалку открытой с подсказкой выбрать другой. */}
+      {pinModalOpen && worker && (
+        <div className="confirm-backdrop" onClick={closePinModal}>
+          <div className="card confirm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="item-title">{t('reset_pin')}</div>
+            <p className="muted">{t('reset_pin_modal_hint')}</p>
+            <label>{t('new_pin_label')}</label>
+            <div className="row set-password-row">
+              <input
+                value={pinInput}
+                disabled={busy !== null}
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={8}
+                placeholder="••••"
+                onChange={(e) => { setPinInput(e.target.value.replace(/\D/g, '').slice(0, 8)); setPinMsg(null) }}
+              />
+              <button
+                type="button"
+                className="btn ghost small"
+                disabled={busy !== null}
+                onClick={() => { setPinInput(generatePin()); setPinMsg(null) }}
+              >
+                {t('generate_pin')}
+              </button>
+            </div>
+            {pinMsg && <p className={pinMsg === 'pin_updated' ? 'ok-msg' : 'error-msg'}>{t(pinMsg)}</p>}
+            <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+              <button
+                type="button"
+                className="btn"
+                disabled={busy !== null || !/^\d{4,8}$/.test(pinInput)}
+                onClick={submitPin}
+              >
+                {t('save')}
+              </button>
+              <button type="button" className="btn ghost" disabled={busy !== null} onClick={closePinModal}>
+                {t('cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {activeDayPhotoUrl && (
