@@ -25,8 +25,10 @@ import {
   subscribeToTaskChanges,
   subscribeToMyMessages,
   subscribeToLiveLocations,
+  subscribeToOrgEvents,
   getDeliveryProgress,
 } from '../lib/api'
+import { useLiveRefresh } from '../lib/useLiveRefresh'
 import { shiftState, workedMs, fmtHours, fmtClock } from '../lib/time'
 import { isManagerWrite } from '../lib/types'
 import type {
@@ -123,9 +125,11 @@ export default function Dispatch() {
     setLive(ll)
   }
 
-  const load = async () => {
+  // LIVE-REFRESH-1: silent=true — фоновый полный рефетч (60с-поллинг/возврат на вкладку) без
+  // глобального спиннера, чтобы не мерцать и не рушить открытые карточки/формы доски задач.
+  const load = async (silent = false) => {
     if (!profile) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError(false)
     try {
       const [projectRows, people, taskRows, mine, msgs, susp, ev, ll] = await Promise.all([
@@ -149,7 +153,7 @@ export default function Dispatch() {
     } catch {
       setError(true)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -174,6 +178,19 @@ export default function Dispatch() {
     if (!profile?.org_id) return
     return subscribeToLiveLocations(profile.org_id, () => { loadOps().catch(() => {}) }, 'live:cc')
   }, [profile?.org_id])
+  // LIVE-REFRESH-1: журнал событий (0027) — новые действия (ревью смен, раздачи, вложения) держат
+  // очередь внимания владельца и «операции сейчас» свежими. Точечный рефетч, без спиннера.
+  useEffect(() => {
+    if (!profile?.org_id) return
+    return subscribeToOrgEvents(profile.org_id, () => {
+      getSuspiciousShifts().then(setSuspicious).catch(() => {})
+      loadOps().catch(() => {})
+    }, 'events:cc')
+  }, [profile?.org_id])
+
+  // LIVE-REFRESH-1: дашборд КЦ — мягкий 60с-поллинг (только пока вкладка видима) + рефетч на
+  // возврат/фокус. Фоновый full refetch (silent) без спиннера поверх точечных realtime-подписок.
+  useLiveRefresh(() => { void load(true) }, 60000)
 
   const peopleById = useMemo(() => new Map(team.map((p) => [p.id, p])), [team])
   const projectName = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects])

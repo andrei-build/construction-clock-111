@@ -5,6 +5,7 @@ import { useEntityDrawer } from '../components/EntityDrawer'
 import { useAuth } from '../lib/auth'
 import { getLiveLastLocations, getMapProjects, getTeam, getTodayEvents, getWorkerLastLocations, subscribeToLiveLocations, type WorkerLocation } from '../lib/api'
 import { useI18n } from '../lib/i18n'
+import { useLiveRefresh } from '../lib/useLiveRefresh'
 import { shiftState } from '../lib/time'
 import { keepStableListIfUnchanged } from '../lib/list-stability'
 import { formatGpsAge } from '../lib/gps-freshness'
@@ -201,6 +202,10 @@ export default function LiveMap() {
       }).catch(() => { /* best-effort — поллинг догонит */ })
     }, `livemap:${profile.org_id}`)
   }, [profile?.org_id])
+
+  // LIVE-REFRESH-1: рефетч при возврате на вкладку/фокусе (фоновый silent — без спиннера).
+  // Мягкий поллинг у карты уже свой (60с выше), поэтому здесь только visibility/focus.
+  useLiveRefresh(() => { void load(true) })
 
   useEffect(() => {
     if (!mapEl.current || mapRef.current) return

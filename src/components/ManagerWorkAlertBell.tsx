@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getDueClientReminders, getMessages, getOpenTasks, markClientReminderDone, subscribeToMyMessages, subscribeToTaskChanges } from '../lib/api'
+import { getDueClientReminders, getMessages, getOpenTasks, markClientReminderDone, subscribeToMyMessages, subscribeToOrgEvents, subscribeToTaskChanges } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { armUrgentChimeUnlock, playUrgentChime } from '../lib/notification-sound'
@@ -130,7 +130,10 @@ export default function ManagerWorkAlertBell() {
     if (!manager || !profile?.org_id) return
     const offTasks = subscribeToTaskChanges(profile.org_id, () => { void load() }, `tasks:manager-alert:${profile.id}`)
     const offMessages = subscribeToMyMessages(profile.id, () => { void load() }, `messages:bell:${profile.id}`)
-    return () => { offTasks(); offMessages() }
+    // LIVE-REFRESH-1: журнал событий (0027) — новые действия (в т.ч. напоминания клиентов) сразу
+    // пересчитывают счётчик оповещений, а не ждут 30с-полла.
+    const offEvents = subscribeToOrgEvents(profile.org_id, () => { void load() }, `events-alerts:${profile.id}`)
+    return () => { offTasks(); offMessages(); offEvents() }
   }, [manager, profile?.org_id, profile?.id, load])
 
   // Chime once per genuinely-new alert. The first populated load is treated as hydration
