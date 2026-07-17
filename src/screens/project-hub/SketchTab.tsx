@@ -24,12 +24,34 @@ const VIEW_W = GRID_COLS * CELL_PX
 const VIEW_H = GRID_ROWS * CELL_PX
 const CLOSE_SNAP = 0.45 // клетки — попадание в стартовую точку замыкает контур
 const SEG_HIT = 0.7 // клетки — попадание в сегмент при установке двери/окна
+const ROOM_SNAP = 0.6 // клетки — радиус прилипания новой комнаты к существующим вершинам/стенам
+const EDGE_FT_SNAP = 0.25 // фута — прилипание проёма к ровному футу при отпускании
 const HISTORY_MAX = 60
+
+// Дефолтные габариты проёмов в футах (законы Андрея 17.07).
+const DOOR_W_FT = 3
+const WIN_W_FT = 3
+const WIN_H_FT = 4
+const WIN_SILL_FT = 3
 
 type Pt = { x: number; y: number }
 type Contour = { points: Pt[]; closed: boolean }
-type Opening = { kind: 'door' | 'window'; c: number; s: number; t: number }
+// Габариты (w/h/sill) опциональны и аддитивны — старый JSON без них открывается с дефолтами.
+type Opening = {
+  kind: 'door' | 'window'
+  c: number
+  s: number
+  t: number
+  w?: number // ширина проёма в футах
+  h?: number // высота окна в футах (только окно)
+  sill?: number // высота окна от пола в футах (только окно)
+}
 type SketchModel = { version: 1; cellFt: number; contours: Contour[]; openings: Opening[] }
+
+// Ширина проёма в футах с учётом дефолта по типу.
+function openingWidthFt(o: Opening): number {
+  return o.w ?? (o.kind === 'door' ? DOOR_W_FT : WIN_W_FT)
+}
 
 type Tool = 'wall' | 'door' | 'window'
 
@@ -58,14 +80,40 @@ function contourArea(c: Contour): number {
   return Math.abs(sum) / 2
 }
 
-// Мировая точка проёма на сегменте.
-function openingPoint(model: SketchModel, o: Opening): Pt | null {
+// Концы сегмента, на котором сидит проём.
+function openingEnds(model: SketchModel, o: Opening): { a: Pt; b: Pt } | null {
   const c = model.contours[o.c]
   if (!c) return null
   const a = c.points[o.s]
   const b = o.s + 1 < c.points.length ? c.points[o.s + 1] : (c.closed ? c.points[0] : null)
   if (!a || !b) return null
-  return { x: a.x + (b.x - a.x) * o.t, y: a.y + (b.y - a.y) * o.t }
+  return { a, b }
+}
+
+// Мировая точка проёма на сегменте.
+function openingPoint(model: SketchModel, o: Opening): Pt | null {
+  const e = openingEnds(model, o)
+  if (!e) return null
+  return { x: e.a.x + (e.b.x - e.a.x) * o.t, y: e.a.y + (e.b.y - e.a.y) * o.t }
+}
+
+// Геометрия проёма: центр, единичный вектор вдоль стены, концы сегмента.
+function openingGeom(model: SketchModel, o: Opening): { p: Pt; ux: number; uy: number; a: Pt; b: Pt } | null {
+  const e = openingEnds(model, o)
+  if (!e) return null
+  const len = dist(e.a, e.b) || 1
+  const ux = (e.b.x - e.a.x) / len
+  const uy = (e.b.y - e.a.y) / len
+  return { p: { x: e.a.x + (e.b.x - e.a.x) * o.t, y: e.a.y + (e.b.y - e.a.y) * o.t }, ux, uy, a: e.a, b: e.b }
+}
+
+// Проекция точки p на сегмент a→b, параметр t в [0,1].
+function projectT(p: Pt, a: Pt, b: Pt): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy
+  if (len2 === 0) return 0
+  return Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
 }
 
 // Список сегментов (с индексами контура/сегмента и концами) для поиска ближайшего.
@@ -152,15 +200,22 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
     const my = (seg.a.y + seg.b.y) / 2 * CELL_PX
     ctx.fillText(fmtLen(dist(seg.a, seg.b)), mx, my - 4)
   }
-  // проёмы
+  // проёмы — отрезок вдоль стены заданной ширины
+  ctx.lineCap = 'butt'
   for (const o of model.openings) {
-    const p = openingPoint(model, o)
-    if (!p) continue
-    ctx.fillStyle = o.kind === 'door' ? '#b45309' : '#2563eb'
+    const g = openingGeom(model, o)
+    if (!g) continue
+    const wCells = Math.min(openingWidthFt(o) / (model.cellFt || CELL_FT), dist(g.a, g.b))
+    const hx = (g.ux * wCells) / 2
+    const hy = (g.uy * wCells) / 2
+    ctx.strokeStyle = o.kind === 'door' ? '#b45309' : '#2563eb'
+    ctx.lineWidth = 6
     ctx.beginPath()
-    ctx.arc(p.x * CELL_PX, p.y * CELL_PX, 5, 0, Math.PI * 2)
-    ctx.fill()
+    ctx.moveTo((g.p.x - hx) * CELL_PX, (g.p.y - hy) * CELL_PX)
+    ctx.lineTo((g.p.x + hx) * CELL_PX, (g.p.y + hy) * CELL_PX)
+    ctx.stroke()
   }
+  ctx.lineCap = 'round'
   // сводка
   const area = model.contours.reduce((s, c) => s + contourArea(c), 0)
   const perim = model.contours.reduce((s, c) => s + contourPerimeter(c), 0)
@@ -183,6 +238,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [history, setHistory] = useState<SketchModel[]>([])
   const [tool, setTool] = useState<Tool>('wall')
   const [hover, setHover] = useState<Pt | null>(null)
+  const [hoverSnapped, setHoverSnapped] = useState(false)
+  // Габариты проёмов (в футах), задаются перед вставкой.
+  const [doorW, setDoorW] = useState(DOOR_W_FT)
+  const [winW, setWinW] = useState(WIN_W_FT)
+  const [winH, setWinH] = useState(WIN_H_FT)
+  const [winSill, setWinSill] = useState(WIN_SILL_FT)
+  // Перетаскивание проёма вдоль стены.
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const dragMovedRef = useRef(false)
   const [name, setName] = useState('room-1')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -229,19 +293,124 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     y: Math.max(0, Math.min(GRID_ROWS, Math.round(p.y))),
   })
 
+  // Прилипание новой точки к вершинам/стенам ДРУГИХ контуров (общая стена не дублируется).
+  // Возвращает координату существующей геометрии, если она в радиусе ROOM_SNAP, иначе null.
+  const snapToExisting = (p: Pt): Pt | null => {
+    const activeIdx = model.contours.length - 1
+    const active = model.contours[activeIdx]
+    const drawingNew = !!active && !active.closed
+    let best: Pt | null = null
+    let bestD = ROOM_SNAP
+    // сначала вершины
+    model.contours.forEach((c, ci) => {
+      if (drawingNew && ci === activeIdx) return
+      c.points.forEach((v) => {
+        const d = dist(p, v)
+        if (d <= bestD) {
+          bestD = d
+          best = { x: v.x, y: v.y }
+        }
+      })
+    })
+    if (best) return best
+    // затем проекция на существующие стены
+    let bestSegD = ROOM_SNAP
+    eachSegment(model).forEach((seg) => {
+      if (drawingNew && seg.c === activeIdx) return
+      const t = projectT(p, seg.a, seg.b)
+      const proj = { x: seg.a.x + (seg.b.x - seg.a.x) * t, y: seg.a.y + (seg.b.y - seg.a.y) * t }
+      const d = dist(p, proj)
+      if (d <= bestSegD) {
+        bestSegD = d
+        best = proj
+      }
+    })
+    return best
+  }
+
+  // Точка для установки угла стены: прилипание к чужой геометрии имеет приоритет над сеткой.
+  const wallPoint = (raw: Pt): { p: Pt; snapped: boolean } => {
+    const s = snapToExisting(raw)
+    return s ? { p: s, snapped: true } : { p: snap(raw), snapped: false }
+  }
+
   const handleMove = (e: React.PointerEvent) => {
     if (!canEdit) return
     const raw = pointerCell(e)
-    setHover(raw ? (tool === 'wall' ? snap(raw) : raw) : null)
+    if (dragIdx !== null) {
+      if (!raw) return
+      dragMovedRef.current = true
+      setModel((m) => {
+        const o = m.openings[dragIdx]
+        if (!o) return m
+        const ends = openingEnds(m, o)
+        if (!ends) return m
+        const t = projectT(raw, ends.a, ends.b)
+        return { ...m, openings: m.openings.map((op, i) => (i === dragIdx ? { ...op, t } : op)) }
+      })
+      return
+    }
+    if (!raw) {
+      setHover(null)
+      setHoverSnapped(false)
+      return
+    }
+    if (tool === 'wall') {
+      const wp = wallPoint(raw)
+      setHover(wp.p)
+      setHoverSnapped(wp.snapped)
+    } else {
+      setHover(raw)
+      setHoverSnapped(false)
+    }
+  }
+
+  // Начало перетаскивания существующего проёма.
+  const startDragOpening = (i: number) => (e: React.PointerEvent) => {
+    if (!canEdit) return
+    e.stopPropagation()
+    setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
+    setStatus(null)
+    setError(null)
+    // любое взаимодействие с проёмом подавляет следующий click (иначе поставили бы новую точку/проём)
+    dragMovedRef.current = true
+    setDragIdx(i)
+    ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
+  }
+
+  // Отпускание проёма: лёгкое прилипание к ровному футу вдоль стены.
+  const endDragOpening = () => {
+    if (dragIdx === null) return
+    setModel((m) => {
+      const o = m.openings[dragIdx]
+      if (!o) return m
+      const ends = openingEnds(m, o)
+      if (!ends) return m
+      const segLen = dist(ends.a, ends.b)
+      const cellFt = m.cellFt || CELL_FT
+      const distFt = o.t * segLen * cellFt
+      const rounded = Math.round(distFt)
+      let t = o.t
+      if (segLen > 0 && Math.abs(distFt - rounded) <= EDGE_FT_SNAP) {
+        t = Math.max(0, Math.min(1, rounded / (segLen * cellFt)))
+      }
+      return { ...m, openings: m.openings.map((op, i) => (i === dragIdx ? { ...op, t } : op)) }
+    })
+    setDragIdx(null)
   }
 
   const handleClick = (e: React.MouseEvent) => {
     if (!canEdit) return
+    // клик после перетаскивания проёма не должен ставить новый
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false
+      return
+    }
     const raw = pointerCell(e)
     if (!raw) return
 
     if (tool === 'wall') {
-      const p = snap(raw)
+      const p = wallPoint(raw).p
       const contours = model.contours
       const last = contours[contours.length - 1]
       // Замыкание: клик рядом со стартовой точкой активного контура (≥3 точек).
@@ -268,7 +437,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setError('hub_sketch_no_segment')
       return
     }
-    commit({ ...model, openings: [...model.openings, { kind: tool, c: near.c, s: near.s, t: near.t }] })
+    const opening: Opening =
+      tool === 'door'
+        ? { kind: 'door', c: near.c, s: near.s, t: near.t, w: Math.max(0.5, doorW) }
+        : { kind: 'window', c: near.c, s: near.s, t: near.t, w: Math.max(0.5, winW), h: Math.max(0.5, winH), sill: Math.max(0, winSill) }
+    commit({ ...model, openings: [...model.openings, opening] })
   }
 
   const finishShape = () => {
@@ -413,6 +586,34 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               {t('hub_sketch_clear')}
             </button>
           </div>
+          {tool === 'door' && (
+            <div className="hub-sketch-dims">
+              <label className="hub-sketch-dim-field">
+                <span className="muted">{t('hub_sketch_width')}</span>
+                <input type="number" min="0.5" step="0.5" value={doorW} onChange={(e) => setDoorW(Number(e.target.value) || 0)} />
+                <span className="muted">ft</span>
+              </label>
+            </div>
+          )}
+          {tool === 'window' && (
+            <div className="hub-sketch-dims">
+              <label className="hub-sketch-dim-field">
+                <span className="muted">{t('hub_sketch_width')}</span>
+                <input type="number" min="0.5" step="0.5" value={winW} onChange={(e) => setWinW(Number(e.target.value) || 0)} />
+                <span className="muted">ft</span>
+              </label>
+              <label className="hub-sketch-dim-field">
+                <span className="muted">{t('hub_sketch_height')}</span>
+                <input type="number" min="0.5" step="0.5" value={winH} onChange={(e) => setWinH(Number(e.target.value) || 0)} />
+                <span className="muted">ft</span>
+              </label>
+              <label className="hub-sketch-dim-field">
+                <span className="muted">{t('hub_sketch_sill')}</span>
+                <input type="number" min="0" step="0.5" value={winSill} onChange={(e) => setWinSill(Number(e.target.value) || 0)} />
+                <span className="muted">ft</span>
+              </label>
+            </div>
+          )}
         </div>
       )}
 
@@ -425,7 +626,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           aria-label={t('hub_tab_sketch')}
           onClick={handleClick}
           onPointerMove={handleMove}
-          onPointerLeave={() => setHover(null)}
+          onPointerUp={endDragOpening}
+          onPointerLeave={() => {
+            endDragOpening()
+            setHover(null)
+            setHoverSnapped(false)
+          }}
           style={{ touchAction: 'none' }}
         >
           {/* сетка */}
@@ -467,24 +673,87 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             )),
           )}
 
-          {/* проёмы */}
+          {/* проёмы — отрезок вдоль стены заданной ширины, можно перетаскивать */}
           {model.openings.map((o, i) => {
-            const p = openingPoint(model, o)
-            if (!p) return null
+            const g = openingGeom(model, o)
+            if (!g) return null
+            const wCells = Math.min(openingWidthFt(o) / (model.cellFt || CELL_FT), dist(g.a, g.b))
+            const hx = (g.ux * wCells) / 2
+            const hy = (g.uy * wCells) / 2
+            const x1 = (g.p.x - hx) * CELL_PX
+            const y1 = (g.p.y - hy) * CELL_PX
+            const x2 = (g.p.x + hx) * CELL_PX
+            const y2 = (g.p.y + hy) * CELL_PX
+            const cls = o.kind === 'door' ? 'hub-sketch-door' : 'hub-sketch-window'
             return (
-              <circle
+              <g
                 key={`o${i}`}
-                className={o.kind === 'door' ? 'hub-sketch-door' : 'hub-sketch-window'}
-                cx={p.x * CELL_PX}
-                cy={p.y * CELL_PX}
-                r={6}
-              />
+                className={canEdit ? 'hub-sketch-opening' : undefined}
+                onPointerDown={canEdit ? startDragOpening(i) : undefined}
+              >
+                <line className={cls} x1={x1} y1={y1} x2={x2} y2={y2} />
+                {/* невидимый широкий хит-таргет для захвата пальцем */}
+                <line className="hub-sketch-opening-hit" x1={x1} y1={y1} x2={x2} y2={y2} />
+              </g>
             )
           })}
 
+          {/* превью стены: живая длина текущего сегмента при рисовании */}
+          {canEdit &&
+            hover &&
+            tool === 'wall' &&
+            activeContour &&
+            !activeContour.closed &&
+            activeContour.points.length > 0 &&
+            (() => {
+              const last = activeContour.points[activeContour.points.length - 1]
+              const mx = ((last.x + hover.x) / 2) * CELL_PX
+              const my = ((last.y + hover.y) / 2) * CELL_PX
+              return (
+                <g>
+                  <line
+                    className="hub-sketch-preview"
+                    x1={last.x * CELL_PX}
+                    y1={last.y * CELL_PX}
+                    x2={hover.x * CELL_PX}
+                    y2={hover.y * CELL_PX}
+                  />
+                  <text className="hub-sketch-live-dim" x={mx} y={my - 6} textAnchor="middle">
+                    {fmtLen(dist(last, hover))}
+                  </text>
+                </g>
+              )
+            })()}
+
+          {/* подсказка при перетаскивании проёма: расстояния до краёв стены (+ высота от пола для окна) */}
+          {dragIdx !== null &&
+            (() => {
+              const o = model.openings[dragIdx]
+              if (!o) return null
+              const g = openingGeom(model, o)
+              if (!g) return null
+              const segLen = dist(g.a, g.b)
+              const cellFt = model.cellFt || CELL_FT
+              const left = o.t * segLen * cellFt
+              const right = (1 - o.t) * segLen * cellFt
+              const px = g.p.x * CELL_PX
+              const py = g.p.y * CELL_PX
+              const sillTxt = o.kind === 'window' ? ` · ${t('hub_sketch_sill')} ${(o.sill ?? WIN_SILL_FT).toFixed(1)}′` : ''
+              return (
+                <text className="hub-sketch-drag-dim" x={px} y={py - 12} textAnchor="middle">
+                  {`◄ ${left.toFixed(1)}′  ·  ${right.toFixed(1)}′ ►${sillTxt}`}
+                </text>
+              )
+            })()}
+
           {/* превью курсора */}
           {canEdit && hover && tool === 'wall' && (
-            <circle className="hub-sketch-hover" cx={hover.x * CELL_PX} cy={hover.y * CELL_PX} r={6} />
+            <circle
+              className={hoverSnapped ? 'hub-sketch-hover hub-sketch-hover-snap' : 'hub-sketch-hover'}
+              cx={hover.x * CELL_PX}
+              cy={hover.y * CELL_PX}
+              r={6}
+            />
           )}
         </svg>
         <p className="muted hub-sketch-scale">{t('hub_sketch_scale_note')}</p>

@@ -3780,6 +3780,18 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .hub-sketch-load-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .hub-sketch-load-item { width: auto; }
+/* SKETCH-2D-2: габариты проёмов, живой размер сегмента, прилипание комнат */
+.hub-sketch-dims { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; }
+.hub-sketch-dim-field { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.hub-sketch-dim-field input { width: 64px; }
+.hub-sketch-preview { stroke: #2563eb; stroke-width: 2; stroke-dasharray: 4 4; pointer-events: none; }
+.hub-sketch-live-dim { fill: #2563eb; font-size: 13px; font-weight: 800; pointer-events: none; }
+.hub-sketch-drag-dim { fill: #b45309; font-size: 12px; font-weight: 800; pointer-events: none; }
+.hub-sketch-hover-snap { fill: rgba(22, 163, 74, .4); stroke: #16a34a; }
+.hub-sketch-opening { cursor: grab; }
+.hub-sketch-door { stroke: #b45309; stroke-width: 6; stroke-linecap: butt; }
+.hub-sketch-window { stroke: #2563eb; stroke-width: 6; stroke-linecap: butt; }
+.hub-sketch-opening-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
 
 /* WF-1: досье работника → «Документы и согласия» (GPS-согласия, ТБ, личные файлы). Только чтение. */
 .worker-docs-card h3 { margin: 14px 0 6px; }
