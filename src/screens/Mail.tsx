@@ -16,6 +16,7 @@ import {
 import type { MailAccount, MailAllowlistEntry, MailMessage } from '../lib/api/mail'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { useLiveRefresh } from '../lib/useLiveRefresh'
 
 // MAIL-2-UI: отправка писем ИЗ приложения (compose/reply) поверх экрана MAIL-1. Модалка «Написать»
 // шлёт через edge `mail-send`; строку исходящего вставляет сам edge (direction='out', seen=true),
@@ -135,9 +136,12 @@ export default function Mail() {
   }, [])
   useEffect(() => () => { if (toastTimer.current !== null) window.clearTimeout(toastTimer.current) }, [])
 
-  const load = useCallback(async () => {
+  // LIVE-REFRESH-1: silent=true — фоновый рефетч (60с-поллинг/возврат на вкладку) без спиннера.
+  // Обновляет только массивы ящиков/писем/белого списка; активную вкладку сохраняем, открытое
+  // письмо/модалку компоновки/белого списка НЕ трогаем (это отдельный локальный стейт).
+  const load = useCallback(async (silent = false) => {
     if (!isAdminOrOwner) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     // MAIL-4-UI: block-список тянем сразу (owner-only) — он нужен клиентскому фильтру ленты, а не
     // только модалу. Не-владельцу RLS отдаст [] (мягко); ему фильтр скрытых и не адресован.
     const [accs, msgs, al] = await Promise.all([
@@ -149,10 +153,14 @@ export default function Mail() {
     setMessages(msgs)
     setAllowlist(al)
     setActiveId((prev) => (prev && accs.some((a) => a.id === prev) ? prev : accs[0]?.id ?? null))
-    setLoading(false)
+    if (!silent) setLoading(false)
   }, [isAdminOrOwner, isOwner])
 
   useEffect(() => { void load() }, [load])
+
+  // LIVE-REFRESH-1: дашборд «Почта» — мягкий 60с-поллинг (только пока вкладка видима) + рефетч на
+  // возврат/фокус. Почта приходит по mail-sync без realtime-канала, поэтому поллинг здесь основной.
+  useLiveRefresh(() => { void load(true).catch(() => {}) }, 60000)
   // MAIL-4-UI: закрываем мини-меню «Скрыть навсегда» при смене/закрытии открытого письма.
   useEffect(() => { setHideMenuOpen(false) }, [openMsg])
 

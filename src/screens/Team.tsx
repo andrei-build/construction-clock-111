@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { useLiveRefresh } from '../lib/useLiveRefresh'
 import { getTeam, getTodayEvents, createWorker, setWorkerCheckoutVideo } from '../lib/api'
 import { workedMs, fmtHours, shiftState } from '../lib/time'
 import { buildWorkerDisambiguationMap } from '../lib/worker-utils'
@@ -40,8 +41,14 @@ export default function Team() {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
+  // LIVE-REFRESH-1: у экрана нет флага loading — load() и так фоновый (обновляет только массивы
+  // team/events, не трогает форму добавления и открытый drawer), поэтому его же используем как refetch.
   const load = () => Promise.all([getTeam(), getTodayEvents()]).then(([tm, e]) => { setTeam(tm); setEvents(e) })
   useEffect(() => { load() }, [profile?.id])
+
+  // LIVE-REFRESH-1: дашборд «Команда» — мягкий 60с-поллинг (только пока вкладка видима) + рефетч
+  // на возврат/фокус, чтобы «на смене N из M» и часы были свежими без ручной перезагрузки.
+  useLiveRefresh(() => { void load().catch(() => {}) }, 60000)
 
   const byWorker = useMemo(() => {
     const m = new Map<string, TimeEvent[]>()

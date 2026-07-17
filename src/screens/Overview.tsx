@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import CollapsibleSection from '../components/CollapsibleSection'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { useLiveRefresh } from '../lib/useLiveRefresh'
 import {
   approveShiftReview,
   createTimeAdjustment,
@@ -282,6 +283,10 @@ export default function Overview() {
       }).catch(() => { /* polling catches the next state */ })
     }, `live:overview:${profile.org_id}`)
   }, [profile?.org_id])
+
+  // LIVE-REFRESH-1: рефетч при возврате на вкладку/фокусе (фоновый silent — без спиннера).
+  // Мягкий поллинг у экрана уже свой (30с выше), поэтому здесь только visibility/focus.
+  useLiveRefresh(() => { void loadSnapshot(true) })
 
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects])
   const workerById = useMemo(() => new Map(team.map((worker) => [worker.id, worker])), [team])

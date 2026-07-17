@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { useLiveRefresh } from '../lib/useLiveRefresh'
 import { useNotifications } from '../lib/notifications'
 import { getMessages, getTeam, markMessageRead, snoozeMessage, subscribeToMyMessages, unsnoozeMessage } from '../lib/api'
 import type { SnoozableMessageRow } from '../lib/api'
@@ -62,9 +63,11 @@ export default function Messages() {
   const [snoozeOpenId, setSnoozeOpenId] = useState<string | null>(null)
   const [showSnoozed, setShowSnoozed] = useState(false)
 
-  const load = async () => {
+  // LIVE-REFRESH-1: silent=true — фоновый рефетч (realtime/возврат на вкладку) без глобального
+  // спиннера, чтобы не мерцать и не перестраивать открытый тред при новом входящем сообщении.
+  const load = async (silent = false) => {
     if (!profile) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError(false)
     try {
       const [people, rows] = await Promise.all([getTeam(), getMessages(profile.id)])
@@ -74,7 +77,7 @@ export default function Messages() {
     } catch {
       setError(true)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -82,8 +85,11 @@ export default function Messages() {
 
   useEffect(() => {
     if (!profile?.id) return
-    return subscribeToMyMessages(profile.id, () => { void load() }, `messages:screen:${profile.id}`)
+    return subscribeToMyMessages(profile.id, () => { void load(true) }, `messages:screen:${profile.id}`)
   }, [profile?.id])
+
+  // LIVE-REFRESH-1: рефетч при возврате на вкладку/фокусе (фоновый, без спиннера).
+  useLiveRefresh(() => { void load(true) })
 
   const peopleById = useMemo(() => {
     const m = new Map<string, Profile>()

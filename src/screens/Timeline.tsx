@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { getTimelineEvents } from '../lib/api'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getTimelineEvents, subscribeToOrgEvents } from '../lib/api'
+import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { useLiveRefresh } from '../lib/useLiveRefresh'
 import type { TimelineEventRow } from '../lib/types'
 
 const PAGE_SIZE = 200
@@ -49,34 +51,47 @@ function formatTime(iso: string) {
 
 export default function Timeline() {
   const { t, lang } = useI18n()
+  const { profile } = useAuth()
   const [filter, setFilter] = useState<TimelineFilter>('all')
   const [limit, setLimit] = useState(PAGE_SIZE)
   const [events, setEvents] = useState<TimelineEventRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  // LIVE-REFRESH-1: токен запроса — фоновый рефетч не должен перезаписать данные более свежим
+  // фильтром/лимитом, если ответы придут не по порядку.
+  const reqRef = useRef(0)
 
   const activeFilter = filters.find((item) => item.key === filter) ?? filters[0]
 
-  useEffect(() => {
-    let mounted = true
-    async function load() {
-      setLoading(true)
-      setError(false)
-      try {
-        const rows = await getTimelineEvents(limit, activeFilter.prefix)
-        if (mounted) setEvents(rows)
-      } catch {
-        if (mounted) {
-          setEvents([])
-          setError(true)
-        }
-      } finally {
-        if (mounted) setLoading(false)
+  // LIVE-REFRESH-1: silent=true — фоновый рефетч (realtime журнала / возврат на вкладку) без
+  // спиннера, чтобы лента не мерцала и не сбрасывала скролл при новом событии.
+  const load = useCallback(async (silent = false) => {
+    const req = ++reqRef.current
+    if (!silent) setLoading(true)
+    setError(false)
+    try {
+      const rows = await getTimelineEvents(limit, activeFilter.prefix)
+      if (req === reqRef.current) setEvents(rows)
+    } catch {
+      if (req === reqRef.current) {
+        setEvents([])
+        setError(true)
       }
+    } finally {
+      if (!silent) setLoading(false)
     }
-    load()
-    return () => { mounted = false }
   }, [activeFilter.prefix, limit])
+
+  useEffect(() => { void load() }, [load])
+
+  // LIVE-REFRESH-1: realtime журнала событий (0027) — новая строка events → фоновый рефетч ленты.
+  useEffect(() => {
+    if (!profile?.org_id) return
+    return subscribeToOrgEvents(profile.org_id, () => { void load(true) }, 'events-timeline')
+  }, [profile?.org_id, load])
+
+  // LIVE-REFRESH-1: рефетч при возврате на вкладку/фокусе (фоновый, без спиннера).
+  useLiveRefresh(() => { void load(true) })
 
   const grouped = useMemo(() => {
     const today = new Date()
