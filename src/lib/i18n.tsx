@@ -243,6 +243,12 @@ const dict: Record<string, Record<Lang, string>> = {
   gps_consents: { ru: 'Согласия на GPS', en: 'GPS location consents', es: 'Consentimientos de GPS' },
   safety_acks: { ru: 'Подписи по технике безопасности', en: 'Safety acknowledgements', es: 'Consentimientos de seguridad' },
   personal_files: { ru: 'Личные файлы', en: 'Personal files', es: 'Archivos personales' },
+  // TEAM-DOSSIER-1-files: загрузка/список/скачивание файлов работника (страховки, документы, сертификаты).
+  dossier_files_hint: { ru: 'Страховки, документы, сертификаты', en: 'Insurance, documents, certificates', es: 'Seguros, documentos, certificados' },
+  dossier_file_upload: { ru: 'Загрузить файл', en: 'Upload file', es: 'Subir archivo' },
+  dossier_file_uploaded: { ru: 'Файл загружен', en: 'File uploaded', es: 'Archivo subido' },
+  dossier_file_upload_failed: { ru: 'Не удалось загрузить файл', en: 'Could not upload the file', es: 'No se pudo subir el archivo' },
+  dossier_file_download_failed: { ru: 'Не удалось открыть файл', en: 'Could not open the file', es: 'No se pudo abrir el archivo' },
   consent_active: { ru: 'Активно', en: 'Active', es: 'Activo' },
   consent_revoked: { ru: 'Отозвано', en: 'Revoked', es: 'Revocado' },
   consent_version: { ru: 'Версия', en: 'Version', es: 'Versión' },

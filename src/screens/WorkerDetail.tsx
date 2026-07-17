@@ -19,13 +19,14 @@ import {
   getAppSettings,
   getCurrentPayPeriod,
   getWorkerProfile,
-  getWorkerProfileFiles,
+  getProfileFiles,
+  uploadProfileFileToR2,
+  getProjectFileDownloadUrl,
   getWorkerSafetyAcks,
   getWorkerTimeEvents,
   type WorkerDayClosedTask,
   type WorkerDayPhoto,
   type WorkerLocationConsentRow,
-  type WorkerProfileFileRow,
   type WorkerSafetyAckRow,
   purgeProfile,
   removeProjectExclusion,
@@ -49,7 +50,7 @@ import {
 import { currentSafetyVersion, isAckCurrent } from '../lib/safety'
 import { fmtClock, fmtHours, computeTravelGaps, intervalsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 import { computeTransferGaps } from '../lib/shift-gaps'
-import { canAssignRole, isManagerRole, isManagerWrite, type AppSettings, type PayPeriod, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type TimeEvent, type UserCapability, type WorkInterval } from '../lib/types'
+import { canAssignRole, isManagerRole, isManagerWrite, type AppSettings, type FileRow, type PayPeriod, type Profile, type ProfileRate, type Project, type ProjectAssignment, type ProjectExclusion, type Role, type TimeEvent, type UserCapability, type WorkInterval } from '../lib/types'
 import MessageComposer from '../components/MessageComposer'
 import VoiceMic from '../components/VoiceMic'
 
@@ -283,7 +284,7 @@ export default function WorkerDetail() {
   // WF-1: «Документы и согласия» — GPS-согласия, подписи ТБ, личные файлы этого работника.
   const [consents, setConsents] = useState<WorkerLocationConsentRow[]>([])
   const [safetyAcks, setSafetyAcks] = useState<WorkerSafetyAckRow[]>([])
-  const [profileFiles, setProfileFiles] = useState<WorkerProfileFileRow[]>([])
+  const [profileFiles, setProfileFiles] = useState<FileRow[]>([])
   const [docsState, setDocsState] = useState<'loading' | 'ready' | 'error'>('loading')
   // SAFETY-2: текущая версия свода ТБ (для метки «Актуально/Устарело») + заказ СИЗ работнику.
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
@@ -408,7 +409,7 @@ export default function WorkerDetail() {
     Promise.all([
       getWorkerLocationConsents(id),
       getWorkerSafetyAcks(id),
-      getWorkerProfileFiles(id),
+      getProfileFiles(id),
       getAppSettings(),
     ])
       .then(([consentRows, ackRows, fileRows, settingsRow]) => {
@@ -820,6 +821,37 @@ export default function WorkerDetail() {
       setMsg('public_bio_save_failed')
     } finally {
       setBusy(null)
+    }
+  }
+
+  // TEAM-DOSSIER-1-files: загрузка файла работника (страховки/сертификаты/документы) в R2 → строка
+  // files scope='worker', profile_id. Только manager+ (canEditProfile); RLS дублирует гейт на сервере.
+  // Новую строку добавляем в начало списка. Коды валидатора (file_too_large/…) показываем через t().
+  const onProfileFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // позволяем повторно выбрать тот же файл
+    if (!profile || !worker || !canEditProfile || busy || !file) return
+    setBusy('profile_file')
+    setMsg(null)
+    try {
+      const row = await uploadProfileFileToR2(profile, worker.id, file)
+      setProfileFiles((rows) => [row, ...rows])
+      setMsg('dossier_file_uploaded')
+    } catch (err) {
+      setMsg(uploadErrorCode(err) ?? 'dossier_file_upload_failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // TEAM-DOSSIER-1-files: скачивание файла работника — подписанная ссылка R2 (r2-sign download),
+  // открываем в новой вкладке. Тот же механизм, что у файлов клиента/проекта.
+  const downloadProfileFile = async (file: FileRow) => {
+    try {
+      const url = await getProjectFileDownloadUrl(file)
+      window.open(url, '_blank', 'noopener')
+    } catch {
+      setMsg('dossier_file_download_failed')
     }
   }
 
@@ -1699,7 +1731,11 @@ export default function WorkerDetail() {
                   </div>
                 )}
 
+                {/* TEAM-DOSSIER-1-files: файлы работника (страховки/сертификаты/документы) — загрузка,
+                    список (имя/дата/размер), скачивание по клику. Загружает manager+ (canEditProfile);
+                    RLS files дублирует гейт. scope='worker' + profile_id — download через r2-sign. */}
                 <h3>{t('personal_files')}</h3>
+                <p className="muted">{t('dossier_files_hint')}</p>
                 {profileFiles.length === 0 ? (
                   <p className="muted">{t('no_records')}</p>
                 ) : (
@@ -1714,14 +1750,22 @@ export default function WorkerDetail() {
                               .join(' · ')}
                           </div>
                         </div>
-                        {row.url && (
-                          <a className="btn ghost small" href={row.url} target="_blank" rel="noopener noreferrer">
-                            {t('download')}
-                          </a>
-                        )}
+                        <button
+                          type="button"
+                          className="btn ghost small"
+                          onClick={() => downloadProfileFile(row)}
+                        >
+                          {t('download')}
+                        </button>
                       </div>
                     ))}
                   </div>
+                )}
+                {canEditProfile && (
+                  <label className={`btn small worker-file-upload ${busy === 'profile_file' ? 'busy' : ''}`} style={{ marginTop: 8, display: 'inline-block' }}>
+                    <input type="file" hidden disabled={busy !== null} onChange={onProfileFilePick} />
+                    {busy === 'profile_file' ? t('loading') : t('dossier_file_upload')}
+                  </label>
                 )}
               </>
             )}
