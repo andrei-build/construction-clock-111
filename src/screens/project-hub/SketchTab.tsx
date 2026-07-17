@@ -9,6 +9,7 @@ import {
 } from '../../lib/api'
 import { isManagerWrite } from '../../lib/types'
 import type { Profile, Project, ProjectHubFile } from '../../lib/types'
+import Sketch3DView from './Sketch3DView'
 
 interface SketchTabProps {
   project: Project
@@ -27,6 +28,7 @@ const SEG_HIT = 0.7 // клетки — попадание в сегмент п�
 const ROOM_SNAP = 0.6 // клетки — радиус прилипания новой комнаты к существующим вершинам/стенам
 const EDGE_FT_SNAP = 0.25 // фута — прилипание проёма к ровному футу при отпускании
 const HISTORY_MAX = 60
+const DEFAULT_WALL_HEIGHT_FT = 8
 
 // Дефолтные габариты проёмов в футах (законы Андрея 17.07).
 const DOOR_W_FT = 3
@@ -46,11 +48,21 @@ type Opening = {
   h?: number // высота окна в футах (только окно)
   sill?: number // высота окна от пола в футах (только окно)
 }
-type SketchModel = { version: 1; cellFt: number; contours: Contour[]; openings: Opening[] }
+type SketchModel = { version: 1; cellFt: number; height?: number; contours: Contour[]; openings: Opening[] }
+type ViewMode = '2d' | '3d'
 
 // Ширина проёма в футах с учётом дефолта по типу.
 function openingWidthFt(o: Opening): number {
   return o.w ?? (o.kind === 'door' ? DOOR_W_FT : WIN_W_FT)
+}
+
+function wallHeightFt(model: SketchModel): number {
+  return Number.isFinite(model.height) && (model.height ?? 0) > 0 ? model.height ?? DEFAULT_WALL_HEIGHT_FT : DEFAULT_WALL_HEIGHT_FT
+}
+
+function importWallHeight(value: unknown): number | undefined {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
 type Tool = 'wall' | 'door' | 'window'
@@ -236,6 +248,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const [model, setModel] = useState<SketchModel>(EMPTY_MODEL)
   const [history, setHistory] = useState<SketchModel[]>([])
+  const [viewMode, setViewMode] = useState<ViewMode>('2d')
   const [tool, setTool] = useState<Tool>('wall')
   const [hover, setHover] = useState<Pt | null>(null)
   const [hoverSnapped, setHoverSnapped] = useState(false)
@@ -468,6 +481,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setError(null)
   }
 
+  const updateWallHeight = (value: number) => {
+    const nextHeight = Number.isFinite(value) && value > 0 ? value : DEFAULT_WALL_HEIGHT_FT
+    if (model.height !== undefined && Math.abs(wallHeightFt(model) - nextHeight) < 0.001) return
+    commit({ ...model, height: nextHeight })
+  }
+
   const save = async () => {
     if (!profile || busy) return
     if (model.contours.every((c) => c.points.length < 2)) {
@@ -544,8 +563,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       const res = await fetch(url)
       const data = (await res.json()) as SketchModel
       if (!data || !Array.isArray(data.contours)) throw new Error('bad')
+      const height = importWallHeight(data.height)
+      const nextModel: SketchModel = {
+        version: 1,
+        cellFt: data.cellFt ?? CELL_FT,
+        contours: data.contours,
+        openings: Array.isArray(data.openings) ? data.openings : [],
+      }
+      if (height !== undefined) nextModel.height = height
       setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
-      setModel({ version: 1, cellFt: data.cellFt ?? CELL_FT, contours: data.contours, openings: Array.isArray(data.openings) ? data.openings : [] })
+      setModel(nextModel)
       setName(file.name.replace(/^sketch-/, '').replace(/\.json$/, ''))
       setLoadOpen(false)
       setStatus('hub_sketch_loaded')
@@ -558,10 +585,39 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const activeContour = model.contours[model.contours.length - 1]
   const canClose = !!activeContour && !activeContour.closed && activeContour.points.length >= 3
+  const heightFt = wallHeightFt(model)
 
   return (
     <section className="hub-tab-panel hub-sketch">
-      {canEdit && (
+      <div className="card hub-sketch-viewbar">
+        <div className="hub-sketch-view-toggle" role="group" aria-label={t('hub_sketch_view_mode')}>
+          {(['2d', '3d'] as ViewMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={viewMode === mode ? 'btn small' : 'btn ghost small'}
+              aria-pressed={viewMode === mode}
+              onClick={() => setViewMode(mode)}
+            >
+              {t(mode === '2d' ? 'hub_sketch_view_2d' : 'hub_sketch_view_3d')}
+            </button>
+          ))}
+        </div>
+        <label className="hub-sketch-height-field">
+          <span className="muted">{t('hub_sketch_wall_height')}</span>
+          <input
+            type="number"
+            min="1"
+            step="0.5"
+            value={heightFt}
+            disabled={!canEdit}
+            onChange={(e) => updateWallHeight(Number(e.target.value))}
+          />
+          <span className="muted">ft</span>
+        </label>
+      </div>
+
+      {canEdit && viewMode === '2d' && (
         <div className="card hub-sketch-toolbar">
           <div className="hub-sketch-tools">
             {(['wall', 'door', 'window'] as Tool[]).map((tl) => (
@@ -618,22 +674,24 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       )}
 
       <div className="card hub-sketch-canvas-card">
-        <svg
-          ref={svgRef}
-          className="hub-sketch-svg"
-          viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-          role="img"
-          aria-label={t('hub_tab_sketch')}
-          onClick={handleClick}
-          onPointerMove={handleMove}
-          onPointerUp={endDragOpening}
-          onPointerLeave={() => {
-            endDragOpening()
-            setHover(null)
-            setHoverSnapped(false)
-          }}
-          style={{ touchAction: 'none' }}
-        >
+        {viewMode === '2d' ? (
+          <>
+            <svg
+              ref={svgRef}
+              className="hub-sketch-svg"
+              viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+              role="img"
+              aria-label={t('hub_tab_sketch')}
+              onClick={handleClick}
+              onPointerMove={handleMove}
+              onPointerUp={endDragOpening}
+              onPointerLeave={() => {
+                endDragOpening()
+                setHover(null)
+                setHoverSnapped(false)
+              }}
+              style={{ touchAction: 'none' }}
+            >
           {/* сетка */}
           <g className="hub-sketch-grid">
             {Array.from({ length: GRID_COLS + 1 }, (_, i) => (
@@ -755,8 +813,18 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               r={6}
             />
           )}
-        </svg>
-        <p className="muted hub-sketch-scale">{t('hub_sketch_scale_note')}</p>
+            </svg>
+            <p className="muted hub-sketch-scale">{t('hub_sketch_scale_note')}</p>
+          </>
+        ) : (
+          <Sketch3DView
+            model={model}
+            heightFt={heightFt}
+            label={t('hub_sketch_3d_label')}
+            loadingLabel={t('hub_sketch_3d_loading')}
+            errorLabel={t('hub_sketch_3d_error')}
+          />
+        )}
       </div>
 
       {/* сводка */}
