@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getPendingOutboxCount } from '../lib/offlineOutbox'
+import { getPendingOutboxCount, getOutboxAlerts } from '../lib/offlineOutbox'
 import { useI18n } from '../lib/i18n'
 
 // Feature-detect navigator.onLine; assume online when the browser can't tell us.
@@ -20,6 +20,9 @@ export default function OfflineStatusBanner() {
   const [online, setOnline] = useState(readOnline)
   const [count, setCount] = useState(0)
   const [syncing, setSyncing] = useState(false)
+  // OFFLINE-FIX-1 (б/в): карантин ядовитых строк + отказ персиста — отдельные тревоги.
+  const [quarantined, setQuarantined] = useState(0)
+  const [persistError, setPersistError] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -35,6 +38,19 @@ export default function OfflineStatusBanner() {
       } catch {
         // Queues unreadable (e.g. no IndexedDB) — treat as empty, never block the UI.
         if (alive) setCount(0)
+      }
+      // OFFLINE-FIX-1 (б/в): «N отметок не синхронизированы» (карантин) и предупреждение о квоте.
+      try {
+        const alerts = await getOutboxAlerts()
+        if (alive) {
+          setQuarantined(alerts.quarantined)
+          setPersistError(alerts.persistError)
+        }
+      } catch {
+        if (alive) {
+          setQuarantined(0)
+          setPersistError(false)
+        }
       }
     }
 
@@ -83,19 +99,45 @@ export default function OfflineStatusBanner() {
   else if (syncing && count > 0) state = 'syncing'
   else if (count > 0) state = 'pending'
 
-  if (!state) return null
-
   const label =
     state === 'offline'
       ? t('offline_banner_offline')
       : state === 'syncing'
         ? t('offline_banner_syncing')
-        : t('offline_banner_pending').replace('{n}', String(count))
+        : state === 'pending'
+          ? t('offline_banner_pending').replace('{n}', String(count))
+          : null
+
+  // OFFLINE-FIX-1 (б/в): отдельный красный баннер-тревога. Персист-отказ (данные под угрозой)
+  // важнее карантина; показываем один самый срочный. Рендерится и когда обычного статуса нет
+  // (онлайн, очередь пуста, но осталась карантинная строка). Красный фон — inline (стилей нет в CSS).
+  const alertLabel = persistError
+    ? t('offline_banner_quota')
+    : quarantined > 0
+      ? t('offline_banner_quarantine').replace('{n}', String(quarantined))
+      : null
+
+  if (!state && !alertLabel) return null
 
   return (
-    <div className={`offline-banner offline-banner-${state}`} role="status" aria-live="polite">
-      <span className={`offline-dot${state === 'syncing' ? ' syncing' : ''}`} />
-      <span className="offline-banner-text">{label}</span>
-    </div>
+    <>
+      {state && label && (
+        <div className={`offline-banner offline-banner-${state}`} role="status" aria-live="polite">
+          <span className={`offline-dot${state === 'syncing' ? ' syncing' : ''}`} />
+          <span className="offline-banner-text">{label}</span>
+        </div>
+      )}
+      {alertLabel && (
+        <div
+          className="offline-banner offline-banner-offline"
+          role="alert"
+          aria-live="assertive"
+          style={{ background: 'rgba(255,107,107,.16)', borderBottomColor: 'rgba(255,107,107,.4)' }}
+        >
+          <span className="offline-dot" style={{ background: '#ff6b6b' }} />
+          <span className="offline-banner-text">{alertLabel}</span>
+        </div>
+      )}
+    </>
   )
 }

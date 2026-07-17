@@ -108,6 +108,7 @@ export async function addTimeEvent(
   geo: Geo,
   eventTime = new Date().toISOString(),
   metadata: Record<string, unknown> = {},
+  clientId?: string,
 ) {
   // F13: ДОП. метаданные для триажа менеджера — gps_status ('good'/'off') НЕ трогаем.
   // location_unverified/needs_review — когда фикс не взялся; gps_error_kind — причина (denied/…).
@@ -118,11 +119,17 @@ export async function addTimeEvent(
     reviewMeta.location_unverified = true
     reviewMeta.needs_review = true
   }
+  // OFFLINE-FIX-1: стабильный client_id. Раньше он генерился ЗДЕСЬ на каждый вызов, поэтому
+  // онлайн-вставка и её офлайн-фолбэк (после обрыва ответа) получали РАЗНЫЕ id → unique-констрейнт
+  // не срабатывал → дубль смены. Теперь CheckIn генерит id ОДИН РАЗ до первой попытки и передаёт его
+  // сюда (clientId) и в очередь; повторная вставка ловится как 23505. Реплей очереди по-прежнему
+  // передаёт client_id через metadata (spread ниже имеет приоритет) — связка row.id ↔ client_id цела.
+  const stableClientId = clientId ?? crypto.randomUUID()
   const row: Record<string, unknown> = {
     org_id: p.org_id, profile_id: p.id, project_id: projectId,
     event_type: type, event_time: eventTime,
     gps_status: geo.status, gps_accuracy_m: geo.accuracy, gps_source: 'browser',
-    metadata: { lat: geo.lat, lng: geo.lng, client_id: crypto.randomUUID(), ...reviewMeta, ...metadata },
+    metadata: { lat: geo.lat, lng: geo.lng, client_id: stableClientId, ...reviewMeta, ...metadata },
   }
   if (geo.lat !== null && geo.lng !== null) row.gps_point = `SRID=4326;POINT(${geo.lng} ${geo.lat})`
   const { data, error } = await supabase.from('time_events').insert(row).select('id').single()
