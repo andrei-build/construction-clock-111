@@ -27,6 +27,17 @@ function sortAccounts(rows: Account[]) {
   return [...rows].sort((a, b) => a.name.localeCompare(b.name))
 }
 
+// CLIENT-DOSSIER-2: инициалы + логотип клиента (accounts.metadata.avatar_url).
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'CC'
+}
+
+function accountAvatarUrl(account: Account): string | null {
+  const meta = account.metadata as Record<string, unknown> | null
+  const url = meta && typeof meta === 'object' ? meta.avatar_url : null
+  return typeof url === 'string' && url.trim() ? url : null
+}
+
 // BRAND-1: «Закон двух компаний» — два бренда клиента (accounts.brand). Нормализуем к одному из
 // двух известных значений; всё неизвестное/пустое трактуем как дефолт 'nw_build_pro'.
 type BrandKey = 'nw_build_pro' | 'nw_custom_homes'
@@ -315,6 +326,10 @@ export default function Clients() {
                   style={{ display: 'grid', gap: 8, width: '100%', padding: 0, background: 'none', border: 'none', font: 'inherit', color: 'inherit', textAlign: 'left', cursor: 'pointer' }}
                 >
                   <div className="client-list-main">
+                    {/* CLIENT-DOSSIER-2: кружок-аватар клиента (логотип или инициалы). */}
+                    <span className="client-list-avatar" aria-hidden="true">
+                      {accountAvatarUrl(account) ? <img src={accountAvatarUrl(account) as string} alt="" /> : <span>{initials(account.name)}</span>}
+                    </span>
                     <div>
                       <div className="item-title" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         {account.name}

@@ -647,6 +647,68 @@ export async function getProjectFileDownloadUrl(file: FileRow): Promise<string> 
   return signed.url
 }
 
+// === CLIENT-DOSSIER-2: логотип/фото клиента + файлы клиента (files.account_id) ===
+// Логотип клиента: ПУБЛИЧНЫЙ bucket 'avatars' (как аватар работника) → ПОСТОЯННЫЙ publicUrl.
+// Возвращаем только URL; запись в accounts.metadata.avatar_url делает updateClientAvatar (clients.ts).
+export async function uploadClientLogo(p: Profile, accountId: string, file: File): Promise<string> {
+  validateUpload(file, 'photo')
+  const ext = safeFileName(file.name, file.type).split('.').pop() || 'jpg'
+  const storagePath = `clients/${p.org_id}/${accountId}/${Date.now()}-${crypto.randomUUID()}.${ext}`
+  const { error: uploadError } = await supabase.storage
+    .from(AVATARS_BUCKET)
+    .upload(storagePath, file, { contentType: inferUploadContentType(file), upsert: false })
+  if (uploadError) throw uploadError
+  const { data: pub } = supabase.storage.from(AVATARS_BUCKET).getPublicUrl(storagePath)
+  return pub.publicUrl
+}
+
+// Файлы одного клиента (scope='account' + account_id): фильтр по scope отделяет их от вложений
+// смет/счётов, которые тоже несут account_id, но идут со scope 'project'/'company'. Свежие сверху.
+export async function getAccountFiles(accountId: string): Promise<FileRow[]> {
+  const { data, error } = await supabase.from('files')
+    .select(FILE_SELECT)
+    .eq('scope', 'account')
+    .eq('account_id', accountId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data as FileRow[]) ?? []
+}
+
+// Загрузка файла клиента в R2 (тот же паттерн, что uploadProjectFileToR2): подпись → PUT в R2 → строка
+// files со scope='account' и account_id. RLS INSERT: org_id=app.org_id() и (менеджер ИЛИ uploaded_by=uid).
+export async function uploadAccountFileToR2(p: Profile, accountId: string, file: File): Promise<FileRow> {
+  validateUpload(file, 'file')
+  const key = `files/${crypto.randomUUID()}-${safeFileName(file.name, file.type)}`
+  const signed = await r2Sign('upload', key)
+  const putRes = await fetch(signed.url, {
+    method: 'PUT',
+    body: file,
+    headers: { 'Content-Type': inferUploadContentType(file) },
+  })
+  if (!putRes.ok) throw new Error(`R2 upload failed: ${putRes.status}`)
+
+  const { data, error } = await supabase.from('files').insert({
+    org_id: p.org_id,
+    scope: 'account',
+    account_id: accountId,
+    folder: '',
+    name: file.name,
+    storage_path: signed.key,
+    mime: file.type || null,
+    size_bytes: file.size,
+    doc_kind: null,
+    expires_at: null,
+    is_private: false,
+    uploaded_by: p.id,
+    project_id: null,
+    profile_id: null,
+  }).select(FILE_SELECT).single()
+  if (error) throw error
+  await logEvent(p, 'file.uploaded', 'file', data.id, { account_id: accountId })
+  return data as unknown as FileRow
+}
+
 // === FILE-1: вложения смет/счётов (files.document_id) — содержимое в приватном media bucket. ===
 // Вложение документа: тонкая проекция строки files, привязанной к смете/счёту через document_id.
 // Отдельный тип (не FileRow) — document_id живёт вне FILE_SELECT/FileRow; здесь берём только нужное.

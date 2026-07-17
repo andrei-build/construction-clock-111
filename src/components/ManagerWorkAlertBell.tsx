@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getMessages, getOpenTasks, subscribeToMyMessages, subscribeToTaskChanges } from '../lib/api'
+import { getDueClientReminders, getMessages, getOpenTasks, markClientReminderDone, subscribeToMyMessages, subscribeToTaskChanges } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { armUrgentChimeUnlock, playUrgentChime } from '../lib/notification-sound'
 import { isManagerRole } from '../lib/types'
-import type { MessageRow, Task } from '../lib/types'
+import type { DueClientReminder, MessageRow, Task } from '../lib/types'
+
+// CLIENT-DOSSIER-2: локальная «сегодня» (YYYY-MM-DD) для сравнения с remind_on (date без времени).
+function todayDateISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 // F69 (П11 parity with Check Time's ManagerWorkAlertBell), POLL-ONLY variant.
 // A manager-only bell in the desktop sidebar that badges the number of items needing
@@ -72,6 +78,8 @@ export default function ManagerWorkAlertBell() {
   const { t } = useI18n()
   const navigate = useNavigate()
   const [items, setItems] = useState<AlertItem[]>([])
+  const [reminders, setReminders] = useState<DueClientReminder[]>([])
+  const [reminderBusyId, setReminderBusyId] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const [muted, setMuted] = useState(() => localStorage.getItem(MUTE_KEY) === '1')
   const rootRef = useRef<HTMLDivElement>(null)
@@ -83,12 +91,27 @@ export default function ManagerWorkAlertBell() {
   const load = useCallback(async () => {
     if (!profile) return
     try {
-      const [messages, tasks] = await Promise.all([getMessages(profile.id), getOpenTasks()])
+      const [messages, tasks, dueReminders] = await Promise.all([getMessages(profile.id), getOpenTasks(), getDueClientReminders()])
       setItems(buildItems(messages, tasks, profile.id))
+      setReminders(dueReminders)
     } catch {
       // Poll-only best-effort: keep the last known counts on a transient read failure.
     }
   }, [profile])
+
+  // CLIENT-DOSSIER-2: отметить напоминание выполненным прямо из «Оповещений» → убрать из списка.
+  const completeReminder = useCallback(async (id: string) => {
+    if (!profile || reminderBusyId) return
+    setReminderBusyId(id)
+    try {
+      await markClientReminderDone(profile, id)
+      setReminders((rows) => rows.filter((row) => row.id !== id))
+    } catch {
+      void load()
+    } finally {
+      setReminderBusyId(null)
+    }
+  }, [load, profile, reminderBusyId])
 
   // Arm autoplay unlock once — mobile browsers keep audio suspended until the first gesture.
   useEffect(() => {
@@ -146,7 +169,8 @@ export default function ManagerWorkAlertBell() {
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
-  const count = items.length
+  const today = todayDateISO()
+  const count = items.length + reminders.length
   const badge = useMemo(() => (count > 99 ? '99+' : String(count)), [count])
 
   if (!manager) return null
@@ -195,18 +219,48 @@ export default function ManagerWorkAlertBell() {
           {count === 0 ? (
             <div className="manager-alert-empty">{t('manager_alerts_empty')}</div>
           ) : (
-            <ul className="manager-alert-list">
-              {items.slice(0, 20).map((it) => (
-                <li key={it.id}>
-                  <button type="button" className="manager-alert-item" role="menuitem" onClick={() => go(it.to)}>
-                    <span className={`badge ${it.tone} manager-alert-kind`}>
-                      {it.kind === 'message' ? t('manager_alerts_kind_message') : t('manager_alerts_kind_task')}
-                    </span>
-                    <span className="manager-alert-item-title">{it.title}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <>
+              {/* CLIENT-DOSSIER-2: наступившие/просроченные напоминания по клиентам с кнопкой «Сделано». */}
+              {reminders.length > 0 && (
+                <ul className="manager-alert-list manager-alert-reminders">
+                  {reminders.slice(0, 20).map((reminder) => {
+                    const overdue = reminder.remind_on < today
+                    return (
+                      <li key={`reminder:${reminder.id}`} className="manager-alert-reminder">
+                        <div className="manager-alert-reminder-body">
+                          <span className={`badge ${overdue ? 'red' : 'amber'} manager-alert-kind`}>
+                            {overdue ? t('client_reminder_overdue') : t('manager_alerts_kind_reminder')}
+                          </span>
+                          <span className="manager-alert-item-title">
+                            {reminder.client_name ?? t('client')}: {reminder.note}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn small"
+                          disabled={reminderBusyId === reminder.id}
+                          onClick={() => completeReminder(reminder.id)}
+                        >
+                          {t('client_reminder_done')}
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+              <ul className="manager-alert-list">
+                {items.slice(0, 20).map((it) => (
+                  <li key={it.id}>
+                    <button type="button" className="manager-alert-item" role="menuitem" onClick={() => go(it.to)}>
+                      <span className={`badge ${it.tone} manager-alert-kind`}>
+                        {it.kind === 'message' ? t('manager_alerts_kind_message') : t('manager_alerts_kind_task')}
+                      </span>
+                      <span className="manager-alert-item-title">{it.title}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </div>
       )}

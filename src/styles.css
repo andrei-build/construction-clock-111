@@ -4159,3 +4159,62 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 @media (prefers-reduced-motion: reduce) {
   .ai-listening-dot.on { animation: none; }
 }
+
+/* CLIENT-DOSSIER-2: досье клиента — логотип, аватар в списке, напоминания, файлы. */
+.drawer-avatar { overflow: hidden; }
+.drawer-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
+.client-avatar-wrap { position: relative; flex: 0 0 auto; }
+.client-avatar-pick {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  font-size: 13px;
+}
+.client-avatar-pick.busy { opacity: .6; cursor: default; }
+.client-list-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--elevated);
+  border: 1px solid var(--line);
+  color: var(--cyan);
+  font-size: 14px;
+  font-weight: 600;
+}
+.client-list-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.client-list-main { align-items: center; }
+.client-reminder-form { display: grid; gap: 6px; margin-top: 10px; }
+.client-reminder-row.overdue { border-color: rgba(214, 69, 69, .5); }
+.client-reminder-badge { margin-left: 8px; }
+.client-file-row {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  cursor: pointer;
+}
+.client-file-row:hover { border-color: rgba(200,169,59,.42); background: var(--panel2); }
+.client-file-upload { cursor: pointer; }
+.client-file-upload.busy { opacity: .6; cursor: default; }
+.manager-alert-reminder {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+}
+.manager-alert-reminder-body { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.manager-alert-reminders { border-bottom: 1px solid var(--line); }
