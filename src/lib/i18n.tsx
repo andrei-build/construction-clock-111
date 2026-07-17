@@ -1853,6 +1853,11 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_reject_failed: { ru: 'Не удалось отклонить', en: 'Could not reject', es: 'No se pudo rechazar' },
   ai_unresolved: { ru: 'Не удалось однозначно распознать исполнителя или проект — создайте вручную.', en: 'Could not unambiguously resolve the assignee or project — create it manually.', es: 'No se pudo resolver sin ambigüedad el responsable o el proyecto — créelo manualmente.' },
   ai_unsupported: { ru: 'Это действие пока нельзя выполнить автоматически.', en: 'This action cannot be executed automatically yet.', es: 'Esta acción aún no se puede ejecutar automáticamente.' },
+  // AI-2-front: озвучка ответов (speechSynthesis) + голосовая активация «окей, Клок» (webkitSpeechRecognition).
+  ai_speak_toggle: { ru: 'Озвучивать ответы', en: 'Speak responses', es: 'Leer respuestas en voz alta' },
+  ai_wake_toggle: { ru: 'Голосовая активация', en: 'Voice activation', es: 'Activación por voz' },
+  ai_wake_hint: { ru: 'Скажите «окей, Клок», чтобы открыть ассистента', en: 'Say “okay, Clock” to open the assistant', es: 'Diga «okay, Clock» para abrir el asistente' },
+  ai_wake_listening: { ru: 'Слушаю «окей, Клок»', en: 'Listening for “okay, Clock”', es: 'Escuchando «okay, Clock»' },
 }
 
 interface I18n {

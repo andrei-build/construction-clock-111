@@ -4125,3 +4125,37 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: var(--panel); color: var(--text); font-size: 14px;
 }
 .ai-toast { z-index: 95; }
+
+/* AI-2-front: тумблеры «Озвучивать ответы» / «Голосовая активация» + индикатор «слушаю». */
+.ai-toggles { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 2px 2px 0; }
+.ai-toggle {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  font-size: 13px; color: var(--muted); user-select: none;
+}
+.ai-toggle input { accent-color: var(--accent, #1f7a3f); width: 15px; height: 15px; cursor: pointer; }
+.ai-toggle:hover { color: var(--text); }
+
+/* Ненавязчивый fixed-бейдж «слушаю» (правый нижний угол), виден пока активация включена. */
+.ai-listening-badge {
+  position: fixed; right: 16px; bottom: 16px; z-index: 88;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel, #14181d); color: var(--muted);
+  font-size: 12px; box-shadow: 0 4px 14px rgba(0, 0, 0, .28); pointer-events: none;
+}
+.ai-listening-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted); flex: 0 0 auto;
+}
+.ai-listening-dot.on {
+  background: var(--accent, #1f7a3f);
+  animation: ai-listening-pulse 1.6s ease-in-out infinite;
+}
+.ai-listening-text { white-space: nowrap; }
+@keyframes ai-listening-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(31, 122, 63, .45); opacity: 1; }
+  50% { box-shadow: 0 0 0 5px rgba(31, 122, 63, 0); opacity: .65; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-listening-dot.on { animation: none; }
+}
