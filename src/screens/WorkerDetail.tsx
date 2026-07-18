@@ -1041,6 +1041,22 @@ export default function WorkerDetail() {
       setMsg('adjust_time_invalid')
       return
     }
+    // ADJ-FIX (в): на смене с перерывом v_work_intervals бьёт смену на сегменты. Метка
+    // adjusted_check_in применяется ТОЛЬКО к сегменту, начинающемуся с check_in; adjusted_check_out —
+    // только к сегменту, кончающемуся check_out (миграция 0019). Если пользователь двигает границу,
+    // попадающую на перерыв (start_type=break_end / end_type=break_start), правка молча теряется.
+    // Явно блокируем такой ввод вместо тихой потери часов. Тип концов приходит из getWorkerIntervals
+    // (attachIntervalEventTypes); если тип неизвестен (null) — не мешаем (вести себя как раньше).
+    const startType = row.interval.start_type
+    const endType = row.interval.end_type
+    const inApplicable = startType == null || startType === 'check_in'
+    const outApplicable = endType == null || endType === 'check_out'
+    const inChanged = adjustIn !== toDatetimeLocal(row.interval.start_at)
+    const outChanged = adjustOut !== toDatetimeLocal(row.interval.end_at ?? new Date(now).toISOString())
+    if ((inChanged && !inApplicable) || (outChanged && !outApplicable)) {
+      setMsg('adjust_break_segment_unsupported')
+      return
+    }
     setBusy('adjustment')
     setMsg(null)
     try {
@@ -1064,7 +1080,7 @@ export default function WorkerDetail() {
     }
   }
 
-  const msgClass = msg?.includes('failed') || msg?.includes('invalid') || msg?.includes('required') ? 'error-msg' : 'ok-msg'
+  const msgClass = msg?.includes('failed') || msg?.includes('invalid') || msg?.includes('required') || msg?.includes('unsupported') ? 'error-msg' : 'ok-msg'
 
   return (
     <div className="screen worker-detail-screen">

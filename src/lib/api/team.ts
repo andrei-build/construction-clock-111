@@ -71,6 +71,21 @@ export async function getWorkerIntervals(profileId: string): Promise<WorkInterva
   return attachIntervalEventTypes((data as WorkInterval[]) ?? [])
 }
 
+// UI-FIX-PACK-1 (е): отработанные интервалы ОДНОГО работника с момента sinceISO — для экрана
+// «Мои часы». v_work_intervals уже применяет корректировки менеджера, поэтому плитки часов
+// совпадают с зарплатой (а не считаются по сырым событиям). OVERLAP-фильтр как в
+// getIntervalsBetween: смена, начавшаяся до окна, но идущая внутрь, не теряется; открытая
+// смена (end_at null) включается. Типы концов не тянем — для суммы часов они не нужны.
+export async function getWorkerIntervalsSince(profileId: string, sinceISO: string): Promise<WorkInterval[]> {
+  const { data, error } = await supabase.from('v_work_intervals')
+    .select('*')
+    .eq('profile_id', profileId)
+    .or(`end_at.gt.${sinceISO},end_at.is.null`)
+    .order('start_at', { ascending: false })
+  if (error) return []
+  return (data as WorkInterval[]) ?? []
+}
+
 // Отработанные интервалы всех работников за период — для зарплаты (v_work_intervals).
 // A4b: OVERLAP-фильтр интервала [start_at, end_at) с окном [from, to) — смена, НАЧАВШАЯСЯ до
 // окна, но заканчивающаяся внутри, больше НЕ теряется. Держим строки, где start_at < to И

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { closePayPeriod, getAppSettings, getArchivePayPeriods, getCurrentPayPeriod, getIntervalsBetween, getPayPeriodByExactDates, getTeam, getVisibleProfileRates, getYearlyPayrollReport, logEvent, markPayPeriodPaid } from '../lib/api'
+import { closePayPeriod, getAppSettings, getArchivePayPeriods, getCurrentPayPeriod, getIntervalsBetween, getPayPeriodByExactDates, getPayPeriodItems, getTeam, getVisibleProfileRates, getYearlyPayrollReport, logEvent, markPayPeriodPaid } from '../lib/api'
+import type { PayPeriodSnapshotRow } from '../lib/api'
 import { orgWeekGrouping, computeTravelGaps, intervalsToTravelShifts, DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 import { computeWorkerTotal, regularOvertimeSplit, splitHoursByWeek, type WeekBoundary } from '../lib/payrollMath'
 import type { ArchivePayPeriod, PayPeriod, Profile, ProfileRate, WorkInterval, YearlyPayReportRow } from '../lib/types'
@@ -23,6 +24,19 @@ interface PayrollRow {
   overAlertGapMs: number // самый длинный разрыв сверх порога (0 — таких нет)
   rate: number | null
   total: number
+}
+
+// UI-FIX-PACK-1 (г): плоская строка для отрисовки таблицы/итогов/CSV. Живой расчёт (PayrollRow)
+// и замороженный снапшот (PayPeriodSnapshotRow) сводятся к ней — экран не знает, откуда цифры.
+interface DisplayRow {
+  id: string
+  name: string
+  regularHours: number
+  overtimeHours: number
+  travelHours: number
+  rate: number | null
+  total: number
+  overAlertGapMs: number
 }
 
 // PAY-1: пресеты периода для черновика зарплаты «из текущих часов».
@@ -198,6 +212,9 @@ export default function Payroll() {
   const [currentWindow, setCurrentWindow] = useState<PeriodWindow | null>(null)
   const [team, setTeam] = useState<Profile[]>([])
   const [intervals, setIntervals] = useState<WorkInterval[]>([])
+  // UI-FIX-PACK-1 (г): снапшот строк для утверждённого/оплаченного периода (pay_period_items).
+  // null — снапшот ещё не загружен/не нужен (период черновой/текущий → считаем вживую).
+  const [snapshot, setSnapshot] = useState<PayPeriodSnapshotRow[] | null>(null)
   const [rates, setRates] = useState<ProfileRate[]>([])
   const [timezone, setTimezone] = useState<string | null>(null)
   const [alertHours, setAlertHours] = useState(DEFAULT_PAID_GAP_ALERT_HOURS)
@@ -279,6 +296,21 @@ export default function Payroll() {
     return () => { mounted = false }
   }, [bootstrapped, periodStartMs, periodEndMs])
 
+  // UI-FIX-PACK-1 (г): для утверждённого/оплаченного периода читаем ЗАМОРОЖЕННЫЙ снапшот
+  // (pay_period_items) вместо живого пересчёта — иначе поздняя правка ставки/корректировка меняла бы
+  // уже утверждённые деньги задним числом. Черновик/текущий (id нет либо status draft) → снапшота нет.
+  const frozen = Boolean(period.id) && (period.status === 'approved' || period.status === 'paid')
+  useEffect(() => {
+    let mounted = true
+    if (!frozen || !period.id) { setSnapshot(null); return () => { mounted = false } }
+    const pid = period.id
+    setSnapshot(null)
+    getPayPeriodItems(pid)
+      .then((rows) => { if (mounted) setSnapshot(rows) })
+      .catch(() => { if (mounted) setSnapshot([]) })
+    return () => { mounted = false }
+  }, [frozen, period.id])
+
   // PAY-1: преселект работника из карточки (/payroll?worker=<id>). Ставится один раз, когда
   // команда загружена и такой работник существует.
   useEffect(() => {
@@ -298,7 +330,37 @@ export default function Payroll() {
     [allRows, workerFilter],
   )
 
-  const totals = rows.reduce((acc, row) => ({
+  // UI-FIX-PACK-1 (г): для frozen-периода таблица/итоги/CSV берут суммы из снапшота (замороженные),
+  // иначе — из живого расчёта. Снапшот не даёт метку разрыва (overAlertGapMs=0): её смысл только
+  // для текущего пересчёта. Пока снапшот грузится (frozen && snapshot===null) — рисуем пусто, НЕ
+  // подсовывая живой пересчёт.
+  const snapshotLoading = frozen && snapshot === null
+  const displayRows = useMemo<DisplayRow[]>(() => {
+    const source: DisplayRow[] = frozen
+      ? (snapshot ?? []).map((s) => ({
+          id: s.profile_id,
+          name: s.worker_name ?? '—',
+          regularHours: s.regular_hours,
+          overtimeHours: s.overtime_hours,
+          travelHours: s.travel_hours,
+          rate: s.hourly_rate,
+          total: s.total,
+          overAlertGapMs: 0,
+        }))
+      : allRows.map((r) => ({
+          id: r.worker.id,
+          name: r.worker.name,
+          regularHours: r.regularHours,
+          overtimeHours: r.overtimeHours,
+          travelHours: r.travelHours,
+          rate: r.rate,
+          total: r.total,
+          overAlertGapMs: r.overAlertGapMs,
+        }))
+    return workerFilter ? source.filter((r) => r.id === workerFilter) : source
+  }, [frozen, snapshot, allRows, workerFilter])
+
+  const totals = displayRows.reduce((acc, row) => ({
     regular: acc.regular + row.regularHours,
     overtime: acc.overtime + row.overtimeHours,
     travel: acc.travel + row.travelHours,
@@ -321,8 +383,8 @@ export default function Payroll() {
     if (!profile || locked) return
     const lines = [
       ['worker', 'regular_hours', 'ot_hours', 'travel_hours', 'rate', 'total'].map(csvCell).join(','),
-      ...rows.map((row) => [
-        row.worker.name,
+      ...displayRows.map((row) => [
+        row.name,
         formatHours(row.regularHours),
         formatHours(row.overtimeHours),
         formatHours(row.travelHours),
@@ -341,7 +403,7 @@ export default function Payroll() {
     await logEvent(profile, 'payroll.csv_export', 'pay_period', period.id, {
       start: period.start.toISOString(),
       end: period.end.toISOString(),
-      workers: rows.length,
+      workers: displayRows.length,
     })
   }
 
@@ -409,7 +471,7 @@ export default function Payroll() {
       await markPayPeriodPaid(profile, period.id, {
         periodStart: ymd(period.start),
         periodEnd: ymd(endInclusive),
-        workers: rows.length,
+        workers: displayRows.length,
         totalPay: totals.pay,
       })
       setPeriod((prev) => ({ ...prev, status: 'paid' }))
@@ -512,7 +574,7 @@ export default function Payroll() {
               {t('close_period')}
             </button>
           )}
-          <button className="btn ghost small" disabled={locked || rows.length === 0} onClick={exportCsv}>
+          <button className="btn ghost small" disabled={locked || displayRows.length === 0} onClick={exportCsv}>
             {t('export_csv')}
           </button>
         </div>
@@ -659,8 +721,9 @@ export default function Payroll() {
             </div>
           </div>
 
-          {rows.length === 0 && <div className="card muted">{t('no_payroll_rows')}</div>}
-          {rows.length > 0 && (
+          {snapshotLoading && <div className="card center muted">{t('loading')}</div>}
+          {!snapshotLoading && displayRows.length === 0 && <div className="card muted">{t('no_payroll_rows')}</div>}
+          {!snapshotLoading && displayRows.length > 0 && (
             <div className="card payroll-table-wrap">
               <table className="payroll-table">
                 <thead>
@@ -674,10 +737,10 @@ export default function Payroll() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.worker.id}>
+                  {displayRows.map((row) => (
+                    <tr key={row.id}>
                       <td>
-                        {row.worker.name}
+                        {row.name}
                         {row.overAlertGapMs > 0 && (
                           <span className="badge amber payroll-gap-mark" title={t('payroll_gap_alert_hint')}>
                             ⚠ {fmtGap(row.overAlertGapMs)} — {t('payroll_travel_alert')}

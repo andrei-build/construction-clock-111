@@ -1,41 +1,44 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getEventsSince } from '../lib/api'
-import { workedMs, fmtHours, fmtClock, todayStartISO, weekStartISO, yesterdayStartISO, lastWeekStartISO } from '../lib/time'
-import type { TimeEvent } from '../lib/types'
+import { getEventsSince, getWorkerIntervalsSince } from '../lib/api'
+import { fmtHours, fmtClock, todayStartISO, weekStartISO, yesterdayStartISO, lastWeekStartISO } from '../lib/time'
+import { workedMsInWindow } from '../lib/payrollMath'
+import type { TimeEvent, WorkInterval } from '../lib/types'
 
 export default function MyTime() {
   const { profile } = useAuth()
   const { t } = useI18n()
   const [range, setRange] = useState<'today' | 'week'>('today')
   const [events, setEvents] = useState<TimeEvent[]>([])
+  // UI-FIX-PACK-1 (е): отработанное считаем по v_work_intervals (корректировки применены), а не по
+  // сырым событиям — плитки часов совпадают с зарплатой. Лента ниже остаётся на сырых событиях
+  // (ей нужны типы/GPS/заметки менеджера).
+  const [intervals, setIntervals] = useState<WorkInterval[]>([])
 
   useEffect(() => {
     if (!profile) return
-    // Грузим с начала прошлой недели — покрывает все четыре корзины (только чтение своих событий)
+    // Грузим с начала прошлой недели — покрывает все четыре корзины (только чтение своих данных)
     getEventsSince(lastWeekStartISO(), profile.id).then(setEvents)
+    getWorkerIntervalsSince(profile.id, lastWeekStartISO()).then(setIntervals)
   }, [profile?.id])
 
   // Корзины часов: сегодня/вчера/эта неделя/прошлая неделя. Границы те же, что у todayStart/weekStart.
+  // Считаем пересечение интервалов v_work_intervals с окном корзины (открытая смена — до now).
   const tiles = useMemo(() => {
     const now = Date.now()
     const todayMs = new Date(todayStartISO()).getTime()
     const yestMs = new Date(yesterdayStartISO()).getTime()
     const weekMs = new Date(weekStartISO()).getTime()
     const lastWeekMs = new Date(lastWeekStartISO()).getTime()
-    const worked = (from: number, to: number) =>
-      workedMs(events.filter((e) => {
-        const ts = new Date(e.event_time).getTime()
-        return ts >= from && ts < to
-      }), to)
+    const worked = (from: number, to: number) => workedMsInWindow(intervals, from, to, now)
     return [
       { key: 'today', label: t('today'), value: worked(todayMs, now) },
       { key: 'yesterday', label: t('yesterday'), value: worked(yestMs, todayMs) },
       { key: 'current_week', label: t('current_week'), value: worked(weekMs, now) },
       { key: 'last_week', label: t('last_week'), value: worked(lastWeekMs, weekMs) },
     ]
-  }, [events, t])
+  }, [intervals, t])
 
   // Лента событий переключается вкладкой (сегодня/неделя) поверх уже загруженных данных
   const feed = useMemo(() => {

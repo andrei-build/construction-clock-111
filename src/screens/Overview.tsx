@@ -464,12 +464,15 @@ export default function Overview() {
     ]
 
     if (financeAccess) {
+      // UI-FIX-PACK-1 (д): при ошибке чтения unpaid === null → показываем «—», НЕ $0 (нулём легко
+      // испугать «всё оплачено», когда на деле данные не загрузились). Настоящий ноль ({amount:0})
+      // по-прежнему рисуется как $0 зелёным.
       items.push({
         key: 'unpaid',
         label: t('overview_unpaid_kpi'),
-        value: money(unpaid?.amount ?? 0),
-        tone: (unpaid?.amount ?? 0) > 0 ? 'amber' : 'green',
-        note: `${formatHoursNumber(unpaid?.hours ?? 0)} ${t('h')}`,
+        value: unpaid ? money(unpaid.amount) : '—',
+        tone: unpaid ? (unpaid.amount > 0 ? 'amber' : 'green') : 'grey',
+        note: unpaid ? `${formatHoursNumber(unpaid.hours)} ${t('h')}` : '—',
       })
       items.push({
         key: 'materials',

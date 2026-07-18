@@ -712,6 +712,12 @@ const dict: Record<string, Record<Lang, string>> = {
   project_access_failed: { ru: 'Не удалось изменить доступ', en: 'Could not change access', es: 'No se pudo cambiar el acceso' },
   adjust_reason_required: { ru: 'Укажите причину корректировки', en: 'Enter an adjustment reason', es: 'Ingrese una razón del ajuste' },
   adjust_time_invalid: { ru: 'Уход должен быть позже прихода', en: 'Check-out must be after check-in', es: 'La salida debe ser después de la entrada' },
+  // ADJ-FIX: правка границы, попадающей на перерыв внутри смены, не сохранилась бы (сегменты 0019).
+  adjust_break_segment_unsupported: {
+    ru: 'Эту границу нельзя корректировать: она относится к перерыву внутри смены. Правьте только приход/уход всей смены.',
+    en: 'This boundary can’t be adjusted — it belongs to a break inside the shift. Edit only the shift’s check-in/check-out.',
+    es: 'Este límite no se puede ajustar: pertenece a un descanso dentro del turno. Edite solo la entrada/salida del turno.',
+  },
   adjustment_saved: { ru: 'Корректировка добавлена в историю', en: 'Adjustment added to history', es: 'Ajuste agregado al historial' },
   adjustment_failed: { ru: 'Не удалось сохранить корректировку', en: 'Could not save adjustment', es: 'No se pudo guardar el ajuste' },
   done: { ru: 'Готово', en: 'Done', es: 'Hecho' },
@@ -1931,6 +1937,8 @@ const dict: Record<string, Record<Lang, string>> = {
   delivery_load_error: { ru: 'Не удалось загрузить позиции', en: 'Failed to load positions', es: 'No se pudieron cargar las posiciones' },
   delivery_add_error: { ru: 'Не удалось добавить позицию', en: 'Failed to add position', es: 'No se pudo agregar la posición' },
   delivery_mark_error: { ru: 'Не удалось сохранить отметку', en: 'Failed to save the mark', es: 'No se pudo guardar la marca' },
+  // DELIVERY-CONFLICT: одновременная отметка одной позиции двумя водителями — показываем, кто успел раньше.
+  delivery_conflict: { ru: 'Позицию уже отметил {name}', en: '{name} already marked this item', es: '{name} ya marcó este artículo' },
   delivery_delete_error: { ru: 'Не удалось удалить позицию', en: 'Failed to delete position', es: 'No se pudo eliminar la posición' },
   delivery_item_title_ph: { ru: 'Название позиции', en: 'Item name', es: 'Nombre del artículo' },
   delivery_item_details_ph: { ru: 'Детали (кол-во, размер…)', en: 'Details (qty, size…)', es: 'Detalles (cant., tamaño…)' },

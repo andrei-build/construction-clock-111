@@ -6,6 +6,7 @@ import {
   setDeliveryItemStatus,
   deleteDeliveryItem,
   subscribeToDeliveryItems,
+  DeliveryItemConflictError,
   type DeliveryItemStatus,
 } from '../lib/api'
 import { isManagerWrite } from '../lib/types'
@@ -46,6 +47,9 @@ export default function DeliveryInvoice({ task, profile, team, onClose, onProgre
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // DELIVERY-CONFLICT: уже-переведённый текст «позицию уже отметил <имя>» (с подстановкой имени),
+  // поэтому отдельно от key-based error. Рендерим как есть.
+  const [conflict, setConflict] = useState<string | null>(null)
   const [rowBusy, setRowBusy] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
@@ -133,11 +137,20 @@ export default function DeliveryInvoice({ task, profile, team, onClose, onProgre
     const next: DeliveryItemStatus = item.status === status ? 'needed' : status
     setRowBusy(item.id)
     setError(null)
+    setConflict(null)
     try {
       const updated = await setDeliveryItemStatus(profile, item, next)
       setItems((rows) => rows.map((r) => (r.id === item.id ? updated : r)))
-    } catch {
-      setError('delivery_mark_error')
+    } catch (e) {
+      if (e instanceof DeliveryItemConflictError) {
+        // DELIVERY-CONFLICT: кто-то отметил раньше — показываем кто (claimed_by/updated_by свежей
+        // записи) и подставляем актуальные данные вместо молчаливого перезатирания.
+        const who = name(e.current.claimed_by ?? e.current.updated_by)
+        setConflict(t('delivery_conflict').replace('{name}', who))
+        setItems((rows) => rows.map((r) => (r.id === item.id ? e.current : r)))
+      } else {
+        setError('delivery_mark_error')
+      }
     } finally {
       setRowBusy(null)
     }
@@ -176,6 +189,7 @@ export default function DeliveryInvoice({ task, profile, team, onClose, onProgre
         </div>
 
         {error && <p className="error-msg">{t(error)}</p>}
+        {conflict && <p className="warn-msg">⚠ {conflict}</p>}
         {loading && <div className="center muted">{t('loading')}</div>}
         {loadError && <p className="error-msg">{t('delivery_load_error')}</p>}
 

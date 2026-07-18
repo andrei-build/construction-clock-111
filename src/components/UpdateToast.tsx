@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
 import { getPendingOutboxCount } from '../lib/offlineOutbox'
-import { readCurrentBundle, fetchLatestBundle, pingServiceWorkerUpdate, isUserTyping } from '../lib/appUpdate'
+import { readCurrentBundle, fetchLatestBundle, pingServiceWorkerUpdate, hasUnsavedInput } from '../lib/appUpdate'
 
 // PWA-UPDATE-1 — сторож свежести версии. Проверяет выход новой сборки на интервале (~5 мин) и при
 // возврате фокуса/видимости вкладки (работает и в установленной PWA через visibilitychange/focus).
@@ -39,7 +39,9 @@ export default function UpdateToast() {
       const latest = await fetchLatestBundle()
       if (!alive || reloading) return
       if (!latest || latest === current) return
-      // Вышла новая сборка. Тихий reload ТОЛЬКО когда безопасно: не идёт ввод И очередь офлайн пуста.
+      // Вышла новая сборка. Тихий reload ТОЛЬКО когда безопасно: нет несохранённого ввода И
+      // очередь офлайн пуста. PWA-INPUT: «несохранённый ввод» — это не только фокус в поле, но и
+      // нарисованная подпись, открытая модалка, непустое расфокусированное поле/textarea.
       let pending = 0
       try {
         pending = await getPendingOutboxCount()
@@ -48,10 +50,11 @@ export default function UpdateToast() {
         pending = 0
       }
       if (!alive || reloading) return
-      if (!isUserTyping(composingRef.current) && pending === 0) {
+      if (!hasUnsavedInput(composingRef.current) && pending === 0) {
         doReload()
       } else {
-        // Вводит или есть неотправленные офлайн-записи — не трогаем, предлагаем обновиться вручную.
+        // Есть несохранённый ввод/подпись/модалка или неотправленные офлайн-записи — не трогаем,
+        // предлагаем обновиться вручную ненавязчивым тостом.
         setShow(true)
       }
     }
