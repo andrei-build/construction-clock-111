@@ -4026,6 +4026,59 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 @keyframes hub-sketch-photo-spin {
   to { transform: rotate(360deg); }
 }
+/* SKETCH-SNAP-1: тост-панель снимка 3D-вида (внутри shell → виден и в fullscreen). Bottom-left,
+   чтобы не перекрывать камеру-тулбар (top) и джойстик «внутри» (bottom-right). */
+.hub-sketch-snapshot-toast {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(360px, calc(100% - 20px));
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card, #fff);
+  box-shadow: 0 10px 30px rgba(8, 13, 22, .28);
+  pointer-events: auto;
+}
+.hub-sketch-snapshot-thumb {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 68px;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0b1220;
+}
+.hub-sketch-snapshot-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.hub-sketch-snapshot-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.hub-sketch-snapshot-status {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.hub-sketch-snapshot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hub-sketch-snapshot-actions .btn {
+  width: auto;
+}
 .hub-sketch-inside-controls {
   position: absolute;
   right: 10px;
