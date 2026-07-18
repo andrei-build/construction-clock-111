@@ -1512,6 +1512,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           <Sketch3DView
             model={model}
             heightFt={heightFt}
+            project={project}
+            profile={profile}
+            sketchName={name}
             canEdit={canEdit}
             onModelChange={updateModelFrom3D}
             label={t('hub_sketch_3d_label')}
