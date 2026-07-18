@@ -4967,21 +4967,112 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-modal-v2 .voice-mic svg { width: 26px; height: 26px; }
 .ai-send-btn { width: auto; flex: 0 0 auto; padding: 14px 22px; }
 
-/* Полноэкранный режим на мобильном. */
-@media (max-width: 640px) {
-  .ai-backdrop { padding: 0; }
-  .ai-modal-v2 {
-    width: 100%; max-width: 100%; height: 100%; max-height: 100%;
-    border-radius: 0; margin: 0; overflow-y: auto;
-  }
-  .ai-orb { width: 116px; height: 116px; }
-  .ai-orb-core { width: 84px; height: 84px; }
-  .ai-answer-text { font-size: 17px; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .ai-orb-core, .ai-orb-ring, .ai-caret { animation: none !important; }
   .ai-orb-listening .ai-orb-core { transition: none; }
+}
+
+/* ═══ AI-UX-2: компактный плавающий оверлей на фоне приложения (НЕ панель-стена, НЕ полноэкран) ═══
+   Небольшая карточка в углу: орб + короткая строка состояния + видимый контекст экрана + компактные
+   органы. Нет full-screen backdrop → приложение под оверлеем видно и остаётся интерактивным. */
+.ai-overlay {
+  position: fixed; z-index: 92; right: 18px; bottom: 18px;
+  width: min(320px, calc(100vw - 32px));
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--line); border-radius: 16px;
+  background: var(--panel, #14181d);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .42);
+  pointer-events: auto;
+  animation: ai-overlay-in .18s ease-out;
+}
+@keyframes ai-overlay-in {
+  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Маленький аккуратный крестик — просто закрыть (не крупный). */
+.ai-overlay-close {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 1px solid var(--line); background: var(--panel2, var(--elevated)); color: var(--muted);
+  font-size: 13px; line-height: 1; cursor: pointer;
+  transition: background .12s ease, color .12s ease, transform .1s ease;
+}
+.ai-overlay-close:hover { background: var(--elevated); color: var(--text); }
+.ai-overlay-close:active { transform: scale(.9); }
+
+.ai-overlay-main { display: flex; align-items: center; gap: 12px; padding-right: 20px; }
+.ai-overlay-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; }
+.ai-overlay-meta .ai-orb-label { text-align: left; font-size: 14px; }
+.ai-overlay-ctx {
+  margin: 0; font-size: 11.5px; line-height: 1.35; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+}
+.ai-overlay-hint { margin: 0; text-align: left; }
+.ai-overlay-nokey { text-align: left; }
+
+/* Компактный орб — переиспользует состояния/анимации орба AI-UX-1, только меньше. */
+.ai-orb.ai-orb-sm { width: 60px; height: 60px; margin: 0; flex: 0 0 auto; }
+.ai-orb-sm .ai-orb-core { width: 44px; height: 44px; }
+.ai-orb-sm .ai-orb-ring { width: 54px; height: 54px; }
+
+/* PROPOSAL по голосу: компактная карточка-предложение в углу оверлея (полный список — в drawer). */
+.ai-overlay-proposal { padding: 10px; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.ai-overlay-proposal-head { display: flex; flex-direction: column; gap: 3px; }
+.ai-overlay-proposal-badge {
+  align-self: flex-start; font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--accent, #c8a93b);
+}
+.ai-overlay-proposal-title { font-size: 13px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.ai-overlay-proposal-actions { gap: 8px; }
+.ai-overlay-proposal-actions .btn { flex: 1 1 auto; padding: 7px 10px; font-size: 13px; }
+
+/* Компактные органы: push-to-talk микрофон + «Показать текст». */
+.ai-overlay-controls { display: flex; align-items: center; gap: 10px; }
+.ai-overlay-controls .voice-mic { width: 46px; height: 46px; flex: 0 0 auto; }
+.ai-overlay-controls .voice-mic svg { width: 22px; height: 22px; }
+.ai-overlay-text-btn { flex: 1 1 auto; padding: 10px 12px; font-size: 14px; }
+.ai-overlay-toggles { justify-content: flex-start; gap: 6px 14px; }
+.ai-overlay-toggles .ai-toggle { font-size: 12px; }
+
+/* Выдвижная панель «Показать текст» (drawer): расшифровка диалога (со стримом печати) + proposals. */
+.ai-drawer-backdrop {
+  position: fixed; inset: 0; z-index: 96;
+  display: flex; justify-content: flex-end;
+  background: rgba(0, 0, 0, .42);
+}
+.ai-drawer {
+  width: min(440px, 100%); height: 100%;
+  display: flex; flex-direction: column; gap: 12px;
+  border-radius: 0; padding: 16px; overflow: hidden;
+  animation: ai-drawer-in .2s ease-out;
+}
+@keyframes ai-drawer-in {
+  from { transform: translateX(24px); opacity: .6; }
+  to { transform: none; opacity: 1; }
+}
+.ai-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ai-drawer-title { margin: 0; font-size: 16px; }
+.ai-drawer-head .ai-overlay-close { position: static; }
+.ai-drawer-scroll {
+  flex: 1 1 auto; min-height: 120px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px; text-align: left;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  padding: 10px 2px;
+}
+.ai-drawer-input { flex: 0 0 auto; }
+.ai-drawer .ai-proposals { flex: 0 0 auto; max-height: 34vh; }
+
+/* Мобильный — тоже КОМПАКТНЫЙ оверлей (никакого полноэкрана), поднят над нижней навигацией. */
+@media (max-width: 640px) {
+  .ai-overlay { right: 10px; left: 10px; bottom: 76px; width: auto; }
+  .ai-drawer { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-overlay, .ai-drawer { animation: none; }
 }
 
 /* CLIENT-DOSSIER-2: досье клиента — логотип, аватар в списке, напоминания, файлы. */

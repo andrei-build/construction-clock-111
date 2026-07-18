@@ -2026,6 +2026,15 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_history_hide: { ru: 'Скрыть историю', en: 'Hide history', es: 'Ocultar historial' },
   ai_hist_you: { ru: 'Вы', en: 'You', es: 'Usted' },
   ai_hist_ai: { ru: 'Ассистент', en: 'Assistant', es: 'Asistente' },
+  // AI-UX-2: компактный оверлей на фоне приложения — голос первичен, текст скрыт в выдвижной панели.
+  ai_show_text: { ru: 'Показать текст', en: 'Show text', es: 'Ver texto' },
+  ai_drawer_title: { ru: 'Диалог с ассистентом', en: 'Assistant dialog', es: 'Diálogo con el asistente' },
+  ai_proposal_badge: { ru: 'Предложение', en: 'Proposal', es: 'Propuesta' },
+  // AI-UX-2 (п.5): контекст экрана, который «сущность видит».
+  ai_ctx_seeing: { ru: 'Вижу экран', en: 'Seeing', es: 'Viendo' },
+  ai_ctx_project: { ru: 'Карточка проекта', en: 'Project page', es: 'Ficha del proyecto' },
+  ai_ctx_worker: { ru: 'Карточка сотрудника', en: 'Team member page', es: 'Ficha del empleado' },
+  ai_ctx_tab: { ru: 'Вкладка', en: 'Tab', es: 'Pestaña' },
 
   // DELIVERY-2: доставки как накладная с позициями (delivery_items). Вкладки, бейдж, прогресс,
   // модал-накладная с построчным вводом и отметками водителей.

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
+import { useScreenContext, type ScreenContext } from '../lib/useScreenContext'
 import VoiceMic from './VoiceMic'
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from '../lib/supabase'
 import {
@@ -13,7 +14,6 @@ import {
 import {
   getAiMessages,
   getPendingProposals,
-  askAssistant,
   resolveProposal,
   type AiMessage,
   type AiProposal,
@@ -93,6 +93,22 @@ function stripMarkdown(s: string): string {
     .replace(/^\s{0,3}#{1,6}\s*$/gm, '')
 }
 
+// AI-UX-2: распознаём ответ «нет ключа» (ANTHROPIC_API_KEY не задан) по тексту ошибки edge —
+// терпимо к формулировке (en/ru). Фолбэк-POST теперь живёт здесь (чтобы добавить поле context, не
+// трогая api/ai.ts), поэтому детект дублируем локально — та же логика, что в api/ai.ts:looksLikeNoKey.
+function looksLikeNoKey(text: string | undefined): boolean {
+  if (!text) return false
+  const s = text.toLowerCase()
+  return (
+    s.includes('anthropic_api_key') ||
+    s.includes('api key') ||
+    s.includes('api_key') ||
+    (s.includes('key') && (s.includes('missing') || s.includes('not set') || s.includes('not configured'))) ||
+    s.includes('нет ключ') ||
+    s.includes('ключ не')
+  )
+}
+
 // AI-UX-1: разбор одного SSE-события (блока строк между пустыми строками). Возвращаем имя события и
 // распарсенный data (JSON, а если не JSON — как {text}). Терпимо к отсутствию data/комментариям (: ).
 type SseEvent = { event: string; data: { text?: string; reply?: string; error?: string } | undefined }
@@ -158,6 +174,11 @@ function normalizeWake(s: string): string {
 
 export default function AiCommandBar({ profile }: { profile: Profile }) {
   const { t, lang } = useI18n()
+  // AI-UX-2 (п.5): контекст текущего экрана (route/screen/details) — БЕЗ запросов к БД, только из
+  // pathname. Кладём в ref, чтобы голосовые/стрим-колбэки читали свежее значение без ребилда замыканий.
+  const screenContext = useScreenContext()
+  const contextRef = useRef<ScreenContext>(screenContext)
+  useEffect(() => { contextRef.current = screenContext }, [screenContext])
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [messages, setMessages] = useState<AiMessage[]>([])
@@ -167,10 +188,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const [input, setInput] = useState('')
   const [thinking, setThinking] = useState(false)
   const [noKey, setNoKey] = useState(false)
-  // AI-UX-1: живой стрим последнего ответа (печатается по мере прихода SSE) + флаг стрима + раскрытие истории.
+  // AI-UX-1: живой стрим последнего ответа (печатается по мере прихода SSE) + флаг стрима.
+  // AI-UX-2: стрим/история/proposals-список уезжают в ОТДЕЛЬНУЮ выдвижную панель (drawer), не на оверлей.
   const [streamText, setStreamText] = useState('')
   const [streaming, setStreaming] = useState(false)
-  const [historyOpen, setHistoryOpen] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const streamingRef = useRef(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -178,9 +200,10 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const historyEndRef = useRef<HTMLDivElement | null>(null)
 
-  // AI-2-front: тумблеры (по умолчанию ВЫКЛ, состояние в localStorage). Мягкая деградация — см. флаги support.
+  // AI-2-front: тумблеры (состояние в localStorage). Мягкая деградация — см. флаги support.
+  // AI-UX-2: озвучка ответов первична — по умолчанию ВКЛ (если пользователь ранее не выключил).
   const [speakOn, setSpeakOn] = useState<boolean>(() => {
-    try { return localStorage.getItem('ai_speak') === '1' } catch { return false }
+    try { const v = localStorage.getItem('ai_speak'); return v === null ? true : v === '1' } catch { return true }
   })
   const [wakeOn, setWakeOn] = useState<boolean>(() => {
     try { return localStorage.getItem('ai_wake') === '1' } catch { return false }
@@ -326,21 +349,41 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     setProposals(props)
   }, [])
 
-  // AI-UX-1: обычный (не-стрим) путь — ФОЛБЭК. Тот же контракт, что был до стрима (askAssistant).
+  // AI-UX-1: обычный (не-стрим) путь — ФОЛБЭК. AI-UX-2: делаем прямой POST здесь (а не через
+  // askAssistant), чтобы приложить поле context {route, screen, details} и в фолбэке тоже. Контракт
+  // edge ai-assistant v8 не меняем — только добавляем context в тело. Разбор ошибок/no_key — как в
+  // api/ai.ts (looksLikeNoKey), user/assistant-строки и proposals пишет edge, мы их рефетчим.
   const sendViaPost = useCallback(
     async (msg: string): Promise<{ kind: 'ok' | 'error' | 'nokey'; reply?: string }> => {
-      const res = await askAssistant(msg)
-      if (res.error === 'no_key') { setNoKey(true); setThinking(false); return { kind: 'nokey' } }
-      if (res.error) {
-        flashToast(res.error === 'no_session' || res.error === 'request_failed' ? t('ai_error') : res.error)
-        setThinking(false)
-        return { kind: 'error' }
+      let errText: string | undefined
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        const token = session?.access_token
+        if (!token) { flashToast(t('ai_error')); setThinking(false); return { kind: 'error' } }
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-assistant`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SUPABASE_KEY },
+          body: JSON.stringify({ message: msg, context: contextRef.current }),
+        })
+        const body = (await resp.json().catch(() => null)) as { reply?: unknown; error?: unknown } | null
+        const bodyErr = typeof body?.error === 'string' && body.error.trim() ? body.error : undefined
+        if (resp.ok && !bodyErr) {
+          // Успех: строки уже записал edge — рефетчим историю и предложения.
+          const [msgs, props] = await Promise.all([getAiMessages(), getPendingProposals()])
+          if (mountedRef.current) { setInput(''); setMessages(msgs); setProposals(props); setThinking(false) }
+          const reply = typeof body?.reply === 'string' && body.reply
+            ? body.reply
+            : [...msgs].reverse().find((m) => m.role === 'assistant')?.content
+          return { kind: 'ok', reply }
+        }
+        errText = bodyErr ?? `HTTP ${resp.status}`
+      } catch {
+        errText = undefined
       }
-      // Успех: user/assistant-строки уже записал edge — рефетчим историю и предложения.
-      const [msgs, props] = await Promise.all([getAiMessages(), getPendingProposals()])
-      if (mountedRef.current) { setInput(''); setMessages(msgs); setProposals(props); setThinking(false) }
-      const reply = [...msgs].reverse().find((m) => m.role === 'assistant')?.content
-      return { kind: 'ok', reply }
+      if (looksLikeNoKey(errText)) { setNoKey(true); setThinking(false); return { kind: 'nokey' } }
+      flashToast(errText && !looksLikeNoKey(errText) ? errText : t('ai_error'))
+      setThinking(false)
+      return { kind: 'error' }
     },
     [flashToast, t],
   )
@@ -374,7 +417,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
             Authorization: `Bearer ${token}`,
             apikey: SUPABASE_KEY,
           },
-          body: JSON.stringify({ message: msg, stream: true }),
+          // AI-UX-2 (п.5): прикладываем контекст экрана — edge v8 подкладывает его ассистенту.
+          body: JSON.stringify({ message: msg, stream: true, context: contextRef.current }),
         })
         if (!resp.ok || !resp.body) {
           streamFailed = true // не-2xx (в т.ч. no_key) или нет тела → фолбэк на POST
@@ -460,29 +504,34 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     }
   }, [])
 
-  // Esc закрывает (только пока открыт).
+  // Esc: сначала закрывает выдвижную панель текста (drawer), затем — сам оверлей.
   useEffect(() => {
     if (!open) return
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (drawerOpen) setDrawerOpen(false)
+      else setOpen(false)
+    }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
-  }, [open])
+  }, [open, drawerOpen])
 
   // При открытии — грузим данные и фокусируем поле ввода.
   useEffect(() => {
     if (!open) return
     setNoKey(false)
-    setHistoryOpen(false)
+    setDrawerOpen(false)
     setLoading(true)
     void load().finally(() => setLoading(false))
     const id = window.setTimeout(() => inputRef.current?.focus(), 40)
     return () => window.clearTimeout(id)
   }, [open, load])
 
-  // Автоскролл ленты вниз при изменении истории (пока открыт И раскрыта панель истории).
+  // Автоскролл ленты вниз при изменении истории (пока открыт И раскрыта панель текста).
+  // AI-UX-2: стрим тоже уезжает в drawer — скроллим и при печати живого ответа.
   useEffect(() => {
-    if (open && historyOpen) historyEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [messages, open, historyOpen])
+    if (open && drawerOpen) historyEndRef.current?.scrollIntoView({ block: 'end' })
+  }, [messages, streamText, open, drawerOpen])
 
   // AI-2-front: при открытии сбрасываем «прайм» озвучки (историю вслух не читаем), при закрытии — глушим речь.
   useEffect(() => {
@@ -828,9 +877,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
             ? t('ai_status_speaking')
             : t('ai_orb_idle')
 
-  // AI-UX-1: крупный «последний ответ» под орбом — либо живой стрим, либо последний ответ ассистента.
-  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
-  const lastAnswer = lastAssistant ? stripMarkdown(lastAssistant.content) : ''
+  // AI-UX-2: самое свежее pending-предложение — компактной карточкой в углу оверлея (полный список — в drawer).
+  const latestProposal = proposals[0]
 
   // Бейдж при закрытой панели (оставляем прежним — статус голоса без правки App/Nav).
   const voicePulsing = voiceStatus === 'wake' || voiceStatus === 'listening'
@@ -868,109 +916,162 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         </div>
       )}
 
+      {/* AI-UX-2: КОМПАКТНЫЙ ПЛАВАЮЩИЙ ОВЕРЛЕЙ на фоне приложения. Не блокирует экран (нет backdrop,
+          pointer-events только на самой карточке) — приложение под ним видно и работает. На оверлее
+          ТОЛЬКО орб + короткая строка состояния + контекст экрана + компактные органы. Текст ответа
+          НЕ показываем (голос первичен) — он в выдвижной панели «Показать текст». */}
       {open && (
-        <div
-          className="confirm-backdrop ai-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="ai-cmd-title"
-          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
-        >
-          <div className="card ai-modal ai-modal-v2">
-            {/* Крупный явный крестик закрытия (не мелкий в углу). */}
-            <button type="button" className="ai-close-x" onClick={() => setOpen(false)} aria-label={t('close')}>
-              ✕
-            </button>
+        <div className="ai-overlay" role="dialog" aria-modal="false" aria-label={t('ai_title')}>
+          {/* Маленький аккуратный крестик — просто закрыть. */}
+          <button type="button" className="ai-overlay-close" onClick={() => setOpen(false)} aria-label={t('close')}>
+            ✕
+          </button>
 
-            {/* СУЩНОСТЬ: пульсирующий орб + подпись состояния под ним. */}
-            <div className="ai-orb-wrap">
-              <div
-                className={`ai-orb ai-orb-${orbState}${micDenied ? ' ai-orb-denied' : ''}`}
-                style={{ '--mic': orbState === 'listening' ? micLevel : 0 } as React.CSSProperties}
-                aria-hidden="true"
-              >
-                <span className="ai-orb-ring" />
-                <span className="ai-orb-ring ai-orb-ring2" />
-                <span className="ai-orb-core" />
-              </div>
-              <h2 id="ai-cmd-title" className="ai-orb-title">{t('ai_title')}</h2>
+          {/* СУЩНОСТЬ: пульсирующий орб (компактный) + короткая строка состояния + видимый контекст экрана. */}
+          <div className="ai-overlay-main">
+            <div
+              className={`ai-orb ai-orb-sm ai-orb-${orbState}${micDenied ? ' ai-orb-denied' : ''}`}
+              style={{ '--mic': orbState === 'listening' ? micLevel : 0 } as React.CSSProperties}
+              aria-hidden="true"
+            >
+              <span className="ai-orb-ring" />
+              <span className="ai-orb-ring ai-orb-ring2" />
+              <span className="ai-orb-core" />
+            </div>
+            <div className="ai-overlay-meta">
               <p className="ai-orb-label" role="status" aria-live="polite">{orbLabel}</p>
-              {micDenied && <p className="muted small ai-orb-hint">{t('ai_mic_denied_hint')}</p>}
+              {/* «Оно видит, что я делаю»: человекочитаемый экран + активная вкладка (без запросов к БД). */}
+              <p className="ai-overlay-ctx muted" title={screenContext.route}>
+                {t('ai_ctx_seeing')}: {screenContext.screen}
+                {screenContext.details ? ` · ${screenContext.details}` : ''}
+              </p>
             </div>
+          </div>
 
-            {(TTS_SUPPORTED || wakeSupported) && (
-              <div className="ai-toggles">
-                {TTS_SUPPORTED && (
-                  <label className="ai-toggle">
-                    <input
-                      type="checkbox"
-                      checked={speakOn}
-                      onChange={(e) => { setSpeakOn(e.target.checked); if (!e.target.checked) cancelSpeech() }}
-                    />
-                    <span>{t('ai_speak_toggle')}</span>
-                  </label>
-                )}
-                {wakeSupported && (
-                  <label className="ai-toggle" title={t('ai_wake_hint')}>
-                    <input
-                      type="checkbox"
-                      checked={wakeOn}
-                      onChange={(e) => setWakeOn(e.target.checked)}
-                    />
-                    <span>{t('ai_wake_toggle')}</span>
-                  </label>
-                )}
-              </div>
-            )}
+          {micDenied && <p className="muted small ai-overlay-hint">{t('ai_mic_denied_hint')}</p>}
 
-            {noKey && (
-              <div className="ai-nokey" role="alert">
-                <strong>{t('ai_no_key_title')}</strong>
-                <span className="muted small">{t('ai_no_key_desc')}</span>
-              </div>
-            )}
-
-            {/* НЕ ЧАТ: последний ответ крупным текстом, печатается по мере прихода SSE. */}
-            <div className="ai-answer" role="status" aria-live="polite">
-              {loading ? (
-                <p className="ai-answer-text muted">…</p>
-              ) : streaming && streamText ? (
-                <p className="ai-answer-text">{streamText}<span className="ai-caret" aria-hidden="true" /></p>
-              ) : thinking || streaming ? (
-                <p className="ai-answer-text ai-answer-thinking">{t('ai_thinking')}</p>
-              ) : lastAnswer ? (
-                <p className="ai-answer-text">{lastAnswer}</p>
-              ) : (
-                <p className="ai-answer-empty muted">{t('ai_empty')}</p>
-              )}
+          {noKey && (
+            <div className="ai-nokey ai-overlay-nokey" role="alert">
+              <strong>{t('ai_no_key_title')}</strong>
+              <span className="muted small">{t('ai_no_key_desc')}</span>
             </div>
+          )}
 
-            {/* История — свёрнута за кнопкой (это ассистент, а не мессенджер). */}
-            {messages.length > 0 && (
-              <div className="ai-history-block">
+          {/* PROPOSAL ПО ГОЛОСУ: последнее предложение компактной карточкой в углу (озвучено ответом). */}
+          {latestProposal && (
+            <div className="ai-overlay-proposal card">
+              <div className="ai-overlay-proposal-head">
+                <span className="ai-overlay-proposal-badge">{t('ai_proposal_badge')}</span>
+                <span className="ai-overlay-proposal-title">{latestProposal.title}</span>
+              </div>
+              <div className="row ai-overlay-proposal-actions">
+                {KNOWN_ACTIONS.has(latestProposal.action_type) && (
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={busyId === latestProposal.id}
+                    onClick={() => void executeProposal(latestProposal)}
+                  >
+                    {t('ai_execute')}
+                  </button>
+                )}
                 <button
                   type="button"
-                  className="btn ghost ai-history-toggle"
-                  onClick={() => setHistoryOpen((v) => !v)}
-                  aria-expanded={historyOpen}
+                  className="btn ghost"
+                  disabled={busyId === latestProposal.id}
+                  onClick={() => void rejectProposal(latestProposal)}
                 >
-                  {historyOpen ? t('ai_history_hide') : t('ai_history')} ({messages.length})
+                  {t('ai_reject')}
                 </button>
-                {historyOpen && (
-                  <div className="ai-history">
-                    {messages.map((m) => (
-                      <div key={m.id} className={`ai-hist-row ai-hist-${m.role}`}>
-                        <span className="ai-hist-role">{m.role === 'user' ? t('ai_hist_you') : t('ai_hist_ai')}</span>
-                        <span className="ai-hist-text">
-                          {m.role === 'assistant' ? stripMarkdown(m.content) : m.content}
-                        </span>
-                      </div>
-                    ))}
-                    <div ref={historyEndRef} />
-                  </div>
-                )}
               </div>
-            )}
+            </div>
+          )}
+
+          {/* КОМПАКТНЫЕ ОРГАНЫ: push-to-talk микрофон (сразу шлёт вопрос) + «Показать текст» (drawer). */}
+          <div className="ai-overlay-controls">
+            <VoiceMic
+              lang={lang}
+              title={t('ai_voice_hint')}
+              onResult={(text) => { if (!thinking) void sendQuestion(text) }}
+            />
+            <button
+              type="button"
+              className="btn ghost ai-overlay-text-btn"
+              onClick={() => setDrawerOpen(true)}
+            >
+              {t('ai_show_text')}{messages.length > 0 ? ` (${messages.length})` : ''}
+            </button>
+          </div>
+
+          {(TTS_SUPPORTED || wakeSupported) && (
+            <div className="ai-toggles ai-overlay-toggles">
+              {TTS_SUPPORTED && (
+                <label className="ai-toggle">
+                  <input
+                    type="checkbox"
+                    checked={speakOn}
+                    onChange={(e) => { setSpeakOn(e.target.checked); if (!e.target.checked) cancelSpeech() }}
+                  />
+                  <span>{t('ai_speak_toggle')}</span>
+                </label>
+              )}
+              {wakeSupported && (
+                <label className="ai-toggle" title={t('ai_wake_hint')}>
+                  <input
+                    type="checkbox"
+                    checked={wakeOn}
+                    onChange={(e) => setWakeOn(e.target.checked)}
+                  />
+                  <span>{t('ai_wake_toggle')}</span>
+                </label>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ОТДЕЛЬНАЯ ВЫДВИЖНАЯ ПАНЕЛЬ (drawer): расшифровка диалога (со стримом печати) + полный список
+          proposals + вторичный ввод текста. Открывается кнопкой «Показать текст». */}
+      {open && drawerOpen && (
+        <div
+          className="ai-drawer-backdrop"
+          onClick={(e) => { if (e.target === e.currentTarget) setDrawerOpen(false) }}
+        >
+          <aside className="card ai-drawer" role="dialog" aria-modal="true" aria-label={t('ai_drawer_title')}>
+            <header className="ai-drawer-head">
+              <h2 className="ai-drawer-title">{t('ai_drawer_title')}</h2>
+              <button type="button" className="ai-overlay-close" onClick={() => setDrawerOpen(false)} aria-label={t('close')}>
+                ✕
+              </button>
+            </header>
+
+            {/* Лента диалога + живой стрим печати внизу (стрим идёт ЗДЕСЬ, а не на оверлее). */}
+            <div className="ai-drawer-scroll">
+              {loading && messages.length === 0 ? (
+                <p className="muted small">…</p>
+              ) : null}
+              {messages.map((m) => (
+                <div key={m.id} className={`ai-hist-row ai-hist-${m.role}`}>
+                  <span className="ai-hist-role">{m.role === 'user' ? t('ai_hist_you') : t('ai_hist_ai')}</span>
+                  <span className="ai-hist-text">
+                    {m.role === 'assistant' ? stripMarkdown(m.content) : m.content}
+                  </span>
+                </div>
+              ))}
+              {streaming && streamText && (
+                <div className="ai-hist-row ai-hist-assistant">
+                  <span className="ai-hist-role">{t('ai_hist_ai')}</span>
+                  <span className="ai-hist-text">{streamText}<span className="ai-caret" aria-hidden="true" /></span>
+                </div>
+              )}
+              {(thinking || streaming) && !streamText && (
+                <p className="muted small ai-answer-thinking">{t('ai_thinking')}</p>
+              )}
+              {messages.length === 0 && !loading && !thinking && !streaming && (
+                <p className="ai-answer-empty muted">{t('ai_empty')}</p>
+              )}
+              <div ref={historyEndRef} />
+            </div>
 
             {proposals.length > 0 && (
               <div className="ai-proposals">
@@ -1020,8 +1121,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
               </div>
             )}
 
-            {/* КРУПНЫЕ ОРГАНЫ: большой микрофон + поле + отправка. */}
-            <form className="ai-input-row" onSubmit={submit}>
+            {/* Вторичный ввод текста (голос первичен). */}
+            <form className="ai-input-row ai-drawer-input" onSubmit={submit}>
               <input
                 ref={inputRef}
                 className="ai-input"
@@ -1040,13 +1141,13 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
                 {thinking ? t('ai_thinking') : t('ai_send')}
               </button>
             </form>
-          </div>
+          </aside>
+        </div>
+      )}
 
-          {toast && (
-            <div className="travel-toast ai-toast" role="status" aria-live="polite">
-              {toast}
-            </div>
-          )}
+      {toast && (
+        <div className="travel-toast ai-toast" role="status" aria-live="polite">
+          {toast}
         </div>
       )}
     </>
