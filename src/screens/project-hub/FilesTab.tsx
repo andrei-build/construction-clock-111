@@ -132,6 +132,22 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
     }
   }
 
+  // MARKUP-1: сохранить копию с разметкой рядом с оригиналом через существующий R2-загрузчик проекта
+  // (сигнатуры api.ts не трогаем). Новая строка сразу попадает в список файлов и превью.
+  const saveMarkupCopy = async (blob: Blob, name: string) => {
+    if (!profile) throw new Error('no profile')
+    const copy = new File([blob], name, { type: 'image/png' })
+    const created = await uploadProjectFileToR2(profile, project.id, copy)
+    const row: ProjectHubFile = { ...created, uploader_name: profile.name ?? null }
+    setFiles((rows) => [row, ...rows])
+    try {
+      const url = await fileUrl(row)
+      if (url) setThumbs((prev) => ({ ...prev, [row.id]: url }))
+    } catch {
+      // превью не критично
+    }
+  }
+
   const openFile = async (file: ProjectHubFile) => {
     const category = fileCategory(file.mime)
     // Изображения: общий лайтбокс со стрелками по всем фото текущего вида (URL резолвит сам лайтбокс).
@@ -143,6 +159,7 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
           id: f.id,
           name: f.name,
           resolve: async () => { const u = await fileUrl(f); if (!u) throw new Error('no url'); return u },
+          saveMarkup: profile ? saveMarkupCopy : undefined,
         })),
         idx,
       )
