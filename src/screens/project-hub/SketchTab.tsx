@@ -43,6 +43,7 @@ const DEFAULT_WALL_HEIGHT_FT = 8
 
 // Дефолтные габариты проёмов в футах (законы Андрея 17.07).
 const DOOR_W_FT = 3
+const DOOR_H_FT = 6.8
 const WIN_W_FT = 3
 const WIN_H_FT = 4
 const WIN_SILL_FT = 3
@@ -76,6 +77,18 @@ type CanvasView = { x: number; y: number; width: number; height: number }
 // Ширина проёма в футах с учётом дефолта по типу.
 function openingWidthFt(o: Opening): number {
   return o.w ?? (o.kind === 'door' ? DOOR_W_FT : WIN_W_FT)
+}
+
+function openingHeightFt(o: Opening): number {
+  return o.kind === 'door' ? DOOR_H_FT : (o.h ?? WIN_H_FT)
+}
+
+function openingFloorFt(o: Opening): number {
+  return o.kind === 'door' ? 0 : (o.sill ?? WIN_SILL_FT)
+}
+
+function modelCellFt(model: SketchModel): number {
+  return Number.isFinite(model.cellFt) && model.cellFt > 0 ? model.cellFt : CELL_FT
 }
 
 function wallHeightFt(model: SketchModel): number {
@@ -291,8 +304,45 @@ function canvasGridLines(view: CanvasView, includeSubgrid: boolean) {
 
 const EMPTY_MODEL: SketchModel = { version: 1, cellFt: CELL_FT, contours: [], openings: [] }
 
+function fmtFt(valueFt: number): string {
+  const safe = Number.isFinite(valueFt) ? valueFt : 0
+  return `${safe.toFixed(1)}′`
+}
+
 function fmtLen(cells: number): string {
-  return `${(cells * CELL_FT).toFixed(1)}′`
+  return fmtFt(cells * CELL_FT)
+}
+
+type OpeningDimLabel = {
+  x: number
+  y: number
+  lines: string[]
+  kind: Opening['kind']
+}
+
+function openingDimLabel(model: SketchModel, opening: Opening, index: number, t: (k: string) => string): OpeningDimLabel | null {
+  const g = openingGeom(model, opening)
+  if (!g) return null
+  const segLenCells = dist(g.a, g.b)
+  if (segLenCells <= 0.01) return null
+  const cellFt = modelCellFt(model)
+  const widthFt = openingWidthFt(opening)
+  const widthCells = Math.min(widthFt / cellFt, segLenCells)
+  const centerCells = Math.max(0, Math.min(segLenCells, opening.t * segLenCells))
+  const leftFt = Math.max(0, (centerCells - widthCells / 2) * cellFt)
+  const rightFt = Math.max(0, (segLenCells - centerCells - widthCells / 2) * cellFt)
+  const side = (opening.c + opening.s + index) % 2 === 0 ? 1 : -1
+  const offsetPx = 22 + (index % 2) * 14
+  return {
+    x: g.p.x * CELL_PX + (-g.uy) * side * offsetPx,
+    y: g.p.y * CELL_PX + g.ux * side * offsetPx,
+    kind: opening.kind,
+    lines: [
+      `${t('hub_sketch_dim_size_short')} ${fmtFt(widthFt)}×${fmtFt(openingHeightFt(opening))}`,
+      `${t('hub_sketch_dim_floor_short')} ${fmtFt(openingFloorFt(opening))}`,
+      `${t('hub_sketch_dim_left_short')} ${fmtFt(leftFt)} · ${t('hub_sketch_dim_right_short')} ${fmtFt(rightFt)}`,
+    ],
+  }
 }
 
 function sanitizeName(name: string): string {
@@ -370,6 +420,23 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
     ctx.lineTo((g.p.x + hx) * CELL_PX, (g.p.y + hy) * CELL_PX)
     ctx.stroke()
   }
+  // постоянные габариты проёмов и отступы до краёв стены
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `800 ${Math.max(9 / viewScale, 10)}px sans-serif`
+  ctx.lineWidth = Math.max(2.5 / viewScale, 3)
+  model.openings.forEach((opening, index) => {
+    const label = openingDimLabel(model, opening, index, t)
+    if (!label) return
+    const lineHeight = Math.max(11 / viewScale, 12)
+    ctx.fillStyle = label.kind === 'door' ? '#7c2d12' : '#1d4ed8'
+    ctx.strokeStyle = 'rgba(255, 255, 255, .92)'
+    label.lines.forEach((line, lineIndex) => {
+      const y = label.y + (lineIndex - 1) * lineHeight
+      ctx.strokeText(line, label.x, y)
+      ctx.fillText(line, label.x, y)
+    })
+  })
   ctx.restore()
   // сводка
   const area = model.contours.reduce((s, c) => s + contourArea(c), 0)
@@ -1089,6 +1156,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             const x2 = (g.p.x + hx) * CELL_PX
             const y2 = (g.p.y + hy) * CELL_PX
             const cls = o.kind === 'door' ? 'hub-sketch-door' : 'hub-sketch-window'
+            const dimLabel = openingDimLabel(model, o, i, t)
             return (
               <g
                 key={`o${i}`}
@@ -1098,6 +1166,20 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 <line className={cls} x1={x1} y1={y1} x2={x2} y2={y2} />
                 {/* невидимый широкий хит-таргет для захвата пальцем */}
                 <line className="hub-sketch-opening-hit" x1={x1} y1={y1} x2={x2} y2={y2} />
+                {dimLabel && (
+                  <g
+                    className={`hub-sketch-opening-dim hub-sketch-opening-dim-${dimLabel.kind}`}
+                    transform={`translate(${dimLabel.x} ${dimLabel.y})`}
+                  >
+                    <text textAnchor="middle">
+                      {dimLabel.lines.map((line, lineIndex) => (
+                        <tspan key={`dim-line-${lineIndex}`} x="0" dy={lineIndex === 0 ? -12 : 12}>
+                          {line}
+                        </tspan>
+                      ))}
+                    </text>
+                  </g>
+                )}
               </g>
             )
           })}
@@ -1137,15 +1219,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               const g = openingGeom(model, o)
               if (!g) return null
               const segLen = dist(g.a, g.b)
-              const cellFt = model.cellFt || CELL_FT
-              const left = o.t * segLen * cellFt
-              const right = (1 - o.t) * segLen * cellFt
+              const cellFt = modelCellFt(model)
+              const wCells = Math.min(openingWidthFt(o) / cellFt, segLen)
+              const left = Math.max(0, (o.t * segLen - wCells / 2) * cellFt)
+              const right = Math.max(0, ((1 - o.t) * segLen - wCells / 2) * cellFt)
               const px = g.p.x * CELL_PX
               const py = g.p.y * CELL_PX
-              const sillTxt = o.kind === 'window' ? ` · ${t('hub_sketch_sill')} ${(o.sill ?? WIN_SILL_FT).toFixed(1)}′` : ''
+              const floorTxt = ` · ${t('hub_sketch_dim_floor_short')} ${fmtFt(openingFloorFt(o))}`
               return (
                 <text className="hub-sketch-drag-dim" x={px} y={py - 12} textAnchor="middle">
-                  {`◄ ${left.toFixed(1)}′  ·  ${right.toFixed(1)}′ ►${sillTxt}`}
+                  {`◄ ${fmtFt(left)}  ·  ${fmtFt(right)} ►${floorTxt}`}
                 </text>
               )
             })()}

@@ -3914,6 +3914,47 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-door { stroke: #b45309; stroke-width: 6; stroke-linecap: butt; }
 .hub-sketch-window { stroke: #2563eb; stroke-width: 6; stroke-linecap: butt; }
 .hub-sketch-opening-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
+.hub-sketch-opening-dim {
+  pointer-events: none;
+}
+.hub-sketch-opening-dim text {
+  stroke: rgba(255, 255, 255, .94);
+  stroke-width: 3.5;
+  paint-order: stroke;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+.hub-sketch-opening-dim-door text { fill: #7c2d12; }
+.hub-sketch-opening-dim-window text { fill: #1d4ed8; }
+.hub-sketch-3d-dim-toggle {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: calc(50% - 14px);
+  padding: 8px 10px;
+  border: 1px solid rgba(126,160,190,.28);
+  border-radius: 8px;
+  background: rgba(13, 21, 34, .78);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.1;
+  backdrop-filter: blur(8px);
+}
+.hub-sketch-3d-dim-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+.hub-sketch-3d-dim-toggle span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 /* SKETCH-3D-2: отделка, плиточная раскладка, свет и выключатели */
 .hub-sketch-3d-layout {
   display: grid;

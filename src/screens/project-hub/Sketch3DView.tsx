@@ -155,6 +155,11 @@ function longestWallIn(model: Sketch3DModel): number {
   return Math.max(12, ...eachSegment(model).map((seg) => dist(seg.a, seg.b) * cellFt * 12))
 }
 
+function formatFeet(valueFt: number): string {
+  const safe = Number.isFinite(valueFt) ? valueFt : 0
+  return `${safe.toFixed(1)}′`
+}
+
 function disposeObjectWithMaterial(object: { geometry?: unknown; material?: unknown }) {
   const geometry = object.geometry
   if (geometry && typeof geometry === 'object' && 'dispose' in geometry) {
@@ -313,11 +318,42 @@ function createLabelSprite(THREE: any, text: string) {
   return sprite
 }
 
+function createDimensionSprite(THREE: any, text: string) {
+  const lines = text.split('\n')
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  canvas.width = 384
+  canvas.height = Math.max(86, 34 + lines.length * 28)
+  if (ctx) {
+    ctx.font = '800 22px sans-serif'
+    const widest = Math.max(...lines.map((line) => ctx.measureText(line).width), 120)
+    canvas.width = Math.min(520, Math.max(220, Math.ceil(widest + 42)))
+    ctx.fillStyle = 'rgba(255, 255, 255, .92)'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.strokeStyle = 'rgba(15, 23, 42, .24)'
+    ctx.lineWidth = 3
+    ctx.strokeRect(1.5, 1.5, canvas.width - 3, canvas.height - 3)
+    ctx.fillStyle = '#0f172a'
+    ctx.font = '800 22px sans-serif'
+    lines.forEach((line, i) => ctx.fillText(line, 21, 34 + i * 28))
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false })
+  const sprite = new THREE.Sprite(material)
+  sprite.scale.set(canvas.width / 180, canvas.height / 180, 1)
+  sprite.renderOrder = 21
+  return sprite
+}
+
 export default function Sketch3DView({ model, heightFt, canEdit = false, onModelChange, label, loadingLabel, errorLabel }: Sketch3DViewProps) {
   const { t } = useI18n()
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cameraApiRef = useRef<Record<CameraPreset, () => void> | null>(null)
+  const dimensionGroupRef = useRef<any | null>(null)
+  const dimensionsVisibleRef = useRef(true)
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [showDimensions, setShowDimensions] = useState(true)
   const [surfaceTarget, setSurfaceTarget] = useState<SurfaceTarget>('walls')
   const [placement, setPlacement] = useState<PlacementKind>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -389,6 +425,11 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
       }),
     })
   }
+
+  useEffect(() => {
+    dimensionsVisibleRef.current = showDimensions
+    if (dimensionGroupRef.current) dimensionGroupRef.current.visible = showDimensions
+  }, [showDimensions])
 
   useEffect(() => {
     const host = hostRef.current
@@ -539,6 +580,10 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const floorTargets: any[] = [ground]
         const wallTargets: any[] = []
         const itemTargets: any[] = []
+        const dimensionGroup = new THREE.Group()
+        dimensionGroup.visible = dimensionsVisibleRef.current
+        scene.add(dimensionGroup)
+        dimensionGroupRef.current = dimensionGroup
         const wallSurface = finishes.walls.kind === 'tile' ? finishes.walls : { kind: 'paint' as const, color: cleanColor(finishes.wallPaint, DEFAULT_WALL_PAINT) }
         const floorMaterial = createFloorMaterial(THREE, finishes.floor)
         const doorMaterial = new THREE.MeshStandardMaterial({ color: 0xb86b24, roughness: 0.62 })
@@ -587,6 +632,17 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           wall.userData.wallS = seg.s
           scene.add(wall)
           wallTargets.push(wall)
+
+          const nx = -dz / len
+          const nz = dx / len
+          const dimText = `${t('hub_sketch_dim_length_short')} ${formatFeet(len)}\n${t('hub_sketch_dim_height_short')} ${formatFeet(height)}`
+          const dimSprite = createDimensionSprite(THREE, dimText)
+          dimSprite.position.set(
+            (a.x + b.x) / 2 + nx * (WALL_THICKNESS_FT / 2 + 0.42),
+            Math.max(0.65, Math.min(height - 0.18, height * 0.72)),
+            (a.z + b.z) / 2 + nz * (WALL_THICKNESS_FT / 2 + 0.42),
+          )
+          dimensionGroup.add(dimSprite)
         })
 
         model.openings.forEach((opening) => {
@@ -938,6 +994,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           renderer.domElement.removeEventListener('contextmenu', onContextMenu)
           observer.disconnect()
           cameraApiRef.current = null
+          if (dimensionGroupRef.current === dimensionGroup) dimensionGroupRef.current = null
           controls.dispose()
           scene.traverse((object: { geometry?: unknown; material?: unknown }) => disposeObjectWithMaterial(object))
           renderer.dispose()
@@ -962,6 +1019,15 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
     <div className="hub-sketch-3d-layout">
       <div className="hub-sketch-3d-shell" role="img" aria-label={label}>
         <div ref={hostRef} className="hub-sketch-3d-canvas" />
+        <label className="hub-sketch-3d-dim-toggle">
+          <input
+            type="checkbox"
+            checked={showDimensions}
+            onChange={(e) => setShowDimensions(e.target.checked)}
+            aria-label={t('hub_sketch_3d_dimensions')}
+          />
+          <span>{t('hub_sketch_3d_dimensions')}</span>
+        </label>
         <div className="hub-sketch-3d-camera-tools" role="toolbar" aria-label={t('hub_sketch_3d_camera')}>
           <button type="button" className="btn ghost small" onClick={() => cameraApiRef.current?.fit()}>
             {t('hub_sketch_camera_fit')}
