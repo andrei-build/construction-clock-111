@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useI18n } from '../../lib/i18n'
 import {
   createProjectNote,
@@ -19,6 +19,7 @@ import {
   type SketchSwitch,
 } from './sketchFinishes'
 import { sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
+import { formatFeetInches, parseFeetInches } from './inches'
 
 interface SketchTabProps {
   project: Project
@@ -28,18 +29,16 @@ interface SketchTabProps {
 // Геометрия хранится в клетках сетки. Масштаб: 1 клетка = 1 фут.
 const CELL_FT = 1
 const CELL_PX = 32
-const SUBCELL_PX = CELL_PX / 2
 const DEFAULT_GRID_COLS = 24
 const DEFAULT_GRID_ROWS = 18
 const VIEW_W = DEFAULT_GRID_COLS * CELL_PX
 const VIEW_H = DEFAULT_GRID_ROWS * CELL_PX
 const MIN_VIEW_CELLS = 4
 const MAX_VIEW_CELLS = 4096
-const SUBGRID_HIDE_PX_PER_FT = 18
+const MIN_MINOR_GRID_SCREEN_PX = 8
 const CLOSE_SNAP = 0.45 // клетки — попадание в стартовую точку замыкает контур
 const SEG_HIT = 0.7 // клетки — попадание в сегмент при установке двери/окна
 const ROOM_SNAP = 0.6 // клетки — радиус прилипания новой комнаты к существующим вершинам/стенам
-const EDGE_FT_SNAP = 0.25 // фута — прилипание проёма к ровному футу при отпускании
 const HISTORY_MAX = 60
 const DEFAULT_WALL_HEIGHT_FT = 8
 const DIM_OFFSET_SCREEN_PX = 24
@@ -79,6 +78,15 @@ type SketchModel = {
 type ViewMode = '2d' | '3d'
 type CanvasSize = { width: number; height: number }
 type CanvasView = { x: number; y: number; width: number; height: number }
+type SnapMode = '1ft' | '6in' | '1in' | '1_16in'
+type FeetDraftField = 'wallHeight' | 'doorW' | 'winW' | 'winH' | 'winSill'
+
+const SNAP_OPTIONS: Array<{ mode: SnapMode; stepFt: number; labelKey: string }> = [
+  { mode: '1ft', stepFt: 1, labelKey: 'hub_sketch_snap_1ft' },
+  { mode: '6in', stepFt: 0.5, labelKey: 'hub_sketch_snap_6in' },
+  { mode: '1in', stepFt: 1 / 12, labelKey: 'hub_sketch_snap_1in' },
+  { mode: '1_16in', stepFt: 1 / 192, labelKey: 'hub_sketch_snap_1_16in' },
+]
 
 // Ширина проёма в футах с учётом дефолта по типу.
 function openingWidthFt(o: Opening): number {
@@ -99,6 +107,34 @@ function modelCellFt(model: SketchModel): number {
 
 function wallHeightFt(model: SketchModel): number {
   return Number.isFinite(model.height) && (model.height ?? 0) > 0 ? model.height ?? DEFAULT_WALL_HEIGHT_FT : DEFAULT_WALL_HEIGHT_FT
+}
+
+function formatLengthFt(valueFt: number): string {
+  return formatFeetInches((Number.isFinite(valueFt) ? valueFt : 0) * 12)
+}
+
+function parseLengthFt(value: string): number {
+  const parsedInches = parseFeetInches(value)
+  return Number.isFinite(parsedInches) ? parsedInches / 12 : Number.NaN
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function snapLengthFt(valueFt: number, stepFt: number): number {
+  const step = Number.isFinite(stepFt) && stepFt > 0 ? stepFt : 1
+  return Math.round(valueFt / step) * step
+}
+
+function snapSegmentT(t: number, segLenCells: number, cellFt: number, stepFt: number): number {
+  if (segLenCells <= 0 || cellFt <= 0) return Math.max(0, Math.min(1, t))
+  const snappedFt = snapLengthFt(t * segLenCells * cellFt, stepFt)
+  return Math.max(0, Math.min(1, snappedFt / (segLenCells * cellFt)))
+}
+
+function snapModeStep(mode: SnapMode): number {
+  return SNAP_OPTIONS.find((option) => option.mode === mode)?.stepFt ?? 1
 }
 
 function importWallHeight(value: unknown): number | undefined {
@@ -294,23 +330,27 @@ function canvasViewContainsModel(model: SketchModel, view: CanvasView): boolean 
   return bounds.minX >= left && bounds.maxX <= right && bounds.minY >= top && bounds.maxY <= bottom
 }
 
-function gridLinePositions(startPx: number, endPx: number, stepPx: number, skipEveryOther = false): number[] {
+function gridLinePositions(startPx: number, endPx: number, stepPx: number): number[] {
   const start = Math.floor(startPx / stepPx) - 1
   const end = Math.ceil(endPx / stepPx) + 1
   const count = Math.max(0, end - start + 1)
-  return Array.from({ length: count }, (_, i) => start + i)
-    .filter((n) => !skipEveryOther || n % 2 !== 0)
-    .map((n) => n * stepPx)
+  return Array.from({ length: count }, (_, i) => (start + i) * stepPx)
 }
 
-function canvasGridLines(view: CanvasView, includeSubgrid: boolean) {
+function isMajorGridLine(valuePx: number): boolean {
+  return Math.abs(valuePx / CELL_PX - Math.round(valuePx / CELL_PX)) < 0.0001
+}
+
+function canvasGridLines(view: CanvasView, snapStepFt: number, pxPerFt: number) {
   const left = view.x
   const right = view.x + view.width
   const top = view.y
   const bottom = view.y + view.height
+  const minorStepPx = Math.max(0.0001, snapStepFt * CELL_PX)
+  const includeMinor = snapStepFt < CELL_FT && pxPerFt * snapStepFt >= MIN_MINOR_GRID_SCREEN_PX
   return {
-    subX: includeSubgrid ? gridLinePositions(left, right, SUBCELL_PX, true) : [],
-    subY: includeSubgrid ? gridLinePositions(top, bottom, SUBCELL_PX, true) : [],
+    subX: includeMinor ? gridLinePositions(left, right, minorStepPx).filter((x) => !isMajorGridLine(x)) : [],
+    subY: includeMinor ? gridLinePositions(top, bottom, minorStepPx).filter((y) => !isMajorGridLine(y)) : [],
     majorX: gridLinePositions(left, right, CELL_PX),
     majorY: gridLinePositions(top, bottom, CELL_PX),
   }
@@ -319,8 +359,7 @@ function canvasGridLines(view: CanvasView, includeSubgrid: boolean) {
 const EMPTY_MODEL: SketchModel = { version: 1, cellFt: CELL_FT, contours: [], openings: [] }
 
 function fmtFt(valueFt: number): string {
-  const safe = Number.isFinite(valueFt) ? valueFt : 0
-  return `${safe.toFixed(1)} ft`
+  return formatLengthFt(valueFt)
 }
 
 function fmtLen(cells: number): string {
@@ -454,7 +493,7 @@ function segmentDimLine(model: SketchModel, seg: { c: number; s: number; a: Pt; 
   const by = seg.b.y * CELL_PX
   const { nx, ny } = outsideNormal(model, seg.c, ax, ay, bx, by)
   const offset = DIM_OFFSET_SCREEN_PX * screenWorldPx
-  return createDimLine(ax, ay, bx, by, nx, ny, offset, screenWorldPx, fmtLen(dist(seg.a, seg.b)), 'wall') as SegmentDimLine | null
+  return createDimLine(ax, ay, bx, by, nx, ny, offset, screenWorldPx, fmtFt(dist(seg.a, seg.b) * modelCellFt(model)), 'wall') as SegmentDimLine | null
 }
 
 function openingDimLabel(model: SketchModel, opening: Opening, index: number, t: (k: string) => string, screenWorldPx: number): OpeningDimLabel | null {
@@ -521,7 +560,7 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
   ctx.fillRect(0, 0, VIEW_W, VIEW_H)
   const view = fitCanvasView(model, { width: VIEW_W, height: VIEW_H })
   const viewScale = VIEW_W / view.width
-  const grid = canvasGridLines(view, viewScale * CELL_PX >= SUBGRID_HIDE_PX_PER_FT)
+  const grid = canvasGridLines(view, 0.5, viewScale * CELL_PX)
   ctx.save()
   ctx.scale(viewScale, viewScale)
   ctx.translate(-view.x, -view.y)
@@ -588,7 +627,7 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
   ctx.font = 'bold 13px sans-serif'
   ctx.textAlign = 'left'
   ctx.fillText(
-    `${t('hub_sketch_area')}: ${(area * CELL_FT * CELL_FT).toFixed(1)} ft²  ·  ${t('hub_sketch_perimeter')}: ${(perim * CELL_FT).toFixed(1)} ft`,
+    `${t('hub_sketch_area')}: ${(area * CELL_FT * CELL_FT).toFixed(1)} ft²  ·  ${t('hub_sketch_perimeter')}: ${fmtFt(perim * CELL_FT)}`,
     8,
     VIEW_H - 10,
   )
@@ -603,6 +642,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [history, setHistory] = useState<SketchModel[]>([])
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
   const [tool, setTool] = useState<Tool>('wall')
+  const [snapMode, setSnapMode] = useState<SnapMode>('1ft')
   const [hover, setHover] = useState<Pt | null>(null)
   const [hoverSnapped, setHoverSnapped] = useState(false)
   // Габариты проёмов (в футах), задаются перед вставкой.
@@ -610,6 +650,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [winW, setWinW] = useState(WIN_W_FT)
   const [winH, setWinH] = useState(WIN_H_FT)
   const [winSill, setWinSill] = useState(WIN_SILL_FT)
+  const [feetDrafts, setFeetDrafts] = useState<Partial<Record<FeetDraftField, string>>>({})
   // Перетаскивание проёма вдоль стены.
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const dragMovedRef = useRef(false)
@@ -641,6 +682,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const totalPerimeter = perContour.reduce((s, c) => s + c.perimeter, 0)
     return { perContour, totalArea, totalPerimeter }
   }, [model])
+  const activeSnapFt = snapModeStep(snapMode)
 
   // Снимок в историю перед изменением; затем применяем мутатор.
   const commit = (next: SketchModel) => {
@@ -681,6 +723,70 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setCanvasView(fitCanvasView(model, canvasSize))
   }, [model, canvasSize])
 
+  const feetInputValue = (field: FeetDraftField, fallbackFt: number): string => {
+    return feetDrafts[field] ?? formatLengthFt(fallbackFt)
+  }
+
+  const setFeetDraft = (field: FeetDraftField, value: string) => {
+    setFeetDrafts((current) => ({ ...current, [field]: value }))
+  }
+
+  const clearFeetDraft = (field: FeetDraftField) => {
+    setFeetDrafts((current) => {
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+  }
+
+  const commitFeetDraft = (field: FeetDraftField, fallbackFt: number, minFt: number, maxFt: number, apply: (valueFt: number) => void) => {
+    const raw = feetDrafts[field] ?? formatLengthFt(fallbackFt)
+    clearFeetDraft(field)
+    const parsed = parseLengthFt(raw)
+    if (!Number.isFinite(parsed)) return
+    apply(clampNumber(parsed, minFt, maxFt))
+  }
+
+  const handleFeetKeyDown = (
+    event: ReactKeyboardEvent<HTMLInputElement>,
+    field: FeetDraftField,
+    fallbackFt: number,
+    minFt: number,
+    maxFt: number,
+    apply: (valueFt: number) => void,
+  ) => {
+    if (event.key === 'Enter') {
+      commitFeetDraft(field, fallbackFt, minFt, maxFt, apply)
+      event.currentTarget.blur()
+    } else if (event.key === 'Escape') {
+      clearFeetDraft(field)
+      event.currentTarget.blur()
+    }
+  }
+
+  const lengthInput = (
+    field: FeetDraftField,
+    labelKey: string,
+    valueFt: number,
+    minFt: number,
+    maxFt: number,
+    apply: (valueFt: number) => void,
+    className = 'hub-sketch-dim-field',
+  ) => (
+    <label className={className}>
+      <span className="muted">{t(labelKey)}</span>
+      <input
+        type="text"
+        inputMode="text"
+        value={feetInputValue(field, valueFt)}
+        disabled={!canEdit}
+        onChange={(e) => setFeetDraft(field, e.target.value)}
+        onBlur={() => commitFeetDraft(field, valueFt, minFt, maxFt, apply)}
+        onKeyDown={(e) => handleFeetKeyDown(e, field, valueFt, minFt, maxFt, apply)}
+      />
+    </label>
+  )
+
   const canvasPoint = (clientX: number, clientY: number, view = canvasView): { x: number; y: number } | null => {
     const svg = svgRef.current
     if (!svg) return null
@@ -716,8 +822,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const snap = (p: Pt): Pt => ({
-    x: Math.round(p.x),
-    y: Math.round(p.y),
+    x: snapLengthFt(p.x * modelCellFt(model), activeSnapFt) / modelCellFt(model),
+    y: snapLengthFt(p.y * modelCellFt(model), activeSnapFt) / modelCellFt(model),
   })
 
   // Прилипание новой точки к вершинам/стенам ДРУГИХ контуров (общая стена не дублируется).
@@ -772,7 +878,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         if (!o) return m
         const ends = openingEnds(m, o)
         if (!ends) return m
-        const t = projectT(raw, ends.a, ends.b)
+        const rawT = projectT(raw, ends.a, ends.b)
+        const t = snapSegmentT(rawT, dist(ends.a, ends.b), modelCellFt(m), activeSnapFt)
         return { ...m, openings: m.openings.map((op, i) => (i === dragIdx ? { ...op, t } : op)) }
       })
       return
@@ -911,7 +1018,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   }
 
-  // Отпускание проёма: лёгкое прилипание к ровному футу вдоль стены.
+  // Отпускание проёма: фиксируем положение на текущем шаге точности.
   const endDragOpening = () => {
     if (dragIdx === null) return
     setModel((m) => {
@@ -919,14 +1026,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       if (!o) return m
       const ends = openingEnds(m, o)
       if (!ends) return m
-      const segLen = dist(ends.a, ends.b)
-      const cellFt = m.cellFt || CELL_FT
-      const distFt = o.t * segLen * cellFt
-      const rounded = Math.round(distFt)
-      let t = o.t
-      if (segLen > 0 && Math.abs(distFt - rounded) <= EDGE_FT_SNAP) {
-        t = Math.max(0, Math.min(1, rounded / (segLen * cellFt)))
-      }
+      const t = snapSegmentT(o.t, dist(ends.a, ends.b), modelCellFt(m), activeSnapFt)
       return { ...m, openings: m.openings.map((op, i) => (i === dragIdx ? { ...op, t } : op)) }
     })
     setDragIdx(null)
@@ -975,10 +1075,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setError('hub_sketch_no_segment')
       return
     }
+    const ends = openingEnds(model, { kind: tool, c: near.c, s: near.s, t: near.t })
+    const t = ends ? snapSegmentT(near.t, dist(ends.a, ends.b), modelCellFt(model), activeSnapFt) : near.t
     const opening: Opening =
       tool === 'door'
-        ? { kind: 'door', c: near.c, s: near.s, t: near.t, w: Math.max(0.5, doorW) }
-        : { kind: 'window', c: near.c, s: near.s, t: near.t, w: Math.max(0.5, winW), h: Math.max(0.5, winH), sill: Math.max(0, winSill) }
+        ? { kind: 'door', c: near.c, s: near.s, t, w: Math.max(0.5, doorW) }
+        : { kind: 'window', c: near.c, s: near.s, t, w: Math.max(0.5, winW), h: Math.max(0.5, winH), sill: Math.max(0, winSill) }
     commit({ ...model, openings: [...model.openings, opening] })
   }
 
@@ -1059,11 +1161,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       const lines: string[] = [`${t('hub_sketch_material_title')} — ${name.trim() || 'room'}`, '']
       stats.perContour.forEach((c, i) => {
         lines.push(
-          `${t('hub_sketch_contour')} ${i + 1}: ${t('hub_sketch_area')} ${c.area.toFixed(1)} ft² · ${t('hub_sketch_perimeter')} ${c.perimeter.toFixed(1)} ft${c.closed ? '' : ` (${t('hub_sketch_open')})`}`,
+          `${t('hub_sketch_contour')} ${i + 1}: ${t('hub_sketch_area')} ${c.area.toFixed(1)} ft² · ${t('hub_sketch_perimeter')} ${fmtFt(c.perimeter)}${c.closed ? '' : ` (${t('hub_sketch_open')})`}`,
         )
       })
       lines.push('')
-      lines.push(`${t('hub_sketch_total')}: ${t('hub_sketch_area')} ${stats.totalArea.toFixed(1)} ft² · ${t('hub_sketch_perimeter')} ${stats.totalPerimeter.toFixed(1)} ft`)
+      lines.push(`${t('hub_sketch_total')}: ${t('hub_sketch_area')} ${stats.totalArea.toFixed(1)} ft² · ${t('hub_sketch_perimeter')} ${fmtFt(stats.totalPerimeter)}`)
       await createProjectNote(profile, project.id, lines.join('\n'))
       setStatus('hub_sketch_material_saved')
     } catch {
@@ -1128,8 +1230,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const canClose = !!activeContour && !activeContour.closed && activeContour.points.length >= 3
   const heightFt = wallHeightFt(model)
   const pxPerFt = (canvasSize.width * CELL_PX) / Math.max(1, canvasView.width)
-  const showSubgrid = pxPerFt >= SUBGRID_HIDE_PX_PER_FT
-  const gridLines = useMemo(() => canvasGridLines(canvasView, showSubgrid), [canvasView, showSubgrid])
+  const gridLines = useMemo(() => canvasGridLines(canvasView, activeSnapFt, pxPerFt), [canvasView, activeSnapFt, pxPerFt])
   const screenWorldPx = canvasView.width / Math.max(1, canvasSize.width)
   const nodeRadius = Math.max(3, Math.min(18, 5 * screenWorldPx))
   const hoverRadius = Math.max(4, Math.min(20, 6 * screenWorldPx))
@@ -1158,18 +1259,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             </button>
           ))}
         </div>
-        <label className="hub-sketch-height-field">
-          <span className="muted">{t('hub_sketch_wall_height')}</span>
-          <input
-            type="number"
-            min="1"
-            step="0.5"
-            value={heightFt}
-            disabled={!canEdit}
-            onChange={(e) => updateWallHeight(Number(e.target.value))}
-          />
-          <span className="muted">ft</span>
-        </label>
+        {lengthInput('wallHeight', 'hub_sketch_wall_height', heightFt, 1, 30, updateWallHeight, 'hub-sketch-height-field')}
       </div>
 
       {canEdit && viewMode === '2d' && (
@@ -1197,32 +1287,30 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               {t('hub_sketch_clear')}
             </button>
           </div>
+          <div className="hub-sketch-snap" role="group" aria-label={t('hub_sketch_snap')}>
+            <span className="muted">{t('hub_sketch_snap')}</span>
+            {SNAP_OPTIONS.map((option) => (
+              <button
+                key={option.mode}
+                type="button"
+                className={snapMode === option.mode ? 'btn small' : 'btn ghost small'}
+                aria-pressed={snapMode === option.mode}
+                onClick={() => setSnapMode(option.mode)}
+              >
+                {t(option.labelKey)}
+              </button>
+            ))}
+          </div>
           {tool === 'door' && (
             <div className="hub-sketch-dims">
-              <label className="hub-sketch-dim-field">
-                <span className="muted">{t('hub_sketch_width')}</span>
-                <input type="number" min="0.5" step="0.5" value={doorW} onChange={(e) => setDoorW(Number(e.target.value) || 0)} />
-                <span className="muted">ft</span>
-              </label>
+              {lengthInput('doorW', 'hub_sketch_width', doorW, 0.5, 20, setDoorW)}
             </div>
           )}
           {tool === 'window' && (
             <div className="hub-sketch-dims">
-              <label className="hub-sketch-dim-field">
-                <span className="muted">{t('hub_sketch_width')}</span>
-                <input type="number" min="0.5" step="0.5" value={winW} onChange={(e) => setWinW(Number(e.target.value) || 0)} />
-                <span className="muted">ft</span>
-              </label>
-              <label className="hub-sketch-dim-field">
-                <span className="muted">{t('hub_sketch_height')}</span>
-                <input type="number" min="0.5" step="0.5" value={winH} onChange={(e) => setWinH(Number(e.target.value) || 0)} />
-                <span className="muted">ft</span>
-              </label>
-              <label className="hub-sketch-dim-field">
-                <span className="muted">{t('hub_sketch_sill')}</span>
-                <input type="number" min="0" step="0.5" value={winSill} onChange={(e) => setWinSill(Number(e.target.value) || 0)} />
-                <span className="muted">ft</span>
-              </label>
+              {lengthInput('winW', 'hub_sketch_width', winW, 0.5, 20, setWinW)}
+              {lengthInput('winH', 'hub_sketch_height', winH, 0.5, 20, setWinH)}
+              {lengthInput('winSill', 'hub_sketch_sill', winSill, 0, 20, setWinSill)}
             </div>
           )}
         </div>
@@ -1374,7 +1462,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     y2={hover.y * CELL_PX}
                   />
                   <text className="hub-sketch-live-dim" x={mx} y={my - 6} textAnchor="middle">
-                    {fmtLen(dist(last, hover))}
+                    {fmtFt(dist(last, hover) * modelCellFt(model))}
                   </text>
                 </g>
               )
@@ -1441,7 +1529,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         </div>
         <div className="hub-sketch-stat">
           <span className="muted">{t('hub_sketch_perimeter')}</span>
-          <span className="hub-sketch-stat-value">{stats.totalPerimeter.toFixed(1)} ft</span>
+          <span className="hub-sketch-stat-value">{fmtFt(stats.totalPerimeter)}</span>
         </div>
         <div className="hub-sketch-stat">
           <span className="muted">{t('hub_sketch_contours')}</span>

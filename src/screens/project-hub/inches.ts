@@ -4,9 +4,14 @@ function roundToSixteenth(value: number): number {
   return Math.round(value / SIXTEENTH) * SIXTEENTH
 }
 
-function stripInchUnit(value: string): string {
+function normalizeUnits(value: string): string {
   return value
+    .replace(/[′‘’]/g, "'")
     .replace(/[″“”]/g, '"')
+}
+
+function stripInchUnit(value: string): string {
+  return normalizeUnits(value)
     .replace(/\s*(?:"|in\.?|inch|inches)\s*$/i, '')
     .trim()
 }
@@ -68,4 +73,53 @@ export function formatInches(value: number): string {
   const denominator = 16 / divisor
   const fraction = `${numerator}/${denominator}`
   return whole > 0 ? `${sign}${whole} ${fraction}"` : `${sign}${fraction}"`
+}
+
+export function parseFeetInches(value: string): number {
+  const body = normalizeUnits(value).trim()
+  if (!body) return Number.NaN
+
+  const sign = body.startsWith('-') ? -1 : 1
+  const unsigned = body.replace(/^[+-]\s*/, '').trim()
+  if (!unsigned) return Number.NaN
+
+  const footMatch = unsigned.match(/^(.+?)\s*(?:ft\.?|feet|foot|')\s*(.*)$/i)
+  if (footMatch) {
+    const feet = parseInches(footMatch[1])
+    if (!Number.isFinite(feet)) return Number.NaN
+    const rest = footMatch[2].trim()
+    if (!rest) return roundToSixteenth(sign * feet * 12)
+    const inches = parseInches(rest)
+    if (!Number.isFinite(inches)) return Number.NaN
+    return roundToSixteenth(sign * (feet * 12 + Math.abs(inches)))
+  }
+
+  return parseInches(body)
+}
+
+export function formatFeetInches(valueInches: number): string {
+  const units = Math.round((Number.isFinite(valueInches) ? valueInches : 0) * 16)
+  const sign = units < 0 ? '-' : ''
+  const absUnits = Math.abs(units)
+  const unitsPerFoot = 12 * 16
+  const feet = Math.floor(absUnits / unitsPerFoot)
+  const inchUnits = absUnits % unitsPerFoot
+  const wholeInches = Math.floor(inchUnits / 16)
+  const fractionUnits = inchUnits % 16
+
+  const parts: string[] = []
+  if (feet > 0) parts.push(`${feet} ft`)
+
+  if (wholeInches > 0 || fractionUnits > 0 || parts.length === 0) {
+    let inchText = ''
+    if (wholeInches > 0) inchText = `${wholeInches}`
+    if (fractionUnits > 0) {
+      const divisor = gcd(fractionUnits, 16)
+      const fraction = `${fractionUnits / divisor}/${16 / divisor}`
+      inchText = inchText ? `${inchText} ${fraction}` : fraction
+    }
+    parts.push(`${inchText} in`)
+  }
+
+  return `${sign}${parts.join(' ')}`
 }

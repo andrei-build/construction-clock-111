@@ -15,6 +15,7 @@ import {
   createTilePatternCanvas,
   normalizeFinishes,
   normalizeTileSurface,
+  sketchWallKey,
   type Pt,
   type Sketch3DModel,
   type SketchLight,
@@ -23,7 +24,8 @@ import {
   type SketchSwitch,
   type SketchTileFinish,
 } from './sketchFinishes'
-import { formatInches, parseInches } from './inches'
+import { formatFeetInches, formatInches, parseInches } from './inches'
+import WallElevation from './WallElevation'
 import {
   catalogDimsFromItem,
   catalogDimsText,
@@ -57,10 +59,11 @@ const DEFAULT_SWITCH_HEIGHT_FT = 4
 const DEFAULT_SCONCE_HEIGHT_FT = 5.6
 const ORBIT_FOV_DEG = 65
 const INSIDE_FOV_DEG = 70
+const FULLSCREEN_FOV_DEG = 75
 const EYE_HEIGHT_FT = 5.5
 const SW_COLOR_LIMIT = 48
 
-type SurfaceTarget = 'walls' | 'floor'
+type SurfaceTarget = 'walls' | 'wall' | 'floor'
 type PlacementKind = SketchLightKind | 'switch' | null
 type Segment = { c: number; s: number; a: Pt; b: Pt }
 type CameraPreset = 'fit' | 'top' | 'angle' | 'inside'
@@ -260,8 +263,7 @@ function segmentLengthFt(model: Sketch3DModel, c: number | undefined, s: number 
 }
 
 function formatFeet(valueFt: number): string {
-  const safe = Number.isFinite(valueFt) ? valueFt : 0
-  return `${safe.toFixed(1)} ft`
+  return formatFeetInches((Number.isFinite(valueFt) ? valueFt : 0) * 12)
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -686,6 +688,7 @@ function addDimensionLineGroup(
 
 export default function Sketch3DView({ model, heightFt, canEdit = false, onModelChange, label, loadingLabel, errorLabel }: Sketch3DViewProps) {
   const { t } = useI18n()
+  const shellRef = useRef<HTMLDivElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cameraApiRef = useRef<Record<CameraPreset, () => void> | null>(null)
   const dimensionGroupRef = useRef<any | null>(null)
@@ -697,6 +700,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const [showDimensions, setShowDimensions] = useState(false)
   const [cameraMode, setCameraMode] = useState<CameraPreset>('fit')
   const [surfaceTarget, setSurfaceTarget] = useState<SurfaceTarget>('walls')
+  const [selectedWallKey, setSelectedWallKey] = useState<string | null>(null)
   const [placement, setPlacement] = useState<PlacementKind>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([])
@@ -705,6 +709,8 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const [catalogPlacementId, setCatalogPlacementId] = useState<string | null>(null)
   const [paintSearch, setPaintSearch] = useState('')
   const [inchDrafts, setInchDrafts] = useState<Partial<Record<InchDraftField, string>>>({})
+  const [browserFullscreen, setBrowserFullscreen] = useState(false)
+  const [fullscreenFallback, setFullscreenFallback] = useState(false)
 
   const finishes = useMemo(() => normalizeFinishes(model.finishes), [model.finishes])
   const lights = useMemo(() => model.lights ?? [], [model.lights])
@@ -721,12 +727,27 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const selectedSwitch = switches.find((sw) => sw.id === selectedId) ?? null
   const selectedPlaced = resolvedPlacedItems.find((item) => item.placed.id === selectedId) ?? null
   const catalogPlacementItem = catalogPlacementId ? catalogById.get(catalogPlacementId) ?? null : null
+  const fullscreenActive = browserFullscreen || fullscreenFallback
   const catalogGroups = useMemo(
     () => CATALOG_CATEGORIES.map((category) => ({ category, rows: catalogItems.filter((item) => item.category === category) }))
       .filter((group) => group.rows.length > 0),
     [catalogItems],
   )
-  const activeSurface = finishes[surfaceTarget]
+  const wallSegments = useMemo(() => eachSegment(model), [model])
+  const effectiveSelectedWallKey = selectedWallKey && wallSegments.some((seg) => sketchWallKey(seg.c, seg.s) === selectedWallKey)
+    ? selectedWallKey
+    : wallSegments[0]
+      ? sketchWallKey(wallSegments[0].c, wallSegments[0].s)
+      : null
+  const selectedWall = effectiveSelectedWallKey
+    ? wallSegments.find((seg) => sketchWallKey(seg.c, seg.s) === effectiveSelectedWallKey) ?? null
+    : null
+  const selectedWallFinish = effectiveSelectedWallKey ? finishes.wallFinishes[effectiveSelectedWallKey] : undefined
+  const activeSurface = surfaceTarget === 'floor'
+    ? finishes.floor
+    : surfaceTarget === 'wall'
+      ? selectedWallFinish ?? finishes.walls
+      : finishes.walls
   const activeTile = useMemo(() => normalizeTileSurface(activeSurface), [activeSurface])
   const swColorMatches = useMemo(() => {
     const query = paintSearch.trim().toLowerCase()
@@ -736,8 +757,13 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
     return rows.slice(0, SW_COLOR_LIMIT)
   }, [paintSearch])
   const boundsForCuts = modelBounds(model)
-  const surfaceHeightIn = surfaceTarget === 'walls' ? Math.max(1, heightFt * 12) : Math.max(12, boundsForCuts.depth * 12)
-  const surfaceWidthIn = surfaceTarget === 'walls' ? longestWallIn(model) : Math.max(12, boundsForCuts.width * 12)
+  const selectedWallLengthFt = selectedWall ? dist(selectedWall.a, selectedWall.b) * modelCellFt(model) : null
+  const surfaceHeightIn = surfaceTarget === 'floor' ? Math.max(12, boundsForCuts.depth * 12) : Math.max(1, heightFt * 12)
+  const surfaceWidthIn = surfaceTarget === 'floor'
+    ? Math.max(12, boundsForCuts.width * 12)
+    : selectedWallLengthFt
+      ? Math.max(12, selectedWallLengthFt * 12)
+      : longestWallIn(model)
   const cutSummary = activeSurface.kind === 'tile' ? calculateTileCuts(activeSurface, surfaceHeightIn, surfaceWidthIn) : null
   const selectedPlacedDoesNotFit = selectedPlaced
     ? placedCatalogDoesNotFit(selectedPlaced.placed, selectedPlaced.dims, boundsForCuts, heightFt, segmentLengthFt(model, selectedPlaced.placed.c, selectedPlaced.placed.s))
@@ -751,6 +777,16 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   useEffect(() => {
     setInchDrafts({})
   }, [surfaceTarget, activeTile.tileWIn, activeTile.tileHIn, activeTile.groutIn, activeTile.offsetXIn, activeTile.offsetYIn])
+
+  useEffect(() => {
+    if (wallSegments.length === 0) {
+      if (selectedWallKey) setSelectedWallKey(null)
+      return
+    }
+    if (!effectiveSelectedWallKey || selectedWallKey !== effectiveSelectedWallKey) {
+      setSelectedWallKey(effectiveSelectedWallKey)
+    }
+  }, [wallSegments, selectedWallKey, effectiveSelectedWallKey])
 
   const applyModel = (next: Sketch3DModelWithCatalog) => {
     if (!canEdit) return
@@ -766,6 +802,20 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
 
   const updateSurface = (surface: SketchSurfaceFinish) => {
     const nextFinishes = normalizeFinishes(model.finishes)
+    if (surfaceTarget === 'wall') {
+      if (!effectiveSelectedWallKey) return
+      applyModel({
+        ...model,
+        finishes: {
+          ...nextFinishes,
+          wallFinishes: {
+            ...nextFinishes.wallFinishes,
+            [effectiveSelectedWallKey]: surface,
+          },
+        },
+      })
+      return
+    }
     const next = { ...nextFinishes, [surfaceTarget]: surface }
     if (surfaceTarget === 'walls' && surface.kind === 'paint') next.wallPaint = cleanColor(surface.color, DEFAULT_WALL_PAINT)
     applyModel({ ...model, finishes: next })
@@ -776,6 +826,20 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
     const nextFinishes = normalizeFinishes(model.finishes)
     const nextWalls = nextFinishes.walls.kind === 'paint' ? { kind: 'paint' as const, color: clean } : nextFinishes.walls
     applyModel({ ...model, finishes: { ...nextFinishes, wallPaint: clean, walls: nextWalls } })
+  }
+
+  const updatePaintColor = (color: string) => {
+    const clean = cleanColor(color, DEFAULT_WALL_PAINT)
+    if (surfaceTarget === 'walls') updateWallPaint(clean)
+    else updateSurface({ kind: 'paint', color: clean })
+  }
+
+  const clearSelectedWallFinish = () => {
+    if (!effectiveSelectedWallKey) return
+    const nextFinishes = normalizeFinishes(model.finishes)
+    const nextWallFinishes = { ...nextFinishes.wallFinishes }
+    delete nextWallFinishes[effectiveSelectedWallKey]
+    applyModel({ ...model, finishes: { ...nextFinishes, wallFinishes: nextWallFinishes } })
   }
 
   const updateTile = (patch: Partial<SketchTileFinish>) => {
@@ -906,6 +970,29 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   }, [canEdit, selectedPlaced, placedItems])
 
   useEffect(() => {
+    const onFullscreenChange = () => {
+      const active = document.fullscreenElement === shellRef.current
+      setBrowserFullscreen(active)
+      if (active) setFullscreenFallback(false)
+      invalidate3DRef.current?.()
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
+
+  useEffect(() => {
+    if (!fullscreenFallback) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setFullscreenFallback(false)
+        invalidate3DRef.current?.()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [fullscreenFallback])
+
+  useEffect(() => {
     dimensionsVisibleRef.current = showDimensions
     if (dimensionGroupRef.current) dimensionGroupRef.current.visible = showDimensions
     invalidate3DRef.current?.()
@@ -949,6 +1036,8 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const span = Math.max(bounds.width, bounds.depth, height, 12)
         const centerX = bounds.minX + bounds.width / 2
         const centerZ = bounds.minZ + bounds.depth / 2
+        const orbitFov = fullscreenActive ? FULLSCREEN_FOV_DEG : ORBIT_FOV_DEG
+        const insideFov = fullscreenActive ? FULLSCREEN_FOV_DEG : INSIDE_FOV_DEG
         const fitPad = Math.max(1.25, Math.min(8, span * 0.08))
         const sceneMinX = bounds.minX - WALL_THICKNESS_FT / 2 - fitPad
         const sceneMaxX = bounds.maxX + WALL_THICKNESS_FT / 2 + fitPad
@@ -971,7 +1060,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const sceneRadius = Math.hypot(paddedWidth, paddedDepth, height) / 2
         const minCameraDistance = Math.max(6, height * 1.05, floorRadius * 1.12)
         const maxCameraDistance = Math.max(minCameraDistance + span * 2, sceneRadius * 8, 60)
-        const camera = new THREE.PerspectiveCamera(ORBIT_FOV_DEG, 1, 0.1, Math.max(300, maxCameraDistance * 4))
+        const camera = new THREE.PerspectiveCamera(orbitFov, 1, 0.1, Math.max(300, maxCameraDistance * 4))
 
         const controls = new OrbitControls(camera, renderer.domElement)
         controls.enableDamping = true
@@ -1055,7 +1144,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           insideMode = true
           controls.enabled = false
           setCameraUp(false)
-          camera.fov = INSIDE_FOV_DEG
+          camera.fov = insideFov
           camera.near = 0.03
           camera.far = Math.max(300, maxCameraDistance * 4)
           camera.position.set(insideCenter.x, eyeY, insideCenter.z)
@@ -1088,7 +1177,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const fitCamera = (preset: CameraPreset = 'fit') => {
           insideMode = false
           controls.enabled = true
-          camera.fov = ORBIT_FOV_DEG
+          camera.fov = orbitFov
           const direction =
             preset === 'top'
               ? new THREE.Vector3(0.001, 1, 0.001).normalize()
@@ -1177,7 +1266,8 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           const dz = b.z - a.z
           const len = Math.hypot(dx, dz)
           if (len <= 0.01) return
-          const wall = new THREE.Mesh(new THREE.BoxGeometry(len, height, WALL_THICKNESS_FT), createWallMaterial(THREE, wallSurface, len, height))
+          const wallFinish = finishes.wallFinishes[sketchWallKey(seg.c, seg.s)] ?? wallSurface
+          const wall = new THREE.Mesh(new THREE.BoxGeometry(len, height, WALL_THICKNESS_FT), createWallMaterial(THREE, wallFinish, len, height))
           wall.position.set((a.x + b.x) / 2, height / 2, (a.z + b.z) / 2)
           wall.rotation.y = -Math.atan2(dz, dx)
           wall.castShadow = false
@@ -1724,7 +1814,36 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
       cleanup?.()
       host.replaceChildren()
     }
-  }, [model, heightFt, finishes, canEdit, onModelChange, selectedId, t, lights, switches, placedItems, resolvedPlacedItems])
+  }, [model, heightFt, finishes, canEdit, onModelChange, selectedId, t, lights, switches, placedItems, resolvedPlacedItems, fullscreenActive])
+
+  const toggleFullscreen = async () => {
+    const shell = shellRef.current
+    if (!shell) return
+    if (fullscreenActive) {
+      setFullscreenFallback(false)
+      if (document.fullscreenElement === shell && document.exitFullscreen) {
+        try {
+          await document.exitFullscreen()
+        } catch {
+          setBrowserFullscreen(false)
+        }
+      } else {
+        setBrowserFullscreen(false)
+      }
+      invalidate3DRef.current?.()
+      return
+    }
+    if (shell.requestFullscreen) {
+      try {
+        await shell.requestFullscreen()
+        return
+      } catch {
+        setBrowserFullscreen(false)
+      }
+    }
+    setFullscreenFallback(true)
+    invalidate3DRef.current?.()
+  }
 
   const tileSizeValue = `${activeTile.tileWIn ?? 12}x${activeTile.tileHIn ?? 24}`
   const tileSizePresetValue = TILE_SIZE_OPTIONS.some((option) => `${option.w}x${option.h}` === tileSizeValue) ? tileSizeValue : 'custom'
@@ -1736,7 +1855,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
 
   return (
     <div className="hub-sketch-3d-layout">
-      <div className="hub-sketch-3d-shell" role="img" aria-label={label}>
+      <div ref={shellRef} className={fullscreenActive ? 'hub-sketch-3d-shell hub-sketch-3d-shell-fullscreen' : 'hub-sketch-3d-shell'} role="img" aria-label={label}>
         <div ref={hostRef} className="hub-sketch-3d-canvas" />
         <label className="hub-sketch-3d-dim-toggle">
           <input
@@ -1759,6 +1878,9 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           </button>
           <button type="button" className={cameraButtonClass('inside')} onClick={() => setCameraPreset('inside')}>
             {t('hub_sketch_camera_inside')}
+          </button>
+          <button type="button" className="btn ghost small" aria-pressed={fullscreenActive} onClick={toggleFullscreen}>
+            {t(fullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
           </button>
         </div>
         {state === 'loading' && <div className="hub-sketch-3d-overlay muted">{loadingLabel}</div>}
@@ -1800,17 +1922,42 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           <section className="hub-sketch-3d-section">
             <h3>{t('hub_sketch_3d_finishes')}</h3>
             <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_3d_surface')}>
-              {(['walls', 'floor'] as SurfaceTarget[]).map((target) => (
+              {(['walls', 'wall', 'floor'] as SurfaceTarget[]).map((target) => (
                 <button
                   key={target}
                   type="button"
                   className={surfaceTarget === target ? 'btn small' : 'btn ghost small'}
+                  disabled={target === 'wall' && wallSegments.length === 0}
                   onClick={() => setSurfaceTarget(target)}
                 >
-                  {t(target === 'walls' ? 'hub_sketch_3d_walls' : 'hub_sketch_3d_floor')}
+                  {t(target === 'walls' ? 'hub_sketch_3d_walls' : target === 'wall' ? 'hub_sketch_3d_wall_selected' : 'hub_sketch_3d_floor')}
                 </button>
               ))}
             </div>
+
+            {surfaceTarget === 'wall' && selectedWall && effectiveSelectedWallKey && (
+              <div className="hub-sketch-wall-tools">
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_3d_wall')}</span>
+                  <select value={effectiveSelectedWallKey} onChange={(event) => setSelectedWallKey(event.target.value)}>
+                    {wallSegments.map((seg, index) => {
+                      const key = sketchWallKey(seg.c, seg.s)
+                      return (
+                        <option key={key} value={key}>
+                          {`${t('hub_sketch_3d_wall')} ${index + 1} · ${formatFeet(dist(seg.a, seg.b) * modelCellFt(model))}`}
+                        </option>
+                      )
+                    })}
+                  </select>
+                </label>
+                <WallElevation model={model} wall={selectedWall} heightFt={heightFt} finish={activeSurface} />
+                {selectedWallFinish && (
+                  <button type="button" className="btn ghost small" onClick={clearSelectedWallFinish}>
+                    {t('hub_sketch_3d_wall_use_all')}
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_3d_finish_mode')}>
               {(['paint', 'tile'] as const).map((kind) => (
@@ -1818,14 +1965,14 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
                   key={kind}
                   type="button"
                   className={activeSurface.kind === kind ? 'btn small' : 'btn ghost small'}
-                  onClick={() => updateSurface(kind === 'tile' ? normalizeTileSurface(activeSurface) : { kind: 'paint', color: surfaceTarget === 'walls' ? finishes.wallPaint : DEFAULT_FLOOR_PAINT })}
+                  onClick={() => updateSurface(kind === 'tile' ? normalizeTileSurface(activeSurface) : { kind: 'paint', color: surfaceTarget === 'floor' ? DEFAULT_FLOOR_PAINT : activeSurface.kind === 'paint' ? activeSurface.color : finishes.wallPaint })}
                 >
                   {t(kind === 'paint' ? 'hub_sketch_3d_paint' : 'hub_sketch_3d_tile')}
                 </button>
               ))}
             </div>
 
-            {surfaceTarget === 'walls' && (
+            {surfaceTarget !== 'floor' && (
               <div className="hub-sketch-paint-picker" aria-label={t('hub_sketch_3d_wall_color')}>
                 <div className="hub-sketch-color-row">
                   {WALL_PAINT_SWATCHES.map((color) => (
@@ -1835,14 +1982,14 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
                       className="hub-sketch-swatch"
                       style={{ backgroundColor: color }}
                       aria-label={color}
-                      onClick={() => updateWallPaint(color)}
+                      onClick={() => updatePaintColor(color)}
                     />
                   ))}
                   <input
                     className="hub-sketch-color-input"
                     type="color"
-                    value={cleanColor(finishes.wallPaint, DEFAULT_WALL_PAINT)}
-                    onChange={(e) => updateWallPaint(e.target.value)}
+                    value={cleanColor(activeSurface.kind === 'paint' ? activeSurface.color : finishes.wallPaint, DEFAULT_WALL_PAINT)}
+                    onChange={(e) => updatePaintColor(e.target.value)}
                     aria-label={t('hub_sketch_3d_custom_color')}
                   />
                 </div>
@@ -1855,13 +2002,13 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
                 />
                 <div className="hub-sketch-sw-grid">
                   {swColorMatches.map((color) => {
-                    const selected = cleanColor(finishes.wallPaint, DEFAULT_WALL_PAINT).toLowerCase() === color.hex.toLowerCase()
+                    const selected = cleanColor(activeSurface.kind === 'paint' ? activeSurface.color : finishes.wallPaint, DEFAULT_WALL_PAINT).toLowerCase() === color.hex.toLowerCase()
                     return (
                       <button
                         key={color.code}
                         type="button"
                         className={selected ? 'hub-sketch-sw-chip hub-sketch-sw-chip-active' : 'hub-sketch-sw-chip'}
-                        onClick={() => updateWallPaint(color.hex)}
+                        onClick={() => updatePaintColor(color.hex)}
                         title={`${color.code} ${color.name}`}
                       >
                         <span className="hub-sketch-sw-dot" style={{ backgroundColor: color.hex }} aria-hidden="true" />
