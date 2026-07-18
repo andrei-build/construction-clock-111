@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
+
+// MARKUP-1: слой разметки грузим лениво — canvas/распознавание не раздувают основной бандл.
+const MarkupLayer = lazy(() => import('./markup/MarkupLayer'))
 
 // LIGHTBOX-1: единый лайтбокс изображений для ВСЕГО приложения (Закон Андрея: «все фотографии
 // открываются сначала большим размером по центру окна, а если надо — на весь экран В ПРИЛОЖЕНИИ,
@@ -16,6 +19,10 @@ export interface LightboxImage {
   // Резолвит отображаемый/скачиваемый URL картинки. Лайтбокс дёргает resolve() максимум один раз
   // на элемент (результат кэшируется по id). Reject → статус ошибки для этого элемента.
   resolve: () => Promise<string>
+  // MARKUP-1 (необязательно): сохранить PNG-копию с разметкой рядом с оригиналом через загрузчик
+  // экрана (переиспользуем существующий upload; api.ts не трогаем). Не задан → в разметке доступно
+  // только «Скачать». Экран сам решает, куда класть копию (файлы проекта/клиента/…).
+  saveMarkup?: (blob: Blob, name: string) => Promise<void>
 }
 
 // MAIL-UX-2 совместимость: старое имя типа сохраняем как алиас.
@@ -39,6 +46,8 @@ export default function ImageLightbox({ images, initialIndex, onClose }: Props) 
   const [urls, setUrls] = useState<Record<string, string>>({})
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [isFull, setIsFull] = useState(false)
+  // MARKUP-1: активен ли слой разметки поверх текущей картинки.
+  const [markup, setMarkup] = useState(false)
 
   // Зум/панорама текущей картинки. Сбрасываются при листании.
   const [scale, setScale] = useState(1)
@@ -50,6 +59,7 @@ export default function ImageLightbox({ images, initialIndex, onClose }: Props) 
 
   const rootRef = useRef<HTMLDivElement | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
+  const imgRef = useRef<HTMLImageElement | null>(null)
   // Активные указатели (pointerId → координаты) для панорамы/пинча; pinchDist — прошлое расстояние
   // между двумя пальцами (для вычисления коэффициента масштаба).
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map())
@@ -72,20 +82,35 @@ export default function ImageLightbox({ images, initialIndex, onClose }: Props) 
 
   const go = useCallback((delta: number) => {
     if (images.length === 0) return
+    setMarkup(false) // MARKUP-1: смена картинки закрывает слой разметки (не переносим штрихи на другое фото).
     setIndex((i) => (i + delta + images.length) % images.length)
     resetView()
   }, [images.length, resetView])
 
+  // Вход в разметку — с чистого вида (масштаб 1, без панорамы), чтобы холст совпал с картинкой.
+  const toggleMarkup = useCallback(() => {
+    setMarkup((m) => {
+      if (!m) resetView()
+      return !m
+    })
+  }, [resetView])
+
   // Клавиатура: Esc — закрыть, ← → — листать между картинками.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { if (!document.fullscreenElement) onClose() }
-      else if (e.key === 'ArrowLeft') go(-1)
+      if (e.key === 'Escape') {
+        // MARKUP-1: в разметке Esc выходит из слоя, а не закрывает лайтбокс.
+        if (markup) { setMarkup(false); return }
+        if (!document.fullscreenElement) onClose()
+      } else if (markup) {
+        // Не листаем картинки, пока открыт слой разметки (стрелки могут набираться в заметке).
+        return
+      } else if (e.key === 'ArrowLeft') go(-1)
       else if (e.key === 'ArrowRight') go(1)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, go])
+  }, [onClose, go, markup])
 
   // «На весь экран» через Fullscreen API поверх оверлея. Синхронизируем локальный флаг с реальным
   // состоянием (пользователь может выйти из fullscreen системным Esc/жестом).
@@ -159,6 +184,17 @@ export default function ImageLightbox({ images, initialIndex, onClose }: Props) 
   return (
     <div className="mail-lightbox" role="dialog" aria-modal="true" ref={rootRef} onClick={onClose}>
       <div className="mail-lightbox-bar" onClick={(e) => e.stopPropagation()}>
+        {status === 'ready' && currentUrl && (
+          <button
+            type="button"
+            className={`mail-lightbox-btn${markup ? ' active' : ''}`}
+            aria-label={t('markup_toggle')}
+            aria-pressed={markup}
+            onClick={toggleMarkup}
+          >
+            ✏️ {t('markup_toggle')}
+          </button>
+        )}
         <button
           type="button"
           className="mail-lightbox-btn"
@@ -186,7 +222,7 @@ export default function ImageLightbox({ images, initialIndex, onClose }: Props) 
         <button type="button" className="mail-lightbox-btn" aria-label={t('lightbox_close')} onClick={onClose}>✕</button>
       </div>
 
-      {many && (
+      {many && !markup && (
         <>
           <button
             type="button"
@@ -219,16 +255,34 @@ export default function ImageLightbox({ images, initialIndex, onClose }: Props) 
         {status === 'loading' && <div className="mail-lightbox-msg">{t('lightbox_loading')}</div>}
         {status === 'error' && <div className="mail-lightbox-msg">{t('lightbox_error')}</div>}
         {status === 'ready' && currentUrl && (
-          <img
-            className="mail-lightbox-img"
-            src={currentUrl}
-            alt={current?.name ?? ''}
-            draggable={false}
-            style={{
-              transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
-              cursor: scale > 1 ? 'grab' : 'zoom-in',
-            }}
-          />
+          // MARKUP-1: img + слой разметки в одной трансформируемой обёртке — canvas всегда совпадает с
+          // картинкой при любом зуме/панораме (родитель масштабируется, координаты берём из bounding rect).
+          <div
+            className="mail-lightbox-canvaswrap"
+            style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }}
+          >
+            <img
+              ref={imgRef}
+              className="mail-lightbox-img"
+              src={currentUrl}
+              alt={current?.name ?? ''}
+              draggable={false}
+              style={{ cursor: markup ? 'crosshair' : scale > 1 ? 'grab' : 'zoom-in' }}
+            />
+            {markup && imgRef.current && (
+              <Suspense fallback={null}>
+                <MarkupLayer
+                  key={current?.id}
+                  imageEl={imgRef.current}
+                  imageName={current?.name ?? null}
+                  saveMarkup={current?.saveMarkup}
+                  portalTarget={rootRef.current}
+                  onExit={() => setMarkup(false)}
+                  t={t}
+                />
+              </Suspense>
+            )}
+          </div>
         )}
       </div>
 

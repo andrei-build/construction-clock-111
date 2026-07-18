@@ -5534,6 +5534,64 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding: 4px 12px; border-radius: 999px;
   background: var(--panel2); color: var(--text); font-size: 13px; z-index: 2;
 }
+.mail-lightbox-btn.active { background: var(--accent, #3b82f6); color: #fff; }
+
+/* MARKUP-1: обёртка img + слой разметки (общая трансформация зума/панорамы). */
+.mail-lightbox-canvaswrap { position: relative; display: inline-flex; will-change: transform; }
+.markup-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  touch-action: none; z-index: 1;
+}
+
+/* MARKUP-1: плавающий тулбар разметки — крупные тап-таргеты (планшет/стилус), поверх оверлея. */
+.markup-toolbar {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px;
+  padding: 8px 10px; border-radius: 14px; z-index: 120; max-width: 96vw;
+  background: rgba(17, 24, 39, .96); box-shadow: 0 8px 30px rgba(0, 0, 0, .5);
+}
+.markup-group { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
+.markup-group + .markup-group { border-left: 1px solid rgba(255, 255, 255, .14); }
+.markup-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 44px; height: 44px; padding: 0 10px; border: none; border-radius: 10px;
+  background: rgba(255, 255, 255, .08); color: #f8fafc;
+  font-size: 18px; font-weight: 600; line-height: 1; cursor: pointer; text-decoration: none;
+}
+.markup-btn:hover { background: rgba(255, 255, 255, .16); }
+.markup-btn.active { background: var(--accent, #3b82f6); color: #fff; }
+.markup-btn:disabled { opacity: .4; cursor: default; }
+.markup-btn.markup-save { background: var(--accent, #3b82f6); color: #fff; font-size: 14px; }
+.markup-btn.markup-done { font-size: 14px; }
+.markup-swatch {
+  width: 32px; height: 32px; border-radius: 50%; cursor: pointer;
+  border: 2px solid rgba(255, 255, 255, .35); box-shadow: 0 0 0 1px rgba(0, 0, 0, .4) inset;
+}
+.markup-swatch.active { border-color: #fff; box-shadow: 0 0 0 3px var(--accent, #3b82f6); }
+.markup-width .markup-width-dot { display: inline-block; border-radius: 50%; background: currentColor; }
+.markup-keep {
+  position: fixed; left: 50%; bottom: 78px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; z-index: 121;
+  padding: 8px 12px; border-radius: 999px;
+  background: rgba(17, 24, 39, .97); color: #f8fafc; font-size: 13px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .5);
+}
+.markup-keep button {
+  border: none; border-radius: 999px; padding: 6px 12px; cursor: pointer;
+  background: var(--accent, #3b82f6); color: #fff; font-size: 13px; font-weight: 600;
+}
+.markup-toast {
+  position: fixed; left: 50%; bottom: 78px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; z-index: 122;
+  padding: 8px 12px; border-radius: 12px;
+  background: rgba(17, 24, 39, .98); color: #f8fafc; font-size: 13px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .5);
+}
+.markup-text-input {
+  position: fixed; z-index: 123; min-width: 120px;
+  padding: 4px 8px; border-radius: 8px; border: 2px solid var(--accent, #3b82f6);
+  background: rgba(17, 24, 39, .95); font-size: 18px; font-weight: 600;
+}
 
 /* AI-1-UI: «строка-командир» — кнопка «Спроси» в сайдбаре + оверлей-диалог ассистента. */
 .side-ask {
