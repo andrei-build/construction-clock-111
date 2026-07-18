@@ -8,6 +8,7 @@ import {
   uploadErrorCode,
 } from '../../lib/api'
 import type { Profile, Project, ProjectHubFile } from '../../lib/types'
+import { useImageLightbox, type LightboxImage } from '../../components/ImageLightbox'
 
 interface FilesTabProps {
   project: Project
@@ -57,8 +58,10 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [openBusyId, setOpenBusyId] = useState<string | null>(null)
   const [openError, setOpenError] = useState(false)
-  // Лайтбокс для изображений/видео; прочие файлы открываем в новой вкладке.
-  const [lightbox, setLightbox] = useState<{ url: string; kind: 'image' | 'video'; name: string } | null>(null)
+  // LIGHTBOX-1: изображения — через общий лайтбокс (зум/листание/на весь экран/скачать В ПРИЛОЖЕНИИ).
+  const lb = useImageLightbox()
+  // Видео остаётся в простом оверлее; прочие файлы (pdf и т.п.) открываем в новой вкладке — прежнее поведение.
+  const [videoLightbox, setVideoLightbox] = useState<{ url: string; name: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -130,15 +133,28 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
   }
 
   const openFile = async (file: ProjectHubFile) => {
+    const category = fileCategory(file.mime)
+    // Изображения: общий лайтбокс со стрелками по всем фото текущего вида (URL резолвит сам лайтбокс).
+    if (category === 'photos') {
+      const photoFiles = visible.filter((f) => fileCategory(f.mime) === 'photos')
+      const idx = Math.max(0, photoFiles.findIndex((f) => f.id === file.id))
+      lb.open(
+        photoFiles.map<LightboxImage>((f) => ({
+          id: f.id,
+          name: f.name,
+          resolve: async () => { const u = await fileUrl(f); if (!u) throw new Error('no url'); return u },
+        })),
+        idx,
+      )
+      return
+    }
     if (openBusyId) return
     setOpenBusyId(file.id)
     setOpenError(false)
     try {
       const url = await fileUrl(file)
       if (!url) { setOpenError(true); return }
-      const category = fileCategory(file.mime)
-      if (category === 'photos') setLightbox({ url, kind: 'image', name: file.name })
-      else if (category === 'videos') setLightbox({ url, kind: 'video', name: file.name })
+      if (category === 'videos') setVideoLightbox({ url, name: file.name })
       else window.open(url, '_blank', 'noopener,noreferrer')
     } catch {
       setOpenError(true)
@@ -226,21 +242,19 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
         </div>
       )}
 
-      {lightbox && (
-        <div className="gallery-lightbox" onClick={() => setLightbox(null)}>
+      {lb.node}
+
+      {videoLightbox && (
+        <div className="gallery-lightbox" onClick={() => setVideoLightbox(null)}>
           <button
             type="button"
             className="gallery-lightbox-close"
             aria-label={t('hub_files_close')}
-            onClick={() => setLightbox(null)}
+            onClick={() => setVideoLightbox(null)}
           >
             ✕
           </button>
-          {lightbox.kind === 'image' ? (
-            <img src={lightbox.url} alt={lightbox.name} onClick={(e) => e.stopPropagation()} />
-          ) : (
-            <video src={lightbox.url} controls autoPlay onClick={(e) => e.stopPropagation()} />
-          )}
+          <video src={videoLightbox.url} controls autoPlay onClick={(e) => e.stopPropagation()} />
         </div>
       )}
     </section>

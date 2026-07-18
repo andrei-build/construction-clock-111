@@ -1,6 +1,7 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './lib/auth'
+import { checkAndApplyUpdateOnNavigate } from './lib/appUpdate'
 import { isManagerRole, hasFinanceAccess } from './lib/types'
 // PERF-1: критический путь работника/водителя грузится сразу (вход, навигация, полевые экраны).
 import Login from './screens/Login'
@@ -54,6 +55,10 @@ import AiCommandBar from './components/AiCommandBar'
 export default function App() {
   const { loading, profile } = useAuth()
   const location = useLocation()
+  // NAV-STATE-1: применяем накопившееся обновление ВЕРСИИ на переходах между экранами (а не по
+  // фокусу/visibility вкладки). Смена pathname — «безопасная точка»: экран и так меняется, поэтому
+  // тихий reload не рвёт контекст, а активная вкладка (?tab=) и история сохраняются в URL.
+  useEffect(() => { void checkAndApplyUpdateOnNavigate() }, [location.pathname])
   // ACC-1 (b): экран восстановления пароля доступен ДО загрузки профиля —
   // по recovery-ссылке из письма профиль может ещё не подняться, а форму показать надо.
   if (location.pathname === '/reset') return <ResetPassword />

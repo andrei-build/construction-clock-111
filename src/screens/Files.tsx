@@ -4,6 +4,7 @@ import { useI18n } from '../lib/i18n'
 import { isManagerRole } from '../lib/types'
 import { getFiles, uploadFile, softDeleteFile, mediaUrl, uploadErrorCode } from '../lib/api'
 import type { FileRow } from '../lib/types'
+import { useImageLightbox, type LightboxImage } from '../components/ImageLightbox'
 
 const localeByLang = {
   ru: 'ru-RU',
@@ -33,6 +34,8 @@ export default function Files() {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
   const manager = profile ? isManagerRole(profile.role) : false
+  // LIGHTBOX-1: изображения открываем В ПРИЛОЖЕНИИ (общий лайтбокс), не в отдельной вкладке.
+  const lb = useImageLightbox()
 
   const [files, setFiles] = useState<FileRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -123,6 +126,21 @@ export default function Files() {
   }
 
   async function handleDownload(row: FileRow) {
+    // Картинки — в общий лайтбокс (просмотр по центру + «на весь экран» + «скачать» внутри него),
+    // со стрелками по всем изображениям списка. Не-картинки (pdf/doc/…) — прежнее поведение (новая вкладка).
+    if (row.mime?.startsWith('image/')) {
+      const imageRows = files.filter((r) => r.mime?.startsWith('image/'))
+      const idx = Math.max(0, imageRows.findIndex((r) => r.id === row.id))
+      lb.open(
+        imageRows.map<LightboxImage>((r) => ({
+          id: r.id,
+          name: r.name,
+          resolve: async () => { const u = await mediaUrl(r.storage_path); if (!u) throw new Error('no url'); return u },
+        })),
+        idx,
+      )
+      return
+    }
     try {
       const url = await mediaUrl(row.storage_path)
       if (!url) { setError(true); return }
@@ -157,6 +175,7 @@ export default function Files() {
 
   return (
     <div className="screen">
+      {lb.node}
       <h1>📁 {t('files')}</h1>
       <p className="muted" style={{ marginTop: -8 }}>{t('files_subtitle')}</p>
 
