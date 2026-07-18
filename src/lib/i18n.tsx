@@ -1896,6 +1896,14 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_attachments: { ru: 'Вложения', en: 'Attachments', es: 'Adjuntos' },
   mail_attachment_photo: { ru: 'фото', en: 'photo', es: 'foto' },
   mail_attachment_later: { ru: 'файл появится позже', en: 'file will appear later', es: 'el archivo aparecerá más tarde' },
+  // MAIL-UX-2: лайтбокс изображений письма (оверлей внутри приложения, как в Gmail).
+  mail_attachment_open: { ru: 'Открыть', en: 'Open', es: 'Abrir' },
+  mail_lightbox_close: { ru: 'Закрыть', en: 'Close', es: 'Cerrar' },
+  mail_lightbox_prev: { ru: 'Предыдущее', en: 'Previous', es: 'Anterior' },
+  mail_lightbox_next: { ru: 'Следующее', en: 'Next', es: 'Siguiente' },
+  mail_lightbox_download: { ru: 'Скачать', en: 'Download', es: 'Descargar' },
+  mail_lightbox_loading: { ru: 'Загрузка…', en: 'Loading…', es: 'Cargando…' },
+  mail_lightbox_error: { ru: 'Не удалось загрузить изображение', en: 'Could not load image', es: 'No se pudo cargar la imagen' },
   // MAIL-FIX-1: пагинация ленты, догрузка тела, состояние ошибки загрузки.
   mail_load_more: { ru: 'Показать ещё', en: 'Show more', es: 'Mostrar más' },
   mail_loading_more: { ru: 'Загружаем…', en: 'Loading…', es: 'Cargando…' },
