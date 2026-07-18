@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { CATALOG_CATEGORIES, getCatalogItems } from '../../lib/api'
 import type { CatalogCategory, CatalogItem } from '../../lib/api'
 import { useI18n } from '../../lib/i18n'
@@ -13,7 +13,6 @@ import {
   calculateTileCuts,
   cleanColor,
   createTilePatternCanvas,
-  formatInches,
   normalizeFinishes,
   normalizeTileSurface,
   type Pt,
@@ -24,6 +23,7 @@ import {
   type SketchSwitch,
   type SketchTileFinish,
 } from './sketchFinishes'
+import { formatInches, parseInches } from './inches'
 import {
   catalogDimsFromItem,
   catalogDimsText,
@@ -43,6 +43,7 @@ import {
   type CatalogWallHit,
   type SketchPlacedCatalogItem,
 } from './sketchCatalog'
+import { SHERWIN_WILLIAMS_COLORS } from './sw-colors'
 
 const CELL_FT = 1
 const DEFAULT_WALL_HEIGHT_FT = 8
@@ -57,12 +58,14 @@ const DEFAULT_SCONCE_HEIGHT_FT = 5.6
 const ORBIT_FOV_DEG = 65
 const INSIDE_FOV_DEG = 70
 const EYE_HEIGHT_FT = 5.5
+const SW_COLOR_LIMIT = 48
 
 type SurfaceTarget = 'walls' | 'floor'
 type PlacementKind = SketchLightKind | 'switch' | null
 type Segment = { c: number; s: number; a: Pt; b: Pt }
 type CameraPreset = 'fit' | 'top' | 'angle' | 'inside'
 type InteractiveKind = 'light' | 'switch' | 'catalog'
+type InchDraftField = 'tileWIn' | 'tileHIn' | 'groutIn' | 'offsetXIn' | 'offsetYIn'
 type Sketch3DModelWithCatalog = Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }
 type SketchContour = Sketch3DModel['contours'][number]
 
@@ -261,6 +264,10 @@ function formatFeet(valueFt: number): string {
   return `${safe.toFixed(1)} ft`
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
 function disposeObjectWithMaterial(object: { geometry?: unknown; material?: unknown }) {
   const geometry = object.geometry
   if (geometry && typeof geometry === 'object' && 'dispose' in geometry) {
@@ -426,6 +433,140 @@ function catalogColor(category: CatalogCategory): number {
   }
 }
 
+function configurePhotoTexture(THREE: any, texture: any, anisotropy: number) {
+  texture.wrapS = THREE.RepeatWrapping
+  texture.wrapT = THREE.RepeatWrapping
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.anisotropy = Math.max(1, anisotropy)
+}
+
+function createCatalogMaterial(
+  THREE: any,
+  resolved: CatalogResolvedPlacedItem,
+  doesNotFit: boolean,
+  textureLoader: any,
+  maxAnisotropy: number,
+  onTextureReady: () => void,
+) {
+  const hasPhoto = !!resolved.photoPath
+  const material = new THREE.MeshStandardMaterial({
+    color: doesNotFit ? 0xffd6d6 : hasPhoto ? 0xffffff : resolved.missingCatalogItem ? 0x9ca3af : catalogColor(resolved.category),
+    roughness: resolved.category === 'shower' || resolved.category === 'vanity' ? 0.46 : 0.58,
+    metalness: resolved.category === 'light' || resolved.category === 'fan' ? 0.16 : 0.04,
+    transparent: resolved.missingCatalogItem,
+    opacity: resolved.missingCatalogItem ? 0.7 : 0.96,
+  })
+
+  if (hasPhoto) {
+    const texture = textureLoader.load(
+      resolved.photoPath,
+      () => {
+        material.needsUpdate = true
+        onTextureReady()
+      },
+      undefined,
+      () => {
+        material.map = null
+        material.color.set(doesNotFit ? 0xffd6d6 : catalogColor(resolved.category))
+        material.needsUpdate = true
+        onTextureReady()
+      },
+    )
+    configurePhotoTexture(THREE, texture, maxAnisotropy)
+    material.map = texture
+  }
+
+  return material
+}
+
+function createContactShadowTexture(THREE: any) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 128
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(64, 64, 8, 64, 64, 62)
+    gradient.addColorStop(0, 'rgba(15, 23, 42, .22)')
+    gradient.addColorStop(0.58, 'rgba(15, 23, 42, .09)')
+    gradient.addColorStop(1, 'rgba(15, 23, 42, 0)')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
+
+function addContactShadow(THREE: any, group: any, widthFt: number, depthFt: number, heightFt: number) {
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({
+      map: createContactShadowTexture(THREE),
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.82,
+    }),
+  )
+  shadow.rotation.x = -Math.PI / 2
+  shadow.position.y = -heightFt / 2 + 0.012
+  shadow.scale.set(Math.max(0.6, widthFt * 1.16), Math.max(0.6, depthFt * 1.16), 1)
+  shadow.renderOrder = 1
+  group.add(shadow)
+}
+
+function addMeshWithEdges(THREE: any, group: any, mesh: any, edgeColor: number, edgeOpacity = 0.76) {
+  group.add(mesh)
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(mesh.geometry),
+    new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: edgeOpacity }),
+  )
+  edges.position.copy(mesh.position)
+  edges.rotation.copy(mesh.rotation)
+  edges.scale.copy(mesh.scale)
+  group.add(edges)
+}
+
+function addCatalogBox(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, material: any, edgeColor: number) {
+  const width = Math.max(0.04, resolved.dims.widthFt)
+  const height = Math.max(0.04, resolved.dims.heightFt)
+  const depth = Math.max(0.04, resolved.dims.depthFt)
+  const box = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material)
+  box.castShadow = false
+  box.receiveShadow = false
+  addMeshWithEdges(THREE, group, box, edgeColor)
+}
+
+function addShowerPan(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, material: any, edgeColor: number) {
+  const width = Math.max(0.04, resolved.dims.widthFt)
+  const height = Math.max(0.08, resolved.dims.heightFt)
+  const depth = Math.max(0.04, resolved.dims.depthFt)
+  const rim = Math.max(0.08, Math.min(0.28, Math.min(width, depth) * 0.07))
+  const baseHeight = Math.max(0.04, Math.min(height * 0.5, height - 0.035))
+  const rimHeight = Math.max(0.04, height - baseHeight)
+  const base = new THREE.Mesh(new THREE.BoxGeometry(width, baseHeight, depth), material)
+  base.position.y = -height / 2 + baseHeight / 2
+  addMeshWithEdges(THREE, group, base, edgeColor, 0.58)
+
+  const basinMaterial = new THREE.MeshStandardMaterial({ color: 0xf3f6f7, roughness: 0.38, metalness: 0.02 })
+  const rimY = height / 2 - rimHeight / 2
+  const back = new THREE.Mesh(new THREE.BoxGeometry(width, rimHeight, rim), basinMaterial)
+  const front = new THREE.Mesh(new THREE.BoxGeometry(width, rimHeight, rim), basinMaterial)
+  const left = new THREE.Mesh(new THREE.BoxGeometry(rim, rimHeight, Math.max(0.02, depth - rim * 2)), basinMaterial)
+  const right = new THREE.Mesh(new THREE.BoxGeometry(rim, rimHeight, Math.max(0.02, depth - rim * 2)), basinMaterial)
+  back.position.set(0, rimY, -depth / 2 + rim / 2)
+  front.position.set(0, rimY, depth / 2 - rim / 2)
+  left.position.set(-width / 2 + rim / 2, rimY, 0)
+  right.position.set(width / 2 - rim / 2, rimY, 0)
+  ;[back, front, left, right].forEach((mesh) => addMeshWithEdges(THREE, group, mesh, edgeColor, 0.44))
+
+  const panFloor = new THREE.Mesh(
+    new THREE.BoxGeometry(Math.max(0.02, width - rim * 2), 0.025, Math.max(0.02, depth - rim * 2)),
+    new THREE.MeshStandardMaterial({ color: 0xe9eef0, roughness: 0.42 }),
+  )
+  panFloor.position.y = -height / 2 + baseHeight + 0.014
+  addMeshWithEdges(THREE, group, panFloor, edgeColor, 0.32)
+}
+
 function createLabelSprite(THREE: any, text: string) {
   const lines = text.split('\n')
   const canvas = document.createElement('canvas')
@@ -548,12 +689,12 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cameraApiRef = useRef<Record<CameraPreset, () => void> | null>(null)
   const dimensionGroupRef = useRef<any | null>(null)
-  const dimensionsVisibleRef = useRef(true)
+  const dimensionsVisibleRef = useRef(false)
   const invalidate3DRef = useRef<(() => void) | null>(null)
   const placementRef = useRef<PlacementKind>(null)
   const catalogPlacementItemRef = useRef<CatalogItem | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [showDimensions, setShowDimensions] = useState(true)
+  const [showDimensions, setShowDimensions] = useState(false)
   const [cameraMode, setCameraMode] = useState<CameraPreset>('fit')
   const [surfaceTarget, setSurfaceTarget] = useState<SurfaceTarget>('walls')
   const [placement, setPlacement] = useState<PlacementKind>(null)
@@ -562,6 +703,8 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const [catalogLoading, setCatalogLoading] = useState(true)
   const [catalogError, setCatalogError] = useState(false)
   const [catalogPlacementId, setCatalogPlacementId] = useState<string | null>(null)
+  const [paintSearch, setPaintSearch] = useState('')
+  const [inchDrafts, setInchDrafts] = useState<Partial<Record<InchDraftField, string>>>({})
 
   const finishes = useMemo(() => normalizeFinishes(model.finishes), [model.finishes])
   const lights = useMemo(() => model.lights ?? [], [model.lights])
@@ -584,6 +727,14 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
     [catalogItems],
   )
   const activeSurface = finishes[surfaceTarget]
+  const activeTile = useMemo(() => normalizeTileSurface(activeSurface), [activeSurface])
+  const swColorMatches = useMemo(() => {
+    const query = paintSearch.trim().toLowerCase()
+    const rows = query
+      ? SHERWIN_WILLIAMS_COLORS.filter((color) => `${color.code} ${color.name}`.toLowerCase().includes(query))
+      : SHERWIN_WILLIAMS_COLORS
+    return rows.slice(0, SW_COLOR_LIMIT)
+  }, [paintSearch])
   const boundsForCuts = modelBounds(model)
   const surfaceHeightIn = surfaceTarget === 'walls' ? Math.max(1, heightFt * 12) : Math.max(12, boundsForCuts.depth * 12)
   const surfaceWidthIn = surfaceTarget === 'walls' ? longestWallIn(model) : Math.max(12, boundsForCuts.width * 12)
@@ -596,6 +747,10 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
     placementRef.current = placement
     catalogPlacementItemRef.current = catalogPlacementItem
   }, [placement, catalogPlacementItem])
+
+  useEffect(() => {
+    setInchDrafts({})
+  }, [surfaceTarget, activeTile.tileWIn, activeTile.tileHIn, activeTile.groutIn, activeTile.offsetXIn, activeTile.offsetYIn])
 
   const applyModel = (next: Sketch3DModelWithCatalog) => {
     if (!canEdit) return
@@ -626,6 +781,40 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const updateTile = (patch: Partial<SketchTileFinish>) => {
     const tile = normalizeTileSurface(activeSurface)
     updateSurface({ ...tile, ...patch, kind: 'tile' })
+  }
+
+  const setInchDraft = (field: InchDraftField, value: string) => {
+    setInchDrafts((current) => ({ ...current, [field]: value }))
+  }
+
+  const inchInputValue = (field: InchDraftField, fallback: number): string => {
+    return inchDrafts[field] ?? formatInches(fallback)
+  }
+
+  const commitInchDraft = (field: InchDraftField, fallback: number, min: number, max: number) => {
+    const raw = inchDrafts[field] ?? formatInches(fallback)
+    const parsed = parseInches(raw)
+    setInchDrafts((current) => {
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+    if (!Number.isFinite(parsed)) return
+    updateTile({ [field]: clampNumber(parsed, min, max) } as Partial<SketchTileFinish>)
+  }
+
+  const handleInchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>, field: InchDraftField, fallback: number, min: number, max: number) => {
+    if (event.key === 'Enter') {
+      commitInchDraft(field, fallback, min, max)
+      event.currentTarget.blur()
+    } else if (event.key === 'Escape') {
+      setInchDrafts((current) => {
+        const next = { ...current }
+        delete next[field]
+        return next
+      })
+      event.currentTarget.blur()
+    }
   }
 
   const addLightAt = (kind: SketchLightKind, xFt: number, zFt: number): SketchLight => ({
@@ -739,9 +928,15 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
 
         const renderer = new THREE.WebGLRenderer({ antialias: true })
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+        renderer.outputColorSpace = THREE.SRGBColorSpace
+        renderer.toneMapping = THREE.ACESFilmicToneMapping
+        renderer.toneMappingExposure = 1.02
         renderer.setClearColor(0xf7f8fb, 1)
         renderer.shadowMap.enabled = false
         currentHost.appendChild(renderer.domElement)
+        const textureLoader = new THREE.TextureLoader()
+        textureLoader.setCrossOrigin?.('anonymous')
+        const maxAnisotropy = renderer.capabilities?.getMaxAnisotropy?.() ?? 4
 
         const scene = new THREE.Scene()
         scene.background = new THREE.Color(0xf7f8fb)
@@ -918,9 +1113,9 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         }
         controls.update()
 
-        scene.add(new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 1.2))
-        const keyLight = new THREE.DirectionalLight(0xffffff, 1)
-        keyLight.position.set(centerX - span * 0.45, height + span * 0.9, centerZ + span * 0.55)
+        scene.add(new THREE.HemisphereLight(0xf8fbff, 0xd3c8bb, 1.1))
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.18)
+        keyLight.position.set(centerX - span * 0.5, height + span * 0.95, centerZ + span * 0.58)
         keyLight.castShadow = false
         scene.add(keyLight)
 
@@ -1171,21 +1366,14 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           const doesNotFit = placedCatalogDoesNotFit(placed, resolved.dims, bounds, height, catalogWallLength(placed))
           const group = new THREE.Group()
           applyCatalogObjectPose(group, placed)
-          const material = new THREE.MeshStandardMaterial({
-            color: doesNotFit ? 0xdc2626 : resolved.missingCatalogItem ? 0x9ca3af : catalogColor(resolved.category),
-            roughness: 0.58,
-            metalness: resolved.category === 'light' || resolved.category === 'fan' ? 0.12 : 0.04,
-            transparent: resolved.missingCatalogItem,
-            opacity: resolved.missingCatalogItem ? 0.52 : 0.92,
-          })
-          const box = new THREE.Mesh(new THREE.BoxGeometry(resolved.dims.widthFt, resolved.dims.heightFt, resolved.dims.depthFt), material)
-          box.castShadow = false
-          box.receiveShadow = false
-          const edges = new THREE.LineSegments(
-            new THREE.EdgesGeometry(box.geometry),
-            new THREE.LineBasicMaterial({ color: doesNotFit ? 0x991b1b : selectedId === placed.id ? 0x0f172a : 0xffffff, transparent: true, opacity: 0.85 }),
-          )
-          group.add(box, edges)
+          const edgeColor = doesNotFit ? 0x991b1b : selectedId === placed.id ? 0x0f172a : 0xffffff
+          const material = createCatalogMaterial(THREE, resolved, doesNotFit, textureLoader, maxAnisotropy, invalidate)
+          if (placed.surface === 'floor') addContactShadow(THREE, group, resolved.dims.widthFt, resolved.dims.depthFt, resolved.dims.heightFt)
+          if (resolved.category === 'shower' && placed.surface === 'floor') {
+            addShowerPan(THREE, group, resolved, material, edgeColor)
+          } else {
+            addCatalogBox(THREE, group, resolved, material, edgeColor)
+          }
           tagInteractive(group, 'catalog', placed.id)
           scene.add(group)
           itemTargets.push(group)
@@ -1538,8 +1726,8 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
     }
   }, [model, heightFt, finishes, canEdit, onModelChange, selectedId, t, lights, switches, placedItems, resolvedPlacedItems])
 
-  const activeTile = normalizeTileSurface(activeSurface)
   const tileSizeValue = `${activeTile.tileWIn ?? 12}x${activeTile.tileHIn ?? 24}`
+  const tileSizePresetValue = TILE_SIZE_OPTIONS.some((option) => `${option.w}x${option.h}` === tileSizeValue) ? tileSizeValue : 'custom'
   const cameraButtonClass = (mode: CameraPreset) => (cameraMode === mode ? 'btn small' : 'btn ghost small')
   const setCameraPreset = (mode: CameraPreset) => {
     setCameraMode(mode)
@@ -1638,24 +1826,51 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
             </div>
 
             {surfaceTarget === 'walls' && (
-              <div className="hub-sketch-color-row" aria-label={t('hub_sketch_3d_wall_color')}>
-                {WALL_PAINT_SWATCHES.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    className="hub-sketch-swatch"
-                    style={{ backgroundColor: color }}
-                    aria-label={color}
-                    onClick={() => updateWallPaint(color)}
+              <div className="hub-sketch-paint-picker" aria-label={t('hub_sketch_3d_wall_color')}>
+                <div className="hub-sketch-color-row">
+                  {WALL_PAINT_SWATCHES.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      className="hub-sketch-swatch"
+                      style={{ backgroundColor: color }}
+                      aria-label={color}
+                      onClick={() => updateWallPaint(color)}
+                    />
+                  ))}
+                  <input
+                    className="hub-sketch-color-input"
+                    type="color"
+                    value={cleanColor(finishes.wallPaint, DEFAULT_WALL_PAINT)}
+                    onChange={(e) => updateWallPaint(e.target.value)}
+                    aria-label={t('hub_sketch_3d_custom_color')}
                   />
-                ))}
+                </div>
                 <input
-                  className="hub-sketch-color-input"
-                  type="color"
-                  value={cleanColor(finishes.wallPaint, DEFAULT_WALL_PAINT)}
-                  onChange={(e) => updateWallPaint(e.target.value)}
-                  aria-label={t('hub_sketch_3d_wall_color')}
+                  className="hub-sketch-sw-search"
+                  value={paintSearch}
+                  onChange={(e) => setPaintSearch(e.target.value)}
+                  placeholder={t('hub_sketch_3d_sw_search')}
+                  aria-label={t('hub_sketch_3d_sw_search')}
                 />
+                <div className="hub-sketch-sw-grid">
+                  {swColorMatches.map((color) => {
+                    const selected = cleanColor(finishes.wallPaint, DEFAULT_WALL_PAINT).toLowerCase() === color.hex.toLowerCase()
+                    return (
+                      <button
+                        key={color.code}
+                        type="button"
+                        className={selected ? 'hub-sketch-sw-chip hub-sketch-sw-chip-active' : 'hub-sketch-sw-chip'}
+                        onClick={() => updateWallPaint(color.hex)}
+                        title={`${color.code} ${color.name}`}
+                      >
+                        <span className="hub-sketch-sw-dot" style={{ backgroundColor: color.hex }} aria-hidden="true" />
+                        <span className="hub-sketch-sw-code">{color.code}</span>
+                        <span className="hub-sketch-sw-name">{color.name}</span>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             )}
 
@@ -1664,12 +1879,14 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
                 <label className="hub-sketch-field">
                   <span className="muted">{t('hub_sketch_3d_tile_size')}</span>
                   <select
-                    value={tileSizeValue}
+                    value={tileSizePresetValue}
                     onChange={(e) => {
+                      if (e.target.value === 'custom') return
                       const option = TILE_SIZE_OPTIONS.find((item) => `${item.w}x${item.h}` === e.target.value) ?? TILE_SIZE_OPTIONS[0]
                       updateTile({ tileWIn: option.w, tileHIn: option.h })
                     }}
                   >
+                    <option value="custom">{t('hub_sketch_3d_tile_size_custom')}</option>
                     {TILE_SIZE_OPTIONS.map((option) => (
                       <option key={option.key} value={`${option.w}x${option.h}`}>
                         {option.label}
@@ -1678,8 +1895,37 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
                   </select>
                 </label>
                 <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_width')}</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={inchInputValue('tileWIn', activeTile.tileWIn ?? 12)}
+                    onChange={(e) => setInchDraft('tileWIn', e.target.value)}
+                    onBlur={() => commitInchDraft('tileWIn', activeTile.tileWIn ?? 12, 1, 96)}
+                    onKeyDown={(e) => handleInchKeyDown(e, 'tileWIn', activeTile.tileWIn ?? 12, 1, 96)}
+                  />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_height')}</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={inchInputValue('tileHIn', activeTile.tileHIn ?? 24)}
+                    onChange={(e) => setInchDraft('tileHIn', e.target.value)}
+                    onBlur={() => commitInchDraft('tileHIn', activeTile.tileHIn ?? 24, 1, 96)}
+                    onKeyDown={(e) => handleInchKeyDown(e, 'tileHIn', activeTile.tileHIn ?? 24, 1, 96)}
+                  />
+                </label>
+                <label className="hub-sketch-field">
                   <span className="muted">{t('hub_sketch_3d_grout_width')}</span>
-                  <input type="number" min="0" max="2" step="0.0625" value={activeTile.groutIn ?? DEFAULT_GROUT_IN} onChange={(e) => updateTile({ groutIn: Number(e.target.value) || 0 })} />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={inchInputValue('groutIn', activeTile.groutIn ?? DEFAULT_GROUT_IN)}
+                    onChange={(e) => setInchDraft('groutIn', e.target.value)}
+                    onBlur={() => commitInchDraft('groutIn', activeTile.groutIn ?? DEFAULT_GROUT_IN, 0, 2)}
+                    onKeyDown={(e) => handleInchKeyDown(e, 'groutIn', activeTile.groutIn ?? DEFAULT_GROUT_IN, 0, 2)}
+                  />
                 </label>
                 <label className="hub-sketch-field">
                   <span className="muted">{t('hub_sketch_3d_tile_color')}</span>
@@ -1691,11 +1937,25 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
                 </label>
                 <label className="hub-sketch-field">
                   <span className="muted">{t('hub_sketch_3d_row_offset')}</span>
-                  <input type="number" min="-96" max="96" step="0.25" value={activeTile.offsetYIn ?? 0} onChange={(e) => updateTile({ offsetYIn: Number(e.target.value) || 0 })} />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={inchInputValue('offsetYIn', activeTile.offsetYIn ?? 0)}
+                    onChange={(e) => setInchDraft('offsetYIn', e.target.value)}
+                    onBlur={() => commitInchDraft('offsetYIn', activeTile.offsetYIn ?? 0, -96, 96)}
+                    onKeyDown={(e) => handleInchKeyDown(e, 'offsetYIn', activeTile.offsetYIn ?? 0, -96, 96)}
+                  />
                 </label>
                 <label className="hub-sketch-field">
                   <span className="muted">{t('hub_sketch_3d_corner_offset')}</span>
-                  <input type="number" min="-96" max="96" step="0.25" value={activeTile.offsetXIn ?? 0} onChange={(e) => updateTile({ offsetXIn: Number(e.target.value) || 0 })} />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={inchInputValue('offsetXIn', activeTile.offsetXIn ?? 0)}
+                    onChange={(e) => setInchDraft('offsetXIn', e.target.value)}
+                    onBlur={() => commitInchDraft('offsetXIn', activeTile.offsetXIn ?? 0, -96, 96)}
+                    onKeyDown={(e) => handleInchKeyDown(e, 'offsetXIn', activeTile.offsetXIn ?? 0, -96, 96)}
+                  />
                 </label>
                 {cutSummary && (
                   <div className="hub-sketch-cut-summary">
