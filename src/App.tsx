@@ -38,6 +38,7 @@ const Payroll = lazy(() => import('./screens/Payroll'))
 const Settings = lazy(() => import('./screens/Settings'))
 const Broadcast = lazy(() => import('./screens/Broadcast'))
 const Mail = lazy(() => import('./screens/Mail'))
+const Catalog = lazy(() => import('./screens/Catalog'))
 import ScreenFallback from './components/ScreenFallback'
 import Nav from './components/Nav'
 import BackButton from './components/BackButton'
@@ -128,6 +129,8 @@ export default function App() {
             {/* MAIL-1-UI: «Почта» — owner/admin (RLS дополнительно ограничивает чтение владельцем). */}
             <Route path="/mail" element={adminOrOwner ? <Mail /> : <Navigate to="/" />} />
             <Route path="/settings" element={adminOrOwner ? <Settings /> : <Navigate to="/" />} />
+            {/* CATALOG-UI-1: «Каталог» — позиции для 3D-визуализации, manager+. */}
+            <Route path="/catalog" element={manager ? <Catalog /> : <Navigate to="/" />} />
             {/* SET-2 (ЗАКОН-6): «Настройки владельца» merged into «Настройки». Old /owner-settings
                 bookmarks redirect to the owner block inside /settings. A plain manager landing on
                 /settings is redirected to '/' by the gate above — that's fine. */}
