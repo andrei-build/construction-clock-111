@@ -1,5 +1,6 @@
 import { supabase } from '../supabase'
 import { logEvent } from './_shared'
+import { computeUnpaidSummary, type ClosedWindow } from '../payrollMath'
 import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
 
 
@@ -307,36 +308,19 @@ export interface UnpaidWorkSummary {
   amount: number
 }
 
-function payPeriodWindow(period: { period_start: string; period_end: string }): { startMs: number; endMs: number } {
+function payPeriodWindow(period: { period_start: string; period_end: string }): ClosedWindow {
   const start = new Date(`${period.period_start}T00:00:00`)
   const end = new Date(`${period.period_end}T00:00:00`)
   end.setDate(end.getDate() + 1)
   return { startMs: start.getTime(), endMs: end.getTime() }
 }
 
-function subtractClosedPeriods(startMs: number, endMs: number, closed: Array<{ startMs: number; endMs: number }>): number {
-  let openSegments = [{ startMs, endMs }]
-  for (const period of closed) {
-    const next: Array<{ startMs: number; endMs: number }> = []
-    for (const segment of openSegments) {
-      const overlapStart = Math.max(segment.startMs, period.startMs)
-      const overlapEnd = Math.min(segment.endMs, period.endMs)
-      if (overlapEnd <= overlapStart) {
-        next.push(segment)
-        continue
-      }
-      if (segment.startMs < overlapStart) next.push({ startMs: segment.startMs, endMs: overlapStart })
-      if (overlapEnd < segment.endMs) next.push({ startMs: overlapEnd, endMs: segment.endMs })
-    }
-    openSegments = next
-    if (openSegments.length === 0) break
-  }
-  return openSegments.reduce((sum, segment) => sum + Math.max(0, segment.endMs - segment.startMs), 0)
-}
-
-// OVR-1: finance-only Overview KPI. "Unpaid" means work interval hours that are
-// outside approved/paid pay periods. Money uses the latest visible worker rate.
-export async function getUnpaidWorkSummary(): Promise<UnpaidWorkSummary> {
+// OVR-1 / UI-FIX-PACK-1 (д): finance-only Overview KPI. "Unpaid" = work-interval hours outside
+// approved/paid pay periods. Money now applies weekly OT ×1.5 (computeUnpaidSummary) using the
+// latest visible worker rate — a worker over 40 unpaid hours/week is no longer undercounted.
+// Returns null on ANY read error so the KPI can render «—» instead of a scary $0 (a real zero is
+// {hours:0, amount:0}, which stays distinct from the error case).
+export async function getUnpaidWorkSummary(): Promise<UnpaidWorkSummary | null> {
   const [periodsRes, intervalsRes, ratesRes] = await Promise.all([
     supabase.from('pay_periods')
       .select('period_start, period_end')
@@ -348,7 +332,7 @@ export async function getUnpaidWorkSummary(): Promise<UnpaidWorkSummary> {
       .select('profile_id, hourly_rate, effective_from')
       .order('effective_from', { ascending: false }),
   ])
-  if (periodsRes.error || intervalsRes.error || ratesRes.error) return { hours: 0, amount: 0 }
+  if (periodsRes.error || intervalsRes.error || ratesRes.error) return null
 
   const closed = ((periodsRes.data ?? []) as Array<{ period_start: string; period_end: string }>)
     .map(payPeriodWindow)
@@ -360,19 +344,46 @@ export async function getUnpaidWorkSummary(): Promise<UnpaidWorkSummary> {
     }
   }
 
-  const now = Date.now()
-  let hours = 0
-  let amount = 0
-  for (const interval of (intervalsRes.data ?? []) as Array<{ profile_id: string; start_at: string; end_at: string | null }>) {
-    const startMs = new Date(interval.start_at).getTime()
-    const endMs = interval.end_at ? new Date(interval.end_at).getTime() : now
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue
-    const unpaidMs = subtractClosedPeriods(startMs, endMs, closed)
-    const unpaidHours = unpaidMs / 3600000
-    hours += unpaidHours
-    const rate = rateByWorker.get(interval.profile_id)
-    if (typeof rate === 'number' && Number.isFinite(rate)) amount += unpaidHours * rate
-  }
+  const intervals = (intervalsRes.data ?? []) as Array<{ profile_id: string; start_at: string; end_at: string | null }>
+  return computeUnpaidSummary(intervals, closed, rateByWorker, Date.now())
+}
 
-  return { hours, amount }
+// UI-FIX-PACK-1 (г) PAY-LEDGER: снапшот строк утверждённого/оплаченного периода (pay_period_items).
+// Экран зарплаты для approved/paid ДОЛЖЕН показывать эти замороженные суммы, а не пересчитывать по
+// живым интервалам (иначе поздняя правка ставки/корректировка «плывёт» задним числом). Только чтение
+// существующих колонок; имя работника дотягиваем отдельным запросом (без embed — не зависим от FK).
+export interface PayPeriodSnapshotRow {
+  profile_id: string
+  worker_name: string | null
+  regular_hours: number
+  overtime_hours: number
+  travel_hours: number
+  hourly_rate: number | null
+  total: number
+}
+
+export async function getPayPeriodItems(periodId: string): Promise<PayPeriodSnapshotRow[]> {
+  const { data, error } = await supabase.from('pay_period_items')
+    .select('profile_id, regular_hours, overtime_hours, travel_hours, hourly_rate, total')
+    .eq('pay_period_id', periodId)
+  if (error || !data) return []
+  const rows = data as Array<{ profile_id: string; regular_hours: number | null; overtime_hours: number | null; travel_hours: number | null; hourly_rate: number | null; total: number | null }>
+  if (rows.length === 0) return []
+
+  const ids = [...new Set(rows.map((r) => r.profile_id))]
+  const nameById = new Map<string, string | null>()
+  const { data: profRows } = await supabase.from('profiles').select('id, name').in('id', ids)
+  for (const row of (profRows ?? []) as Array<{ id: string; name: string | null }>) nameById.set(row.id, row.name)
+
+  return rows
+    .map((r) => ({
+      profile_id: r.profile_id,
+      worker_name: nameById.get(r.profile_id) ?? null,
+      regular_hours: Number(r.regular_hours) || 0,
+      overtime_hours: Number(r.overtime_hours) || 0,
+      travel_hours: Number(r.travel_hours) || 0,
+      hourly_rate: r.hourly_rate === null ? null : Number(r.hourly_rate),
+      total: Number(r.total) || 0,
+    }))
+    .sort((a, b) => (a.worker_name ?? '').localeCompare(b.worker_name ?? ''))
 }

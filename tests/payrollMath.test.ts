@@ -4,8 +4,13 @@ import {
   computeWorkerTotal,
   splitHoursByWeek,
   regularOvertimeSplit,
+  workedMsInWindow,
+  unpaidSegments,
+  computeUnpaidSummary,
   type HoursInterval,
   type WeekBoundary,
+  type ClosedWindow,
+  type UnpaidInterval,
 } from '../src/lib/payrollMath'
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -181,5 +186,133 @@ describe('splitHoursByWeek — DST transition day (America/Los_Angeles spring fo
     ]
     const weeks = splitHoursByWeek(intervals, pStart, pEnd, utcWeekBoundary, NOW)
     expect(sumWeeks(weeks)).toBeCloseTo(3, 10)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// workedMsInWindow — MyTime tile hours from adjustment-aware intervals (е)
+// ═══════════════════════════════════════════════════════════════════════════════
+describe('workedMsInWindow — overlap of intervals with a bucket window', () => {
+  const from = iso('2026-01-06T00:00:00Z')
+  const to = iso('2026-01-07T00:00:00Z') // one-day bucket
+
+  it('sums whole intervals fully inside the window', () => {
+    const ivs: HoursInterval[] = [
+      { start_at: '2026-01-06T08:00:00Z', end_at: '2026-01-06T12:00:00Z' }, // 4h
+      { start_at: '2026-01-06T13:00:00Z', end_at: '2026-01-06T17:30:00Z' }, // 4.5h
+    ]
+    expect(workedMsInWindow(ivs, from, to, NOW)).toBe(8.5 * H)
+  })
+
+  it('clips an interval straddling the window start/end to the in-window part', () => {
+    const ivs: HoursInterval[] = [
+      { start_at: '2026-01-05T22:00:00Z', end_at: '2026-01-06T02:00:00Z' }, // 2h in-window
+      { start_at: '2026-01-06T23:00:00Z', end_at: '2026-01-07T05:00:00Z' }, // 1h in-window
+    ]
+    expect(workedMsInWindow(ivs, from, to, NOW)).toBe(3 * H)
+  })
+
+  it('excludes intervals entirely outside the window', () => {
+    const ivs: HoursInterval[] = [
+      { start_at: '2026-01-08T08:00:00Z', end_at: '2026-01-08T12:00:00Z' },
+    ]
+    expect(workedMsInWindow(ivs, from, to, NOW)).toBe(0)
+  })
+
+  it('an OPEN interval (end_at null) is clamped to min(now, windowEnd)', () => {
+    // now inside the window → clamp to now, not windowEnd.
+    const now = iso('2026-01-06T10:00:00Z')
+    const ivs: HoursInterval[] = [{ start_at: '2026-01-06T08:00:00Z', end_at: null }]
+    expect(workedMsInWindow(ivs, from, to, now)).toBe(2 * H) // 08:00→10:00
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// unpaidSegments — subtract closed pay-period windows from an interval (д)
+// ═══════════════════════════════════════════════════════════════════════════════
+describe('unpaidSegments', () => {
+  const seg = (a: string, b: string): ClosedWindow => ({ startMs: iso(a), endMs: iso(b) })
+
+  it('no closed windows → the whole interval is unpaid', () => {
+    const out = unpaidSegments(iso('2026-01-01T00:00:00Z'), iso('2026-01-02T00:00:00Z'), [])
+    expect(out).toHaveLength(1)
+    expect(out[0].endMs - out[0].startMs).toBe(24 * H)
+  })
+
+  it('a closed window fully covering the interval → nothing unpaid', () => {
+    const out = unpaidSegments(iso('2026-01-01T06:00:00Z'), iso('2026-01-01T18:00:00Z'), [seg('2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z')])
+    expect(out).toHaveLength(0)
+  })
+
+  it('a closed window in the MIDDLE splits the interval into two unpaid pieces', () => {
+    const out = unpaidSegments(iso('2026-01-01T00:00:00Z'), iso('2026-01-02T00:00:00Z'), [seg('2026-01-01T08:00:00Z', '2026-01-01T16:00:00Z')])
+    const total = out.reduce((s, x) => s + (x.endMs - x.startMs), 0)
+    expect(out).toHaveLength(2)
+    expect(total).toBe(16 * H) // 24h - 8h closed
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// computeUnpaidSummary — Overview "unpaid" KPI with weekly OT ×1.5 (д)
+// ═══════════════════════════════════════════════════════════════════════════════
+describe('computeUnpaidSummary — hours outside closed periods, OT ×1.5', () => {
+  const boundary = (c: number): WeekBoundary => utcWeekBoundary(c)
+
+  it('sums plain unpaid hours × rate when under 40h/week (no OT)', () => {
+    // Two 5h shifts in one week, rate 20 → 10h × 20 = 200, all regular.
+    const ivs: UnpaidInterval[] = [
+      { profile_id: 'w1', start_at: '2026-01-06T08:00:00Z', end_at: '2026-01-06T13:00:00Z' },
+      { profile_id: 'w1', start_at: '2026-01-07T08:00:00Z', end_at: '2026-01-07T13:00:00Z' },
+    ]
+    const rates = new Map<string, number | null>([['w1', 20]])
+    const s = computeUnpaidSummary(ivs, [], rates, NOW, boundary)
+    expect(s.hours).toBeCloseTo(10, 10)
+    expect(s.amount).toBe(200)
+  })
+
+  it('applies OT ×1.5 to unpaid hours over 40 in a week', () => {
+    // 45h in one UTC week (Mon 2026-01-05 00:00Z → Tue 21:00Z, same Mon-anchored week),
+    // rate 10 → 40×10 + 5×10×1.5 = 400 + 75 = 475.
+    const ivs: UnpaidInterval[] = [
+      { profile_id: 'w1', start_at: '2026-01-05T00:00:00Z', end_at: '2026-01-06T21:00:00Z' }, // 45h straight, one week
+    ]
+    const rates = new Map<string, number | null>([['w1', 10]])
+    const s = computeUnpaidSummary(ivs, [], rates, NOW, boundary)
+    expect(s.hours).toBeCloseTo(45, 10)
+    expect(s.amount).toBe(475)
+  })
+
+  it('excludes hours inside a closed (approved/paid) window before the OT split', () => {
+    // 10h shift, 4h of it inside a closed window → 6h unpaid, rate 10 → 60.
+    const ivs: UnpaidInterval[] = [
+      { profile_id: 'w1', start_at: '2026-01-06T08:00:00Z', end_at: '2026-01-06T18:00:00Z' },
+    ]
+    const closed: ClosedWindow[] = [{ startMs: iso('2026-01-06T10:00:00Z'), endMs: iso('2026-01-06T14:00:00Z') }]
+    const rates = new Map<string, number | null>([['w1', 10]])
+    const s = computeUnpaidSummary(ivs, closed, rates, NOW, boundary)
+    expect(s.hours).toBeCloseTo(6, 10)
+    expect(s.amount).toBe(60)
+  })
+
+  it('rate === null → hours still count, money contributes 0', () => {
+    const ivs: UnpaidInterval[] = [
+      { profile_id: 'w1', start_at: '2026-01-06T08:00:00Z', end_at: '2026-01-06T16:00:00Z' },
+    ]
+    const rates = new Map<string, number | null>([['w1', null]])
+    const s = computeUnpaidSummary(ivs, [], rates, NOW, boundary)
+    expect(s.hours).toBeCloseTo(8, 10)
+    expect(s.amount).toBe(0)
+  })
+
+  it('OT is PER WORKER PER WEEK, not pooled across workers', () => {
+    // Two workers, 30h each in one week → each under 40, no OT. rate 10 → 600 total.
+    const ivs: UnpaidInterval[] = [
+      { profile_id: 'w1', start_at: '2026-01-05T00:00:00Z', end_at: '2026-01-06T06:00:00Z' }, // 30h
+      { profile_id: 'w2', start_at: '2026-01-05T00:00:00Z', end_at: '2026-01-06T06:00:00Z' }, // 30h
+    ]
+    const rates = new Map<string, number | null>([['w1', 10], ['w2', 10]])
+    const s = computeUnpaidSummary(ivs, [], rates, NOW, boundary)
+    expect(s.hours).toBeCloseTo(60, 10)
+    expect(s.amount).toBe(600) // no OT despite 60h pooled
   })
 })

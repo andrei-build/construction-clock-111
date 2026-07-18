@@ -403,9 +403,24 @@ export async function addDeliveryItem(p: Profile, task: Task, input: NewDelivery
 
 export type DeliveryItemStatus = DeliveryItem['status']
 
+// DELIVERY-CONFLICT: конфликт одновременной отметки одной позиции двумя водителями. Несёт СВЕЖУЮ
+// запись (уже отмеченную другим), чтобы UI показал «позицию уже отметил <имя>» вместо молчаливого
+// перезатирания. Отдельный класс — вызывающий отличает конфликт от обычной сетевой ошибки.
+export class DeliveryItemConflictError extends Error {
+  constructor(public readonly current: DeliveryItem) {
+    super('delivery_item_conflict')
+    this.name = 'DeliveryItemConflictError'
+  }
+}
+
 // Отметка водителя по позиции: bought (купил) / have (есть у меня — завезу) / delivered (привезено) /
 // needed (сброс). updated_by/updated_at ставим всегда (кто и когда трогал). claimed_by = я ТОЛЬКО
 // при 'have'; на любом другом статусе снимаем притязание (NULL), чтобы «завезу» не висело после купил/сброс.
+//
+// DELIVERY-CONFLICT: optimistic-concurrency guard по updated_at — апдейт проходит ТОЛЬКО если
+// позиция не менялась с момента чтения (.eq('updated_at', item.updated_at)). Если кто-то уже
+// отметил (0 строк обновлено, maybeSingle→null), читаем свежую запись и бросаем
+// DeliveryItemConflictError — UI покажет, кто отметил, и подставит актуальные данные.
 export async function setDeliveryItemStatus(p: Profile, item: DeliveryItem, status: DeliveryItemStatus): Promise<DeliveryItem> {
   const patch: Record<string, unknown> = {
     status,
@@ -413,8 +428,19 @@ export async function setDeliveryItemStatus(p: Profile, item: DeliveryItem, stat
     updated_at: new Date().toISOString(),
     claimed_by: status === 'have' ? p.id : null,
   }
-  const { data, error } = await supabase.from('delivery_items').update(patch).eq('id', item.id).select(DELIVERY_ITEM_SELECT).single()
+  const { data, error } = await supabase.from('delivery_items')
+    .update(patch)
+    .eq('id', item.id)
+    .eq('updated_at', item.updated_at)
+    .select(DELIVERY_ITEM_SELECT)
+    .maybeSingle()
   if (error) throw error
+  if (!data) {
+    // 0 строк обновлено → updated_at уже не тот: позицию тронул кто-то другой. Тянем свежую
+    // запись (best-effort) и бросаем конфликт с ней; при неудаче чтения — со старой (хоть что-то).
+    const { data: fresh } = await supabase.from('delivery_items').select(DELIVERY_ITEM_SELECT).eq('id', item.id).maybeSingle()
+    throw new DeliveryItemConflictError((fresh as DeliveryItem | null) ?? item)
+  }
   return data as DeliveryItem
 }
 

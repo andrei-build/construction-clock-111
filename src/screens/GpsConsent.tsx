@@ -104,6 +104,8 @@ export default function GpsConsent({ onSigned }: { onSigned: () => void }) {
         <canvas
           ref={signatureCanvasRef}
           className="signature-canvas"
+          /* PWA-INPUT: помечаем нарисованную подпись, чтобы тихое автообновление её не стёрло. */
+          data-signed={signatureTouched ? 'true' : undefined}
           width={640}
           height={220}
           onPointerDown={beginSignature}

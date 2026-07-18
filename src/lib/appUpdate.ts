@@ -73,3 +73,39 @@ export function isUserTyping(composing: boolean): boolean {
   if (el.isContentEditable) return true
   return false
 }
+
+// PWA-INPUT: типы <input>, чьё непустое значение считаем несохранённым черновиком. Чекбоксы,
+// радио, кнопки, файлы, скрытые/служебные поля намеренно исключены — их «значение» либо не
+// теряется при reload, либо не является вводом пользователя.
+const DRAFT_INPUT_TYPES = new Set(['text', 'search', 'email', 'tel', 'url', 'password', 'number', 'date', 'datetime-local', 'time', 'month', 'week'])
+
+// PWA-INPUT: есть ли на экране непустое текстовое поле / textarea, даже РАСфокусированное. Тихий
+// reload затёр бы такой черновик (заметка, имя, сумма, набранная позиция накладной), поэтому его
+// наличие — повод отложить обновление и лишь предложить тост.
+function hasNonEmptyTextField(): boolean {
+  const fields = document.querySelectorAll('input, textarea')
+  for (const node of Array.from(fields)) {
+    const el = node as HTMLInputElement | HTMLTextAreaElement
+    if (el.disabled || el.readOnly) continue
+    if (el.tagName === 'INPUT' && !DRAFT_INPUT_TYPES.has((el as HTMLInputElement).type)) continue
+    if (el.value.trim().length > 0) return true
+  }
+  return false
+}
+
+// PWA-INPUT: расширенный сторож несохранённого ввода для тихого автообновления. Тихий reload
+// допустим лишь когда экран действительно «пуст». Откладываем обновление (показываем тост), если:
+//   • пользователь печатает / идёт IME-композиция (isUserTyping);
+//   • открыта модалка/диалог (aria-modal|role=dialog) — человек в середине задачи;
+//   • на канвасе нарисована подпись (ТБ/доставка) — canvas помечает себя data-signed при первом
+//     штрихе; reload стёр бы неотправленную подпись;
+//   • есть непустое (даже расфокусированное) текстовое поле/textarea — черновик заметки/суммы/позиции.
+// Чистая happy-path (пустой экран) по-прежнему обновляется тихо.
+export function hasUnsavedInput(composing: boolean): boolean {
+  if (isUserTyping(composing)) return true
+  if (typeof document === 'undefined') return false
+  if (document.querySelector('[aria-modal="true"], [role="dialog"]')) return true
+  if (document.querySelector('canvas[data-signed="true"]')) return true
+  if (hasNonEmptyTextField()) return true
+  return false
+}

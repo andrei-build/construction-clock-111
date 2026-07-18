@@ -100,3 +100,114 @@ export function regularOvertimeSplit(weeks: Map<string, number>, weeklyThreshold
   }
   return { regularHours, overtimeHours }
 }
+
+// (е) MyTime — worked ms of a set of adjustment-aware intervals (v_work_intervals) intersecting
+// the half-open window [fromMs, toMs). Open shifts (end_at null) are clamped to min(now, toMs).
+// Pure overlap-sum so the worker's hour tiles read the SAME source as payroll (edits applied).
+export function workedMsInWindow(intervals: HoursInterval[], fromMs: number, toMs: number, now: number): number {
+  let ms = 0
+  for (const iv of intervals) {
+    const startMs = new Date(iv.start_at).getTime()
+    const rawEndMs = iv.end_at ? new Date(iv.end_at).getTime() : Math.min(now, toMs)
+    if (!Number.isFinite(startMs) || !Number.isFinite(rawEndMs)) continue
+    const lo = Math.max(startMs, fromMs)
+    const hi = Math.min(rawEndMs, toMs)
+    if (hi > lo) ms += hi - lo
+  }
+  return ms
+}
+
+// (д) Overview «Неоплачено» KPI — pure computation, TZ-agnostic and Supabase-free so vitest can
+// exercise the OT math directly.
+export interface ClosedWindow {
+  startMs: number
+  endMs: number
+}
+
+export interface UnpaidInterval {
+  profile_id: string
+  start_at: string
+  end_at: string | null
+}
+
+export interface UnpaidSummary {
+  hours: number
+  amount: number
+}
+
+// UTC Monday-anchored week boundary. The KPI is a dashboard ESTIMATE, so it uses TZ-agnostic UTC
+// weeks (exact per-org weekly grouping lives in Payroll). Injected into computeUnpaidSummary so
+// tests can pin the boundary.
+export function utcMondayWeekBoundary(cursorMs: number): WeekBoundary {
+  const d = new Date(cursorMs)
+  const dayFromMon = (d.getUTCDay() + 6) % 7 // 0 = Monday
+  const mondayMs = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - dayFromMon)
+  return { key: new Date(mondayMs).toISOString(), nextBoundaryMs: mondayMs + 7 * 24 * 3600000 }
+}
+
+// Subtract closed (approved/paid) pay-period windows from [startMs, endMs), returning the UNPAID
+// sub-segments. Splitting each interval against every closed window in turn preserves the exact
+// unpaid slices (needed later for weekly OT grouping).
+export function unpaidSegments(startMs: number, endMs: number, closed: ClosedWindow[]): ClosedWindow[] {
+  let open: ClosedWindow[] = [{ startMs, endMs }]
+  for (const period of closed) {
+    const next: ClosedWindow[] = []
+    for (const segment of open) {
+      const overlapStart = Math.max(segment.startMs, period.startMs)
+      const overlapEnd = Math.min(segment.endMs, period.endMs)
+      if (overlapEnd <= overlapStart) {
+        next.push(segment)
+        continue
+      }
+      if (segment.startMs < overlapStart) next.push({ startMs: segment.startMs, endMs: overlapStart })
+      if (overlapEnd < segment.endMs) next.push({ startMs: overlapEnd, endMs: segment.endMs })
+    }
+    open = next
+    if (open.length === 0) break
+  }
+  return open
+}
+
+// Unpaid hours + money for the Overview KPI. Unpaid = work-interval time outside approved/paid
+// periods. Money applies weekly OT ×1.5 (regularOvertimeSplit + computeWorkerTotal) per worker,
+// using their latest rate — so a worker over 40 unpaid hours in a week is not undercounted.
+// rate === null (no rate on file) contributes 0 money but its hours still count.
+export function computeUnpaidSummary(
+  intervals: UnpaidInterval[],
+  closed: ClosedWindow[],
+  rateByWorker: Map<string, number | null>,
+  now: number,
+  weekBoundary: (cursorMs: number) => WeekBoundary = utcMondayWeekBoundary,
+): UnpaidSummary {
+  // Collect each worker's unpaid sub-segments as HoursInterval so we can reuse splitHoursByWeek.
+  const segByWorker = new Map<string, HoursInterval[]>()
+  for (const interval of intervals) {
+    const startMs = new Date(interval.start_at).getTime()
+    const endMs = interval.end_at ? new Date(interval.end_at).getTime() : now
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue
+    const segs = unpaidSegments(startMs, endMs, closed)
+    if (segs.length === 0) continue
+    const list = segByWorker.get(interval.profile_id) ?? []
+    for (const s of segs) list.push({ start_at: new Date(s.startMs).toISOString(), end_at: new Date(s.endMs).toISOString() })
+    segByWorker.set(interval.profile_id, list)
+  }
+
+  let hours = 0
+  let amount = 0
+  for (const [profileId, segs] of segByWorker) {
+    let winStart = Infinity
+    let winEnd = -Infinity
+    for (const s of segs) {
+      winStart = Math.min(winStart, new Date(s.start_at).getTime())
+      winEnd = Math.max(winEnd, new Date(s.end_at as string).getTime())
+    }
+    // Segments are already clipped to the unpaid windows; the wide [winStart, winEnd) window means
+    // splitHoursByWeek only performs the week-boundary split, no further clipping.
+    const weeks = splitHoursByWeek(segs, winStart, winEnd, weekBoundary, now)
+    const { regularHours, overtimeHours } = regularOvertimeSplit(weeks)
+    hours += regularHours + overtimeHours
+    const rate = rateByWorker.get(profileId) ?? null
+    amount += computeWorkerTotal({ regularHours, overtimeHours, travelHours: 0, rate })
+  }
+  return { hours, amount }
+}
