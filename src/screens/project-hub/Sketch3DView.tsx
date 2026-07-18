@@ -54,13 +54,17 @@ const WIN_H_FT = 4
 const WIN_SILL_FT = 3
 const DEFAULT_SWITCH_HEIGHT_FT = 4
 const DEFAULT_SCONCE_HEIGHT_FT = 5.6
+const ORBIT_FOV_DEG = 65
+const INSIDE_FOV_DEG = 70
+const EYE_HEIGHT_FT = 5.5
 
 type SurfaceTarget = 'walls' | 'floor'
 type PlacementKind = SketchLightKind | 'switch' | null
 type Segment = { c: number; s: number; a: Pt; b: Pt }
-type CameraPreset = 'fit' | 'top' | 'angle'
+type CameraPreset = 'fit' | 'top' | 'angle' | 'inside'
 type InteractiveKind = 'light' | 'switch' | 'catalog'
 type Sketch3DModelWithCatalog = Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }
+type SketchContour = Sketch3DModel['contours'][number]
 
 interface Sketch3DViewProps {
   model: Sketch3DModelWithCatalog
@@ -120,6 +124,74 @@ function modelBounds(model: Sketch3DModel): { minX: number; maxX: number; minZ: 
     width: Math.max(maxX - minX, 1),
     depth: Math.max(maxZ - minZ, 1),
   }
+}
+
+function contourSignedArea(contour: SketchContour): number {
+  if (contour.points.length < 3) return 0
+  let sum = 0
+  contour.points.forEach((point, index) => {
+    const next = contour.points[(index + 1) % contour.points.length]
+    sum += point.x * next.y - next.x * point.y
+  })
+  return sum / 2
+}
+
+function largestClosedContour(model: Sketch3DModel): SketchContour | null {
+  let best: SketchContour | null = null
+  let bestArea = 0
+  model.contours.forEach((contour) => {
+    if (!contour.closed || contour.points.length < 3) return
+    const area = Math.abs(contourSignedArea(contour))
+    if (area > bestArea) {
+      bestArea = area
+      best = contour
+    }
+  })
+  return best
+}
+
+function pointInContourWorld(contour: SketchContour, cellFt: number, x: number, z: number): boolean {
+  let inside = false
+  const points = contour.points
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const xi = points[i].x * cellFt
+    const zi = points[i].y * cellFt
+    const xj = points[j].x * cellFt
+    const zj = points[j].y * cellFt
+    const denom = zj - zi
+    const atX = ((xj - xi) * (z - zi)) / (Math.abs(denom) < 0.000001 ? 0.000001 : denom) + xi
+    const intersects = ((zi > z) !== (zj > z)) && x < atX
+    if (intersects) inside = !inside
+  }
+  return inside
+}
+
+function contourCenterWorld(contour: SketchContour, cellFt: number): { x: number; z: number } {
+  const area = contourSignedArea(contour)
+  if (Math.abs(area) > 0.000001) {
+    let x = 0
+    let z = 0
+    contour.points.forEach((point, index) => {
+      const next = contour.points[(index + 1) % contour.points.length]
+      const cross = point.x * next.y - next.x * point.y
+      x += (point.x + next.x) * cross
+      z += (point.y + next.y) * cross
+    })
+    const factor = 1 / (6 * area)
+    return { x: x * factor * cellFt, z: z * factor * cellFt }
+  }
+  const sum = contour.points.reduce((acc, point) => ({ x: acc.x + point.x, z: acc.z + point.y }), { x: 0, z: 0 })
+  return { x: (sum.x / Math.max(1, contour.points.length)) * cellFt, z: (sum.z / Math.max(1, contour.points.length)) * cellFt }
+}
+
+function roomCenterWorld(model: Sketch3DModel, bounds: { minX: number; maxX: number; minZ: number; maxZ: number; width: number; depth: number }): { x: number; z: number } {
+  const cellFt = modelCellFt(model)
+  const room = largestClosedContour(model)
+  if (room) {
+    const center = contourCenterWorld(room, cellFt)
+    if (pointInContourWorld(room, cellFt, center.x, center.z)) return center
+  }
+  return { x: bounds.minX + bounds.width / 2, z: bounds.minZ + bounds.depth / 2 }
 }
 
 function segmentWorld(model: Sketch3DModel, c: number, s: number): Segment | null {
@@ -186,7 +258,7 @@ function segmentLengthFt(model: Sketch3DModel, c: number | undefined, s: number 
 
 function formatFeet(valueFt: number): string {
   const safe = Number.isFinite(valueFt) ? valueFt : 0
-  return `${safe.toFixed(1)}′`
+  return `${safe.toFixed(1)} ft`
 }
 
 function disposeObjectWithMaterial(object: { geometry?: unknown; material?: unknown }) {
@@ -383,31 +455,92 @@ function createLabelSprite(THREE: any, text: string) {
 }
 
 function createDimensionSprite(THREE: any, text: string) {
-  const lines = text.split('\n')
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')
-  canvas.width = 384
-  canvas.height = Math.max(86, 34 + lines.length * 28)
+  canvas.width = 320
+  canvas.height = 82
   if (ctx) {
-    ctx.font = '800 22px sans-serif'
-    const widest = Math.max(...lines.map((line) => ctx.measureText(line).width), 120)
-    canvas.width = Math.min(520, Math.max(220, Math.ceil(widest + 42)))
-    ctx.fillStyle = 'rgba(255, 255, 255, .92)'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    ctx.strokeStyle = 'rgba(15, 23, 42, .24)'
-    ctx.lineWidth = 3
-    ctx.strokeRect(1.5, 1.5, canvas.width - 3, canvas.height - 3)
+    ctx.font = '800 24px sans-serif'
+    const widest = Math.max(ctx.measureText(text).width, 90)
+    canvas.width = Math.min(420, Math.max(180, Math.ceil(widest + 30)))
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.lineWidth = 6
+    ctx.strokeStyle = 'rgba(255, 255, 255, .94)'
     ctx.fillStyle = '#0f172a'
     ctx.font = '800 22px sans-serif'
-    lines.forEach((line, i) => ctx.fillText(line, 21, 34 + i * 28))
+    ctx.strokeText(text, canvas.width / 2, canvas.height / 2)
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2)
   }
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false })
   const sprite = new THREE.Sprite(material)
-  sprite.scale.set(canvas.width / 180, canvas.height / 180, 1)
+  sprite.scale.set(canvas.width / 210, canvas.height / 210, 1)
   sprite.renderOrder = 21
   return sprite
+}
+
+function addLine(points: any[], a: any, b: any) {
+  points.push(a.x, a.y, a.z, b.x, b.y, b.z)
+}
+
+function addDimensionLineGroup(
+  THREE: any,
+  parent: any,
+  a: { x: number; z: number },
+  b: { x: number; z: number },
+  height: number,
+  nx: number,
+  nz: number,
+  lengthText: string,
+  heightText: string,
+) {
+  const dx = b.x - a.x
+  const dz = b.z - a.z
+  const len = Math.hypot(dx, dz)
+  if (len <= 0.01) return
+  const ux = dx / len
+  const uz = dz / len
+  const offset = WALL_THICKNESS_FT / 2 + 0.48
+  const extGap = 0.08
+  const tick = 0.22
+  const y = 0.13
+  const start = new THREE.Vector3(a.x + nx * offset, y, a.z + nz * offset)
+  const end = new THREE.Vector3(b.x + nx * offset, y, b.z + nz * offset)
+  const points: number[] = []
+
+  addLine(points, new THREE.Vector3(a.x + nx * extGap, y, a.z + nz * extGap), start.clone().add(new THREE.Vector3(nx * extGap, 0, nz * extGap)))
+  addLine(points, new THREE.Vector3(b.x + nx * extGap, y, b.z + nz * extGap), end.clone().add(new THREE.Vector3(nx * extGap, 0, nz * extGap)))
+  addLine(points, start, end)
+  const slash = new THREE.Vector3((ux + nx) * tick, 0, (uz + nz) * tick)
+  addLine(points, start.clone().addScaledVector(slash, -0.5), start.clone().addScaledVector(slash, 0.5))
+  addLine(points, end.clone().addScaledVector(slash, -0.5), end.clone().addScaledVector(slash, 0.5))
+
+  const hx = a.x + nx * (offset + 0.42) - ux * 0.16
+  const hz = a.z + nz * (offset + 0.42) - uz * 0.16
+  const bottom = new THREE.Vector3(hx, 0, hz)
+  const top = new THREE.Vector3(hx, height, hz)
+  addLine(points, bottom, top)
+  const heightSlash = new THREE.Vector3(ux * tick, tick, uz * tick)
+  addLine(points, bottom.clone().addScaledVector(heightSlash, -0.5), bottom.clone().addScaledVector(heightSlash, 0.5))
+  addLine(points, top.clone().addScaledVector(heightSlash, -0.5), top.clone().addScaledVector(heightSlash, 0.5))
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3))
+  const material = new THREE.LineBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.9, depthTest: false })
+  const lines = new THREE.LineSegments(geometry, material)
+  lines.renderOrder = 20
+  parent.add(lines)
+
+  const lengthLabel = createDimensionSprite(THREE, lengthText)
+  lengthLabel.position.set((start.x + end.x) / 2 + nx * 0.18, y + 0.28, (start.z + end.z) / 2 + nz * 0.18)
+  parent.add(lengthLabel)
+
+  const heightLabel = createDimensionSprite(THREE, heightText)
+  heightLabel.position.set(hx + nx * 0.2, height / 2, hz + nz * 0.2)
+  parent.add(heightLabel)
 }
 
 export default function Sketch3DView({ model, heightFt, canEdit = false, onModelChange, label, loadingLabel, errorLabel }: Sketch3DViewProps) {
@@ -416,8 +549,12 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const cameraApiRef = useRef<Record<CameraPreset, () => void> | null>(null)
   const dimensionGroupRef = useRef<any | null>(null)
   const dimensionsVisibleRef = useRef(true)
+  const invalidate3DRef = useRef<(() => void) | null>(null)
+  const placementRef = useRef<PlacementKind>(null)
+  const catalogPlacementItemRef = useRef<CatalogItem | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [showDimensions, setShowDimensions] = useState(true)
+  const [cameraMode, setCameraMode] = useState<CameraPreset>('fit')
   const [surfaceTarget, setSurfaceTarget] = useState<SurfaceTarget>('walls')
   const [placement, setPlacement] = useState<PlacementKind>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -454,6 +591,11 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const selectedPlacedDoesNotFit = selectedPlaced
     ? placedCatalogDoesNotFit(selectedPlaced.placed, selectedPlaced.dims, boundsForCuts, heightFt, segmentLengthFt(model, selectedPlaced.placed.c, selectedPlaced.placed.s))
     : false
+
+  useEffect(() => {
+    placementRef.current = placement
+    catalogPlacementItemRef.current = catalogPlacementItem
+  }, [placement, catalogPlacementItem])
 
   const applyModel = (next: Sketch3DModelWithCatalog) => {
     if (!canEdit) return
@@ -577,6 +719,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   useEffect(() => {
     dimensionsVisibleRef.current = showDimensions
     if (dimensionGroupRef.current) dimensionGroupRef.current.visible = showDimensions
+    invalidate3DRef.current?.()
   }, [showDimensions])
 
   useEffect(() => {
@@ -597,14 +740,16 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const renderer = new THREE.WebGLRenderer({ antialias: true })
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
         renderer.setClearColor(0xf7f8fb, 1)
-        renderer.shadowMap.enabled = true
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap
+        renderer.shadowMap.enabled = false
         currentHost.appendChild(renderer.domElement)
 
         const scene = new THREE.Scene()
         scene.background = new THREE.Color(0xf7f8fb)
 
+        const cellFt = modelCellFt(model)
         const bounds = modelBounds(model)
+        const insideRoom = largestClosedContour(model)
+        const insideCenter = roomCenterWorld(model, bounds)
         const height = Number.isFinite(heightFt) && heightFt > 0 ? heightFt : DEFAULT_WALL_HEIGHT_FT
         const span = Math.max(bounds.width, bounds.depth, height, 12)
         const centerX = bounds.minX + bounds.width / 2
@@ -631,7 +776,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const sceneRadius = Math.hypot(paddedWidth, paddedDepth, height) / 2
         const minCameraDistance = Math.max(6, height * 1.05, floorRadius * 1.12)
         const maxCameraDistance = Math.max(minCameraDistance + span * 2, sceneRadius * 8, 60)
-        const camera = new THREE.PerspectiveCamera(45, 1, 0.1, Math.max(300, maxCameraDistance * 4))
+        const camera = new THREE.PerspectiveCamera(ORBIT_FOV_DEG, 1, 0.1, Math.max(300, maxCameraDistance * 4))
 
         const controls = new OrbitControls(camera, renderer.domElement)
         controls.enableDamping = true
@@ -653,6 +798,24 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           ONE: THREE.TOUCH.ROTATE,
           TWO: THREE.TOUCH.DOLLY_PAN,
         }
+
+        let frame = 0
+        let renderQueued = false
+        function invalidate() {
+          if (disposed || renderQueued) return
+          renderQueued = true
+          frame = window.requestAnimationFrame(renderFrame)
+        }
+        function renderFrame() {
+          if (disposed) return
+          renderQueued = false
+          const orbitChanged = controls.enabled ? controls.update() : false
+          const clamped = controls.enabled ? clampCameraTarget() : false
+          renderer.render(scene, camera)
+          if (controls.enabled && (orbitChanged || clamped)) invalidate()
+        }
+        invalidate3DRef.current = invalidate
+        controls.addEventListener('change', invalidate)
 
         const setCameraUp = (top: boolean) => {
           camera.up.set(0, top ? 0 : 1, top ? -1 : 0)
@@ -681,7 +844,56 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           return Math.max(minCameraDistance, Math.min(maxCameraDistance * 0.9, fitDistance))
         }
 
+        let insideMode = false
+        let insideYaw = bounds.depth >= bounds.width ? 0 : Math.PI / 2
+        let insidePitch = 0
+        const eyeY = Math.max(1.25, Math.min(EYE_HEIGHT_FT, Math.max(1.25, height - 0.25)))
+        const insideCanStandAt = (x: number, z: number) => !insideRoom || pointInContourWorld(insideRoom, cellFt, x, z)
+        const applyInsideLook = () => {
+          camera.rotation.order = 'YXZ'
+          camera.rotation.set(insidePitch, insideYaw, 0)
+          camera.position.y = eyeY
+          camera.updateMatrixWorld()
+          invalidate()
+        }
+        const enterInsideCamera = () => {
+          insideMode = true
+          controls.enabled = false
+          setCameraUp(false)
+          camera.fov = INSIDE_FOV_DEG
+          camera.near = 0.03
+          camera.far = Math.max(300, maxCameraDistance * 4)
+          camera.position.set(insideCenter.x, eyeY, insideCenter.z)
+          if (!insideCanStandAt(camera.position.x, camera.position.z)) {
+            camera.position.set(centerX, eyeY, centerZ)
+          }
+          camera.updateProjectionMatrix()
+          applyInsideLook()
+        }
+        const moveInsideCamera = (amount: number) => {
+          if (!insideMode || Math.abs(amount) <= 0.001) return
+          const direction = new THREE.Vector3()
+          camera.getWorldDirection(direction)
+          direction.y = 0
+          if (direction.lengthSq() <= 0.000001) return
+          direction.normalize()
+          const steps = Math.max(1, Math.ceil(Math.abs(amount) / 0.25))
+          const step = amount / steps
+          for (let i = 0; i < steps; i++) {
+            const nextX = camera.position.x + direction.x * step
+            const nextZ = camera.position.z + direction.z * step
+            if (!insideCanStandAt(nextX, nextZ)) break
+            camera.position.x = nextX
+            camera.position.z = nextZ
+          }
+          camera.position.y = eyeY
+          invalidate()
+        }
+
         const fitCamera = (preset: CameraPreset = 'fit') => {
+          insideMode = false
+          controls.enabled = true
+          camera.fov = ORBIT_FOV_DEG
           const direction =
             preset === 'top'
               ? new THREE.Vector3(0.001, 1, 0.001).normalize()
@@ -695,20 +907,21 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           camera.far = Math.max(300, maxCameraDistance * 4)
           camera.updateProjectionMatrix()
           controls.update()
+          invalidate()
         }
 
         cameraApiRef.current = {
           fit: () => fitCamera('fit'),
           top: () => fitCamera('top'),
           angle: () => fitCamera('angle'),
+          inside: enterInsideCamera,
         }
         controls.update()
 
         scene.add(new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 1.2))
         const keyLight = new THREE.DirectionalLight(0xffffff, 1)
         keyLight.position.set(centerX - span * 0.45, height + span * 0.9, centerZ + span * 0.55)
-        keyLight.castShadow = true
-        keyLight.shadow.mapSize.set(1024, 1024)
+        keyLight.castShadow = false
         scene.add(keyLight)
 
         const gridSize = Math.max(24, Math.ceil(span + 8))
@@ -718,7 +931,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         )
         ground.rotation.x = -Math.PI / 2
         ground.position.set(centerX, -0.04, centerZ)
-        ground.receiveShadow = true
+        ground.receiveShadow = false
         scene.add(ground)
 
         const grid = new THREE.GridHelper(gridSize, gridSize, 0xaeb8c4, 0xd9dee7)
@@ -742,8 +955,6 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           roughness: 0.36,
           metalness: 0.08,
         })
-        const cellFt = modelCellFt(model)
-
         model.contours.forEach((contour) => {
           if (!contour.closed || contour.points.length < 3) return
           const shape = new THREE.Shape()
@@ -759,7 +970,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           geometry.rotateX(Math.PI / 2)
           const floor = new THREE.Mesh(geometry, floorMaterial)
           floor.position.y = 0.015
-          floor.receiveShadow = true
+          floor.receiveShadow = false
           scene.add(floor)
           floorTargets.push(floor)
         })
@@ -774,23 +985,36 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           const wall = new THREE.Mesh(new THREE.BoxGeometry(len, height, WALL_THICKNESS_FT), createWallMaterial(THREE, wallSurface, len, height))
           wall.position.set((a.x + b.x) / 2, height / 2, (a.z + b.z) / 2)
           wall.rotation.y = -Math.atan2(dz, dx)
-          wall.castShadow = true
-          wall.receiveShadow = true
+          wall.castShadow = false
+          wall.receiveShadow = false
           wall.userData.wallC = seg.c
           wall.userData.wallS = seg.s
           scene.add(wall)
           wallTargets.push(wall)
 
-          const nx = -dz / len
-          const nz = dx / len
-          const dimText = `${t('hub_sketch_dim_length_short')} ${formatFeet(len)}\n${t('hub_sketch_dim_height_short')} ${formatFeet(height)}`
-          const dimSprite = createDimensionSprite(THREE, dimText)
-          dimSprite.position.set(
-            (a.x + b.x) / 2 + nx * (WALL_THICKNESS_FT / 2 + 0.42),
-            Math.max(0.65, Math.min(height - 0.18, height * 0.72)),
-            (a.z + b.z) / 2 + nz * (WALL_THICKNESS_FT / 2 + 0.42),
+          let nx = -dz / len
+          let nz = dx / len
+          const contour = model.contours[seg.c]
+          if (contour?.points.length) {
+            const contourCenter = contourCenterWorld(contour, cellFt)
+            const midX = (a.x + b.x) / 2
+            const midZ = (a.z + b.z) / 2
+            if ((contourCenter.x - midX) * nx + (contourCenter.z - midZ) * nz > 0) {
+              nx *= -1
+              nz *= -1
+            }
+          }
+          addDimensionLineGroup(
+            THREE,
+            dimensionGroup,
+            a,
+            b,
+            height,
+            nx,
+            nz,
+            formatFeet(len),
+            formatFeet(height),
           )
-          dimensionGroup.add(dimSprite)
         })
 
         model.openings.forEach((opening) => {
@@ -824,7 +1048,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
             z + nz * (WALL_THICKNESS_FT / 2 + 0.055),
           )
           insert.rotation.y = -Math.atan2(uz, ux)
-          insert.castShadow = true
+          insert.castShadow = false
           scene.add(insert)
         })
 
@@ -955,8 +1179,8 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
             opacity: resolved.missingCatalogItem ? 0.52 : 0.92,
           })
           const box = new THREE.Mesh(new THREE.BoxGeometry(resolved.dims.widthFt, resolved.dims.heightFt, resolved.dims.depthFt), material)
-          box.castShadow = true
-          box.receiveShadow = true
+          box.castShadow = false
+          box.receiveShadow = false
           const edges = new THREE.LineSegments(
             new THREE.EdgesGeometry(box.geometry),
             new THREE.LineBasicMaterial({ color: doesNotFit ? 0x991b1b : selectedId === placed.id ? 0x0f172a : 0xffffff, transparent: true, opacity: 0.85 }),
@@ -991,6 +1215,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
               object: any
             }
           | null = null
+        let insideLookDrag: { pointerId: number; x: number; y: number; yaw: number; pitch: number } | null = null
 
         const updatePointer = (event: { clientX: number; clientY: number }) => {
           const rect = renderer.domElement.getBoundingClientRect()
@@ -1053,13 +1278,15 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
 
         const placeAtPointer = (event: PointerEvent) => {
           if (!canEdit) return
-          if (catalogPlacementItem) {
-            placeCatalogAtPointer(event, catalogPlacementItem)
+          const currentCatalogPlacementItem = catalogPlacementItemRef.current
+          if (currentCatalogPlacementItem) {
+            placeCatalogAtPointer(event, currentCatalogPlacementItem)
             return
           }
-          if (!placement) return
+          const currentPlacement = placementRef.current
+          if (!currentPlacement) return
           updatePointer(event)
-          if (placement === 'switch') {
+          if (currentPlacement === 'switch') {
             const anchor = wallHitAnchor()
             if (!anchor) return
             const nextSwitch: SketchSwitch = {
@@ -1074,7 +1301,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
             setSelectedId(nextSwitch.id)
             return
           }
-          if (placement === 'sconce') {
+          if (currentPlacement === 'sconce') {
             const anchor = wallHitAnchor()
             if (!anchor) return
             const nextLight: SketchLight = {
@@ -1092,7 +1319,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           }
           const point = floorHitPoint()
           if (!point) return
-          const nextLight = addLightAt(placement, point.x, point.z)
+          const nextLight = addLightAt(currentPlacement, point.x, point.z)
           onModelChange?.({ ...model, lights: [...lights, nextLight] })
           setSelectedId(nextLight.id)
         }
@@ -1100,6 +1327,12 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const onPointerDown = (event: PointerEvent) => {
           pointerDown = { x: event.clientX, y: event.clientY }
           if (event.button !== 0) return
+          if (insideMode) {
+            insideLookDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, yaw: insideYaw, pitch: insidePitch }
+            renderer.domElement.setPointerCapture?.(event.pointerId)
+            event.preventDefault()
+            return
+          }
           updatePointer(event)
           const hit = raycaster.intersectObjects(itemTargets, true)[0]
           const tagged = hit ? taggedObject(hit.object) : null
@@ -1114,6 +1347,15 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         }
 
         const onPointerMove = (event: PointerEvent) => {
+          if (insideLookDrag && insideLookDrag.pointerId === event.pointerId) {
+            const dx = event.clientX - insideLookDrag.x
+            const dy = event.clientY - insideLookDrag.y
+            insideYaw = insideLookDrag.yaw - dx * 0.004
+            insidePitch = Math.max(-1.32, Math.min(1.32, insideLookDrag.pitch - dy * 0.004))
+            applyInsideLook()
+            event.preventDefault()
+            return
+          }
           if (!drag) return
           updatePointer(event)
           drag.moved = true
@@ -1167,6 +1409,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
               drag.object.position.z = point.z
             }
           }
+          invalidate()
           event.preventDefault()
         }
 
@@ -1174,10 +1417,17 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           const delta = pointerDown ? Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) : 0
           pointerDown = null
           if (event.button !== 0) return
+          if (insideLookDrag && insideLookDrag.pointerId === event.pointerId) {
+            insideLookDrag = null
+            renderer.domElement.releasePointerCapture?.(event.pointerId)
+            event.preventDefault()
+            return
+          }
           if (drag) {
             const completed = drag
             drag = null
             controls.enabled = true
+            invalidate()
             if (completed.moved && completed.latestLight) {
               onModelChange?.({ ...model, lights: lights.map((light) => (light.id === completed.latestLight?.id ? completed.latestLight : light)) })
             }
@@ -1194,34 +1444,44 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           if (delta <= 4) placeAtPointer(event)
         }
 
+        const onWheel = (event: WheelEvent) => {
+          if (!insideMode) return
+          event.preventDefault()
+          moveInsideCamera(Math.max(-2, Math.min(2, -event.deltaY * 0.012)))
+        }
+
         const onContextMenu = (event: MouseEvent) => event.preventDefault()
         const onDragOver = (event: DragEvent) => {
-          if (!canEdit || !catalogPlacementItem || !catalogItemHasExactDims(catalogPlacementItem)) return
+          const currentCatalogPlacementItem = catalogPlacementItemRef.current
+          if (!canEdit || !currentCatalogPlacementItem || !catalogItemHasExactDims(currentCatalogPlacementItem)) return
           event.preventDefault()
         }
         const onDrop = (event: DragEvent) => {
-          if (!canEdit || !catalogPlacementItem || !catalogItemHasExactDims(catalogPlacementItem)) return
+          const currentCatalogPlacementItem = catalogPlacementItemRef.current
+          if (!canEdit || !currentCatalogPlacementItem || !catalogItemHasExactDims(currentCatalogPlacementItem)) return
           event.preventDefault()
-          placeCatalogAtPointer(event, catalogPlacementItem)
+          placeCatalogAtPointer(event, currentCatalogPlacementItem)
         }
 
         renderer.domElement.addEventListener('pointerdown', onPointerDown)
         renderer.domElement.addEventListener('pointermove', onPointerMove)
         renderer.domElement.addEventListener('pointerup', onPointerUp)
+        renderer.domElement.addEventListener('wheel', onWheel, { passive: false })
         renderer.domElement.addEventListener('contextmenu', onContextMenu)
         renderer.domElement.addEventListener('dragover', onDragOver)
         renderer.domElement.addEventListener('drop', onDrop)
 
-        const clampCameraTarget = () => {
+        function clampCameraTarget(): boolean {
           const panPad = Math.max(4, span * 0.35)
           const nextTarget = controls.target.clone()
           nextTarget.x = Math.max(sceneMinX - panPad, Math.min(sceneMaxX + panPad, nextTarget.x))
           nextTarget.y = Math.max(0, Math.min(height, nextTarget.y))
           nextTarget.z = Math.max(sceneMinZ - panPad, Math.min(sceneMaxZ + panPad, nextTarget.z))
           const delta = nextTarget.sub(controls.target)
-          if (delta.lengthSq() <= 0.000001) return
+          if (delta.lengthSq() <= 0.000001) return false
           controls.target.add(delta)
           camera.position.add(delta)
+          return true
         }
 
         let didInitialFit = false
@@ -1233,30 +1493,28 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           camera.aspect = width / heightPx
           camera.updateProjectionMatrix()
           if (!didInitialFit) {
-            fitCamera('fit')
+            if (cameraMode === 'inside') enterInsideCamera()
+            else fitCamera('fit')
             didInitialFit = true
+          } else {
+            invalidate()
           }
         }
         const observer = new ResizeObserver(resize)
         observer.observe(currentHost)
         resize()
 
-        let frame = 0
-        const animate = () => {
-          if (disposed) return
-          controls.update()
-          clampCameraTarget()
-          renderer.render(scene, camera)
-          frame = window.requestAnimationFrame(animate)
-        }
-        animate()
+        invalidate()
         setState('ready')
 
         cleanup = () => {
           window.cancelAnimationFrame(frame)
+          if (invalidate3DRef.current === invalidate) invalidate3DRef.current = null
+          controls.removeEventListener('change', invalidate)
           renderer.domElement.removeEventListener('pointerdown', onPointerDown)
           renderer.domElement.removeEventListener('pointermove', onPointerMove)
           renderer.domElement.removeEventListener('pointerup', onPointerUp)
+          renderer.domElement.removeEventListener('wheel', onWheel)
           renderer.domElement.removeEventListener('contextmenu', onContextMenu)
           renderer.domElement.removeEventListener('dragover', onDragOver)
           renderer.domElement.removeEventListener('drop', onDrop)
@@ -1278,10 +1536,15 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
       cleanup?.()
       host.replaceChildren()
     }
-  }, [model, heightFt, finishes, canEdit, onModelChange, placement, selectedId, t, lights, switches, placedItems, resolvedPlacedItems, catalogPlacementItem])
+  }, [model, heightFt, finishes, canEdit, onModelChange, selectedId, t, lights, switches, placedItems, resolvedPlacedItems])
 
   const activeTile = normalizeTileSurface(activeSurface)
   const tileSizeValue = `${activeTile.tileWIn ?? 12}x${activeTile.tileHIn ?? 24}`
+  const cameraButtonClass = (mode: CameraPreset) => (cameraMode === mode ? 'btn small' : 'btn ghost small')
+  const setCameraPreset = (mode: CameraPreset) => {
+    setCameraMode(mode)
+    cameraApiRef.current?.[mode]()
+  }
 
   return (
     <div className="hub-sketch-3d-layout">
@@ -1297,14 +1560,17 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           <span>{t('hub_sketch_3d_dimensions')}</span>
         </label>
         <div className="hub-sketch-3d-camera-tools" role="toolbar" aria-label={t('hub_sketch_3d_camera')}>
-          <button type="button" className="btn ghost small" onClick={() => cameraApiRef.current?.fit()}>
+          <button type="button" className={cameraButtonClass('fit')} onClick={() => setCameraPreset('fit')}>
             {t('hub_sketch_camera_fit')}
           </button>
-          <button type="button" className="btn ghost small" onClick={() => cameraApiRef.current?.top()}>
+          <button type="button" className={cameraButtonClass('top')} onClick={() => setCameraPreset('top')}>
             {t('hub_sketch_camera_top')}
           </button>
-          <button type="button" className="btn ghost small" onClick={() => cameraApiRef.current?.angle()}>
+          <button type="button" className={cameraButtonClass('angle')} onClick={() => setCameraPreset('angle')}>
             {t('hub_sketch_camera_angle')}
+          </button>
+          <button type="button" className={cameraButtonClass('inside')} onClick={() => setCameraPreset('inside')}>
+            {t('hub_sketch_camera_inside')}
           </button>
         </div>
         {state === 'loading' && <div className="hub-sketch-3d-overlay muted">{loadingLabel}</div>}

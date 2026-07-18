@@ -84,6 +84,7 @@ export const TILE_SIZE_OPTIONS = [
 export const WALL_PAINT_SWATCHES = ['#f4f1ea', '#e7ebf0', '#dbe7df', '#e9ded3', '#d7e1ea', '#f1e3e0']
 
 const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i
+const tilePatternCanvasCache = new Map<string, HTMLCanvasElement>()
 
 function cleanNumber(value: unknown, fallback: number, min: number, max: number): number {
   const n = Number(value)
@@ -245,6 +246,15 @@ export function formatInches(value: number): string {
 
 export function createTilePatternCanvas(surface: SketchSurfaceFinish | undefined): HTMLCanvasElement {
   const tile = normalizeTileSurface(surface)
+  const key = [
+    tile.tileWIn ?? 12,
+    tile.tileHIn ?? 24,
+    tile.groutIn ?? DEFAULT_GROUT_IN,
+    cleanColor(tile.groutColor, DEFAULT_GROUT_COLOR),
+    cleanColor(tile.tileColor, DEFAULT_TILE_COLOR),
+  ].join('|')
+  const cached = tilePatternCanvasCache.get(key)
+  if (cached) return cached
   const tileW = Math.max(0.01, tile.tileWIn ?? 12)
   const tileH = Math.max(0.01, tile.tileHIn ?? 24)
   const grout = Math.max(0, tile.groutIn ?? DEFAULT_GROUT_IN)
@@ -265,5 +275,6 @@ export function createTilePatternCanvas(surface: SketchSurfaceFinish | undefined
   ctx.strokeStyle = 'rgba(255,255,255,.22)'
   ctx.lineWidth = 2
   ctx.strokeRect(1, 1, Math.max(1, w - 2), Math.max(1, h - 2))
+  tilePatternCanvasCache.set(key, canvas)
   return canvas
 }
