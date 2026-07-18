@@ -1,7 +1,26 @@
-const SIXTEENTH = 1 / 16
+export const INCH_PRECISION_DENOMINATOR = 16
+const INCH_PRECISION = 1 / INCH_PRECISION_DENOMINATOR
+export const OPENING_INCH_PRECISION_DENOMINATOR = 8
+const OPENING_INCH_PRECISION = 1 / OPENING_INCH_PRECISION_DENOMINATOR
 
 function roundToSixteenth(value: number): number {
-  return Math.round(value / SIXTEENTH) * SIXTEENTH
+  return Math.round(value / INCH_PRECISION) * INCH_PRECISION
+}
+
+export function snapInchesToPrecision(value: number): number {
+  return roundToSixteenth(Number.isFinite(value) ? value : 0)
+}
+
+export function snapFeetToPrecision(valueFt: number): number {
+  return snapInchesToPrecision((Number.isFinite(valueFt) ? valueFt : 0) * 12) / 12
+}
+
+export function snapOpeningInchesToPrecision(value: number): number {
+  return Math.round((Number.isFinite(value) ? value : 0) / OPENING_INCH_PRECISION) * OPENING_INCH_PRECISION
+}
+
+export function snapOpeningFeetToPrecision(valueFt: number): number {
+  return snapOpeningInchesToPrecision((Number.isFinite(valueFt) ? valueFt : 0) * 12) / 12
 }
 
 function normalizeUnits(value: string): string {
@@ -34,18 +53,18 @@ export function parseInches(value: string): number {
   if (!unsigned) return Number.NaN
 
   if (/^\d+(?:\.\d+)?$/.test(unsigned)) {
-    return roundToSixteenth(sign * Number(unsigned))
+    return snapInchesToPrecision(sign * Number(unsigned))
   }
 
   const fraction = parseFraction(unsigned)
-  if (Number.isFinite(fraction)) return roundToSixteenth(sign * fraction)
+  if (Number.isFinite(fraction)) return snapInchesToPrecision(sign * fraction)
 
   const mixed = unsigned.match(/^(\d+(?:\.\d+)?)\s+(\d+\s*\/\s*\d+)$/)
   if (!mixed) return Number.NaN
   const whole = Number(mixed[1])
   const part = parseFraction(mixed[2])
   if (!Number.isFinite(whole) || !Number.isFinite(part)) return Number.NaN
-  return roundToSixteenth(sign * (whole + part))
+  return snapInchesToPrecision(sign * (whole + part))
 }
 
 function gcd(a: number, b: number): number {
@@ -60,17 +79,17 @@ function gcd(a: number, b: number): number {
 }
 
 export function formatInches(value: number): string {
-  const units = Math.round((Number.isFinite(value) ? value : 0) * 16)
+  const units = Math.round((Number.isFinite(value) ? value : 0) * INCH_PRECISION_DENOMINATOR)
   const sign = units < 0 ? '-' : ''
   const absUnits = Math.abs(units)
-  const whole = Math.floor(absUnits / 16)
-  const remainder = absUnits % 16
+  const whole = Math.floor(absUnits / INCH_PRECISION_DENOMINATOR)
+  const remainder = absUnits % INCH_PRECISION_DENOMINATOR
 
   if (remainder === 0) return `${sign}${whole}"`
 
-  const divisor = gcd(remainder, 16)
+  const divisor = gcd(remainder, INCH_PRECISION_DENOMINATOR)
   const numerator = remainder / divisor
-  const denominator = 16 / divisor
+  const denominator = INCH_PRECISION_DENOMINATOR / divisor
   const fraction = `${numerator}/${denominator}`
   return whole > 0 ? `${sign}${whole} ${fraction}"` : `${sign}${fraction}"`
 }
@@ -88,24 +107,24 @@ export function parseFeetInches(value: string): number {
     const feet = parseInches(footMatch[1])
     if (!Number.isFinite(feet)) return Number.NaN
     const rest = footMatch[2].trim()
-    if (!rest) return roundToSixteenth(sign * feet * 12)
+    if (!rest) return snapInchesToPrecision(sign * feet * 12)
     const inches = parseInches(rest)
     if (!Number.isFinite(inches)) return Number.NaN
-    return roundToSixteenth(sign * (feet * 12 + Math.abs(inches)))
+    return snapInchesToPrecision(sign * (feet * 12 + Math.abs(inches)))
   }
 
   return parseInches(body)
 }
 
 export function formatFeetInches(valueInches: number): string {
-  const units = Math.round((Number.isFinite(valueInches) ? valueInches : 0) * 16)
+  const units = Math.round((Number.isFinite(valueInches) ? valueInches : 0) * INCH_PRECISION_DENOMINATOR)
   const sign = units < 0 ? '-' : ''
   const absUnits = Math.abs(units)
-  const unitsPerFoot = 12 * 16
+  const unitsPerFoot = 12 * INCH_PRECISION_DENOMINATOR
   const feet = Math.floor(absUnits / unitsPerFoot)
   const inchUnits = absUnits % unitsPerFoot
-  const wholeInches = Math.floor(inchUnits / 16)
-  const fractionUnits = inchUnits % 16
+  const wholeInches = Math.floor(inchUnits / INCH_PRECISION_DENOMINATOR)
+  const fractionUnits = inchUnits % INCH_PRECISION_DENOMINATOR
 
   const parts: string[] = []
   if (feet > 0) parts.push(`${feet} ft`)
@@ -114,8 +133,8 @@ export function formatFeetInches(valueInches: number): string {
     let inchText = ''
     if (wholeInches > 0) inchText = `${wholeInches}`
     if (fractionUnits > 0) {
-      const divisor = gcd(fractionUnits, 16)
-      const fraction = `${fractionUnits / divisor}/${16 / divisor}`
+      const divisor = gcd(fractionUnits, INCH_PRECISION_DENOMINATOR)
+      const fraction = `${fractionUnits / divisor}/${INCH_PRECISION_DENOMINATOR / divisor}`
       inchText = inchText ? `${inchText} ${fraction}` : fraction
     }
     parts.push(`${inchText} in`)

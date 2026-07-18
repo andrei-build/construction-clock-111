@@ -18,6 +18,7 @@ import {
   normalizeFinishes,
   normalizeTileSurface,
   sketchWallKey,
+  type Opening,
   type SketchFinishes,
   type Pt,
   type Sketch3DModel,
@@ -27,7 +28,7 @@ import {
   type SketchSwitch,
   type SketchTileFinish,
 } from './sketchFinishes'
-import { formatFeetInches, formatInches, parseInches } from './inches'
+import { formatFeetInches, formatInches, parseInches, snapOpeningFeetToPrecision } from './inches'
 import WallElevation from './WallElevation'
 import {
   catalogDimsFromItem,
@@ -54,10 +55,11 @@ const CELL_FT = 1
 const DEFAULT_WALL_HEIGHT_FT = 8
 const WALL_THICKNESS_FT = 0.5
 const DOOR_W_FT = 3
-const DOOR_H_FT = 6.8
+const DOOR_H_FT = 80 / 12
 const WIN_W_FT = 3
 const WIN_H_FT = 4
 const WIN_SILL_FT = 3
+const EIGHTH_IN_FT = 1 / 96
 const DEFAULT_SWITCH_HEIGHT_FT = 4
 const DEFAULT_SCONCE_HEIGHT_FT = 5.6
 const ORBIT_FOV_DEG = 65
@@ -75,10 +77,11 @@ const SW_COLOR_LIMIT = 48
 const PHOTO_RENDER_MIME = 'image/png'
 
 type SurfaceTarget = 'walls' | 'wall' | 'floor'
-type PlacementKind = SketchLightKind | 'switch' | null
+type OpeningPlacementKind = Opening['kind']
+type PlacementKind = SketchLightKind | 'switch' | OpeningPlacementKind | null
 type Segment = { c: number; s: number; a: Pt; b: Pt }
 type CameraPreset = 'fit' | 'top' | 'angle' | 'inside'
-type InteractiveKind = 'light' | 'switch' | 'catalog'
+type InteractiveKind = 'light' | 'switch' | 'catalog' | 'opening'
 type InchDraftField = 'tileWIn' | 'tileHIn' | 'groutIn' | 'offsetXIn' | 'offsetYIn'
 type Sketch3DModelWithCatalog = Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }
 type SketchContour = Sketch3DModel['contours'][number]
@@ -122,6 +125,14 @@ interface Sketch3DViewProps {
   sketchName?: string
   canEdit?: boolean
   onModelChange?: (model: Sketch3DModelWithCatalog) => void
+  snapStepFt?: number
+  openingDefaults?: {
+    doorW: number
+    doorH: number
+    winW: number
+    winH: number
+    winSill: number
+  }
   label: string
   loadingLabel: string
   errorLabel: string
@@ -570,6 +581,37 @@ function projectWallT(model: Sketch3DModel, c: number, s: number, point: { x: nu
   return Math.max(0, Math.min(1, ((point.x - ax) * dx + (point.z - az) * dz) / len2))
 }
 
+function openingInteractiveId(index: number): string {
+  return `opening:${index}`
+}
+
+function openingIndexFromId(id: string | null): number | null {
+  if (!id?.startsWith('opening:')) return null
+  const index = Number(id.slice('opening:'.length))
+  return Number.isInteger(index) && index >= 0 ? index : null
+}
+
+function clampOpeningT(model: Sketch3DModel, opening: Opening, t: number): number {
+  const ends = openingEnds(model, opening)
+  if (!ends) return Math.max(0, Math.min(1, t))
+  const segLenFt = dist(ends.a, ends.b) * modelCellFt(model)
+  if (segLenFt <= 0.001) return 0.5
+  const widthFt = Math.max(0.1, Math.min(openingWidthFt(opening), segLenFt))
+  if (widthFt >= segLenFt - 0.001) return 0.5
+  const padT = (widthFt / 2) / segLenFt
+  return Math.max(padT, Math.min(1 - padT, t))
+}
+
+function snapOpeningT(model: Sketch3DModel, opening: Opening, t: number, stepFt: number): number {
+  const seg = segmentWorld(model, opening.c, opening.s)
+  if (!seg) return clampOpeningT(model, opening, t)
+  const segLenFt = dist(seg.a, seg.b) * modelCellFt(model)
+  if (segLenFt <= 0.001) return 0.5
+  const step = Math.max(EIGHTH_IN_FT, Number.isFinite(stepFt) && stepFt > 0 ? stepFt : EIGHTH_IN_FT)
+  const snappedFt = Math.round((t * segLenFt) / step) * step
+  return clampOpeningT(model, opening, snappedFt / segLenFt)
+}
+
 function longestWallIn(model: Sketch3DModel): number {
   const cellFt = modelCellFt(model)
   return Math.max(12, ...eachSegment(model).map((seg) => dist(seg.a, seg.b) * cellFt * 12))
@@ -583,6 +625,10 @@ function segmentLengthFt(model: Sketch3DModel, c: number | undefined, s: number 
 
 function formatFeet(valueFt: number): string {
   return formatFeetInches((Number.isFinite(valueFt) ? valueFt : 0) * 12)
+}
+
+function formatOpeningFeet(valueFt: number): string {
+  return formatInches((Number.isFinite(valueFt) ? valueFt : 0) * 12)
 }
 
 function roundFact(value: number, digits = 3): number {
@@ -658,7 +704,7 @@ function contourAreaFt(contour: SketchContour, cellFt: number): number {
 }
 
 function openingHeightFt(o: Sketch3DModel['openings'][number], roomHeightFt: number): number {
-  const raw = o.kind === 'door' ? DOOR_H_FT : (o.h ?? WIN_H_FT)
+  const raw = o.kind === 'door' ? (o.h ?? DOOR_H_FT) : (o.h ?? WIN_H_FT)
   return Math.max(0.2, Math.min(raw, Math.max(0.2, roomHeightFt)))
 }
 
@@ -666,6 +712,88 @@ function openingSillFt(o: Sketch3DModel['openings'][number], roomHeightFt: numbe
   if (o.kind === 'door') return 0
   const height = openingHeightFt(o, roomHeightFt)
   return Math.max(0, Math.min(o.sill ?? WIN_SILL_FT, Math.max(0, roomHeightFt - height)))
+}
+
+type OpeningMetrics = {
+  centerX: number
+  centerZ: number
+  ux: number
+  uz: number
+  nx: number
+  nz: number
+  rotationY: number
+  width: number
+  height: number
+  sill: number
+  wallLength: number
+  left: number
+  right: number
+  edgeA: { x: number; z: number }
+  edgeB: { x: number; z: number }
+  wallA: { x: number; z: number }
+  wallB: { x: number; z: number }
+}
+
+function openingMetrics(model: Sketch3DModel, opening: Opening, roomHeightFt: number): OpeningMetrics | null {
+  const ends = openingEnds(model, opening)
+  if (!ends) return null
+  const cellFt = modelCellFt(model)
+  const wallA = { x: ends.a.x * cellFt, z: ends.a.y * cellFt }
+  const wallB = { x: ends.b.x * cellFt, z: ends.b.y * cellFt }
+  const dx = wallB.x - wallA.x
+  const dz = wallB.z - wallA.z
+  const wallLength = Math.hypot(dx, dz)
+  if (wallLength <= 0.01) return null
+  const ux = dx / wallLength
+  const uz = dz / wallLength
+  const width = Math.max(0.2, Math.min(openingWidthFt(opening), wallLength))
+  const height = openingHeightFt(opening, roomHeightFt)
+  const sill = openingSillFt(opening, roomHeightFt)
+  const clampedT = clampOpeningT(model, opening, opening.t)
+  const centerDistance = clampedT * wallLength
+  const centerX = wallA.x + ux * centerDistance
+  const centerZ = wallA.z + uz * centerDistance
+  let nx = -uz
+  let nz = ux
+  const contour = model.contours[opening.c]
+  if (contour?.points.length) {
+    const contourCenter = contourCenterWorld(contour, cellFt)
+    const midX = (wallA.x + wallB.x) / 2
+    const midZ = (wallA.z + wallB.z) / 2
+    if ((contourCenter.x - midX) * nx + (contourCenter.z - midZ) * nz > 0) {
+      nx *= -1
+      nz *= -1
+    }
+  }
+  const half = width / 2
+  return {
+    centerX,
+    centerZ,
+    ux,
+    uz,
+    nx,
+    nz,
+    rotationY: -Math.atan2(uz, ux),
+    width,
+    height,
+    sill,
+    wallLength,
+    left: Math.max(0, centerDistance - half),
+    right: Math.max(0, wallLength - centerDistance - half),
+    edgeA: { x: centerX - ux * half, z: centerZ - uz * half },
+    edgeB: { x: centerX + ux * half, z: centerZ + uz * half },
+    wallA,
+    wallB,
+  }
+}
+
+function openingName(opening: Opening, index: number, t: (k: string) => string): string {
+  return `${t(opening.kind === 'door' ? 'hub_sketch_tool_door' : 'hub_sketch_tool_window')} ${index + 1}`
+}
+
+function openingDimensionText(opening: Opening, metrics: OpeningMetrics, t: (k: string) => string): string {
+  const size = `${t('hub_sketch_dim_size_short')} ${formatOpeningFeet(metrics.width)} x ${formatOpeningFeet(metrics.height)}`
+  return opening.kind === 'door' ? size : `${size}\n${t('hub_sketch_dim_floor_short')} ${formatOpeningFeet(metrics.sill)}`
 }
 
 function safeRenderSlug(value: string | undefined, fallback: string): string {
@@ -1016,7 +1144,15 @@ function tagInteractive(object: any, type: InteractiveKind, id: string) {
 function taggedObject(object: any): { type: InteractiveKind; id: string } | null {
   let cur = object
   while (cur) {
-    if ((cur.userData?.itemType === 'light' || cur.userData?.itemType === 'switch' || cur.userData?.itemType === 'catalog') && typeof cur.userData?.itemId === 'string') {
+    if (
+      (
+        cur.userData?.itemType === 'light'
+        || cur.userData?.itemType === 'switch'
+        || cur.userData?.itemType === 'catalog'
+        || cur.userData?.itemType === 'opening'
+      )
+      && typeof cur.userData?.itemId === 'string'
+    ) {
       return { type: cur.userData.itemType, id: cur.userData.itemId }
     }
     cur = cur.parent
@@ -1333,7 +1469,90 @@ function addDimensionLineGroup(
   parent.add(heightLabel)
 }
 
-export default function Sketch3DView({ model, heightFt, project, profile, sketchName, canEdit = false, onModelChange, label, loadingLabel, errorLabel }: Sketch3DViewProps) {
+function addFlatDimSegment(
+  THREE: any,
+  points: number[],
+  labels: Array<{ text: string; x: number; y: number; z: number }>,
+  a: { x: number; z: number },
+  b: { x: number; z: number },
+  y: number,
+  nx: number,
+  nz: number,
+  ux: number,
+  uz: number,
+  offset: number,
+  text: string,
+) {
+  const start = new THREE.Vector3(a.x + nx * offset, y, a.z + nz * offset)
+  const end = new THREE.Vector3(b.x + nx * offset, y, b.z + nz * offset)
+  const len = Math.hypot(end.x - start.x, end.z - start.z)
+  if (len <= 0.08) return
+  const tick = 0.16
+  const slash = new THREE.Vector3((ux + nx) * tick, 0, (uz + nz) * tick)
+  addLine(points, start, end)
+  addLine(points, start.clone().addScaledVector(slash, -0.5), start.clone().addScaledVector(slash, 0.5))
+  addLine(points, end.clone().addScaledVector(slash, -0.5), end.clone().addScaledVector(slash, 0.5))
+  labels.push({
+    text,
+    x: (start.x + end.x) / 2 + nx * 0.12,
+    y: y + 0.24,
+    z: (start.z + end.z) / 2 + nz * 0.12,
+  })
+}
+
+function createOpeningDimensionGroup(
+  THREE: any,
+  opening: Opening,
+  metrics: OpeningMetrics,
+  t: (k: string) => string,
+) {
+  const group = new THREE.Group()
+  const points: number[] = []
+  const labels: Array<{ text: string; x: number; y: number; z: number }> = []
+  const offset = WALL_THICKNESS_FT / 2 + 0.38
+  const y = Math.max(0.18, Math.min(metrics.sill + 0.18, metrics.height + metrics.sill + 0.18))
+
+  addFlatDimSegment(THREE, points, labels, metrics.wallA, metrics.edgeA, y, metrics.nx, metrics.nz, metrics.ux, metrics.uz, offset, `${t('hub_sketch_dim_left_short')} ${formatOpeningFeet(metrics.left)}`)
+  addFlatDimSegment(THREE, points, labels, metrics.edgeA, metrics.edgeB, y + 0.38, metrics.nx, metrics.nz, metrics.ux, metrics.uz, offset, openingDimensionText(opening, metrics, t).replace('\n', ' · '))
+  addFlatDimSegment(THREE, points, labels, metrics.edgeB, metrics.wallB, y, metrics.nx, metrics.nz, metrics.ux, metrics.uz, offset, `${t('hub_sketch_dim_right_short')} ${formatOpeningFeet(metrics.right)}`)
+
+  if (points.length > 0) {
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3))
+    const material = new THREE.LineBasicMaterial({
+      color: opening.kind === 'door' ? 0x7c2d12 : 0x1d4ed8,
+      transparent: true,
+      opacity: 0.96,
+      depthTest: false,
+    })
+    const lines = new THREE.LineSegments(geometry, material)
+    lines.renderOrder = 24
+    group.add(lines)
+  }
+
+  labels.forEach((label) => {
+    const sprite = createDimensionSprite(THREE, label.text)
+    sprite.position.set(label.x, label.y, label.z)
+    group.add(sprite)
+  })
+
+  return group
+}
+
+export default function Sketch3DView({
+  model,
+  heightFt,
+  project,
+  profile,
+  sketchName,
+  canEdit = false,
+  onModelChange,
+  snapStepFt = EIGHTH_IN_FT,
+  openingDefaults,
+  label,
+  loadingLabel,
+  errorLabel,
+}: Sketch3DViewProps) {
   const { t } = useI18n()
   const shellRef = useRef<HTMLDivElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -1381,6 +1600,9 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
   const selectedLight = lights.find((light) => light.id === selectedId) ?? null
   const selectedSwitch = switches.find((sw) => sw.id === selectedId) ?? null
   const selectedPlaced = resolvedPlacedItems.find((item) => item.placed.id === selectedId) ?? null
+  const selectedOpeningIndex = openingIndexFromId(selectedId)
+  const selectedOpening = selectedOpeningIndex !== null ? model.openings[selectedOpeningIndex] ?? null : null
+  const selectedOpeningMetrics = selectedOpening ? openingMetrics(model, selectedOpening, heightFt) : null
   const catalogPlacementItem = catalogPlacementId ? catalogById.get(catalogPlacementId) ?? null : null
   const fullscreenActive = browserFullscreen || fullscreenFallback
   const catalogGroups = useMemo(
@@ -1548,8 +1770,48 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
     zFt,
   })
 
+  const openingAtWall = (kind: OpeningPlacementKind, c: number, s: number, rawT: number): Opening => {
+    const defaults = {
+      doorW: openingDefaults?.doorW ?? DOOR_W_FT,
+      doorH: openingDefaults?.doorH ?? DOOR_H_FT,
+      winW: openingDefaults?.winW ?? WIN_W_FT,
+      winH: openingDefaults?.winH ?? WIN_H_FT,
+      winSill: openingDefaults?.winSill ?? WIN_SILL_FT,
+    }
+    const draft: Opening =
+      kind === 'door'
+        ? {
+            kind: 'door',
+            c,
+            s,
+            t: rawT,
+            w: Math.max(0.5, snapOpeningFeetToPrecision(defaults.doorW)),
+            h: Math.max(0.5, snapOpeningFeetToPrecision(defaults.doorH)),
+          }
+        : {
+            kind: 'window',
+            c,
+            s,
+            t: rawT,
+            w: Math.max(0.5, snapOpeningFeetToPrecision(defaults.winW)),
+            h: Math.max(0.5, snapOpeningFeetToPrecision(defaults.winH)),
+            sill: Math.max(0, snapOpeningFeetToPrecision(defaults.winSill)),
+          }
+    return { ...draft, t: snapOpeningT(model, draft, rawT, snapStepFt) }
+  }
+
   const removeSelected = () => {
     if (!selectedId) return
+    const openingIndex = openingIndexFromId(selectedId)
+    if (openingIndex !== null) {
+      if (!model.openings[openingIndex]) return
+      applyModel({
+        ...model,
+        openings: model.openings.filter((_, index) => index !== openingIndex),
+      })
+      setSelectedId(null)
+      return
+    }
     const nextPlaced = placedItems.filter((item) => item.id !== selectedId)
     const next: Sketch3DModelWithCatalog = {
       ...model,
@@ -1612,11 +1874,11 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
   }, [])
 
   useEffect(() => {
-    if (!canEdit || !selectedPlaced) return
+    if (!canEdit || (!selectedPlaced && !selectedOpening)) return
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return
-      if (event.key.toLowerCase() === 'r') {
+      if (selectedPlaced && event.key.toLowerCase() === 'r') {
         rotateSelectedPlaced()
         event.preventDefault()
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -1626,7 +1888,7 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, selectedPlaced, placedItems])
+  }, [canEdit, selectedPlaced, selectedOpening, placedItems, selectedId, model.openings])
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -2042,39 +2304,38 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
           )
         })
 
-        model.openings.forEach((opening) => {
-          const ends = openingEnds(model, opening)
-          if (!ends) return
-          const segLenCells = dist(ends.a, ends.b)
-          const segLenFt = segLenCells * cellFt
-          if (segLenFt <= 0.01) return
-          const ux = ((ends.b.x - ends.a.x) * cellFt) / segLenFt
-          const uz = ((ends.b.y - ends.a.y) * cellFt) / segLenFt
-          const x = (ends.a.x + (ends.b.x - ends.a.x) * opening.t) * cellFt
-          const z = (ends.a.y + (ends.b.y - ends.a.y) * opening.t) * cellFt
-          const width = Math.max(0.2, Math.min(openingWidthFt(opening), segLenFt))
-          const insertHeight =
-            opening.kind === 'door'
-              ? Math.max(0.2, Math.min(DOOR_H_FT, height - 0.12))
-              : Math.max(0.2, Math.min(opening.h ?? WIN_H_FT, height - 0.12))
-          const sill =
-            opening.kind === 'door'
-              ? 0
-              : Math.max(0, Math.min(opening.sill ?? WIN_SILL_FT, Math.max(0, height - insertHeight)))
-          const nx = -uz
-          const nz = ux
+        const applyOpeningPose = (object: any, opening: Opening) => {
+          const metrics = openingMetrics(model, opening, height)
+          if (!metrics) return null
+          object.position.set(metrics.centerX, 0, metrics.centerZ)
+          object.rotation.y = metrics.rotationY
+          return metrics
+        }
+
+        model.openings.forEach((opening, index) => {
+          const metrics = openingMetrics(model, opening, height)
+          if (!metrics) return
+          const group = new THREE.Group()
+          group.position.set(metrics.centerX, 0, metrics.centerZ)
+          group.rotation.y = metrics.rotationY
           const insert = new THREE.Mesh(
-            new THREE.BoxGeometry(width, insertHeight, 0.08),
+            new THREE.BoxGeometry(metrics.width, metrics.height, 0.08),
             opening.kind === 'door' ? doorMaterial : windowMaterial,
           )
-          insert.position.set(
-            x + nx * (WALL_THICKNESS_FT / 2 + 0.055),
-            sill + insertHeight / 2,
-            z + nz * (WALL_THICKNESS_FT / 2 + 0.055),
-          )
-          insert.rotation.y = -Math.atan2(uz, ux)
+          insert.position.set(0, metrics.sill + metrics.height / 2, WALL_THICKNESS_FT / 2 + 0.055)
           insert.castShadow = false
-          scene.add(insert)
+          insert.receiveShadow = false
+          group.add(insert)
+          if (selectedId === openingInteractiveId(index)) {
+            addMeshWithEdges(THREE, group, insert, opening.kind === 'door' ? 0x7c2d12 : 0x1d4ed8, 0.95)
+            const sprite = createLabelSprite(THREE, `${openingName(opening, index, t)}\n${openingDimensionText(opening, metrics, t)}`)
+            sprite.position.set(metrics.centerX + metrics.nx * 0.34, metrics.sill + metrics.height + 0.48, metrics.centerZ + metrics.nz * 0.34)
+            scene.add(sprite)
+            scene.add(createOpeningDimensionGroup(THREE, opening, metrics, t))
+          }
+          tagInteractive(group, 'opening', openingInteractiveId(index))
+          scene.add(group)
+          itemTargets.push(group)
         })
 
         const addLightGroup = (light: SketchLight, index: number) => {
@@ -2254,12 +2515,29 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
               latestLight?: SketchLight
               latestSwitch?: SketchSwitch
               latestPlaced?: SketchPlacedCatalogItem
+              latestOpening?: Opening
               object: any
             }
           | null = null
         let insideLookDrag: { pointerId: number; x: number; y: number; yaw: number; pitch: number } | null = null
         const insidePointers = new Map<number, { clientX: number; clientY: number }>()
         let insidePinch: { distance: number } | null = null
+        let openingDragDimensionGroup: any | null = null
+
+        const clearOpeningDragDimensions = () => {
+          if (!openingDragDimensionGroup) return
+          scene.remove(openingDragDimensionGroup)
+          openingDragDimensionGroup.traverse?.((object: { geometry?: unknown; material?: unknown }) => disposeObjectWithMaterial(object))
+          openingDragDimensionGroup = null
+        }
+
+        const showOpeningDragDimensions = (opening: Opening) => {
+          const metrics = openingMetrics(model, opening, height)
+          clearOpeningDragDimensions()
+          if (!metrics) return
+          openingDragDimensionGroup = createOpeningDimensionGroup(THREE, opening, metrics, t)
+          scene.add(openingDragDimensionGroup)
+        }
 
         const updatePointer = (event: { clientX: number; clientY: number }) => {
           const rect = renderer.domElement.getBoundingClientRect()
@@ -2342,6 +2620,14 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
           const currentPlacement = placementRef.current
           if (!currentPlacement) return
           updatePointer(event)
+          if (currentPlacement === 'door' || currentPlacement === 'window') {
+            const anchor = wallHitAnchor()
+            if (!anchor) return
+            const nextOpening = openingAtWall(currentPlacement, anchor.c, anchor.s, anchor.t)
+            onModelChange?.({ ...model, openings: [...model.openings, nextOpening] })
+            setSelectedId(openingInteractiveId(model.openings.length))
+            return
+          }
           if (currentPlacement === 'switch') {
             const anchor = wallHitAnchor()
             if (!anchor) return
@@ -2450,6 +2736,16 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
             }
             drag.latestPlaced = nextPlaced
             applyCatalogObjectPose(drag.object, nextPlaced)
+          } else if (drag.type === 'opening') {
+            const openingIndex = openingIndexFromId(drag.id)
+            const current = openingIndex !== null ? model.openings[openingIndex] : null
+            const anchor = wallHitAnchor()
+            if (!current || !anchor) return
+            const draft: Opening = { ...current, c: anchor.c, s: anchor.s, t: anchor.t }
+            const nextOpening: Opening = { ...draft, t: snapOpeningT(model, draft, anchor.t, snapStepFt) }
+            drag.latestOpening = nextOpening
+            applyOpeningPose(drag.object, nextOpening)
+            showOpeningDragDimensions(nextOpening)
           } else if (drag.type === 'switch') {
             const anchor = wallHitAnchor()
             const current = switches.find((sw) => sw.id === drag?.id)
@@ -2511,6 +2807,7 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
             const completed = drag
             drag = null
             controls.enabled = true
+            clearOpeningDragDimensions()
             invalidate()
             if (completed.moved && completed.latestLight) {
               onModelChange?.({ ...model, lights: lights.map((light) => (light.id === completed.latestLight?.id ? completed.latestLight : light)) })
@@ -2520,6 +2817,16 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
             }
             if (completed.moved && completed.latestPlaced) {
               onModelChange?.({ ...model, placedItems: placedItems.map((item) => (item.id === completed.latestPlaced?.id ? completed.latestPlaced : item)) })
+            }
+            if (completed.moved && completed.latestOpening) {
+              const openingIndex = openingIndexFromId(completed.id)
+              if (openingIndex !== null) {
+                onModelChange?.({
+                  ...model,
+                  openings: model.openings.map((opening, index) => (index === openingIndex ? completed.latestOpening as Opening : opening)),
+                })
+                setSelectedId(openingInteractiveId(openingIndex))
+              }
             }
             renderer.domElement.releasePointerCapture?.(event.pointerId)
             event.preventDefault()
@@ -2596,6 +2903,7 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
         cleanup = () => {
           window.cancelAnimationFrame(frame)
           stopInsideJoystick()
+          clearOpeningDragDimensions()
           if (invalidate3DRef.current === invalidate) invalidate3DRef.current = null
           if (insideMoveApiRef.current?.stopJoystick === stopInsideJoystick) insideMoveApiRef.current = null
           if (photoSnapshotApiRef.current?.capturePng === capturePng) photoSnapshotApiRef.current = null
@@ -2626,7 +2934,7 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
       cleanup?.()
       host.replaceChildren()
     }
-  }, [model, heightFt, finishes, canEdit, onModelChange, selectedId, t, lights, switches, placedItems, resolvedPlacedItems, fullscreenActive])
+  }, [model, heightFt, finishes, canEdit, onModelChange, selectedId, t, lights, switches, placedItems, resolvedPlacedItems, fullscreenActive, snapStepFt, openingDefaults])
 
   const toggleFullscreen = async () => {
     const shell = shellRef.current
@@ -2872,6 +3180,25 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
                   <button type="button" className="btn ghost small" onClick={rotateSelectedPlaced}>
                     {t('hub_sketch_3d_rotate')}
                   </button>
+                  <button type="button" className="btn ghost small" onClick={removeSelected}>
+                    {t('hub_sketch_3d_remove')}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {selectedOpening && selectedOpeningIndex !== null && selectedOpeningMetrics && (
+          <div className="hub-sketch-3d-item-popover hub-sketch-3d-opening-popover">
+            <div className={selectedOpening.kind === 'door' ? 'hub-sketch-3d-opening-thumb hub-sketch-3d-opening-thumb-door' : 'hub-sketch-3d-opening-thumb hub-sketch-3d-opening-thumb-window'} aria-hidden="true" />
+            <div className="hub-sketch-3d-item-popover-body">
+              <div className="item-title">{openingName(selectedOpening, selectedOpeningIndex, t)}</div>
+              <div className="muted">{openingDimensionText(selectedOpening, selectedOpeningMetrics, t).replace('\n', ' · ')}</div>
+              <div className="muted">
+                {`${t('hub_sketch_dim_left_short')} ${formatOpeningFeet(selectedOpeningMetrics.left)} · ${t('hub_sketch_dim_right_short')} ${formatOpeningFeet(selectedOpeningMetrics.right)}`}
+              </div>
+              {canEdit && (
+                <div className="hub-sketch-3d-item-actions">
                   <button type="button" className="btn ghost small" onClick={removeSelected}>
                     {t('hub_sketch_3d_remove')}
                   </button>
@@ -3134,6 +3461,43 @@ export default function Sketch3DView({ model, heightFt, project, profile, sketch
                 )}
               </div>
             )}
+          </section>
+
+          <section className="hub-sketch-3d-section">
+            <h3>{t('hub_sketch_3d_openings')}</h3>
+            <div className="hub-sketch-place-grid" role="group" aria-label={t('hub_sketch_3d_place_opening')}>
+              {(['door', 'window'] as OpeningPlacementKind[]).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className={placement === kind ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={placement === kind}
+                  onClick={() => {
+                    setCatalogPlacementId(null)
+                    setPlacement((current) => (current === kind ? null : kind))
+                    setSelectedId(null)
+                  }}
+                >
+                  {t(kind === 'door' ? 'hub_sketch_tool_door' : 'hub_sketch_tool_window')}
+                </button>
+              ))}
+            </div>
+            <div className="hub-sketch-object-list">
+              {model.openings.map((opening, index) => (
+                <button
+                  key={openingInteractiveId(index)}
+                  type="button"
+                  className={selectedId === openingInteractiveId(index) ? 'btn small' : 'btn ghost small'}
+                  onClick={() => {
+                    setPlacement(null)
+                    setCatalogPlacementId(null)
+                    setSelectedId(openingInteractiveId(index))
+                  }}
+                >
+                  {openingName(opening, index, t)}
+                </button>
+              ))}
+            </div>
           </section>
 
           <section className="hub-sketch-3d-section">

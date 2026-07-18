@@ -13,13 +13,14 @@ import Sketch3DView from './Sketch3DView'
 import {
   sanitizeSketchFinishes,
   sanitizeSketchLights,
+  sanitizeSketchOpenings,
   sanitizeSketchSwitches,
   type SketchFinishes,
   type SketchLight,
   type SketchSwitch,
 } from './sketchFinishes'
 import { sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
-import { formatFeetInches, parseFeetInches } from './inches'
+import { formatFeetInches, formatInches, parseFeetInches, snapFeetToPrecision, snapOpeningFeetToPrecision } from './inches'
 
 interface SketchTabProps {
   project: Project
@@ -44,13 +45,16 @@ const DEFAULT_WALL_HEIGHT_FT = 8
 const DIM_OFFSET_SCREEN_PX = 24
 const DIM_LABEL_SCREEN_PX = 12
 const DIM_TICK_SCREEN_PX = 8
+const EIGHTH_IN_FT = 1 / 96
 
 // Дефолтные габариты проёмов в футах (законы Андрея 17.07).
 const DOOR_W_FT = 3
-const DOOR_H_FT = 6.8
+const DOOR_H_FT = 80 / 12
 const WIN_W_FT = 3
 const WIN_H_FT = 4
 const WIN_SILL_FT = 3
+const DOOR_WIDTH_PRESETS_FT = [24, 28, 30, 32, 36].map((value) => value / 12)
+const WINDOW_WIDTH_PRESETS_FT = [24, 36, 48].map((value) => value / 12)
 
 type Pt = { x: number; y: number }
 type Contour = { points: Pt[]; closed: boolean }
@@ -78,14 +82,14 @@ type SketchModel = {
 type ViewMode = '2d' | '3d'
 type CanvasSize = { width: number; height: number }
 type CanvasView = { x: number; y: number; width: number; height: number }
-type SnapMode = '1ft' | '6in' | '1in' | '1_16in'
-type FeetDraftField = 'wallHeight' | 'doorW' | 'winW' | 'winH' | 'winSill'
+type SnapMode = '1ft' | '6in' | '1in' | '1_8in'
+type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill'
 
 const SNAP_OPTIONS: Array<{ mode: SnapMode; stepFt: number; labelKey: string }> = [
   { mode: '1ft', stepFt: 1, labelKey: 'hub_sketch_snap_1ft' },
   { mode: '6in', stepFt: 0.5, labelKey: 'hub_sketch_snap_6in' },
   { mode: '1in', stepFt: 1 / 12, labelKey: 'hub_sketch_snap_1in' },
-  { mode: '1_16in', stepFt: 1 / 192, labelKey: 'hub_sketch_snap_1_16in' },
+  { mode: '1_8in', stepFt: EIGHTH_IN_FT, labelKey: 'hub_sketch_snap_1_8in' },
 ]
 
 // Ширина проёма в футах с учётом дефолта по типу.
@@ -94,7 +98,7 @@ function openingWidthFt(o: Opening): number {
 }
 
 function openingHeightFt(o: Opening): number {
-  return o.kind === 'door' ? DOOR_H_FT : (o.h ?? WIN_H_FT)
+  return o.kind === 'door' ? (o.h ?? DOOR_H_FT) : (o.h ?? WIN_H_FT)
 }
 
 function openingFloorFt(o: Opening): number {
@@ -111,6 +115,10 @@ function wallHeightFt(model: SketchModel): number {
 
 function formatLengthFt(valueFt: number): string {
   return formatFeetInches((Number.isFinite(valueFt) ? valueFt : 0) * 12)
+}
+
+function formatOpeningFt(valueFt: number): string {
+  return formatInches((Number.isFinite(valueFt) ? valueFt : 0) * 12)
 }
 
 function parseLengthFt(value: string): number {
@@ -133,13 +141,31 @@ function snapSegmentT(t: number, segLenCells: number, cellFt: number, stepFt: nu
   return Math.max(0, Math.min(1, snappedFt / (segLenCells * cellFt)))
 }
 
+function clampOpeningT(model: SketchModel, opening: Opening, t: number): number {
+  const ends = openingEnds(model, opening)
+  if (!ends) return Math.max(0, Math.min(1, t))
+  const segLenFt = dist(ends.a, ends.b) * modelCellFt(model)
+  if (segLenFt <= 0.001) return 0.5
+  const widthFt = Math.max(0.1, Math.min(openingWidthFt(opening), segLenFt))
+  if (widthFt >= segLenFt - 0.001) return 0.5
+  const padT = (widthFt / 2) / segLenFt
+  return Math.max(padT, Math.min(1 - padT, t))
+}
+
+function snapOpeningT(model: SketchModel, opening: Opening, t: number, stepFt: number): number {
+  const ends = openingEnds(model, opening)
+  if (!ends) return clampOpeningT(model, opening, t)
+  const snapped = snapSegmentT(t, dist(ends.a, ends.b), modelCellFt(model), Math.max(stepFt, EIGHTH_IN_FT))
+  return clampOpeningT(model, opening, snapped)
+}
+
 function snapModeStep(mode: SnapMode): number {
   return SNAP_OPTIONS.find((option) => option.mode === mode)?.stepFt ?? 1
 }
 
 function importWallHeight(value: unknown): number | undefined {
   const n = Number(value)
-  return Number.isFinite(n) && n > 0 ? n : undefined
+  return Number.isFinite(n) && n > 0 ? snapFeetToPrecision(n) : undefined
 }
 
 type Tool = 'wall' | 'door' | 'window'
@@ -358,6 +384,40 @@ function canvasGridLines(view: CanvasView, snapStepFt: number, pxPerFt: number) 
 
 const EMPTY_MODEL: SketchModel = { version: 1, cellFt: CELL_FT, contours: [], openings: [] }
 
+function normalizeOpeningForModel(model: SketchModel, opening: Opening): Opening | null {
+  if (!openingEnds(model, opening)) return null
+  const width = snapOpeningFeetToPrecision(openingWidthFt(opening))
+  const roomHeight = wallHeightFt(model)
+  const height = Math.max(0.5, Math.min(snapOpeningFeetToPrecision(openingHeightFt(opening)), roomHeight))
+  const sill = Math.max(0, Math.min(snapOpeningFeetToPrecision(openingFloorFt(opening)), Math.max(0, roomHeight - height)))
+  const next: Opening = {
+    kind: opening.kind,
+    c: opening.c,
+    s: opening.s,
+    t: snapOpeningT(model, { ...opening, w: width }, opening.t, EIGHTH_IN_FT),
+    w: Math.max(0.5, width),
+  }
+  if (opening.kind === 'door') next.h = height
+  else {
+    next.h = height
+    next.sill = sill
+  }
+  return next
+}
+
+function normalizeSketchModelForStorage(model: SketchModel): SketchModel {
+  const next: SketchModel = {
+    ...model,
+    version: 1,
+    cellFt: modelCellFt(model),
+    openings: model.openings
+      .map((opening) => normalizeOpeningForModel(model, opening))
+      .filter((opening): opening is Opening => !!opening),
+  }
+  if (model.height !== undefined) next.height = snapFeetToPrecision(wallHeightFt(model))
+  return next
+}
+
 function fmtFt(valueFt: number): string {
   return formatLengthFt(valueFt)
 }
@@ -513,8 +573,8 @@ function openingDimLabel(model: SketchModel, opening: Opening, index: number, t:
   const normal = outsideNormal(model, opening.c, g.a.x * CELL_PX, g.a.y * CELL_PX, g.b.x * CELL_PX, g.b.y * CELL_PX)
   const offset = (16 + (index % 2) * 6) * screenWorldPx
   const text = opening.kind === 'door'
-    ? `${t('hub_sketch_dim_size_short')} ${fmtFt(widthFt)}×${fmtFt(openingHeightFt(opening))}`
-    : `${t('hub_sketch_dim_size_short')} ${fmtFt(widthFt)}×${fmtFt(openingHeightFt(opening))} · ${t('hub_sketch_dim_floor_short')} ${fmtFt(openingFloorFt(opening))}`
+    ? `${t('hub_sketch_dim_size_short')} ${formatOpeningFt(widthFt)}×${formatOpeningFt(openingHeightFt(opening))}`
+    : `${t('hub_sketch_dim_size_short')} ${formatOpeningFt(widthFt)}×${formatOpeningFt(openingHeightFt(opening))} · ${t('hub_sketch_dim_floor_short')} ${formatOpeningFt(openingFloorFt(opening))}`
   return createDimLine(ax, ay, bx, by, normal.nx, normal.ny, offset, screenWorldPx, text, opening.kind) as OpeningDimLabel | null
 }
 
@@ -647,6 +707,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [hoverSnapped, setHoverSnapped] = useState(false)
   // Габариты проёмов (в футах), задаются перед вставкой.
   const [doorW, setDoorW] = useState(DOOR_W_FT)
+  const [doorH, setDoorH] = useState(DOOR_H_FT)
   const [winW, setWinW] = useState(WIN_W_FT)
   const [winH, setWinH] = useState(WIN_H_FT)
   const [winSill, setWinSill] = useState(WIN_SILL_FT)
@@ -683,6 +744,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     return { perContour, totalArea, totalPerimeter }
   }, [model])
   const activeSnapFt = snapModeStep(snapMode)
+  const openingDefaults = useMemo(() => ({ doorW, doorH, winW, winH, winSill }), [doorW, doorH, winW, winH, winSill])
 
   // Снимок в историю перед изменением; затем применяем мутатор.
   const commit = (next: SketchModel) => {
@@ -744,7 +806,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     clearFeetDraft(field)
     const parsed = parseLengthFt(raw)
     if (!Number.isFinite(parsed)) return
-    apply(clampNumber(parsed, minFt, maxFt))
+    const clamped = clampNumber(parsed, minFt, maxFt)
+    apply(field === 'wallHeight' ? snapFeetToPrecision(clamped) : snapOpeningFeetToPrecision(clamped))
   }
 
   const handleFeetKeyDown = (
@@ -785,6 +848,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         onKeyDown={(e) => handleFeetKeyDown(e, field, valueFt, minFt, maxFt, apply)}
       />
     </label>
+  )
+
+  const presetButton = (valueFt: number, apply: (valueFt: number) => void) => (
+    <button key={valueFt} type="button" className="btn ghost small" onClick={() => apply(snapOpeningFeetToPrecision(valueFt))}>
+      {formatInches(valueFt * 12)}
+    </button>
   )
 
   const canvasPoint = (clientX: number, clientY: number, view = canvasView): { x: number; y: number } | null => {
@@ -879,7 +948,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         const ends = openingEnds(m, o)
         if (!ends) return m
         const rawT = projectT(raw, ends.a, ends.b)
-        const t = snapSegmentT(rawT, dist(ends.a, ends.b), modelCellFt(m), activeSnapFt)
+        const t = snapOpeningT(m, o, rawT, activeSnapFt)
         return { ...m, openings: m.openings.map((op, i) => (i === dragIdx ? { ...op, t } : op)) }
       })
       return
@@ -1026,7 +1095,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       if (!o) return m
       const ends = openingEnds(m, o)
       if (!ends) return m
-      const t = snapSegmentT(o.t, dist(ends.a, ends.b), modelCellFt(m), activeSnapFt)
+      const t = snapOpeningT(m, o, o.t, activeSnapFt)
       return { ...m, openings: m.openings.map((op, i) => (i === dragIdx ? { ...op, t } : op)) }
     })
     setDragIdx(null)
@@ -1075,12 +1144,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setError('hub_sketch_no_segment')
       return
     }
-    const ends = openingEnds(model, { kind: tool, c: near.c, s: near.s, t: near.t })
-    const t = ends ? snapSegmentT(near.t, dist(ends.a, ends.b), modelCellFt(model), activeSnapFt) : near.t
+    const draftOpening: Opening =
+      tool === 'door'
+        ? { kind: 'door', c: near.c, s: near.s, t: near.t, w: Math.max(0.5, snapOpeningFeetToPrecision(doorW)), h: Math.max(0.5, snapOpeningFeetToPrecision(doorH)) }
+        : { kind: 'window', c: near.c, s: near.s, t: near.t, w: Math.max(0.5, snapOpeningFeetToPrecision(winW)), h: Math.max(0.5, snapOpeningFeetToPrecision(winH)), sill: Math.max(0, snapOpeningFeetToPrecision(winSill)) }
+    const t = snapOpeningT(model, draftOpening, near.t, activeSnapFt)
     const opening: Opening =
       tool === 'door'
-        ? { kind: 'door', c: near.c, s: near.s, t, w: Math.max(0.5, doorW) }
-        : { kind: 'window', c: near.c, s: near.s, t, w: Math.max(0.5, winW), h: Math.max(0.5, winH), sill: Math.max(0, winSill) }
+        ? { ...draftOpening, t }
+        : { kind: 'window', c: near.c, s: near.s, t, w: Math.max(0.5, snapOpeningFeetToPrecision(winW)), h: Math.max(0.5, snapOpeningFeetToPrecision(winH)), sill: Math.max(0, snapOpeningFeetToPrecision(winSill)) }
     commit({ ...model, openings: [...model.openings, opening] })
   }
 
@@ -1116,7 +1188,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const updateModelFrom3D = useCallback((next: SketchModel) => {
-    setModel(next)
+    setModel(normalizeSketchModelForStorage(next))
     setStatus(null)
     setError(null)
   }, [])
@@ -1133,8 +1205,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     try {
       const base = `sketch-${sanitizeName(name)}`
       // JSON без явного type — validateUpload пропускает файлы с пустым MIME.
-      const jsonFile = new File([JSON.stringify(model)], `${base}.json`)
-      const png = await renderPng(model, t)
+      const modelForStorage = normalizeSketchModelForStorage(model)
+      const jsonFile = new File([JSON.stringify(modelForStorage)], `${base}.json`)
+      const png = await renderPng(modelForStorage, t)
       await uploadProjectFileToR2(profile, project.id, jsonFile)
       if (png) {
         const pngFile = new File([png], `${base}.png`, { type: 'image/png' })
@@ -1202,7 +1275,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         version: 1,
         cellFt: data.cellFt ?? CELL_FT,
         contours: data.contours,
-        openings: Array.isArray(data.openings) ? data.openings : [],
+        openings: sanitizeSketchOpenings(data.openings),
       }
       const finishes = sanitizeSketchFinishes(data.finishes)
       const lights = sanitizeSketchLights(data.lights)
@@ -1215,7 +1288,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       if (placedItems.length > 0) nextModel.placedItems = placedItems
       setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
       canvasAutoFitRef.current = true
-      setModel(nextModel)
+      setModel(normalizeSketchModelForStorage(nextModel))
       setName(file.name.replace(/^sketch-/, '').replace(/\.json$/, ''))
       setLoadOpen(false)
       setStatus('hub_sketch_loaded')
@@ -1304,6 +1377,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           {tool === 'door' && (
             <div className="hub-sketch-dims">
               {lengthInput('doorW', 'hub_sketch_width', doorW, 0.5, 20, setDoorW)}
+              {lengthInput('doorH', 'hub_sketch_height', doorH, 0.5, 20, setDoorH)}
+              <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_width')}>
+                {DOOR_WIDTH_PRESETS_FT.map((value) => presetButton(value, setDoorW))}
+              </div>
             </div>
           )}
           {tool === 'window' && (
@@ -1311,6 +1388,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               {lengthInput('winW', 'hub_sketch_width', winW, 0.5, 20, setWinW)}
               {lengthInput('winH', 'hub_sketch_height', winH, 0.5, 20, setWinH)}
               {lengthInput('winSill', 'hub_sketch_sill', winSill, 0, 20, setWinSill)}
+              <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_width')}>
+                {WINDOW_WIDTH_PRESETS_FT.map((value) => presetButton(value, setWinW))}
+              </div>
             </div>
           )}
         </div>
@@ -1482,10 +1562,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               const right = Math.max(0, ((1 - o.t) * segLen - wCells / 2) * cellFt)
               const px = g.p.x * CELL_PX
               const py = g.p.y * CELL_PX
-              const floorTxt = ` · ${t('hub_sketch_dim_floor_short')} ${fmtFt(openingFloorFt(o))}`
+              const floorTxt = ` · ${t('hub_sketch_dim_floor_short')} ${formatOpeningFt(openingFloorFt(o))}`
               return (
                 <text className="hub-sketch-drag-dim" x={px} y={py - 12} textAnchor="middle">
-                  {`◄ ${fmtFt(left)}  ·  ${fmtFt(right)} ►${floorTxt}`}
+                  {`◄ ${formatOpeningFt(left)}  ·  ${formatOpeningFt(right)} ►${floorTxt}`}
                 </text>
               )
             })()}
@@ -1517,6 +1597,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             sketchName={name}
             canEdit={canEdit}
             onModelChange={updateModelFrom3D}
+            snapStepFt={activeSnapFt}
+            openingDefaults={openingDefaults}
             label={t('hub_sketch_3d_label')}
             loadingLabel={t('hub_sketch_3d_loading')}
             errorLabel={t('hub_sketch_3d_error')}
