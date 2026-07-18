@@ -37,6 +37,7 @@ const DEFAULT_SCONCE_HEIGHT_FT = 5.6
 type SurfaceTarget = 'walls' | 'floor'
 type PlacementKind = SketchLightKind | 'switch' | null
 type Segment = { c: number; s: number; a: Pt; b: Pt }
+type CameraPreset = 'fit' | 'top' | 'angle'
 
 interface Sketch3DViewProps {
   model: Sketch3DModel
@@ -315,6 +316,7 @@ function createLabelSprite(THREE: any, text: string) {
 export default function Sketch3DView({ model, heightFt, canEdit = false, onModelChange, label, loadingLabel, errorLabel }: Sketch3DViewProps) {
   const { t } = useI18n()
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const cameraApiRef = useRef<Record<CameraPreset, () => void> | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [surfaceTarget, setSurfaceTarget] = useState<SurfaceTarget>('walls')
   const [placement, setPlacement] = useState<PlacementKind>(null)
@@ -418,16 +420,99 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const span = Math.max(bounds.width, bounds.depth, height, 12)
         const centerX = bounds.minX + bounds.width / 2
         const centerZ = bounds.minZ + bounds.depth / 2
-        const camera = new THREE.PerspectiveCamera(45, 1, 0.1, Math.max(300, span * 24))
-        camera.position.set(centerX + span * 0.85, Math.max(height * 1.35, span * 0.65), centerZ + span * 1.05)
-        camera.lookAt(centerX, height / 2, centerZ)
+        const fitPad = Math.max(1.25, Math.min(8, span * 0.08))
+        const sceneMinX = bounds.minX - WALL_THICKNESS_FT / 2 - fitPad
+        const sceneMaxX = bounds.maxX + WALL_THICKNESS_FT / 2 + fitPad
+        const sceneMinZ = bounds.minZ - WALL_THICKNESS_FT / 2 - fitPad
+        const sceneMaxZ = bounds.maxZ + WALL_THICKNESS_FT / 2 + fitPad
+        const sceneCenter = new THREE.Vector3(centerX, height / 2, centerZ)
+        const sceneCorners = [
+          new THREE.Vector3(sceneMinX, 0, sceneMinZ),
+          new THREE.Vector3(sceneMinX, 0, sceneMaxZ),
+          new THREE.Vector3(sceneMaxX, 0, sceneMinZ),
+          new THREE.Vector3(sceneMaxX, 0, sceneMaxZ),
+          new THREE.Vector3(sceneMinX, height, sceneMinZ),
+          new THREE.Vector3(sceneMinX, height, sceneMaxZ),
+          new THREE.Vector3(sceneMaxX, height, sceneMinZ),
+          new THREE.Vector3(sceneMaxX, height, sceneMaxZ),
+        ]
+        const paddedWidth = sceneMaxX - sceneMinX
+        const paddedDepth = sceneMaxZ - sceneMinZ
+        const floorRadius = Math.hypot(paddedWidth, paddedDepth) / 2
+        const sceneRadius = Math.hypot(paddedWidth, paddedDepth, height) / 2
+        const minCameraDistance = Math.max(6, height * 1.05, floorRadius * 1.12)
+        const maxCameraDistance = Math.max(minCameraDistance + span * 2, sceneRadius * 8, 60)
+        const camera = new THREE.PerspectiveCamera(45, 1, 0.1, Math.max(300, maxCameraDistance * 4))
 
         const controls = new OrbitControls(camera, renderer.domElement)
         controls.enableDamping = true
         controls.dampingFactor = 0.08
-        controls.target.set(centerX, height / 2, centerZ)
-        controls.minDistance = 3
-        controls.maxDistance = Math.max(48, span * 4)
+        controls.enablePan = true
+        controls.enableZoom = true
+        controls.panSpeed = 0.8
+        controls.zoomSpeed = 0.85
+        controls.screenSpacePanning = true
+        controls.target.copy(sceneCenter)
+        controls.minDistance = minCameraDistance
+        controls.maxDistance = maxCameraDistance
+        controls.mouseButtons = {
+          LEFT: THREE.MOUSE.ROTATE,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN,
+        }
+        controls.touches = {
+          ONE: THREE.TOUCH.ROTATE,
+          TWO: THREE.TOUCH.DOLLY_PAN,
+        }
+
+        const setCameraUp = (top: boolean) => {
+          camera.up.set(0, top ? 0 : 1, top ? -1 : 0)
+        }
+
+        const distanceForDirection = (direction: any): number => {
+          const viewDir = direction.clone().normalize()
+          camera.position.copy(sceneCenter).addScaledVector(viewDir, 1)
+          setCameraUp(Math.abs(viewDir.y) > 0.96)
+          camera.lookAt(sceneCenter)
+          camera.updateMatrixWorld()
+          const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion)
+          const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion)
+          let halfW = 0
+          let halfH = 0
+          let depthHalf = 0
+          sceneCorners.forEach((corner: any) => {
+            const rel = corner.clone().sub(sceneCenter)
+            halfW = Math.max(halfW, Math.abs(rel.dot(right)))
+            halfH = Math.max(halfH, Math.abs(rel.dot(up)))
+            depthHalf = Math.max(depthHalf, Math.abs(rel.dot(viewDir)))
+          })
+          const vFov = THREE.MathUtils.degToRad(camera.fov)
+          const hFov = 2 * Math.atan(Math.tan(vFov / 2) * Math.max(0.1, camera.aspect))
+          const fitDistance = (Math.max(halfH / Math.tan(vFov / 2), halfW / Math.tan(hFov / 2)) + depthHalf) * 1.12
+          return Math.max(minCameraDistance, Math.min(maxCameraDistance * 0.9, fitDistance))
+        }
+
+        const fitCamera = (preset: CameraPreset = 'fit') => {
+          const direction =
+            preset === 'top'
+              ? new THREE.Vector3(0.001, 1, 0.001).normalize()
+              : new THREE.Vector3(0.78, 0.52, 0.86).normalize()
+          const distance = distanceForDirection(direction)
+          setCameraUp(preset === 'top')
+          controls.target.copy(sceneCenter)
+          camera.position.copy(sceneCenter).addScaledVector(direction, distance)
+          camera.lookAt(sceneCenter)
+          camera.near = Math.max(0.05, minCameraDistance / 80)
+          camera.far = Math.max(300, maxCameraDistance * 4)
+          camera.updateProjectionMatrix()
+          controls.update()
+        }
+
+        cameraApiRef.current = {
+          fit: () => fitCamera('fit'),
+          top: () => fitCamera('top'),
+          angle: () => fitCamera('angle'),
+        }
         controls.update()
 
         scene.add(new THREE.HemisphereLight(0xffffff, 0xcbd5e1, 1.2))
@@ -723,6 +808,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
 
         const onPointerDown = (event: PointerEvent) => {
           pointerDown = { x: event.clientX, y: event.clientY }
+          if (event.button !== 0) return
           if (!canEdit) return
           updatePointer(event)
           const hit = raycaster.intersectObjects(itemTargets, true)[0]
@@ -779,6 +865,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const onPointerUp = (event: PointerEvent) => {
           const delta = pointerDown ? Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) : 0
           pointerDown = null
+          if (event.button !== 0) return
           if (drag) {
             const completed = drag
             drag = null
@@ -796,10 +883,26 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           if (delta <= 4) placeAtPointer(event)
         }
 
+        const onContextMenu = (event: MouseEvent) => event.preventDefault()
+
         renderer.domElement.addEventListener('pointerdown', onPointerDown)
         renderer.domElement.addEventListener('pointermove', onPointerMove)
         renderer.domElement.addEventListener('pointerup', onPointerUp)
+        renderer.domElement.addEventListener('contextmenu', onContextMenu)
 
+        const clampCameraTarget = () => {
+          const panPad = Math.max(4, span * 0.35)
+          const nextTarget = controls.target.clone()
+          nextTarget.x = Math.max(sceneMinX - panPad, Math.min(sceneMaxX + panPad, nextTarget.x))
+          nextTarget.y = Math.max(0, Math.min(height, nextTarget.y))
+          nextTarget.z = Math.max(sceneMinZ - panPad, Math.min(sceneMaxZ + panPad, nextTarget.z))
+          const delta = nextTarget.sub(controls.target)
+          if (delta.lengthSq() <= 0.000001) return
+          controls.target.add(delta)
+          camera.position.add(delta)
+        }
+
+        let didInitialFit = false
         const resize = () => {
           const rect = currentHost.getBoundingClientRect()
           const width = Math.max(1, Math.floor(rect.width))
@@ -807,6 +910,10 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           renderer.setSize(width, heightPx, false)
           camera.aspect = width / heightPx
           camera.updateProjectionMatrix()
+          if (!didInitialFit) {
+            fitCamera('fit')
+            didInitialFit = true
+          }
         }
         const observer = new ResizeObserver(resize)
         observer.observe(currentHost)
@@ -816,6 +923,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const animate = () => {
           if (disposed) return
           controls.update()
+          clampCameraTarget()
           renderer.render(scene, camera)
           frame = window.requestAnimationFrame(animate)
         }
@@ -827,7 +935,9 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           renderer.domElement.removeEventListener('pointerdown', onPointerDown)
           renderer.domElement.removeEventListener('pointermove', onPointerMove)
           renderer.domElement.removeEventListener('pointerup', onPointerUp)
+          renderer.domElement.removeEventListener('contextmenu', onContextMenu)
           observer.disconnect()
+          cameraApiRef.current = null
           controls.dispose()
           scene.traverse((object: { geometry?: unknown; material?: unknown }) => disposeObjectWithMaterial(object))
           renderer.dispose()
@@ -852,6 +962,17 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
     <div className="hub-sketch-3d-layout">
       <div className="hub-sketch-3d-shell" role="img" aria-label={label}>
         <div ref={hostRef} className="hub-sketch-3d-canvas" />
+        <div className="hub-sketch-3d-camera-tools" role="toolbar" aria-label={t('hub_sketch_3d_camera')}>
+          <button type="button" className="btn ghost small" onClick={() => cameraApiRef.current?.fit()}>
+            {t('hub_sketch_camera_fit')}
+          </button>
+          <button type="button" className="btn ghost small" onClick={() => cameraApiRef.current?.top()}>
+            {t('hub_sketch_camera_top')}
+          </button>
+          <button type="button" className="btn ghost small" onClick={() => cameraApiRef.current?.angle()}>
+            {t('hub_sketch_camera_angle')}
+          </button>
+        </div>
         {state === 'loading' && <div className="hub-sketch-3d-overlay muted">{loadingLabel}</div>}
         {state === 'error' && <div className="hub-sketch-3d-overlay error-msg">{errorLabel}</div>}
       </div>

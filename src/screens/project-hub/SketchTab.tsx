@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../../lib/i18n'
 import {
   createProjectNote,
@@ -27,10 +27,13 @@ interface SketchTabProps {
 // Геометрия хранится в клетках сетки. Масштаб: 1 клетка = 1 фут.
 const CELL_FT = 1
 const CELL_PX = 32
-const GRID_COLS = 24
-const GRID_ROWS = 18
-const VIEW_W = GRID_COLS * CELL_PX
-const VIEW_H = GRID_ROWS * CELL_PX
+const SUBCELL_PX = CELL_PX / 2
+const DEFAULT_GRID_COLS = 24
+const DEFAULT_GRID_ROWS = 18
+const VIEW_W = DEFAULT_GRID_COLS * CELL_PX
+const VIEW_H = DEFAULT_GRID_ROWS * CELL_PX
+const MIN_VIEW_CELLS = 4
+const SUBGRID_HIDE_PX_PER_FT = 18
 const CLOSE_SNAP = 0.45 // клетки — попадание в стартовую точку замыкает контур
 const SEG_HIT = 0.7 // клетки — попадание в сегмент при установке двери/окна
 const ROOM_SNAP = 0.6 // клетки — радиус прилипания новой комнаты к существующим вершинам/стенам
@@ -67,6 +70,8 @@ type SketchModel = {
   switches?: SketchSwitch[]
 }
 type ViewMode = '2d' | '3d'
+type CanvasSize = { width: number; height: number }
+type CanvasView = { x: number; y: number; width: number; height: number }
 
 // Ширина проёма в футах с учётом дефолта по типу.
 function openingWidthFt(o: Opening): number {
@@ -176,6 +181,114 @@ function nearestSegment(model: SketchModel, p: Pt): { c: number; s: number; t: n
   return best
 }
 
+function sketchBounds(model: SketchModel): { minX: number; maxX: number; minY: number; maxY: number; width: number; height: number; hasPoints: boolean } {
+  const points = model.contours.flatMap((contour) => contour.points)
+  if (points.length === 0) {
+    return {
+      minX: 0,
+      maxX: DEFAULT_GRID_COLS,
+      minY: 0,
+      maxY: DEFAULT_GRID_ROWS,
+      width: DEFAULT_GRID_COLS,
+      height: DEFAULT_GRID_ROWS,
+      hasPoints: false,
+    }
+  }
+  const xs = points.map((p) => p.x)
+  const ys = points.map((p) => p.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    width: Math.max(maxX - minX, 0),
+    height: Math.max(maxY - minY, 0),
+    hasPoints: true,
+  }
+}
+
+function canvasAspect(size: CanvasSize): number {
+  return size.width > 0 && size.height > 0 ? size.width / size.height : VIEW_W / VIEW_H
+}
+
+function constrainCanvasView(model: SketchModel, size: CanvasSize, view: CanvasView): CanvasView {
+  const aspect = canvasAspect(size)
+  const bounds = sketchBounds(model)
+  const maxModelCells = Math.max(DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, bounds.width + 16, bounds.height + 16)
+  const minWidth = MIN_VIEW_CELLS * CELL_PX
+  const maxWidth = maxModelCells * CELL_PX * 4
+  const width = Math.max(minWidth, Math.min(maxWidth, Number.isFinite(view.width) ? view.width : VIEW_W))
+  const height = width / aspect
+  const cx = Number.isFinite(view.x) ? view.x + view.width / 2 : VIEW_W / 2
+  const cy = Number.isFinite(view.y) ? view.y + view.height / 2 : VIEW_H / 2
+  return {
+    x: cx - width / 2,
+    y: cy - height / 2,
+    width,
+    height,
+  }
+}
+
+function fitCanvasView(model: SketchModel, size: CanvasSize): CanvasView {
+  const bounds = sketchBounds(model)
+  const aspect = canvasAspect(size)
+  const span = Math.max(bounds.width, bounds.height)
+  const padCells = bounds.hasPoints ? Math.max(2, Math.min(8, span * 0.08)) : 0
+  const minX = bounds.hasPoints ? bounds.minX - padCells : 0
+  const maxX = bounds.hasPoints ? bounds.maxX + padCells : DEFAULT_GRID_COLS
+  const minY = bounds.hasPoints ? bounds.minY - padCells : 0
+  const maxY = bounds.hasPoints ? bounds.maxY + padCells : DEFAULT_GRID_ROWS
+  const boxWidth = Math.max((maxX - minX) * CELL_PX, MIN_VIEW_CELLS * CELL_PX)
+  const boxHeight = Math.max((maxY - minY) * CELL_PX, MIN_VIEW_CELLS * CELL_PX)
+  const boxAspect = boxWidth / boxHeight
+  const width = boxAspect > aspect ? boxWidth : boxHeight * aspect
+  const height = width / aspect
+  const cx = ((minX + maxX) / 2) * CELL_PX
+  const cy = ((minY + maxY) / 2) * CELL_PX
+  return constrainCanvasView(model, size, {
+    x: cx - width / 2,
+    y: cy - height / 2,
+    width,
+    height,
+  })
+}
+
+function canvasViewContainsModel(model: SketchModel, view: CanvasView): boolean {
+  const bounds = sketchBounds(model)
+  if (!bounds.hasPoints) return true
+  const left = view.x / CELL_PX
+  const right = (view.x + view.width) / CELL_PX
+  const top = view.y / CELL_PX
+  const bottom = (view.y + view.height) / CELL_PX
+  return bounds.minX >= left && bounds.maxX <= right && bounds.minY >= top && bounds.maxY <= bottom
+}
+
+function gridLinePositions(startPx: number, endPx: number, stepPx: number, skipEveryOther = false): number[] {
+  const start = Math.floor(startPx / stepPx) - 1
+  const end = Math.ceil(endPx / stepPx) + 1
+  const count = Math.min(900, Math.max(0, end - start + 1))
+  return Array.from({ length: count }, (_, i) => start + i)
+    .filter((n) => !skipEveryOther || n % 2 !== 0)
+    .map((n) => n * stepPx)
+}
+
+function canvasGridLines(view: CanvasView, includeSubgrid: boolean) {
+  const left = view.x
+  const right = view.x + view.width
+  const top = view.y
+  const bottom = view.y + view.height
+  return {
+    subX: includeSubgrid ? gridLinePositions(left, right, SUBCELL_PX, true) : [],
+    subY: includeSubgrid ? gridLinePositions(top, bottom, SUBCELL_PX, true) : [],
+    majorX: gridLinePositions(left, right, CELL_PX),
+    majorY: gridLinePositions(top, bottom, CELL_PX),
+  }
+}
+
 const EMPTY_MODEL: SketchModel = { version: 1, cellFt: CELL_FT, contours: [], openings: [] }
 
 function fmtLen(cells: number): string {
@@ -198,18 +311,31 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
   ctx.scale(scale, scale)
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, VIEW_W, VIEW_H)
+  const view = fitCanvasView(model, { width: VIEW_W, height: VIEW_H })
+  const viewScale = VIEW_W / view.width
+  const grid = canvasGridLines(view, viewScale * CELL_PX >= SUBGRID_HIDE_PX_PER_FT)
+  ctx.save()
+  ctx.scale(viewScale, viewScale)
+  ctx.translate(-view.x, -view.y)
   // сетка
-  ctx.strokeStyle = '#e2e6ea'
-  ctx.lineWidth = 1
-  for (let x = 0; x <= GRID_COLS; x++) {
-    ctx.beginPath(); ctx.moveTo(x * CELL_PX, 0); ctx.lineTo(x * CELL_PX, VIEW_H); ctx.stroke()
+  ctx.strokeStyle = '#edf1f5'
+  ctx.lineWidth = 1 / viewScale
+  for (const x of grid.subX) {
+    ctx.beginPath(); ctx.moveTo(x, view.y); ctx.lineTo(x, view.y + view.height); ctx.stroke()
   }
-  for (let y = 0; y <= GRID_ROWS; y++) {
-    ctx.beginPath(); ctx.moveTo(0, y * CELL_PX); ctx.lineTo(VIEW_W, y * CELL_PX); ctx.stroke()
+  for (const y of grid.subY) {
+    ctx.beginPath(); ctx.moveTo(view.x, y); ctx.lineTo(view.x + view.width, y); ctx.stroke()
+  }
+  ctx.strokeStyle = '#d7dee8'
+  for (const x of grid.majorX) {
+    ctx.beginPath(); ctx.moveTo(x, view.y); ctx.lineTo(x, view.y + view.height); ctx.stroke()
+  }
+  for (const y of grid.majorY) {
+    ctx.beginPath(); ctx.moveTo(view.x, y); ctx.lineTo(view.x + view.width, y); ctx.stroke()
   }
   // стены
   ctx.strokeStyle = '#1f2933'
-  ctx.lineWidth = 3
+  ctx.lineWidth = 3 / viewScale
   ctx.lineJoin = 'round'
   ctx.lineCap = 'round'
   for (const c of model.contours) {
@@ -222,12 +348,12 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
   }
   // подписи длин
   ctx.fillStyle = '#334155'
-  ctx.font = '11px sans-serif'
+  ctx.font = `${Math.max(10 / viewScale, 11)}px sans-serif`
   ctx.textAlign = 'center'
   for (const seg of eachSegment(model)) {
     const mx = (seg.a.x + seg.b.x) / 2 * CELL_PX
     const my = (seg.a.y + seg.b.y) / 2 * CELL_PX
-    ctx.fillText(fmtLen(dist(seg.a, seg.b)), mx, my - 4)
+    ctx.fillText(fmtLen(dist(seg.a, seg.b)), mx, my - 4 / viewScale)
   }
   // проёмы — отрезок вдоль стены заданной ширины
   ctx.lineCap = 'butt'
@@ -238,13 +364,13 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
     const hx = (g.ux * wCells) / 2
     const hy = (g.uy * wCells) / 2
     ctx.strokeStyle = o.kind === 'door' ? '#b45309' : '#2563eb'
-    ctx.lineWidth = 6
+    ctx.lineWidth = 6 / viewScale
     ctx.beginPath()
     ctx.moveTo((g.p.x - hx) * CELL_PX, (g.p.y - hy) * CELL_PX)
     ctx.lineTo((g.p.x + hx) * CELL_PX, (g.p.y + hy) * CELL_PX)
     ctx.stroke()
   }
-  ctx.lineCap = 'round'
+  ctx.restore()
   // сводка
   const area = model.contours.reduce((s, c) => s + contourArea(c), 0)
   const perim = model.contours.reduce((s, c) => s + contourPerimeter(c), 0)
@@ -287,6 +413,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [loadBusy, setLoadBusy] = useState(false)
 
   const svgRef = useRef<SVGSVGElement | null>(null)
+  const canvasAutoFitRef = useRef(true)
+  const canvasSuppressClickRef = useRef(false)
+  const canvasPointersRef = useRef<Map<number, { clientX: number; clientY: number }>>(new Map())
+  const canvasPanRef = useRef<{ startX: number; startY: number; view: CanvasView; moved: boolean } | null>(null)
+  const canvasPinchRef = useRef<{ startDistance: number; startMid: { x: number; y: number }; view: CanvasView } | null>(null)
+  const [canvasSize, setCanvasSize] = useState<CanvasSize>({ width: VIEW_W, height: VIEW_H })
+  const [canvasView, setCanvasView] = useState<CanvasView>({ x: 0, y: 0, width: VIEW_W, height: VIEW_H })
 
   const stats = useMemo(() => {
     const perContour = model.contours.map((c) => ({
@@ -307,20 +440,74 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setError(null)
   }
 
-  // Координаты указателя → клетки сетки (без округления).
-  const pointerCell = (e: React.PointerEvent | React.MouseEvent): Pt | null => {
+  useEffect(() => {
+    if (viewMode !== '2d') return
+    const svg = svgRef.current
+    if (!svg) return
+    const updateSize = () => {
+      const rect = svg.getBoundingClientRect()
+      setCanvasSize({ width: Math.max(1, rect.width), height: Math.max(1, rect.height) })
+    }
+    updateSize()
+    const observer = new ResizeObserver(updateSize)
+    observer.observe(svg)
+    return () => observer.disconnect()
+  }, [viewMode])
+
+  useEffect(() => {
+    if (viewMode !== '2d') return
+    setCanvasView((current) => {
+      const normalized = constrainCanvasView(model, canvasSize, current)
+      if (canvasAutoFitRef.current || !canvasViewContainsModel(model, normalized)) {
+        canvasAutoFitRef.current = false
+        return fitCanvasView(model, canvasSize)
+      }
+      return normalized
+    })
+  }, [model, canvasSize, viewMode])
+
+  const fitCanvasToModel = useCallback(() => {
+    canvasAutoFitRef.current = false
+    setCanvasView(fitCanvasView(model, canvasSize))
+  }, [model, canvasSize])
+
+  const canvasPoint = (clientX: number, clientY: number, view = canvasView): { x: number; y: number } | null => {
     const svg = svgRef.current
     if (!svg) return null
     const rect = svg.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) return null
-    const x = (e.clientX - rect.left) / rect.width * GRID_COLS
-    const y = (e.clientY - rect.top) / rect.height * GRID_ROWS
-    return { x, y }
+    return {
+      x: view.x + ((clientX - rect.left) / rect.width) * view.width,
+      y: view.y + ((clientY - rect.top) / rect.height) * view.height,
+    }
+  }
+
+  const zoomCanvasAt = (clientX: number, clientY: number, factor: number, baseView = canvasView) => {
+    const anchor = canvasPoint(clientX, clientY, baseView)
+    const svg = svgRef.current
+    if (!anchor || !svg) return baseView
+    const rect = svg.getBoundingClientRect()
+    const nextWidth = baseView.width * factor
+    const nextHeight = baseView.height * factor
+    const ratioX = (clientX - rect.left) / Math.max(1, rect.width)
+    const ratioY = (clientY - rect.top) / Math.max(1, rect.height)
+    return constrainCanvasView(model, canvasSize, {
+      x: anchor.x - ratioX * nextWidth,
+      y: anchor.y - ratioY * nextHeight,
+      width: nextWidth,
+      height: nextHeight,
+    })
+  }
+
+  // Координаты указателя → клетки сетки (без округления).
+  const pointerCell = (e: React.PointerEvent | React.MouseEvent): Pt | null => {
+    const point = canvasPoint(e.clientX, e.clientY)
+    return point ? { x: point.x / CELL_PX, y: point.y / CELL_PX } : null
   }
 
   const snap = (p: Pt): Pt => ({
-    x: Math.max(0, Math.min(GRID_COLS, Math.round(p.x))),
-    y: Math.max(0, Math.min(GRID_ROWS, Math.round(p.y))),
+    x: Math.max(0, Math.round(p.x)),
+    y: Math.max(0, Math.round(p.y)),
   })
 
   // Прилипание новой точки к вершинам/стенам ДРУГИХ контуров (общая стена не дублируется).
@@ -395,6 +582,112 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
   }
 
+  const handleCanvasPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.button !== 0) return
+    canvasPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY })
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+    if (canvasPointersRef.current.size === 1) {
+      canvasPanRef.current = { startX: e.clientX, startY: e.clientY, view: canvasView, moved: false }
+      canvasPinchRef.current = null
+      return
+    }
+    if (canvasPointersRef.current.size === 2) {
+      const points = Array.from(canvasPointersRef.current.values())
+      const [a, b] = points
+      canvasPanRef.current = null
+      canvasPinchRef.current = {
+        startDistance: Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)),
+        startMid: { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
+        view: canvasView,
+      }
+      canvasSuppressClickRef.current = true
+    }
+  }
+
+  const handleCanvasPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (canvasPointersRef.current.has(e.pointerId)) {
+      canvasPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY })
+    }
+
+    if (canvasPointersRef.current.size >= 2 && canvasPinchRef.current) {
+      const points = Array.from(canvasPointersRef.current.values())
+      const [a, b] = points
+      const currentDistance = Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY))
+      const currentMid = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
+      const factor = canvasPinchRef.current.startDistance / currentDistance
+      const anchor = canvasPoint(canvasPinchRef.current.startMid.x, canvasPinchRef.current.startMid.y, canvasPinchRef.current.view)
+      const svg = svgRef.current
+      if (anchor && svg) {
+        const rect = svg.getBoundingClientRect()
+        const nextWidth = canvasPinchRef.current.view.width * factor
+        const nextHeight = canvasPinchRef.current.view.height * factor
+        const ratioX = (currentMid.x - rect.left) / Math.max(1, rect.width)
+        const ratioY = (currentMid.y - rect.top) / Math.max(1, rect.height)
+        canvasAutoFitRef.current = false
+        setCanvasView(constrainCanvasView(model, canvasSize, {
+          x: anchor.x - ratioX * nextWidth,
+          y: anchor.y - ratioY * nextHeight,
+          width: nextWidth,
+          height: nextHeight,
+        }))
+        setHover(null)
+        setHoverSnapped(false)
+      }
+      e.preventDefault()
+      return
+    }
+
+    const pan = canvasPanRef.current
+    if (pan) {
+      const dx = e.clientX - pan.startX
+      const dy = e.clientY - pan.startY
+      const moved = Math.hypot(dx, dy) > 4
+      if (moved) {
+        canvasAutoFitRef.current = false
+        canvasSuppressClickRef.current = true
+        canvasPanRef.current = { ...pan, moved: true }
+        setCanvasView(constrainCanvasView(model, canvasSize, {
+          ...pan.view,
+          x: pan.view.x - dx * (pan.view.width / Math.max(1, canvasSize.width)),
+          y: pan.view.y - dy * (pan.view.height / Math.max(1, canvasSize.height)),
+        }))
+        setHover(null)
+        setHoverSnapped(false)
+        e.preventDefault()
+        return
+      }
+    }
+
+    handleMove(e)
+  }
+
+  const handleCanvasPointerEnd = (e: React.PointerEvent<SVGSVGElement>) => {
+    canvasPointersRef.current.delete(e.pointerId)
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    if (canvasPointersRef.current.size < 2) canvasPinchRef.current = null
+    if (canvasPointersRef.current.size === 1) {
+      const remaining = Array.from(canvasPointersRef.current.values())[0]
+      canvasPanRef.current = { startX: remaining.clientX, startY: remaining.clientY, view: canvasView, moved: false }
+    } else {
+      canvasPanRef.current = null
+    }
+    endDragOpening()
+  }
+
+  const handleCanvasPointerLeave = () => {
+    if (canvasPointersRef.current.size > 0) return
+    endDragOpening()
+    setHover(null)
+    setHoverSnapped(false)
+  }
+
+  const handleCanvasWheel = (e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault()
+    const factor = Math.exp(Math.max(-0.7, Math.min(0.7, e.deltaY * 0.001)))
+    canvasAutoFitRef.current = false
+    setCanvasView((view) => zoomCanvasAt(e.clientX, e.clientY, factor, view))
+  }
+
   // Начало перетаскивания существующего проёма.
   const startDragOpening = (i: number) => (e: React.PointerEvent) => {
     if (!canEdit) return
@@ -431,6 +724,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const handleClick = (e: React.MouseEvent) => {
     if (!canEdit) return
+    if (canvasSuppressClickRef.current) {
+      canvasSuppressClickRef.current = false
+      dragMovedRef.current = false
+      return
+    }
     // клик после перетаскивания проёма не должен ставить новый
     if (dragMovedRef.current) {
       dragMovedRef.current = false
@@ -493,6 +791,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const clearAll = () => {
     if (model.contours.length === 0 && model.openings.length === 0) return
     setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
+    canvasAutoFitRef.current = true
     setModel(EMPTY_MODEL)
     setStatus(null)
     setError(null)
@@ -601,6 +900,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       if (lights.length > 0) nextModel.lights = lights
       if (switches.length > 0) nextModel.switches = switches
       setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
+      canvasAutoFitRef.current = true
       setModel(nextModel)
       setName(file.name.replace(/^sketch-/, '').replace(/\.json$/, ''))
       setLoadOpen(false)
@@ -615,6 +915,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const activeContour = model.contours[model.contours.length - 1]
   const canClose = !!activeContour && !activeContour.closed && activeContour.points.length >= 3
   const heightFt = wallHeightFt(model)
+  const pxPerFt = (canvasSize.width * CELL_PX) / Math.max(1, canvasView.width)
+  const showSubgrid = pxPerFt >= SUBGRID_HIDE_PX_PER_FT
+  const gridLines = useMemo(() => canvasGridLines(canvasView, showSubgrid), [canvasView, showSubgrid])
+  const screenWorldPx = canvasView.width / Math.max(1, canvasSize.width)
+  const nodeRadius = Math.max(3, Math.min(18, 5 * screenWorldPx))
+  const hoverRadius = Math.max(4, Math.min(20, 6 * screenWorldPx))
 
   return (
     <section className="hub-tab-panel hub-sketch">
@@ -626,7 +932,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               type="button"
               className={viewMode === mode ? 'btn small' : 'btn ghost small'}
               aria-pressed={viewMode === mode}
-              onClick={() => setViewMode(mode)}
+              onClick={() => {
+                if (mode === '2d') canvasAutoFitRef.current = true
+                setViewMode(mode)
+              }}
             >
               {t(mode === '2d' ? 'hub_sketch_view_2d' : 'hub_sketch_view_3d')}
             </button>
@@ -705,29 +1014,37 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       <div className="card hub-sketch-canvas-card">
         {viewMode === '2d' ? (
           <>
-            <svg
-              ref={svgRef}
-              className="hub-sketch-svg"
-              viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-              role="img"
-              aria-label={t('hub_tab_sketch')}
-              onClick={handleClick}
-              onPointerMove={handleMove}
-              onPointerUp={endDragOpening}
-              onPointerLeave={() => {
-                endDragOpening()
-                setHover(null)
-                setHoverSnapped(false)
-              }}
-              style={{ touchAction: 'none' }}
-            >
+            <div className="hub-sketch-svg-shell">
+              <svg
+                ref={svgRef}
+                className="hub-sketch-svg"
+                viewBox={`${canvasView.x} ${canvasView.y} ${canvasView.width} ${canvasView.height}`}
+                preserveAspectRatio="xMidYMid meet"
+                role="img"
+                aria-label={t('hub_tab_sketch')}
+                onClick={handleClick}
+                onPointerDown={handleCanvasPointerDown}
+                onPointerMove={handleCanvasPointerMove}
+                onPointerUp={handleCanvasPointerEnd}
+                onPointerCancel={handleCanvasPointerEnd}
+                onPointerLeave={handleCanvasPointerLeave}
+                onWheel={handleCanvasWheel}
+              >
           {/* сетка */}
-          <g className="hub-sketch-grid">
-            {Array.from({ length: GRID_COLS + 1 }, (_, i) => (
-              <line key={`v${i}`} x1={i * CELL_PX} y1={0} x2={i * CELL_PX} y2={VIEW_H} />
+          <g className="hub-sketch-subgrid">
+            {gridLines.subX.map((x) => (
+              <line key={`sv${x}`} x1={x} y1={canvasView.y} x2={x} y2={canvasView.y + canvasView.height} />
             ))}
-            {Array.from({ length: GRID_ROWS + 1 }, (_, i) => (
-              <line key={`h${i}`} x1={0} y1={i * CELL_PX} x2={VIEW_W} y2={i * CELL_PX} />
+            {gridLines.subY.map((y) => (
+              <line key={`sh${y}`} x1={canvasView.x} y1={y} x2={canvasView.x + canvasView.width} y2={y} />
+            ))}
+          </g>
+          <g className="hub-sketch-grid">
+            {gridLines.majorX.map((x) => (
+              <line key={`v${x}`} x1={x} y1={canvasView.y} x2={x} y2={canvasView.y + canvasView.height} />
+            ))}
+            {gridLines.majorY.map((y) => (
+              <line key={`h${y}`} x1={canvasView.x} y1={y} x2={canvasView.x + canvasView.width} y2={y} />
             ))}
           </g>
 
@@ -756,7 +1073,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           {/* точки контуров (крупные хит-таргеты) */}
           {model.contours.map((c, ci) =>
             c.points.map((p, pi) => (
-              <circle key={`n${ci}-${pi}`} className="hub-sketch-node" cx={p.x * CELL_PX} cy={p.y * CELL_PX} r={5} />
+              <circle key={`n${ci}-${pi}`} className="hub-sketch-node" cx={p.x * CELL_PX} cy={p.y * CELL_PX} r={nodeRadius} />
             )),
           )}
 
@@ -839,10 +1156,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               className={hoverSnapped ? 'hub-sketch-hover hub-sketch-hover-snap' : 'hub-sketch-hover'}
               cx={hover.x * CELL_PX}
               cy={hover.y * CELL_PX}
-              r={6}
+              r={hoverRadius}
             />
           )}
-            </svg>
+              </svg>
+              <div className="hub-sketch-2d-tools" role="toolbar" aria-label={t('hub_sketch_2d_canvas_tools')}>
+                <button type="button" className="btn ghost small" onClick={fitCanvasToModel}>
+                  {t('hub_sketch_camera_fit')}
+                </button>
+              </div>
+            </div>
             <p className="muted hub-sketch-scale">{t('hub_sketch_scale_note')}</p>
           </>
         ) : (
