@@ -3899,6 +3899,47 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: #fff;
 }
 
+/* DOC-EXPIRY-UI: подсветка строки документа по сроку + бейдж срока + карточка загрузки (тип/действует до). */
+.worker-doc-row.doc-expired,
+.worker-doc-row.doc-urgent {
+  border-left: 3px solid var(--red);
+  padding-left: 8px;
+}
+.worker-doc-row.doc-soon {
+  border-left: 3px solid var(--amber);
+  padding-left: 8px;
+}
+.worker-doc-badges {
+  margin-top: 6px;
+}
+.worker-doc-upload {
+  display: flex;
+  flex-direction: column;
+}
+.worker-doc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+.worker-doc-field select,
+.worker-doc-field input {
+  min-width: 160px;
+}
+/* DOC-EXPIRY-UI: плашка-сводка «Команды» об истекающих/просроченных документах. */
+.doc-expiry-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-weight: 600;
+}
+.doc-expiry-summary.red {
+  border-left: 3px solid var(--red);
+}
+.doc-expiry-summary.amber {
+  border-left: 3px solid var(--amber);
+}
+
 /* MAT-3: Спецификация материалов (plan-BOM) */
 .hub-materials { display: flex; flex-direction: column; gap: 14px; }
 .hub-materials h3 { margin: 0 0 10px; font-size: 16px; }

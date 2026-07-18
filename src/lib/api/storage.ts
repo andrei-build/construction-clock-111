@@ -732,7 +732,14 @@ export async function getProfileFiles(profileId: string): Promise<FileRow[]> {
 // files со scope='worker' и profile_id. RLS INSERT: org_id=app.org_id() и (менеджер ИЛИ uploaded_by=uid) —
 // потому org_id=p.org_id, uploaded_by=p.id. is_private=false: файл виден manager+ и самому работнику
 // (RLS files_select: is_manager() OR profile_id=uid OR uploaded_by=uid); доступ не расширяем.
-export async function uploadProfileFileToR2(p: Profile, profileId: string, file: File): Promise<FileRow> {
+// DOC-EXPIRY-UI: meta.doc_kind (страховка/лицензия/W-9) и meta.expires_at (date «действует до»,
+// nullable) — обе необязательны; читаются существующими колонками files, миграций не требуют.
+export async function uploadProfileFileToR2(
+  p: Profile,
+  profileId: string,
+  file: File,
+  meta?: { doc_kind?: string | null; expires_at?: string | null },
+): Promise<FileRow> {
   validateUpload(file, 'file')
   const key = `files/${crypto.randomUUID()}-${safeFileName(file.name, file.type)}`
   const signed = await r2Sign('upload', key)
@@ -752,8 +759,8 @@ export async function uploadProfileFileToR2(p: Profile, profileId: string, file:
     storage_path: signed.key,
     mime: file.type || null,
     size_bytes: file.size,
-    doc_kind: null,
-    expires_at: null,
+    doc_kind: meta?.doc_kind ?? null,
+    expires_at: meta?.expires_at ?? null,
     is_private: false,
     uploaded_by: p.id,
     project_id: null,
@@ -762,6 +769,32 @@ export async function uploadProfileFileToR2(p: Profile, profileId: string, file:
   if (error) throw error
   await logEvent(p, 'file.uploaded', 'file', data.id, { profile_id: profileId })
   return data as unknown as FileRow
+}
+
+// DOC-EXPIRY-UI: истекающие/просроченные документы работников (scope='worker') для бейджей и плашки
+// реестра «Команда». Тянем ТОЛЬКО строки с expires_at ≤ сегодня+withinDays (включая уже просроченные) —
+// одним запросом на всю команду, без N обращений. Лёгкая проекция (без FILE_SELECT). RLS files сам
+// гейтит доступ: manager+ видит всех, работник — только свои; вычисление urgent(≤7)/soon(8–30)/expired
+// оставляем UI. Только чтение существующих колонок files — миграций/бэкенда не требует.
+export interface ExpiringWorkerDoc {
+  profile_id: string
+  doc_kind: string | null
+  expires_at: string // date YYYY-MM-DD; фильтр гарантирует not-null
+}
+
+export async function getExpiringWorkerDocs(withinDays = 30): Promise<ExpiringWorkerDoc[]> {
+  const boundary = new Date()
+  boundary.setHours(0, 0, 0, 0)
+  boundary.setDate(boundary.getDate() + withinDays)
+  const boundaryStr = boundary.toISOString().slice(0, 10)
+  const { data, error } = await supabase.from('files')
+    .select('profile_id, doc_kind, expires_at')
+    .eq('scope', 'worker')
+    .not('expires_at', 'is', null)
+    .lte('expires_at', boundaryStr)
+    .is('deleted_at', null)
+  if (error) return []
+  return ((data ?? []) as ExpiringWorkerDoc[]).filter((r) => Boolean(r.profile_id))
 }
 
 // === FILE-1: вложения смет/счётов (files.document_id) — содержимое в приватном media bucket. ===
