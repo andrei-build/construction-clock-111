@@ -610,18 +610,37 @@ async function r2Sign(op: 'upload' | 'download', key: string): Promise<{ url: st
   return res.json()
 }
 
+// Загрузка байтов файла в R2 через edge-прокси r2-upload (СРОЧНЫЙ SKETCH-SAVE-FIX-1).
+// У R2-токена приложения нет прав на CORS бакета, поэтому браузерный PUT по presigned-URL
+// режется CORS-preflight-ом — файлы через presigned r2Sign('upload') не загружались вовсе.
+// Прокси кладёт байты сервер-сайд и возвращает { key, size }, где key УЖЕ несёт org-префикс
+// и является готовым storage_path (ровно то, что раньше возвращал signed.key).
+// key на вход — БЕЗ org-префикса, формат `files/<uuid>-<safeName>` (как в r2Sign('upload', key)).
+async function r2Upload(key: string, file: File): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession()
+  const token = session?.access_token
+  if (!token) throw new Error('no session')
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/r2-upload`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: SUPABASE_KEY,
+      'x-file-key': key,
+      'Content-Type': inferUploadContentType(file),
+    },
+    body: file,
+  })
+  if (!res.ok) throw new Error(`R2 upload failed: ${res.status}`)
+  const out = await res.json() as { key: string; size: number }
+  return out.key
+}
+
 // Загрузка произвольного файла проекта в R2: подпись → PUT в R2 → строка files.
 // RLS INSERT: org_id=app.org_id() и (менеджер ИЛИ uploaded_by=uid) — потому org_id=p.org_id, uploaded_by=p.id.
 export async function uploadProjectFileToR2(p: Profile, projectId: string, file: File): Promise<FileRow> {
   validateUpload(file, 'file')
   const key = `files/${crypto.randomUUID()}-${safeFileName(file.name, file.type)}`
-  const signed = await r2Sign('upload', key)
-  const putRes = await fetch(signed.url, {
-    method: 'PUT',
-    body: file,
-    headers: { 'Content-Type': inferUploadContentType(file) },
-  })
-  if (!putRes.ok) throw new Error(`R2 upload failed: ${putRes.status}`)
+  const storagePath = await r2Upload(key, file)
 
   const { data, error } = await supabase.from('files').insert({
     org_id: p.org_id,
@@ -629,7 +648,7 @@ export async function uploadProjectFileToR2(p: Profile, projectId: string, file:
     project_id: projectId,
     folder: '',
     name: file.name,
-    storage_path: signed.key,
+    storage_path: storagePath,
     mime: file.type || null,
     size_bytes: file.size,
     doc_kind: null,
@@ -683,13 +702,7 @@ export async function getAccountFiles(accountId: string): Promise<FileRow[]> {
 export async function uploadAccountFileToR2(p: Profile, accountId: string, file: File): Promise<FileRow> {
   validateUpload(file, 'file')
   const key = `files/${crypto.randomUUID()}-${safeFileName(file.name, file.type)}`
-  const signed = await r2Sign('upload', key)
-  const putRes = await fetch(signed.url, {
-    method: 'PUT',
-    body: file,
-    headers: { 'Content-Type': inferUploadContentType(file) },
-  })
-  if (!putRes.ok) throw new Error(`R2 upload failed: ${putRes.status}`)
+  const storagePath = await r2Upload(key, file)
 
   const { data, error } = await supabase.from('files').insert({
     org_id: p.org_id,
@@ -697,7 +710,7 @@ export async function uploadAccountFileToR2(p: Profile, accountId: string, file:
     account_id: accountId,
     folder: '',
     name: file.name,
-    storage_path: signed.key,
+    storage_path: storagePath,
     mime: file.type || null,
     size_bytes: file.size,
     doc_kind: null,
@@ -742,13 +755,7 @@ export async function uploadProfileFileToR2(
 ): Promise<FileRow> {
   validateUpload(file, 'file')
   const key = `files/${crypto.randomUUID()}-${safeFileName(file.name, file.type)}`
-  const signed = await r2Sign('upload', key)
-  const putRes = await fetch(signed.url, {
-    method: 'PUT',
-    body: file,
-    headers: { 'Content-Type': inferUploadContentType(file) },
-  })
-  if (!putRes.ok) throw new Error(`R2 upload failed: ${putRes.status}`)
+  const storagePath = await r2Upload(key, file)
 
   const { data, error } = await supabase.from('files').insert({
     org_id: p.org_id,
@@ -756,7 +763,7 @@ export async function uploadProfileFileToR2(
     profile_id: profileId,
     folder: '',
     name: file.name,
-    storage_path: signed.key,
+    storage_path: storagePath,
     mime: file.type || null,
     size_bytes: file.size,
     doc_kind: meta?.doc_kind ?? null,
