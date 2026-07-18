@@ -96,12 +96,17 @@ type SpeechRecInstance = {
   maxAlternatives: number
   onresult: ((e: { resultIndex?: number; results: ArrayLike<SpeechResult> }) => void) | null
   onend: (() => void) | null
-  onerror: (() => void) | null
+  onerror: ((e: { error?: string }) => void) | null
   start: () => void
   stop: () => void
   abort?: () => void
 }
 type SpeechRecCtor = new () => SpeechRecInstance
+
+// AI-VOICE-FIX-1: единый статус голосового режима для видимого индикатора (кнопка/панель/бейдж).
+//  off — выключено; wake — ждём «окей, Клок» (панель закрыта); listening — слушаем ВОПРОС;
+//  thinking — ждём ответ ассистента; speaking — озвучиваем ответ; denied — микрофон запрещён.
+type VoiceStatus = 'off' | 'wake' | 'listening' | 'thinking' | 'speaking' | 'denied'
 
 const SpeechRecognitionImpl: SpeechRecCtor | undefined =
   typeof window !== 'undefined'
@@ -144,19 +149,35 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const [wakeOn, setWakeOn] = useState<boolean>(() => {
     try { return localStorage.getItem('ai_wake') === '1' } catch { return false }
   })
-  const [wakeListening, setWakeListening] = useState(false)
-  const dictationRef = useRef<SpeechRecInstance | null>(null)
+  // AI-VOICE-FIX-1: видимое состояние голоса + уровень звука для пульсации «слушаю».
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>('off')
+  const [micLevel, setMicLevel] = useState(0)
   const lastSpokenIdRef = useRef<string | null>(null)
   const ttsPrimedRef = useRef(false)
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
 
+  // AI-VOICE-FIX-1: рефы для явного микрофона (getUserMedia) + метра уровня (AudioContext/Analyser).
+  const streamRef = useRef<MediaStream | null>(null)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const rafRef = useRef<number | null>(null)
+  // Рефы «живых» значений для колбэков распознавания/озвучки (без устаревших замыканий).
+  const speakOnRef = useRef(speakOn)
+  const thinkingRef = useRef(false)
+  const convoActiveRef = useRef(false)
+  const silenceTimerRef = useRef<number | null>(null)
+
   useEffect(() => { try { localStorage.setItem('ai_speak', speakOn ? '1' : '0') } catch { /* ignore */ } }, [speakOn])
   useEffect(() => { try { localStorage.setItem('ai_wake', wakeOn ? '1' : '0') } catch { /* ignore */ } }, [wakeOn])
+  useEffect(() => { speakOnRef.current = speakOn }, [speakOn])
+  useEffect(() => { thinkingRef.current = thinking }, [thinking])
 
   // Озвучка ответа: язык голоса = язык интерфейса, voice подбираем по локали, иначе дефолтный.
-  const speak = useCallback((text: string) => {
-    if (!TTS_SUPPORTED || !text) return
+  // AI-VOICE-FIX-1: onDone вызывается по завершении/ошибке речи — разговорный цикл так возвращается
+  // к прослушке. Если TTS недоступен/текст пуст — колбэк вызываем сразу (цикл не зависает).
+  const speak = useCallback((text: string, onDone?: () => void) => {
+    if (!TTS_SUPPORTED || !text) { onDone?.(); return }
     const synth = window.speechSynthesis
     try {
       synth.cancel()
@@ -169,8 +190,9 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         voices.find((v) => v.lang?.toLowerCase().startsWith(lang)) ||
         null
       if (voice) u.voice = voice
+      if (onDone) { u.onend = () => onDone(); u.onerror = () => onDone() }
       synth.speak(u)
-    } catch { /* ignore — мягкая деградация */ }
+    } catch { onDone?.() /* мягкая деградация — не роняем цикл */ }
   }, [lang])
 
   const cancelSpeech = useCallback(() => {
@@ -178,31 +200,64 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     try { window.speechSynthesis.cancel() } catch { /* ignore */ }
   }, [])
 
-  // Диктовка вопроса после wake-word: локальный распознаватель, interim+final → в поле ввода.
-  const startDictation = useCallback(() => {
-    if (!SpeechRecognitionImpl || !mountedRef.current) return
-    try { dictationRef.current?.stop() } catch { /* ignore */ }
-    const rec = new SpeechRecognitionImpl()
-    rec.lang = SPEECH_LOCALE[lang]
-    rec.continuous = false
-    rec.interimResults = true
-    rec.maxAlternatives = 1
-    let finalText = ''
-    rec.onresult = (e) => {
-      let interim = ''
-      for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
-        const r = e.results[i]
-        const transcript = r?.[0]?.transcript ?? ''
-        if (r?.isFinal) finalText += transcript
-        else interim += transcript
-      }
-      setInput((finalText + interim).trim())
+  // AI-VOICE-FIX-1: метр уровня звука — пульсация индикатора «слушаю» по громкости с микрофона.
+  const stopMeter = useCallback(() => {
+    if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+    setMicLevel(0)
+  }, [])
+  const startMeter = useCallback(() => {
+    const analyser = analyserRef.current
+    if (!analyser || rafRef.current !== null) return
+    const buf = new Uint8Array(analyser.fftSize)
+    const tick = () => {
+      const a = analyserRef.current
+      if (!a) { rafRef.current = null; return }
+      a.getByteTimeDomainData(buf)
+      let sum = 0
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v }
+      const rms = Math.sqrt(sum / buf.length)
+      setMicLevel(Math.min(1, rms * 3))
+      rafRef.current = requestAnimationFrame(tick)
     }
-    rec.onend = () => { if (dictationRef.current === rec) dictationRef.current = null }
-    rec.onerror = () => { if (dictationRef.current === rec) dictationRef.current = null }
-    dictationRef.current = rec
-    try { rec.start(); inputRef.current?.focus() } catch { dictationRef.current = null }
-  }, [lang])
+    rafRef.current = requestAnimationFrame(tick)
+  }, [])
+
+  // AI-VOICE-FIX-1: явный запрос микрофона. getUserMedia показывает браузерный промпт при включении
+  // тумблера (раньше промпта не было — распознавалка молча падала в onerror и «ждала, но не работала»).
+  // Поток же питает Analyser для индикатора уровня. Идемпотентно: повторный вызов переиспользует поток.
+  const ensureMic = useCallback(async (): Promise<boolean> => {
+    if (streamRef.current) return true
+    const md = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined
+    if (!md?.getUserMedia) return true // нет API — полагаемся на встроенный микрофон распознавалки
+    try {
+      const stream = await md.getUserMedia({ audio: true })
+      streamRef.current = stream
+      try {
+        const Ctx = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
+          .AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        if (Ctx) {
+          const ctx = new Ctx()
+          const analyser = ctx.createAnalyser()
+          analyser.fftSize = 256
+          ctx.createMediaStreamSource(stream).connect(analyser)
+          audioCtxRef.current = ctx
+          analyserRef.current = analyser
+        }
+      } catch { /* метр — необязательная роскошь */ }
+      return true
+    } catch {
+      return false // отказ в доступе
+    }
+  }, [])
+
+  const releaseMic = useCallback(() => {
+    stopMeter()
+    try { streamRef.current?.getTracks().forEach((tr) => tr.stop()) } catch { /* ignore */ }
+    streamRef.current = null
+    try { void audioCtxRef.current?.close() } catch { /* ignore */ }
+    audioCtxRef.current = null
+    analyserRef.current = null
+  }, [stopMeter])
 
   const flashToast = useCallback((text: string) => {
     setToast(text)
@@ -234,6 +289,31 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     setMessages(msgs)
     setProposals(props)
   }, [])
+
+  // AI-VOICE-FIX-1: единый путь отправки вопроса (тот же, что кнопка «Отправить» и голосовой цикл).
+  // Возвращает исход + текст ответа ассистента, чтобы разговорный цикл мог его озвучить.
+  const sendQuestion = useCallback(
+    async (raw: string): Promise<{ kind: 'ok' | 'error' | 'nokey' | 'empty'; reply?: string }> => {
+      const msg = raw.trim()
+      if (!msg || thinkingRef.current) return { kind: 'empty' }
+      cancelSpeech() // прерываем текущую озвучку при новом вопросе
+      setThinking(true)
+      setNoKey(false)
+      const res = await askAssistant(msg)
+      if (res.error === 'no_key') { setNoKey(true); setThinking(false); return { kind: 'nokey' } }
+      if (res.error) {
+        flashToast(res.error === 'no_session' || res.error === 'request_failed' ? t('ai_error') : res.error)
+        setThinking(false)
+        return { kind: 'error' }
+      }
+      // Успех: user/assistant-строки уже записал edge — рефетчим историю и предложения.
+      const [msgs, props] = await Promise.all([getAiMessages(), getPendingProposals()])
+      if (mountedRef.current) { setInput(''); setMessages(msgs); setProposals(props); setThinking(false) }
+      const reply = [...msgs].reverse().find((m) => m.role === 'assistant')?.content
+      return { kind: 'ok', reply }
+    },
+    [cancelSpeech, flashToast, t],
+  )
 
   // Глобальные слушатели: Ctrl+K / Cmd+K и AI_OPEN_EVENT (кнопка «Спроси») открывают оверлей.
   useEffect(() => {
@@ -285,6 +365,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   // последнее сообщение из истории как уже сказанное — иначе при открытии зачитали бы старый ответ.
   useEffect(() => {
     if (!open || !speakOn || !TTS_SUPPORTED) return
+    if (convoActiveRef.current) return // AI-VOICE-FIX-1: в разговорном цикле озвучкой рулит он сам (без двойного голоса)
     const last = messages[messages.length - 1]
     if (!last || last.role !== 'assistant') return
     if (!ttsPrimedRef.current) { lastSpokenIdRef.current = last.id; ttsPrimedRef.current = true; return }
@@ -293,11 +374,29 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     speak(last.content)
   }, [messages, open, speakOn, speak])
 
-  // AI-2-front: непрерывное локальное распознавание wake-word «окей, Клок». Активно только пока тумблер
-  // включён И панель закрыта — пока панель открыта, микрофон нужен VoiceMic/диктовке (один инстанс за раз).
-  // onerror/onend → перезапуск с backoff, но только пока смонтированы и тумблер включён.
+  // AI-VOICE-FIX-1 (1): микрофон запрашиваем ЯВНО при включении тумблера голоса — браузер сразу
+  // показывает промпт разрешения. Отказ → статус «микрофон запрещён ❌». Выключение → освобождаем поток.
   useEffect(() => {
-    if (!wakeOn || !SpeechRecognitionImpl || open) { setWakeListening(false); return }
+    if (!wakeOn || !SpeechRecognitionImpl) {
+      releaseMic()
+      setVoiceStatus('off')
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const ok = await ensureMic()
+      if (cancelled) return
+      if (!ok) setVoiceStatus('denied')
+    })()
+    return () => { cancelled = true }
+  }, [wakeOn, ensureMic, releaseMic])
+
+  // AI-VOICE-FIX-1 (2,3): непрерывное распознавание wake-фразы «окей, Клок». Активно пока тумблер включён
+  // И панель закрыта (открытая панель → разговорный цикл, микрофон один). onend/onerror перезапускают
+  // распознавание (Chrome глушит continuous каждые ~60с — без рестарта это и есть «ждёт, но не работает»);
+  // таймер один, чистится при размонтировании/выключении. Отказ в доступе → статус ❌ без бесконечных попыток.
+  useEffect(() => {
+    if (!wakeOn || !SpeechRecognitionImpl || open) return
     let active = true
     let rec: SpeechRecInstance | null = null
     let restartTimer: number | null = null
@@ -321,58 +420,146 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           const transcript = e.results[i]?.[0]?.transcript
           if (!transcript) continue
           if (WAKE_PHRASES.some((p) => normalizeWake(String(transcript)).includes(p))) {
-            // Триггер: открываем панель (эффект сам остановит wake-распознавание) и запускаем диктовку,
-            // когда микрофон освободится.
+            // Триггер: открываем панель — этот эффект остановится, а эффект разговорного цикла (open) подхватит.
             setOpen(true)
-            window.setTimeout(() => { if (mountedRef.current) startDictation() }, 450)
             return
           }
         }
       }
-      r.onerror = () => { setWakeListening(false); scheduleRestart(800) }
-      r.onend = () => { setWakeListening(false); if (active) scheduleRestart(400) }
+      r.onerror = (ev) => {
+        if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') { setVoiceStatus('denied'); return }
+        if (active) { setVoiceStatus('off'); scheduleRestart(800) }
+      }
+      r.onend = () => { if (active) scheduleRestart(400) }
       rec = r
-      try { r.start(); setWakeListening(true) } catch { setWakeListening(false); scheduleRestart(800) }
+      try { r.start(); setVoiceStatus('wake') } catch { scheduleRestart(800) }
     }
 
-    start()
+    void (async () => {
+      const ok = await ensureMic()
+      if (!active) return
+      if (!ok) { setVoiceStatus('denied'); return }
+      start()
+    })()
 
     return () => {
       active = false
       clearTimer()
-      setWakeListening(false)
       if (rec) {
         rec.onresult = null; rec.onerror = null; rec.onend = null
         try { rec.stop() } catch { /* ignore */ }
       }
       rec = null
     }
-  }, [wakeOn, open, lang, startDictation])
+  }, [wakeOn, open, lang, ensureMic])
 
-  // AI-2-front: подчистка на unmount — гасим диктовку и любую озвучку (нет утечек/зависшей речи).
+  // AI-VOICE-FIX-1 (4): РАЗГОВОРНЫЙ ЦИКЛ. Активен пока тумблер голоса включён И панель открыта.
+  // listen → слушаем вопрос (continuous), таймер тишины 1.8с сбрасывается на каждый interim-результат →
+  // авто-отправка тем же путём (sendQuestion) → «думаю ⏳» → авто-озвучка ответа 🔊 → СНОВА listen.
+  // Один инстанс распознавания за раз; всё останавливается при закрытии панели/выключении тумблера.
+  useEffect(() => {
+    if (!wakeOn || !SpeechRecognitionImpl || !open) { convoActiveRef.current = false; return }
+    let active = true
+    convoActiveRef.current = true
+    let rec: SpeechRecInstance | null = null
+
+    const clearSilence = () => {
+      if (silenceTimerRef.current !== null) { window.clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
+    }
+    const stopRec = () => {
+      clearSilence()
+      stopMeter()
+      if (rec) {
+        rec.onresult = null; rec.onend = null; rec.onerror = null
+        try { rec.stop() } catch { /* ignore */ }
+        rec = null
+      }
+    }
+
+    const listen = () => {
+      if (!active) return
+      stopRec()
+      cancelSpeech()
+      const r = new SpeechRecognitionImpl!()
+      r.lang = SPEECH_LOCALE[lang]
+      r.continuous = true
+      r.interimResults = true
+      r.maxAlternatives = 1
+      let finalText = ''
+      const resetSilence = () => {
+        clearSilence()
+        silenceTimerRef.current = window.setTimeout(() => { silenceTimerRef.current = null; finalize(finalText) }, 1800)
+      }
+      r.onresult = (e) => {
+        let interim = ''
+        for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
+          const res = e.results[i]
+          const transcript = res?.[0]?.transcript ?? ''
+          if (res?.isFinal) finalText += transcript
+          else interim += transcript
+        }
+        const combined = (finalText + interim).trim()
+        setInput(combined)
+        if (combined) resetSilence() // тишина отсчитывается только после того, как что-то сказали
+      }
+      // Chrome сам завершает continuous-распознавание — финализируем накопленное (пусто → просто слушаем дальше).
+      r.onend = () => { if (active && rec === r) { clearSilence(); finalize(finalText) } }
+      r.onerror = (ev) => {
+        if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') { active = false; convoActiveRef.current = false; stopRec(); setVoiceStatus('denied'); return }
+        if (active && rec === r) { clearSilence(); stopMeter() } // no-speech/aborted → onend перезапустит
+      }
+      rec = r
+      try { r.start(); setVoiceStatus('listening'); startMeter() } catch { setVoiceStatus('listening') }
+    }
+
+    const finalize = (text: string) => {
+      if (!active) return
+      stopRec()
+      const q = text.trim()
+      if (!q) { listen(); return } // ничего не сказали — продолжаем слушать
+      void runTurn(q)
+    }
+
+    const runTurn = async (q: string) => {
+      if (!active) return
+      setVoiceStatus('thinking')
+      const res = await sendQuestion(q)
+      if (!active) return
+      if (res.kind === 'nokey') { setVoiceStatus('off'); return } // нет ключа — цикл не крутим впустую
+      if (res.kind === 'ok' && speakOnRef.current && res.reply) {
+        setVoiceStatus('speaking')
+        speak(res.reply, () => { if (active) listen() })
+      } else {
+        listen() // ошибка/пусто/без озвучки — снова слушаем следующий вопрос
+      }
+    }
+
+    void (async () => {
+      const ok = await ensureMic()
+      if (!active) return
+      if (!ok) { setVoiceStatus('denied'); return }
+      listen()
+    })()
+
+    return () => {
+      active = false
+      convoActiveRef.current = false
+      stopRec()
+      cancelSpeech()
+    }
+  }, [wakeOn, open, lang, ensureMic, sendQuestion, speak, cancelSpeech, startMeter, stopMeter])
+
+  // AI-VOICE-FIX-1: подчистка на unmount — освобождаем микрофон/метр и гасим озвучку (нет утечек).
   useEffect(() => () => {
-    try { dictationRef.current?.stop() } catch { /* ignore */ }
+    releaseMic()
     cancelSpeech()
-  }, [cancelSpeech])
+  }, [cancelSpeech, releaseMic])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const msg = input.trim()
-    if (!msg || thinking) return
-    cancelSpeech() // прерываем текущую озвучку при новом вопросе
-    setThinking(true)
-    setNoKey(false)
-    const res = await askAssistant(msg)
-    if (res.error === 'no_key') { setNoKey(true); setThinking(false); return }
-    if (res.error) {
-      flashToast(res.error === 'no_session' || res.error === 'request_failed' ? t('ai_error') : res.error)
-      setThinking(false)
-      return
-    }
-    // Успех: user/assistant-строки уже записал edge — просто рефетчим историю и предложения.
-    setInput('')
-    await reload()
-    setThinking(false)
+    if (thinking) return
+    // Ручная отправка: озвучку нового ответа делает эффект по messages (разговорный цикл не активен).
+    await sendQuestion(input)
   }
 
   const executeProposal = async (pr: AiProposal) => {
@@ -489,14 +676,39 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
 
   const wakeSupported = !!SpeechRecognitionImpl
 
+  // AI-VOICE-FIX-1: видимый статус голоса (иконка + подпись) для бейджа и панели.
+  const voiceView: { icon: string; label: string; hint?: string } | null =
+    !wakeOn || !wakeSupported
+      ? null
+      : voiceStatus === 'wake'
+        ? { icon: '🎙', label: t('ai_wake_listening') }
+        : voiceStatus === 'listening'
+          ? { icon: '🎙', label: t('ai_status_listening') }
+          : voiceStatus === 'thinking'
+            ? { icon: '⏳', label: t('ai_thinking') }
+            : voiceStatus === 'speaking'
+              ? { icon: '🔊', label: t('ai_status_speaking') }
+              : voiceStatus === 'denied'
+                ? { icon: '❌', label: t('ai_mic_denied_title'), hint: t('ai_mic_denied_hint') }
+                : null
+  const voicePulsing = voiceStatus === 'wake' || voiceStatus === 'listening'
+
   return (
     <>
-      {/* AI-2-front: ненавязчивый индикатор «слушаю» — fixed-бейдж от AiCommandBar (без правки App/Nav),
-          виден только когда голосовая активация включена. */}
-      {wakeOn && wakeSupported && (
-        <div className="ai-listening-badge" role="status" aria-live="polite" title={t('ai_wake_hint')}>
-          <span className={`ai-listening-dot ${wakeListening ? 'on' : ''}`} aria-hidden="true" />
-          <span className="ai-listening-text">{t('ai_wake_listening')}</span>
+      {/* AI-VOICE-FIX-1: fixed-бейдж статуса голоса (без правки App/Nav), виден при закрытой панели. */}
+      {voiceView && !open && (
+        <div
+          className={`ai-listening-badge ai-voice-${voiceStatus}`}
+          role="status"
+          aria-live="polite"
+          title={voiceView.hint ?? t('ai_wake_hint')}
+        >
+          <span
+            className={`ai-listening-dot ${voicePulsing ? 'on' : ''}`}
+            aria-hidden="true"
+            style={voiceStatus === 'listening' ? { transform: `scale(${1 + micLevel * 0.8})` } : undefined}
+          />
+          <span className="ai-listening-text">{voiceView.icon} {voiceView.label}</span>
         </div>
       )}
 
@@ -541,6 +753,21 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
                     <span>{t('ai_wake_toggle')}</span>
                   </label>
                 )}
+              </div>
+            )}
+
+            {/* AI-VOICE-FIX-1: статус-индикатор голоса внутри панели (слушаю/думаю/говорю/запрещён). */}
+            {voiceView && (
+              <div className={`ai-voice-status ai-voice-${voiceStatus}`} role="status" aria-live="polite">
+                <span
+                  className={`ai-voice-icon ${voicePulsing ? 'on' : ''}`}
+                  aria-hidden="true"
+                  style={voiceStatus === 'listening' ? { transform: `scale(${1 + micLevel * 0.5})` } : undefined}
+                >
+                  {voiceView.icon}
+                </span>
+                <span className="ai-voice-label">{voiceView.label}</span>
+                {voiceView.hint && <span className="muted small ai-voice-hint">{voiceView.hint}</span>}
               </div>
             )}
 
