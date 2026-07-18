@@ -3871,7 +3871,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-size: 13px;
 }
 .hub-sketch-height-field input {
-  width: 82px;
+  width: 132px;
   margin: 0;
   padding: 10px 12px;
 }
@@ -3883,10 +3883,19 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   align-items: center;
 }
 .hub-sketch-tools,
-.hub-sketch-actions {
+.hub-sketch-actions,
+.hub-sketch-snap {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+}
+.hub-sketch-snap {
+  width: 100%;
+  font-size: 12px;
+}
+.hub-sketch-snap .btn {
+  width: auto;
 }
 .hub-sketch-canvas-card { padding: 10px; }
 .hub-sketch-svg-shell {
@@ -3910,6 +3919,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   overflow: hidden;
   border-radius: 8px;
   background: #f7f8fb;
+}
+.hub-sketch-3d-shell-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  height: 100dvh;
+  border-radius: 0;
 }
 .hub-sketch-3d-canvas,
 .hub-sketch-3d-canvas canvas {
@@ -4015,7 +4031,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 /* SKETCH-2D-2: габариты проёмов, живой размер сегмента, прилипание комнат */
 .hub-sketch-dims { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; }
 .hub-sketch-dim-field { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
-.hub-sketch-dim-field input { width: 64px; }
+.hub-sketch-dim-field input { width: 132px; }
 .hub-sketch-preview { stroke: #2563eb; stroke-width: 2; stroke-dasharray: 4 4; pointer-events: none; }
 .hub-sketch-live-dim { fill: #2563eb; font-size: 13px; font-weight: 800; pointer-events: none; }
 .hub-sketch-drag-dim { fill: #b45309; font-size: 12px; font-weight: 800; pointer-events: none; }
@@ -4211,6 +4227,69 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   color: var(--text);
   font-size: 12px;
   font-weight: 750;
+}
+.hub-sketch-wall-tools {
+  display: grid;
+  gap: 8px;
+}
+.hub-sketch-wall-tools .btn {
+  width: auto;
+  justify-self: start;
+}
+.hub-sketch-elevation {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.hub-sketch-elevation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+.hub-sketch-elevation-svg {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 160px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.hub-sketch-elevation-wall {
+  opacity: .98;
+}
+.hub-sketch-elevation-grid line {
+  stroke: rgba(51, 65, 85, .18);
+  stroke-width: .018;
+}
+.hub-sketch-elevation-grid line.major {
+  stroke: rgba(51, 65, 85, .34);
+  stroke-width: .026;
+}
+.hub-sketch-elevation-outline {
+  fill: none;
+  stroke: #334155;
+  stroke-width: .045;
+}
+.hub-sketch-elevation-door {
+  fill: rgba(180, 83, 9, .75);
+  stroke: #7c2d12;
+  stroke-width: .04;
+}
+.hub-sketch-elevation-window {
+  fill: rgba(37, 99, 235, .42);
+  stroke: #1d4ed8;
+  stroke-width: .04;
+}
+.hub-sketch-elevation-svg text {
+  fill: #0f172a;
+  stroke: rgba(255,255,255,.92);
+  stroke-width: .08;
+  paint-order: stroke;
+  font-size: .28px;
+  font-weight: 850;
 }
 .hub-sketch-selected-box {
   padding: 10px;

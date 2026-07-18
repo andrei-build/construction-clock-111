@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatInches, parseInches } from '../src/screens/project-hub/inches'
+import { formatFeetInches, formatInches, parseFeetInches, parseInches } from '../src/screens/project-hub/inches'
 
 describe('project hub inch formatting', () => {
   it('parses whole, mixed fraction, and decimal inches to sixteenths', () => {
@@ -40,5 +40,21 @@ describe('project hub inch formatting', () => {
     expect(formatInches(11.999)).toBe('12"')
     expect(formatInches(-1.5)).toBe('-1 1/2"')
     expect(formatInches(Number.NaN)).toBe('0"')
+  })
+
+  it('parses feet and inches to sixteenth-inch precision', () => {
+    expect(parseFeetInches('8 ft 3 1/2 in')).toBe(99.5)
+    expect(parseFeetInches('8ft 3-1/2in')).toBe(99.5)
+    expect(parseFeetInches('8\' 3 1/2"')).toBe(99.5)
+    expect(parseFeetInches('2.5 ft')).toBe(30)
+    expect(parseFeetInches('6 in')).toBe(6)
+  })
+
+  it('formats feet and inches without decimal feet', () => {
+    expect(formatFeetInches(99.5)).toBe('8 ft 3 1/2 in')
+    expect(formatFeetInches(30)).toBe('2 ft 6 in')
+    expect(formatFeetInches(96)).toBe('8 ft')
+    expect(formatFeetInches(0.0625)).toBe('1/16 in')
+    expect(formatFeetInches(-18)).toBe('-1 ft 6 in')
   })
 })

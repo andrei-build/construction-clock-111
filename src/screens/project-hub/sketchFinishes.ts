@@ -32,6 +32,7 @@ export type SketchFinishes = {
   walls?: SketchSurfaceFinish
   floor?: SketchSurfaceFinish
   wallPaint?: string
+  wallFinishes?: Record<string, SketchSurfaceFinish>
 }
 
 export type SketchLightKind = 'recessed' | 'chandelier' | 'fan' | 'sconce'
@@ -84,7 +85,12 @@ export const TILE_SIZE_OPTIONS = [
 export const WALL_PAINT_SWATCHES = ['#f4f1ea', '#e7ebf0', '#dbe7df', '#e9ded3', '#d7e1ea', '#f1e3e0']
 
 const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i
+const WALL_FINISH_KEY_RE = /^\d+:\d+$/
 const tilePatternCanvasCache = new Map<string, HTMLCanvasElement>()
+
+export function sketchWallKey(c: number, s: number): string {
+  return `${c}:${s}`
+}
 
 function cleanNumber(value: unknown, fallback: number, min: number, max: number): number {
   const n = Number(value)
@@ -123,10 +129,12 @@ function normalizeSurface(surface: SketchSurfaceFinish | undefined, fallbackColo
 
 export function normalizeFinishes(finishes?: SketchFinishes): Required<SketchFinishes> {
   const wallPaint = cleanColor(finishes?.wallPaint, DEFAULT_WALL_PAINT)
+  const wallFinishes = sanitizeWallFinishes(finishes?.wallFinishes)
   return {
     wallPaint,
     walls: normalizeSurface(finishes?.walls, wallPaint),
     floor: normalizeSurface(finishes?.floor, DEFAULT_FLOOR_PAINT),
+    wallFinishes,
   }
 }
 
@@ -140,17 +148,30 @@ function sanitizeSurface(value: unknown): SketchSurfaceFinish | undefined {
   return undefined
 }
 
+function sanitizeWallFinishes(value: unknown): Record<string, SketchSurfaceFinish> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out: Record<string, SketchSurfaceFinish> = {}
+  Object.entries(value as Record<string, unknown>).slice(0, 500).forEach(([key, raw]) => {
+    if (!WALL_FINISH_KEY_RE.test(key)) return
+    const surface = sanitizeSurface(raw)
+    if (surface) out[key] = surface
+  })
+  return out
+}
+
 export function sanitizeSketchFinishes(value: unknown): SketchFinishes | undefined {
   if (!value || typeof value !== 'object') return undefined
-  const raw = value as { walls?: unknown; floor?: unknown; wallPaint?: unknown }
+  const raw = value as { walls?: unknown; floor?: unknown; wallPaint?: unknown; wallFinishes?: unknown }
   const finishes: SketchFinishes = {}
   const wallPaint = typeof raw.wallPaint === 'string' ? cleanColor(raw.wallPaint, DEFAULT_WALL_PAINT) : undefined
   const walls = sanitizeSurface(raw.walls)
   const floor = sanitizeSurface(raw.floor)
+  const wallFinishes = sanitizeWallFinishes(raw.wallFinishes)
   if (wallPaint) finishes.wallPaint = wallPaint
   if (walls) finishes.walls = walls
   if (floor) finishes.floor = floor
-  return finishes.wallPaint || finishes.walls || finishes.floor ? finishes : undefined
+  if (Object.keys(wallFinishes).length > 0) finishes.wallFinishes = wallFinishes
+  return finishes.wallPaint || finishes.walls || finishes.floor || finishes.wallFinishes ? finishes : undefined
 }
 
 export function sanitizeSketchLights(value: unknown): SketchLight[] {
