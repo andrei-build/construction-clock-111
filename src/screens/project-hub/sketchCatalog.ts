@@ -1,5 +1,6 @@
 import type { CatalogCategory, CatalogItem } from '../../lib/api'
 import type { Contour } from './sketchFinishes'
+import { formatInches } from './inches'
 
 export type CatalogPlacementSurface = 'floor' | 'wall' | 'ceiling'
 
@@ -131,8 +132,7 @@ export function placedCatalogDims(placed: SketchPlacedCatalogItem): CatalogDimsF
 }
 
 export function catalogDimsText(widthIn: number, depthIn: number, heightIn: number): string {
-  const fmt = (n: number) => (Number.isInteger(n) ? n.toFixed(0) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, ''))
-  return `${fmt(widthIn)}×${fmt(depthIn)}×${fmt(heightIn)} in`
+  return `${formatInches(widthIn)}×${formatInches(depthIn)}×${formatInches(heightIn)}`
 }
 
 export function snapshotCatalogItem(item: CatalogItem): Pick<SketchPlacedCatalogItem, 'catalogItemId' | 'category' | 'name' | 'brand' | 'model' | 'widthIn' | 'depthIn' | 'heightIn' | 'photoPath'> {

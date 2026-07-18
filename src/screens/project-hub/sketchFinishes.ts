@@ -238,11 +238,7 @@ export function calculateTileCuts(surface: SketchSurfaceFinish | undefined, heig
   }
 }
 
-export function formatInches(value: number): string {
-  const rounded = Math.round((Number.isFinite(value) ? value : 0) * 4) / 4
-  const text = Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
-  return `${text}"`
-}
+export { formatInches } from './inches'
 
 export function createTilePatternCanvas(surface: SketchSurfaceFinish | undefined): HTMLCanvasElement {
   const tile = normalizeTileSurface(surface)
