@@ -472,6 +472,18 @@ export async function updateDealStage(p: Profile, deal: Deal, stage: DealStage) 
 // ---- Вкладка «Клиент» Хаба: гранты видимости присутствия (client_visibility_grants) ----
 const CLIENT_GRANT_SELECT = 'id, org_id, account_id, project_id, can_see_presence, notify_travel, notify_checkin, notify_checkout, channel, note, created_by, created_at, revoked_at'
 
+// CLIENT-ATTACH-1: привязать/сменить/отвязать клиента на СУЩЕСТВУЮЩЕМ проекте — пишем ТОЛЬКО
+// projects.client_account_id (updateProject этой колонки не трогает). null = отвязать. Досье клиента
+// и напоминания идут по client_account_id, поэтому после привязки вкладка «Клиент» видит их тем же
+// путём, что у уже-привязанного клиента. RLS projects UPDATE пускает менеджера+; UI-гейт — isManagerWrite.
+export async function setProjectClient(p: Profile, projectId: string, clientAccountId: string | null): Promise<void> {
+  const { error } = await supabase.from('projects')
+    .update({ client_account_id: clientAccountId })
+    .eq('id', projectId)
+  if (error) throw error
+  await logEvent(p, 'project.client_set', 'project', projectId, { client_account_id: clientAccountId })
+}
+
 // Один аккаунт по id (имя/контакты клиента). RLS держит org-скоуп. error→null.
 export async function getAccountById(accountId: string): Promise<Account | null> {
   const { data, error } = await supabase.from('accounts')

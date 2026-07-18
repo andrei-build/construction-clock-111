@@ -130,7 +130,15 @@ export default function ProjectHub() {
           {tab === 'notes' && <NotesTab project={project} profile={profile} />}
           {tab === 'sketch' && <SketchTab project={project} profile={profile} />}
           {tab === 'materials' && <MaterialsTab project={project} profile={profile} />}
-          {tab === 'client' && <ClientTab project={project} profile={profile} />}
+          {tab === 'client' && (
+            <ClientTab
+              project={project}
+              profile={profile}
+              onClientChanged={(clientAccountId) =>
+                setHub((prev) => (prev.project ? { ...prev, project: { ...prev.project, client_account_id: clientAccountId } } : prev))
+              }
+            />
+          )}
         </>
       )}
     </div>

@@ -1,22 +1,28 @@
 import { useEffect, useState } from 'react'
 import { useI18n } from '../../lib/i18n'
+import AccountForm from '../../components/AccountForm'
 import {
+  createAccount,
   createProjectGrant,
   getAccountById,
   getClientAccessEnabled,
+  getClientAccounts,
   getClientRating,
   getProjectClientMedia,
   getProjectGrants,
   revokeProjectGrant,
   setMediaClientVisible,
+  setProjectClient,
   updateClientAccessEnabled,
 } from '../../lib/api'
 import { isManagerWrite } from '../../lib/types'
-import type { Account, AccountRating, ClientGrant, ClientMediaItem, Profile, Project } from '../../lib/types'
+import type { Account, AccountInput, AccountRating, ClientGrant, ClientMediaItem, Profile, Project } from '../../lib/types'
 
 interface ClientTabProps {
   project: Project
   profile: Profile | null
+  // CLIENT-ATTACH-1: сообщить хабу о смене привязанного клиента, чтобы прочие вкладки/шапка не устаревали.
+  onClientChanged?: (clientAccountId: string | null) => void
 }
 
 // Ключи тумблеров гранта видимости — в порядке отображения. labelKey уже есть в i18n.
@@ -31,10 +37,22 @@ type ToggleState = { can_see_presence: boolean; notify_travel: boolean; notify_c
 
 const EMPTY_FORM: ToggleState = { can_see_presence: true, notify_travel: false, notify_checkin: false, notify_checkout: false }
 
-export default function ClientTab({ project, profile }: ClientTabProps) {
+export default function ClientTab({ project, profile, onClientChanged }: ClientTabProps) {
   const { t } = useI18n()
-  const clientId = project.client_account_id
   const canManage = profile ? isManagerWrite(profile.role) : false
+
+  // CLIENT-ATTACH-1: привязка клиента живёт локально, чтобы вкладка сразу перезагрузила досье после
+  // привязки/смены/отвязки (тот же путь, что у уже-привязанного). Синхронизируемся с пропом проекта.
+  const [clientId, setClientId] = useState<string | null>(project.client_account_id ?? null)
+  useEffect(() => { setClientId(project.client_account_id ?? null) }, [project.client_account_id])
+
+  // Панель привязки: idle | attach (поиск существующих) | create (форма нового клиента).
+  const [attachMode, setAttachMode] = useState<'idle' | 'attach' | 'create'>('idle')
+  const [accounts, setAccounts] = useState<Account[] | null>(null)
+  const [accountsLoading, setAccountsLoading] = useState(false)
+  const [attachSearch, setAttachSearch] = useState('')
+  const [attachBusy, setAttachBusy] = useState(false)
+  const [attachError, setAttachError] = useState<string | null>(null)
 
   const [account, setAccount] = useState<Account | null>(null)
   const [rating, setRating] = useState<AccountRating | null>(null)
@@ -157,11 +175,160 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
     }
   }
 
-  // Клиент не привязан к проекту — карточку и гранты не показываем.
+  // CLIENT-ATTACH-1: открыть панель «Привязать существующего» — лениво тянем список accounts один раз.
+  const openAttach = async () => {
+    setAttachMode('attach')
+    setAttachError(null)
+    if (accounts || accountsLoading) return
+    setAccountsLoading(true)
+    try {
+      setAccounts(await getClientAccounts())
+    } catch {
+      setAttachError('hub_client_attach_load_failed')
+    } finally {
+      setAccountsLoading(false)
+    }
+  }
+
+  // Привязать выбранного существующего клиента к проекту → сразу перезагрузить досье (через setClientId).
+  const attachClient = async (accountId: string) => {
+    if (!profile || !canManage || attachBusy) return
+    setAttachBusy(true)
+    setAttachError(null)
+    try {
+      await setProjectClient(profile, project.id, accountId)
+      setClientId(accountId)
+      onClientChanged?.(accountId)
+      setAttachMode('idle')
+      setAttachSearch('')
+    } catch {
+      setAttachError('hub_client_attach_failed')
+    } finally {
+      setAttachBusy(false)
+    }
+  }
+
+  // Создать нового клиента (как в разделе «Клиенты») и тут же привязать к проекту.
+  const createAndAttach = async (input: AccountInput) => {
+    if (!profile || !canManage || attachBusy) return
+    setAttachBusy(true)
+    setAttachError(null)
+    try {
+      const created = await createAccount(profile, input)
+      await setProjectClient(profile, project.id, created.id)
+      setAccounts((rows) => (rows ? [created, ...rows] : rows))
+      setClientId(created.id)
+      onClientChanged?.(created.id)
+      setAttachMode('idle')
+    } catch {
+      setAttachError('hub_client_create_failed')
+    } finally {
+      setAttachBusy(false)
+    }
+  }
+
+  // Отвязать клиента от проекта (manager+). Возврат к экрану привязки.
+  const detachClient = async () => {
+    if (!profile || !canManage || attachBusy) return
+    setAttachBusy(true)
+    setAttachError(null)
+    try {
+      await setProjectClient(profile, project.id, null)
+      setClientId(null)
+      onClientChanged?.(null)
+      setAttachMode('idle')
+    } catch {
+      setAttachError('hub_client_detach_failed')
+    } finally {
+      setAttachBusy(false)
+    }
+  }
+
+  const filteredAccounts = (() => {
+    const rows = accounts ?? []
+    const needle = attachSearch.trim().toLowerCase()
+    const matched = needle ? rows.filter((a) => a.name.toLowerCase().includes(needle)) : rows
+    return matched.filter((a) => a.id !== clientId).slice(0, 30)
+  })()
+
+  // CLIENT-ATTACH-1: панель привязки/создания — общая для «нет клиента» и «сменить клиента» (manager+).
+  const attachPanel = (
+    <div className="card hub-client-attach">
+      <div className="hub-client-attach-tabs">
+        <button type="button" className={`btn small${attachMode === 'attach' ? '' : ' ghost'}`} disabled={attachBusy} onClick={openAttach}>
+          {t('hub_client_attach_existing')}
+        </button>
+        <button type="button" className={`btn small${attachMode === 'create' ? '' : ' ghost'}`} disabled={attachBusy} onClick={() => { setAttachMode('create'); setAttachError(null) }}>
+          {t('hub_client_create_new')}
+        </button>
+        <button type="button" className="btn ghost small" disabled={attachBusy} onClick={() => { setAttachMode('idle'); setAttachError(null) }}>
+          {t('cancel')}
+        </button>
+      </div>
+      {attachError && <p className="error-msg">{t(attachError)}</p>}
+      {attachMode === 'attach' ? (
+        <>
+          <input
+            className="hub-client-attach-search"
+            value={attachSearch}
+            onChange={(e) => setAttachSearch(e.target.value)}
+            placeholder={t('hub_client_attach_search')}
+          />
+          {accountsLoading ? (
+            <p className="muted">{t('loading')}</p>
+          ) : filteredAccounts.length === 0 ? (
+            <p className="muted">{t('hub_client_attach_empty')}</p>
+          ) : (
+            <div className="hub-client-attach-list">
+              {filteredAccounts.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  className="hub-client-attach-item"
+                  disabled={attachBusy}
+                  onClick={() => attachClient(a.id)}
+                >
+                  <span className="item-title">{a.name}</span>
+                  {(a.phone || a.email) && <span className="muted">{a.phone || a.email}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <AccountForm
+          submitting={attachBusy}
+          submitLabel={t('hub_client_create_attach')}
+          submittingLabel={t('saving')}
+          onSubmit={createAndAttach}
+          onCancel={() => { setAttachMode('idle'); setAttachError(null) }}
+        />
+      )}
+    </div>
+  )
+
+  // Клиент не привязан к проекту — предлагаем привязать/создать (manager+); остальным — заглушка.
   if (!clientId) {
+    if (!canManage) {
+      return (
+        <section className="hub-tab-panel hub-client">
+          <div className="card muted">{t('hub_client_none')}</div>
+        </section>
+      )
+    }
     return (
       <section className="hub-tab-panel hub-client">
-        <div className="card muted">{t('hub_client_none')}</div>
+        {attachMode === 'idle' ? (
+          <div className="card hub-client-attach-cta">
+            <p>{t('hub_client_attach_prompt')}</p>
+            <div className="hub-client-attach-tabs">
+              <button type="button" className="btn small" onClick={openAttach}>{t('hub_client_attach_existing')}</button>
+              <button type="button" className="btn ghost small" onClick={() => setAttachMode('create')}>{t('hub_client_create_new')}</button>
+            </div>
+          </div>
+        ) : (
+          attachPanel
+        )}
       </section>
     )
   }
@@ -189,6 +356,8 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
 
   return (
     <section className="hub-tab-panel hub-client">
+      {/* CLIENT-ATTACH-1: панель смены клиента (manager+) поверх карточки */}
+      {canManage && attachMode !== 'idle' && attachPanel}
       {/* Карточка клиента */}
       <div className="card hub-client-card">
         {account ? (
@@ -207,6 +376,18 @@ export default function ClientTab({ project, profile }: ClientTabProps) {
           </>
         ) : (
           <p className="muted">{t('hub_client_missing')}</p>
+        )}
+
+        {/* CLIENT-ATTACH-1: смена/отвязка клиента — только manager+ */}
+        {canManage && (
+          <div className="hub-client-manage">
+            <button type="button" className="btn ghost small" disabled={attachBusy} onClick={openAttach}>
+              {t('hub_client_change')}
+            </button>
+            <button type="button" className="btn ghost small" disabled={attachBusy} onClick={detachClient}>
+              {t('hub_client_detach')}
+            </button>
+          </div>
         )}
 
         <div className="hub-client-rating">
