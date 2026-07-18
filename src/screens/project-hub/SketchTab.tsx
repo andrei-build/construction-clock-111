@@ -18,6 +18,7 @@ import {
   type SketchLight,
   type SketchSwitch,
 } from './sketchFinishes'
+import { sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
 
 interface SketchTabProps {
   project: Project
@@ -69,6 +70,7 @@ type SketchModel = {
   finishes?: SketchFinishes
   lights?: SketchLight[]
   switches?: SketchSwitch[]
+  placedItems?: SketchPlacedCatalogItem[]
 }
 type ViewMode = '2d' | '3d'
 type CanvasSize = { width: number; height: number }
@@ -856,7 +858,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const clearAll = () => {
-    if (model.contours.length === 0 && model.openings.length === 0) return
+    if (model.contours.length === 0 && model.openings.length === 0 && (model.placedItems ?? []).length === 0) return
     setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
     canvasAutoFitRef.current = true
     setModel(EMPTY_MODEL)
@@ -962,10 +964,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       const finishes = sanitizeSketchFinishes(data.finishes)
       const lights = sanitizeSketchLights(data.lights)
       const switches = sanitizeSketchSwitches(data.switches)
+      const placedItems = sanitizePlacedCatalogItems(data.placedItems)
       if (height !== undefined) nextModel.height = height
       if (finishes) nextModel.finishes = finishes
       if (lights.length > 0) nextModel.lights = lights
       if (switches.length > 0) nextModel.switches = switches
+      if (placedItems.length > 0) nextModel.placedItems = placedItems
       setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
       canvasAutoFitRef.current = true
       setModel(nextModel)
