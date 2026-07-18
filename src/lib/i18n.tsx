@@ -1930,6 +1930,11 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_wake_toggle: { ru: 'Голосовая активация', en: 'Voice activation', es: 'Activación por voz' },
   ai_wake_hint: { ru: 'Скажите «окей, Клок», чтобы открыть ассистента', en: 'Say “okay, Clock” to open the assistant', es: 'Diga «okay, Clock» para abrir el asistente' },
   ai_wake_listening: { ru: 'Слушаю «окей, Клок»', en: 'Listening for “okay, Clock”', es: 'Escuchando «okay, Clock»' },
+  // AI-VOICE-FIX-1: статусы разговорного цикла + подсказка при запрете микрофона.
+  ai_status_listening: { ru: 'Слушаю…', en: 'Listening…', es: 'Escuchando…' },
+  ai_status_speaking: { ru: 'Говорю…', en: 'Speaking…', es: 'Hablando…' },
+  ai_mic_denied_title: { ru: 'Микрофон запрещён', en: 'Microphone blocked', es: 'Micrófono bloqueado' },
+  ai_mic_denied_hint: { ru: 'Разрешите доступ к микрофону в настройках сайта (значок 🔒 в адресной строке), чтобы говорить с ассистентом.', en: 'Allow microphone access in your site settings (the 🔒 icon in the address bar) to talk to the assistant.', es: 'Permita el acceso al micrófono en la configuración del sitio (el icono 🔒 en la barra de direcciones) para hablar con el asistente.' },
 
   // DELIVERY-2: доставки как накладная с позициями (delivery_items). Вкладки, бейдж, прогресс,
   // модал-накладная с построчным вводом и отметками водителей.
