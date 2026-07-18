@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { getProjectHub } from '../lib/api'
@@ -42,19 +42,28 @@ export default function ProjectHub() {
   const { id } = useParams()
   const { profile } = useAuth()
   const { t } = useI18n()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [hub, setHub] = useState<ProjectHubData>({ project: null, profit: null, account: null })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
-  const [tab, setTab] = useState<HubTab>('overview')
   const managerView = profile ? isManagerRole(profile.role) : false
   const visibleTabs = useMemo(
     () => HUB_TABS.filter((item) => managerView || item.workerVisible),
     [managerView],
   )
 
-  useEffect(() => {
-    if (!visibleTabs.some((item) => item.key === tab)) setTab('overview')
-  }, [tab, visibleTabs])
+  // NAV-STATE-1: активная вкладка живёт в URL (?tab=files), а не в useState — переживает ремоунт
+  // (возврат из соседней вкладки браузера, тихий PWA-reload) и восстанавливается кнопкой «назад».
+  // Значение вне доступных вкладок (роль/не найдено) деградирует в «Обзор». Смену вкладки пишем с
+  // replace, чтобы шаги внутри проекта не копились в истории — «назад» уводит из проекта, как раньше.
+  const rawTab = searchParams.get('tab')
+  const tab: HubTab = (visibleTabs.find((item) => item.key === rawTab)?.key) ?? 'overview'
+  const setTab = (next: HubTab) => {
+    const params = new URLSearchParams(searchParams)
+    if (next === 'overview') params.delete('tab')
+    else params.set('tab', next)
+    setSearchParams(params, { replace: true })
+  }
 
   useEffect(() => {
     if (!id) return

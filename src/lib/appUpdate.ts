@@ -9,6 +9,8 @@
 // уровне страницы надёжнее. update() у регистрации всё равно дёргаем, чтобы SW подтянул новый
 // app-shell в фоне.
 
+import { getPendingOutboxCount } from './offlineOutbox'
+
 // Vite хеширует имя входного бандла: /assets/index-<hash>.js. Ни один хеш не хардкодим —
 // вытаскиваем регуляркой и из живого документа, и из свежего html.
 const ENTRY_RE = /\/assets\/index-[A-Za-z0-9_-]+\.js/
@@ -108,4 +110,65 @@ export function hasUnsavedInput(composing: boolean): boolean {
   if (document.querySelector('canvas[data-signed="true"]')) return true
   if (hasNonEmptyTextField()) return true
   return false
+}
+
+// NAV-STATE-1 — применяем обновление ВЕРСИИ на переходах между экранами, а НЕ по фокусу/visibility
+// вкладки. Возврат в приложение (из соседней вкладки браузера, после просмотра файла) больше не
+// дёргает reload посреди работы и не «скидывает» экран на Обзор. Свежую сборку помечаем ожидающей и
+// применяем тихо на следующей смене экрана (когда это безопасно) — либо пользователь жмёт тост.
+
+// Имя бандла текущей вкладки — читаем один раз и мемоизируем (readCurrentBundle детерминирован).
+let currentBundle: string | null | undefined
+function getCurrentBundle(): string | null {
+  if (currentBundle === undefined) currentBundle = readCurrentBundle()
+  return currentBundle
+}
+
+// Обнаружена ли новая сборка (ждёт применения). Модульный флаг общий для тоста и навигации.
+let pendingUpdate = false
+export function isUpdatePending(): boolean { return pendingUpdate }
+
+// Последняя проверка свежести — лёгкий троттлинг, чтобы частая навигация не била по сети.
+let lastCheckAt = 0
+const CHECK_THROTTLE_MS = 15 * 1000
+
+// Проверка «вышла ли новая сборка». Помечает pendingUpdate и возвращает true, когда обновление есть.
+// В dev (бандл не распознан) — всегда false. Сетевые ошибки трактуются как «обновления нет».
+export async function checkForUpdate(force = false): Promise<boolean> {
+  if (pendingUpdate) return true
+  const cur = getCurrentBundle()
+  if (!cur) return false
+  const now = Date.now()
+  if (!force && now - lastCheckAt < CHECK_THROTTLE_MS) return false
+  lastCheckAt = now
+  // Заодно (best-effort) просим SW обновить app-shell.
+  void pingServiceWorkerUpdate()
+  const latest = await fetchLatestBundle()
+  if (latest && latest !== cur) { pendingUpdate = true; return true }
+  return false
+}
+
+// Применить накопившееся обновление, если это безопасно (нет несохранённого ввода/подписи/модалки И
+// офлайн-очередь пуста). Иначе — ничего не делаем (останется ненавязчивый тост). Возвращает true,
+// если reload инициирован.
+export async function applyPendingUpdateIfSafe(): Promise<boolean> {
+  if (!pendingUpdate) return false
+  if (hasUnsavedInput(false)) return false
+  let pending = 0
+  try {
+    pending = await getPendingOutboxCount()
+  } catch {
+    // Очереди нечитаемы (нет IndexedDB и т.п.) — считаем пустыми.
+    pending = 0
+  }
+  if (pending > 0) return false
+  window.location.reload()
+  return true
+}
+
+// Хук навигации: на КАЖДОЙ смене экрана обнаруживаем свежую сборку и, если безопасно, применяем её.
+// Именно так (а не по visibilitychange/focus) обновление доходит до пользователя без потери контекста.
+export async function checkAndApplyUpdateOnNavigate(): Promise<void> {
+  await checkForUpdate()
+  await applyPendingUpdateIfSafe()
 }
