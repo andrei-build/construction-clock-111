@@ -137,6 +137,21 @@ type PhotoRenderModalState =
     }
   | { kind: 'error'; messageKey: string }
 
+// SKETCH-SNAP-1: панель-тост «Снимок» — снимок ТЕКУЩЕГО ракурса камеры (canvas → PNG, без UI-оверлеев
+// и размерных стрелок; механизм снимка общий с «Фото-рендер» — photoSnapshotApiRef.capturePng()).
+// Снимок автосохраняется в файлы проекта и предлагает «Скачать» + «Поделиться» (системный share sheet —
+// «показать клиенту или команде» одним касанием). Никакой автоотправки почты/сообщений.
+type SnapshotPanelState =
+  | {
+      kind: 'ready'
+      dataUrl: string
+      fileName: string
+      saveBusy: boolean
+      saved: boolean
+      saveErrorKey?: string
+    }
+  | { kind: 'error'; messageKey: string }
+
 interface Sketch3DViewProps {
   model: Sketch3DModelWithCatalog
   heightFt: number
@@ -834,6 +849,12 @@ function safeRenderSlug(value: string | undefined, fallback: string): string {
 
 function renderPhotoFileName(baseName: string, variant: number): string {
   return `render-${baseName}-${Math.max(1, variant)}.png`
+}
+
+// SKETCH-SNAP-1: имя PNG-снимка текущего ракурса 3D-вида (закон Андрея — «фото экрана одним кликом»).
+// Оригинал эскиза не трогаем: это отдельный файл проекта snapshot-<эскиз/проект>-<n>.png.
+function snapshotFileName(baseName: string, index: number): string {
+  return `snapshot-${baseName}-${Math.max(1, index)}.png`
 }
 
 function photoImageSrc(imageB64: string, mime: string): string {
@@ -1884,6 +1905,9 @@ export default function Sketch3DView({
   const [joystickKnob, setJoystickKnob] = useState<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false })
   const [photoRenderBusy, setPhotoRenderBusy] = useState(false)
   const [photoModal, setPhotoModal] = useState<PhotoRenderModalState | null>(null)
+  const [snapshotPanel, setSnapshotPanel] = useState<SnapshotPanelState | null>(null)
+  const snapshotBusyRef = useRef(false)
+  const snapshotCountRef = useRef(0)
 
   const finishes = useMemo(() => normalizeFinishes(model.finishes), [model.finishes])
   const lights = useMemo(() => model.lights ?? [], [model.lights])
@@ -3618,6 +3642,89 @@ export default function Sketch3DView({
     if (!photoRenderBusyRef.current) setPhotoModal(null)
   }
 
+  // SKETCH-SNAP-1 — системный share sheet с файлами (мобильные): показать клиенту/команде одним касанием.
+  const canNativeShareFiles = useMemo(() => {
+    if (typeof navigator === 'undefined') return false
+    const nav = navigator as Navigator & { canShare?: (data?: unknown) => boolean }
+    return typeof nav.share === 'function' && typeof nav.canShare === 'function'
+  }, [])
+
+  // 📸 «Снимок»: PNG текущего ракурса (общий механизм с «Фото-рендер» — размерные стрелки на время
+  // снимка гасятся, render() зовётся синхронно перед toDataURL, поэтому кадр не пустой при demand-loop)
+  // → автосохранение в файлы проекта. Оригинал эскиза не трогается (это отдельный файл snapshot-…-n.png).
+  const takeSnapshot = async () => {
+    if (snapshotBusyRef.current) return
+    const snapshot = photoSnapshotApiRef.current?.capturePng()
+    if (!snapshot || snapshot.blank) {
+      setSnapshotPanel({ kind: 'error', messageKey: 'hub_sketch_snapshot_capture_failed' })
+      return
+    }
+    snapshotCountRef.current += 1
+    const fileName = snapshotFileName(photoRenderBaseName, snapshotCountRef.current)
+    setSnapshotPanel({ kind: 'ready', dataUrl: snapshot.dataUrl, fileName, saveBusy: Boolean(profile && project), saved: false })
+    if (!profile || !project) {
+      setSnapshotPanel((current) => (
+        current?.kind === 'ready' && current.fileName === fileName
+          ? { ...current, saveBusy: false, saveErrorKey: 'hub_sketch_snapshot_no_session' }
+          : current
+      ))
+      return
+    }
+    snapshotBusyRef.current = true
+    try {
+      const file = await dataUrlToFile(snapshot.dataUrl, fileName, PHOTO_RENDER_MIME)
+      await uploadProjectFileToR2(profile, project.id, file)
+      setSnapshotPanel((current) => (
+        current?.kind === 'ready' && current.fileName === fileName
+          ? { ...current, saveBusy: false, saved: true, saveErrorKey: undefined }
+          : current
+      ))
+    } catch {
+      setSnapshotPanel((current) => (
+        current?.kind === 'ready' && current.fileName === fileName
+          ? { ...current, saveBusy: false, saveErrorKey: 'hub_sketch_snapshot_save_failed' }
+          : current
+      ))
+    } finally {
+      snapshotBusyRef.current = false
+    }
+  }
+
+  const downloadSnapshot = () => {
+    if (snapshotPanel?.kind !== 'ready') return
+    const link = document.createElement('a')
+    link.href = snapshotPanel.dataUrl
+    link.download = snapshotPanel.fileName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  }
+
+  const shareSnapshot = async () => {
+    if (snapshotPanel?.kind !== 'ready') return
+    const nav = navigator as Navigator & {
+      share?: (data?: unknown) => Promise<void>
+      canShare?: (data?: unknown) => boolean
+    }
+    if (typeof nav.share !== 'function') {
+      downloadSnapshot()
+      return
+    }
+    try {
+      const file = await dataUrlToFile(snapshotPanel.dataUrl, snapshotPanel.fileName, PHOTO_RENDER_MIME)
+      const shareData = { files: [file], title: t('hub_sketch_snapshot_share_title'), text: t('hub_sketch_snapshot_share_text') }
+      if (typeof nav.canShare === 'function' && !nav.canShare(shareData)) {
+        downloadSnapshot()
+        return
+      }
+      await nav.share(shareData)
+    } catch {
+      // Пользователь отменил share sheet (AbortError) или платформа отказала — молча игнорируем.
+    }
+  }
+
+  const closeSnapshotPanel = () => setSnapshotPanel(null)
+
   return (
     <div className="hub-sketch-3d-layout">
       <div ref={shellRef} className={fullscreenActive ? 'hub-sketch-3d-shell hub-sketch-3d-shell-fullscreen' : 'hub-sketch-3d-shell'} role="img" aria-label={label}>
@@ -3671,6 +3778,10 @@ export default function Sketch3DView({
               <span>{t('hub_sketch_tool_measure')}</span>
             </button>
           )}
+          <button type="button" className="btn ghost small hub-sketch-photo-render-btn" disabled={state !== 'ready'} onClick={takeSnapshot} title={t('hub_sketch_snapshot_hint')}>
+            <span aria-hidden="true">📸</span>
+            <span>{t('hub_sketch_snapshot')}</span>
+          </button>
           <button type="button" className="btn ghost small hub-sketch-photo-render-btn" disabled={state !== 'ready' || photoRenderBusy} onClick={startPhotoRender}>
             <span aria-hidden="true">📷</span>
             <span>{t('hub_sketch_photo_render')}</span>
@@ -3786,6 +3897,50 @@ export default function Sketch3DView({
                 </div>
               )}
             </div>
+          </div>
+        )}
+        {snapshotPanel && (
+          <div className="hub-sketch-snapshot-toast" role="status" aria-live="polite">
+            {snapshotPanel.kind === 'ready' ? (
+              <>
+                <div className="hub-sketch-snapshot-thumb">
+                  <img src={snapshotPanel.dataUrl} alt={t('hub_sketch_snapshot_image_alt')} />
+                </div>
+                <div className="hub-sketch-snapshot-body">
+                  <div className={snapshotPanel.saveErrorKey ? 'hub-sketch-snapshot-status error-msg' : 'hub-sketch-snapshot-status'}>
+                    {snapshotPanel.saveBusy
+                      ? t('hub_sketch_snapshot_saving')
+                      : snapshotPanel.saved
+                        ? t('hub_sketch_snapshot_saved')
+                        : snapshotPanel.saveErrorKey
+                          ? t(snapshotPanel.saveErrorKey)
+                          : t('hub_sketch_snapshot_ready')}
+                  </div>
+                  <div className="hub-sketch-snapshot-actions">
+                    <button type="button" className="btn ghost small" onClick={downloadSnapshot}>
+                      {t('download')}
+                    </button>
+                    {canNativeShareFiles && (
+                      <button type="button" className="btn ghost small" onClick={shareSnapshot}>
+                        {t('hub_sketch_snapshot_share')}
+                      </button>
+                    )}
+                    <button type="button" className="btn ghost small" onClick={closeSnapshotPanel}>
+                      {t('close')}
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="hub-sketch-snapshot-body">
+                <div className="hub-sketch-snapshot-status error-msg">{t(snapshotPanel.messageKey)}</div>
+                <div className="hub-sketch-snapshot-actions">
+                  <button type="button" className="btn ghost small" onClick={closeSnapshotPanel}>
+                    {t('close')}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
