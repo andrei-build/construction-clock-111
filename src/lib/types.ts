@@ -117,6 +117,12 @@ export interface WorkInterval {
   end_at: string | null
   was_adjusted: boolean
   adjust_reason: string | null
+  // PAY-FIX-1: типы событий-концов интервала (event_type из time_events по start_event_id/end_event_id).
+  // v_work_intervals отдаёт только их id, а для травела нужен тип: смена, закрытая break_start и открытая
+  // break_end — это ПЕРЕРЫВ, а не переезд между объектами. Опциональны — подтягиваются лишь там, где
+  // считается зарплата/травел (getIntervalsBetween/getWorkerIntervals); прочие вызовы их не заполняют.
+  start_type?: TimeEventType | null
+  end_type?: TimeEventType | null
 }
 
 export interface Task {

@@ -34,6 +34,32 @@ export async function getTimeEventsRange(startISO: string, endISO: string): Prom
   return (data as TimeEvent[]) ?? []
 }
 
+// PAY-FIX-1: v_work_intervals отдаёт только id событий-концов (start_event_id/end_event_id), но НЕ их
+// типы. Для травела важен именно ТИП: гэп между сменами оплачивается лишь между check_out→check_in
+// (перерыв break_start→break_end — не переезд, см. computeTravelGaps). Дотягиваем event_type для
+// собранных id одним READ-запросом (id,event_type) и прокидываем в start_type/end_type. Best-effort:
+// если типы не прочитались, интервалы всё равно возвращаются (травел тогда просто не начислится) —
+// часы (сумма длительностей интервалов) от этого запроса не зависят.
+async function attachIntervalEventTypes(intervals: WorkInterval[]): Promise<WorkInterval[]> {
+  const ids = new Set<string>()
+  for (const iv of intervals) {
+    if (iv.start_event_id) ids.add(iv.start_event_id)
+    if (iv.end_event_id) ids.add(iv.end_event_id)
+  }
+  if (ids.size === 0) return intervals
+  const { data, error } = await supabase.from('time_events')
+    .select('id, event_type')
+    .in('id', [...ids])
+  if (error || !data) return intervals
+  const typeById = new Map<string, TimeEventType>()
+  for (const row of data as Array<{ id: string; event_type: TimeEventType }>) typeById.set(row.id, row.event_type)
+  return intervals.map((iv) => ({
+    ...iv,
+    start_type: iv.start_event_id ? typeById.get(iv.start_event_id) ?? null : null,
+    end_type: iv.end_event_id ? typeById.get(iv.end_event_id) ?? null : null,
+  }))
+}
+
 // Отработанные интервалы одного работника — с учётом корректировок (v_work_intervals)
 export async function getWorkerIntervals(profileId: string): Promise<WorkInterval[]> {
   const { data, error } = await supabase.from('v_work_intervals')
@@ -41,7 +67,8 @@ export async function getWorkerIntervals(profileId: string): Promise<WorkInterva
     .eq('profile_id', profileId)
     .order('start_at', { ascending: false })
   if (error) throw error
-  return (data as WorkInterval[]) ?? []
+  // PAY-FIX-1: дотягиваем типы концов интервала, чтобы травел на карточке работника считался как в SQL.
+  return attachIntervalEventTypes((data as WorkInterval[]) ?? [])
 }
 
 // Отработанные интервалы всех работников за период — для зарплаты (v_work_intervals).
@@ -56,7 +83,9 @@ export async function getIntervalsBetween(fromISO: string, toISO: string): Promi
     .or(`end_at.gt.${fromISO},end_at.is.null`)
     .order('start_at', { ascending: false })
   if (error) throw error
-  return (data as WorkInterval[]) ?? []
+  // PAY-FIX-1: дотягиваем типы концов интервала (check_in/check_out/break_*) — зарплатный экран
+  // считает травел строго между check_out→check_in, как эталонный SQL report_payroll/travel.
+  return attachIntervalEventTypes((data as WorkInterval[]) ?? [])
 }
 
 // Отработанные интервалы по проекту — вкладка «Время» в Project Hub (v_work_intervals, без денег)
