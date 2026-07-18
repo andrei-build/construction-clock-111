@@ -3967,6 +3967,94 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   line-height: 1.1;
   white-space: nowrap;
 }
+.hub-sketch-inside-controls {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  max-width: calc(100% - 20px);
+  pointer-events: none;
+}
+.hub-sketch-inside-hint {
+  max-width: min(360px, calc(100vw - 28px));
+  padding: 7px 9px;
+  border: 1px solid rgba(126,160,190,.28);
+  border-radius: 8px;
+  background: rgba(13, 21, 34, .78);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+  backdrop-filter: blur(8px);
+}
+.hub-sketch-inside-joystick {
+  position: relative;
+  width: 112px;
+  height: 112px;
+  border: 1px solid rgba(255,255,255,.36);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at center, rgba(255,255,255,.22) 0 22%, transparent 23%),
+    rgba(13, 21, 34, .72);
+  box-shadow: inset 0 0 0 1px rgba(15,23,42,.36), 0 10px 24px rgba(15,23,42,.22);
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+  pointer-events: auto;
+  backdrop-filter: blur(8px);
+}
+.hub-sketch-inside-joystick-active {
+  cursor: grabbing;
+}
+.hub-sketch-inside-joy-arrow {
+  position: absolute;
+  color: rgba(255,255,255,.78);
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+  pointer-events: none;
+}
+.hub-sketch-inside-joy-arrow-up {
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+}
+.hub-sketch-inside-joy-arrow-right {
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.hub-sketch-inside-joy-arrow-down {
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+}
+.hub-sketch-inside-joy-arrow-left {
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.hub-sketch-inside-joy-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 38px;
+  height: 38px;
+  margin: -19px 0 0 -19px;
+  border: 1px solid rgba(255,255,255,.82);
+  border-radius: 50%;
+  background: rgba(255,255,255,.92);
+  box-shadow: 0 6px 18px rgba(15,23,42,.28);
+  pointer-events: none;
+  transition: transform .08s ease-out;
+}
+.hub-sketch-inside-joystick-active .hub-sketch-inside-joy-knob {
+  transition: none;
+}
 .hub-sketch-subgrid line,
 .hub-sketch-grid line,
 .hub-sketch-wall,

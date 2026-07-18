@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { CATALOG_CATEGORIES, getCatalogItems } from '../../lib/api'
 import type { CatalogCategory, CatalogItem } from '../../lib/api'
 import { useI18n } from '../../lib/i18n'
@@ -60,7 +60,14 @@ const DEFAULT_SCONCE_HEIGHT_FT = 5.6
 const ORBIT_FOV_DEG = 65
 const INSIDE_FOV_DEG = 70
 const FULLSCREEN_FOV_DEG = 75
-const EYE_HEIGHT_FT = 5.5
+const EYE_HEIGHT_FT = 5 + 7 / 12
+const INSIDE_BODY_CLEARANCE_FT = 0.5
+const INSIDE_WALL_CLEARANCE_FT = WALL_THICKNESS_FT / 2 + INSIDE_BODY_CLEARANCE_FT
+const INSIDE_WHEEL_STEP_FT = 2
+const INSIDE_MOVE_STEP_FT = 0.18
+const INSIDE_LOOK_SENSITIVITY = 0.004
+const INSIDE_PITCH_LIMIT_RAD = 1.28
+const INSIDE_JOYSTICK_SPEED_FTPS = 4
 const SW_COLOR_LIMIT = 48
 
 type SurfaceTarget = 'walls' | 'wall' | 'floor'
@@ -71,6 +78,14 @@ type InteractiveKind = 'light' | 'switch' | 'catalog'
 type InchDraftField = 'tileWIn' | 'tileHIn' | 'groutIn' | 'offsetXIn' | 'offsetYIn'
 type Sketch3DModelWithCatalog = Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }
 type SketchContour = Sketch3DModel['contours'][number]
+type InsidePoint = { x: number; z: number }
+type InsideVector = { x: number; z: number }
+type InsideRectObstacle = { x: number; z: number; halfW: number; halfD: number; rotationY: number }
+type InsideStandingResult = { valid: boolean; score: number; normal: InsideVector | null }
+type InsideMoveApi = {
+  setJoystickVector: (strafe: number, forward: number) => void
+  stopJoystick: () => void
+}
 
 interface Sketch3DViewProps {
   model: Sketch3DModelWithCatalog
@@ -198,6 +213,280 @@ function roomCenterWorld(model: Sketch3DModel, bounds: { minX: number; maxX: num
     if (pointInContourWorld(room, cellFt, center.x, center.z)) return center
   }
   return { x: bounds.minX + bounds.width / 2, z: bounds.minZ + bounds.depth / 2 }
+}
+
+function normalizeInsideVector(x: number, z: number): InsideVector {
+  const len = Math.hypot(x, z)
+  return len > 0.000001 ? { x: x / len, z: z / len } : { x: 0, z: 1 }
+}
+
+function contourBoundsWorld(contour: SketchContour, cellFt: number) {
+  const xs = contour.points.map((point) => point.x * cellFt)
+  const zs = contour.points.map((point) => point.y * cellFt)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minZ = Math.min(...zs)
+  const maxZ = Math.max(...zs)
+  return {
+    minX,
+    maxX,
+    minZ,
+    maxZ,
+    width: Math.max(0.001, maxX - minX),
+    depth: Math.max(0.001, maxZ - minZ),
+  }
+}
+
+function nearestContourWall(contour: SketchContour, cellFt: number, x: number, z: number): { distance: number; normal: InsideVector } | null {
+  if (contour.points.length < 2) return null
+  const center = contourCenterWorld(contour, cellFt)
+  let best: { distance: number; normal: InsideVector } | null = null
+  contour.points.forEach((point, index) => {
+    const next = contour.points[(index + 1) % contour.points.length]
+    if (!next) return
+    const ax = point.x * cellFt
+    const az = point.y * cellFt
+    const bx = next.x * cellFt
+    const bz = next.y * cellFt
+    const dx = bx - ax
+    const dz = bz - az
+    const len2 = dx * dx + dz * dz
+    if (len2 <= 0.000001) return
+    const t = clampNumber(((x - ax) * dx + (z - az) * dz) / len2, 0, 1)
+    const cx = ax + dx * t
+    const cz = az + dz * t
+    const distance = Math.hypot(x - cx, z - cz)
+    let normal = normalizeInsideVector(x - cx, z - cz)
+    if (distance <= 0.000001) normal = normalizeInsideVector(center.x - cx, center.z - cz)
+    if (!best || distance < best.distance) best = { distance, normal }
+  })
+  return best
+}
+
+function rectLocalPoint(rect: InsideRectObstacle, x: number, z: number): InsidePoint {
+  const dx = x - rect.x
+  const dz = z - rect.z
+  const c = Math.cos(rect.rotationY)
+  const s = Math.sin(rect.rotationY)
+  return { x: dx * c - dz * s, z: dx * s + dz * c }
+}
+
+function rectLocalVectorToWorld(rect: InsideRectObstacle, x: number, z: number): InsideVector {
+  const c = Math.cos(rect.rotationY)
+  const s = Math.sin(rect.rotationY)
+  return normalizeInsideVector(x * c + z * s, -x * s + z * c)
+}
+
+function evaluateRectObstacle(rect: InsideRectObstacle, x: number, z: number): InsideStandingResult {
+  const local = rectLocalPoint(rect, x, z)
+  const absX = Math.abs(local.x)
+  const absZ = Math.abs(local.z)
+  const outsideX = Math.max(0, absX - rect.halfW)
+  const outsideZ = Math.max(0, absZ - rect.halfD)
+
+  if (outsideX > 0 || outsideZ > 0) {
+    const distance = Math.hypot(outsideX, outsideZ)
+    const score = distance - INSIDE_BODY_CLEARANCE_FT
+    const nearestX = clampNumber(local.x, -rect.halfW, rect.halfW)
+    const nearestZ = clampNumber(local.z, -rect.halfD, rect.halfD)
+    const normal = rectLocalVectorToWorld(rect, local.x - nearestX, local.z - nearestZ)
+    return { valid: score >= -0.0001, score, normal }
+  }
+
+  const penX = rect.halfW - absX
+  const penZ = rect.halfD - absZ
+  const normal = penX < penZ
+    ? rectLocalVectorToWorld(rect, local.x >= 0 ? 1 : -1, 0)
+    : rectLocalVectorToWorld(rect, 0, local.z >= 0 ? 1 : -1)
+  return { valid: false, score: -(INSIDE_BODY_CLEARANCE_FT + Math.min(penX, penZ)), normal }
+}
+
+function catalogObstacleRect(placed: SketchPlacedCatalogItem, localX: number, localZ: number, widthFt: number, depthFt: number): InsideRectObstacle {
+  const c = Math.cos(placed.rotationY)
+  const s = Math.sin(placed.rotationY)
+  return {
+    x: placed.xFt + localX * c + localZ * s,
+    z: placed.zFt - localX * s + localZ * c,
+    halfW: Math.max(0.02, widthFt / 2),
+    halfD: Math.max(0.02, depthFt / 2),
+    rotationY: placed.rotationY,
+  }
+}
+
+function insideCatalogObstacles(items: CatalogResolvedPlacedItem[]): InsideRectObstacle[] {
+  const obstacles: InsideRectObstacle[] = []
+  items.forEach((resolved) => {
+    const placed = resolved.placed
+    if (placed.surface === 'ceiling') return
+    if (resolved.category === 'light' || resolved.category === 'fan') return
+
+    const width = Math.max(0.04, resolved.dims.widthFt)
+    const depth = Math.max(0.04, resolved.dims.depthFt)
+    if (resolved.category === 'shower' && placed.surface === 'floor') {
+      const rim = Math.max(0.08, Math.min(0.28, Math.min(width, depth) * 0.07))
+      obstacles.push(catalogObstacleRect(placed, 0, -depth / 2 + rim / 2, width, rim))
+      obstacles.push(catalogObstacleRect(placed, -width / 2 + rim / 2, 0, rim, depth))
+      obstacles.push(catalogObstacleRect(placed, width / 2 - rim / 2, 0, rim, depth))
+      return
+    }
+
+    obstacles.push(catalogObstacleRect(placed, 0, 0, width, depth))
+  })
+  return obstacles
+}
+
+function evaluateInsideStanding(
+  contour: SketchContour | null,
+  cellFt: number,
+  obstacles: InsideRectObstacle[],
+  x: number,
+  z: number,
+): InsideStandingResult {
+  let valid = true
+  let score = Number.POSITIVE_INFINITY
+  let blockingScore = Number.POSITIVE_INFINITY
+  let normal: InsideVector | null = null
+
+  const record = (resultValid: boolean, resultScore: number, resultNormal: InsideVector | null) => {
+    score = Math.min(score, resultScore)
+    if (!resultValid) {
+      valid = false
+      if (resultScore < blockingScore) {
+        blockingScore = resultScore
+        normal = resultNormal
+      }
+    }
+  }
+
+  if (contour) {
+    const inside = pointInContourWorld(contour, cellFt, x, z)
+    const wall = nearestContourWall(contour, cellFt, x, z)
+    const wallScore = wall ? wall.distance - INSIDE_WALL_CLEARANCE_FT : 100
+    record(inside && wallScore >= -0.0001, wallScore, wall?.normal ?? null)
+  }
+
+  obstacles.forEach((obstacle) => {
+    const result = evaluateRectObstacle(obstacle, x, z)
+    record(result.valid, result.score, result.normal)
+  })
+
+  return { valid, score: Number.isFinite(score) ? score : 100, normal }
+}
+
+function findInsideStartWorld(
+  contour: SketchContour | null,
+  cellFt: number,
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number; width: number; depth: number },
+  obstacles: InsideRectObstacle[],
+): InsidePoint {
+  if (!contour) return { x: bounds.minX + bounds.width / 2, z: bounds.minZ + bounds.depth / 2 }
+
+  const contourBounds = contourBoundsWorld(contour, cellFt)
+  const centroid = contourCenterWorld(contour, cellFt)
+  const fallback = pointInContourWorld(contour, cellFt, centroid.x, centroid.z)
+    ? centroid
+    : { x: contourBounds.minX + contourBounds.width / 2, z: contourBounds.minZ + contourBounds.depth / 2 }
+  const fallbackResult = evaluateInsideStanding(contour, cellFt, obstacles, fallback.x, fallback.z)
+  let best: { point: InsidePoint; score: number } | null = fallbackResult.valid ? { point: fallback, score: fallbackResult.score } : null
+  let bestAny: { point: InsidePoint; score: number } = {
+    point: fallback,
+    score: fallbackResult.score,
+  }
+
+  const consider = (point: InsidePoint) => {
+    const result = evaluateInsideStanding(contour, cellFt, obstacles, point.x, point.z)
+    if (result.score > bestAny.score) bestAny = { point, score: result.score }
+    if (result.valid && (!best || result.score > best.score)) best = { point, score: result.score }
+  }
+
+  consider({ x: contourBounds.minX + contourBounds.width / 2, z: contourBounds.minZ + contourBounds.depth / 2 })
+
+  const gridStep = clampNumber(Math.min(contourBounds.width, contourBounds.depth) / 24, 0.25, 2)
+  for (let x = contourBounds.minX; x <= contourBounds.maxX + 0.0001; x += gridStep) {
+    for (let z = contourBounds.minZ; z <= contourBounds.maxZ + 0.0001; z += gridStep) {
+      consider({ x, z })
+    }
+  }
+
+  if (best) {
+    let refineStep = gridStep / 2
+    for (let pass = 0; pass < 4; pass++) {
+      const base = best.point
+      for (let ix = -2; ix <= 2; ix++) {
+        for (let iz = -2; iz <= 2; iz++) {
+          consider({ x: base.x + ix * refineStep, z: base.z + iz * refineStep })
+        }
+      }
+      refineStep /= 2
+    }
+    return best.point
+  }
+
+  return bestAny.point
+}
+
+function insideLongAxisDirection(
+  contour: SketchContour | null,
+  cellFt: number,
+  bounds: { width: number; depth: number },
+): InsideVector {
+  if (!contour || contour.points.length < 2) return bounds.width >= bounds.depth ? { x: 1, z: 0 } : { x: 0, z: 1 }
+  const center = contour.points.reduce(
+    (acc, point) => ({ x: acc.x + point.x * cellFt, z: acc.z + point.y * cellFt }),
+    { x: 0, z: 0 },
+  )
+  center.x /= contour.points.length
+  center.z /= contour.points.length
+  let xx = 0
+  let zz = 0
+  let xz = 0
+  contour.points.forEach((point) => {
+    const dx = point.x * cellFt - center.x
+    const dz = point.y * cellFt - center.z
+    xx += dx * dx
+    zz += dz * dz
+    xz += dx * dz
+  })
+  if (Math.abs(xx) + Math.abs(zz) <= 0.000001) return bounds.width >= bounds.depth ? { x: 1, z: 0 } : { x: 0, z: 1 }
+  const angle = 0.5 * Math.atan2(2 * xz, xx - zz)
+  return normalizeInsideVector(Math.cos(angle), Math.sin(angle))
+}
+
+function insideRayDistance(
+  start: InsidePoint,
+  direction: InsideVector,
+  contour: SketchContour | null,
+  cellFt: number,
+  obstacles: InsideRectObstacle[],
+  maxDistance: number,
+): number {
+  const step = 0.25
+  for (let distanceFt = step; distanceFt <= maxDistance; distanceFt += step) {
+    const x = start.x + direction.x * distanceFt
+    const z = start.z + direction.z * distanceFt
+    if (!evaluateInsideStanding(contour, cellFt, obstacles, x, z).valid) return Math.max(0, distanceFt - step)
+  }
+  return maxDistance
+}
+
+function insideYawFromDirection(direction: InsideVector): number {
+  const normalized = normalizeInsideVector(direction.x, direction.z)
+  return Math.atan2(-normalized.x, -normalized.z)
+}
+
+function insideStartYaw(
+  contour: SketchContour | null,
+  cellFt: number,
+  bounds: { width: number; depth: number },
+  obstacles: InsideRectObstacle[],
+  start: InsidePoint,
+): number {
+  let axis = insideLongAxisDirection(contour, cellFt, bounds)
+  const maxDistance = Math.max(8, bounds.width, bounds.depth)
+  const forward = insideRayDistance(start, axis, contour, cellFt, obstacles, maxDistance)
+  const backward = insideRayDistance(start, { x: -axis.x, z: -axis.z }, contour, cellFt, obstacles, maxDistance)
+  if (backward > forward + 0.25) axis = { x: -axis.x, z: -axis.z }
+  return insideYawFromDirection(axis)
 }
 
 function segmentWorld(model: Sketch3DModel, c: number, s: number): Segment | null {
@@ -691,6 +980,9 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const shellRef = useRef<HTMLDivElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cameraApiRef = useRef<Record<CameraPreset, () => void> | null>(null)
+  const insideMoveApiRef = useRef<InsideMoveApi | null>(null)
+  const joystickRef = useRef<HTMLDivElement | null>(null)
+  const joystickPointerRef = useRef<number | null>(null)
   const dimensionGroupRef = useRef<any | null>(null)
   const dimensionsVisibleRef = useRef(false)
   const invalidate3DRef = useRef<(() => void) | null>(null)
@@ -711,6 +1003,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const [inchDrafts, setInchDrafts] = useState<Partial<Record<InchDraftField, string>>>({})
   const [browserFullscreen, setBrowserFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
+  const [joystickKnob, setJoystickKnob] = useState<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false })
 
   const finishes = useMemo(() => normalizeFinishes(model.finishes), [model.finishes])
   const lights = useMemo(() => model.lights ?? [], [model.lights])
@@ -1031,7 +1324,8 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const cellFt = modelCellFt(model)
         const bounds = modelBounds(model)
         const insideRoom = largestClosedContour(model)
-        const insideCenter = roomCenterWorld(model, bounds)
+        const insideObstacles = insideCatalogObstacles(resolvedPlacedItems)
+        const insideStart = findInsideStartWorld(insideRoom, cellFt, bounds, insideObstacles)
         const height = Number.isFinite(heightFt) && heightFt > 0 ? heightFt : DEFAULT_WALL_HEIGHT_FT
         const span = Math.max(bounds.width, bounds.depth, height, 12)
         const centerX = bounds.minX + bounds.width / 2
@@ -1129,10 +1423,14 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         }
 
         let insideMode = false
-        let insideYaw = bounds.depth >= bounds.width ? 0 : Math.PI / 2
+        let insideYaw = insideStartYaw(insideRoom, cellFt, bounds, insideObstacles, insideStart)
         let insidePitch = 0
         const eyeY = Math.max(1.25, Math.min(EYE_HEIGHT_FT, Math.max(1.25, height - 0.25)))
-        const insideCanStandAt = (x: number, z: number) => !insideRoom || pointInContourWorld(insideRoom, cellFt, x, z)
+        let insideJoystickVector = { strafe: 0, forward: 0 }
+        let insideJoystickFrame = 0
+        let insideJoystickLastTime = 0
+        const insideStandingAt = (x: number, z: number) => evaluateInsideStanding(insideRoom, cellFt, insideObstacles, x, z)
+        const insideCanStandAt = (x: number, z: number) => insideStandingAt(x, z).valid
         const applyInsideLook = () => {
           camera.rotation.order = 'YXZ'
           camera.rotation.set(insidePitch, insideYaw, 0)
@@ -1140,42 +1438,118 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           camera.updateMatrixWorld()
           invalidate()
         }
+        const insideForwardVector = (): InsideVector => normalizeInsideVector(-Math.sin(insideYaw), -Math.cos(insideYaw))
+        const insideRightVector = (): InsideVector => normalizeInsideVector(Math.cos(insideYaw), -Math.sin(insideYaw))
+        const tryInsideMoveStep = (dx: number, dz: number): boolean => {
+          const currentX = camera.position.x
+          const currentZ = camera.position.z
+          const target = insideStandingAt(currentX + dx, currentZ + dz)
+          if (target.valid) {
+            camera.position.x = currentX + dx
+            camera.position.z = currentZ + dz
+            return true
+          }
+
+          if (target.normal) {
+            const dot = dx * target.normal.x + dz * target.normal.z
+            const slideX = dx - target.normal.x * dot
+            const slideZ = dz - target.normal.z * dot
+            if (Math.hypot(slideX, slideZ) > 0.0001 && insideCanStandAt(currentX + slideX, currentZ + slideZ)) {
+              camera.position.x = currentX + slideX
+              camera.position.z = currentZ + slideZ
+              return true
+            }
+          }
+
+          if (Math.abs(dx) > 0.0001 && insideCanStandAt(currentX + dx, currentZ)) {
+            camera.position.x = currentX + dx
+            return true
+          }
+          if (Math.abs(dz) > 0.0001 && insideCanStandAt(currentX, currentZ + dz)) {
+            camera.position.z = currentZ + dz
+            return true
+          }
+          return false
+        }
+        const moveInsideCameraLocal = (strafeFt: number, forwardFt: number) => {
+          if (!insideMode) return
+          const forward = insideForwardVector()
+          const right = insideRightVector()
+          const dx = right.x * strafeFt + forward.x * forwardFt
+          const dz = right.z * strafeFt + forward.z * forwardFt
+          const distance = Math.hypot(dx, dz)
+          if (distance <= 0.0001) return
+          const steps = Math.max(1, Math.ceil(distance / INSIDE_MOVE_STEP_FT))
+          let moved = false
+          for (let i = 0; i < steps; i++) {
+            if (!tryInsideMoveStep(dx / steps, dz / steps)) break
+            moved = true
+          }
+          camera.position.y = eyeY
+          if (moved) invalidate()
+        }
+        const moveInsideCamera = (amount: number) => {
+          if (!insideMode || Math.abs(amount) <= 0.001) return
+          moveInsideCameraLocal(0, amount)
+        }
+        const stopInsideJoystick = () => {
+          insideJoystickVector = { strafe: 0, forward: 0 }
+          insideJoystickLastTime = 0
+          if (insideJoystickFrame) {
+            window.cancelAnimationFrame(insideJoystickFrame)
+            insideJoystickFrame = 0
+          }
+        }
+        const runInsideJoystick = (time: number) => {
+          insideJoystickFrame = 0
+          const magnitude = Math.hypot(insideJoystickVector.strafe, insideJoystickVector.forward)
+          if (!insideMode || magnitude <= 0.01) {
+            stopInsideJoystick()
+            return
+          }
+          const dt = insideJoystickLastTime ? Math.min(0.05, Math.max(0, (time - insideJoystickLastTime) / 1000)) : 1 / 60
+          insideJoystickLastTime = time
+          moveInsideCameraLocal(
+            insideJoystickVector.strafe * INSIDE_JOYSTICK_SPEED_FTPS * dt,
+            insideJoystickVector.forward * INSIDE_JOYSTICK_SPEED_FTPS * dt,
+          )
+          insideJoystickFrame = window.requestAnimationFrame(runInsideJoystick)
+        }
+        const startInsideJoystick = () => {
+          if (!insideJoystickFrame) insideJoystickFrame = window.requestAnimationFrame(runInsideJoystick)
+        }
+        insideMoveApiRef.current = {
+          setJoystickVector: (strafe: number, forward: number) => {
+            const magnitude = Math.hypot(strafe, forward)
+            const scale = magnitude > 1 ? 1 / magnitude : 1
+            insideJoystickVector = { strafe: strafe * scale, forward: forward * scale }
+            if (magnitude > 0.01) startInsideJoystick()
+            else stopInsideJoystick()
+          },
+          stopJoystick: stopInsideJoystick,
+        }
         const enterInsideCamera = () => {
           insideMode = true
           controls.enabled = false
           setCameraUp(false)
           camera.fov = insideFov
-          camera.near = 0.03
+          camera.near = 0.05
           camera.far = Math.max(300, maxCameraDistance * 4)
-          camera.position.set(insideCenter.x, eyeY, insideCenter.z)
+          insideYaw = insideStartYaw(insideRoom, cellFt, bounds, insideObstacles, insideStart)
+          insidePitch = 0
+          camera.position.set(insideStart.x, eyeY, insideStart.z)
           if (!insideCanStandAt(camera.position.x, camera.position.z)) {
-            camera.position.set(centerX, eyeY, centerZ)
+            const fallback = { x: centerX, z: centerZ }
+            if (insideCanStandAt(fallback.x, fallback.z)) camera.position.set(fallback.x, eyeY, fallback.z)
           }
           camera.updateProjectionMatrix()
           applyInsideLook()
         }
-        const moveInsideCamera = (amount: number) => {
-          if (!insideMode || Math.abs(amount) <= 0.001) return
-          const direction = new THREE.Vector3()
-          camera.getWorldDirection(direction)
-          direction.y = 0
-          if (direction.lengthSq() <= 0.000001) return
-          direction.normalize()
-          const steps = Math.max(1, Math.ceil(Math.abs(amount) / 0.25))
-          const step = amount / steps
-          for (let i = 0; i < steps; i++) {
-            const nextX = camera.position.x + direction.x * step
-            const nextZ = camera.position.z + direction.z * step
-            if (!insideCanStandAt(nextX, nextZ)) break
-            camera.position.x = nextX
-            camera.position.z = nextZ
-          }
-          camera.position.y = eyeY
-          invalidate()
-        }
 
         const fitCamera = (preset: CameraPreset = 'fit') => {
           insideMode = false
+          stopInsideJoystick()
+          resetInsidePointers()
           controls.enabled = true
           camera.fov = orbitFov
           const direction =
@@ -1494,12 +1868,26 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
             }
           | null = null
         let insideLookDrag: { pointerId: number; x: number; y: number; yaw: number; pitch: number } | null = null
+        const insidePointers = new Map<number, { clientX: number; clientY: number }>()
+        let insidePinch: { distance: number } | null = null
 
         const updatePointer = (event: { clientX: number; clientY: number }) => {
           const rect = renderer.domElement.getBoundingClientRect()
           pointer.x = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
           pointer.y = -(((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 - 1)
           raycaster.setFromCamera(pointer, camera)
+        }
+
+        const insidePointerDistance = () => {
+          const points = Array.from(insidePointers.values())
+          if (points.length < 2) return 0
+          return Math.hypot(points[0].clientX - points[1].clientX, points[0].clientY - points[1].clientY)
+        }
+
+        const resetInsidePointers = () => {
+          insidePointers.clear()
+          insidePinch = null
+          insideLookDrag = null
         }
 
         const floorHitPoint = () => {
@@ -1606,7 +1994,14 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           pointerDown = { x: event.clientX, y: event.clientY }
           if (event.button !== 0) return
           if (insideMode) {
-            insideLookDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, yaw: insideYaw, pitch: insidePitch }
+            insidePointers.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY })
+            if (insidePointers.size === 1) {
+              insideLookDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, yaw: insideYaw, pitch: insidePitch }
+              insidePinch = null
+            } else if (insidePointers.size >= 2) {
+              insideLookDrag = null
+              insidePinch = { distance: insidePointerDistance() }
+            }
             renderer.domElement.setPointerCapture?.(event.pointerId)
             event.preventDefault()
             return
@@ -1625,14 +2020,25 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         }
 
         const onPointerMove = (event: PointerEvent) => {
-          if (insideLookDrag && insideLookDrag.pointerId === event.pointerId) {
-            const dx = event.clientX - insideLookDrag.x
-            const dy = event.clientY - insideLookDrag.y
-            insideYaw = insideLookDrag.yaw - dx * 0.004
-            insidePitch = Math.max(-1.32, Math.min(1.32, insideLookDrag.pitch - dy * 0.004))
-            applyInsideLook()
-            event.preventDefault()
-            return
+          if (insideMode && insidePointers.has(event.pointerId)) {
+            insidePointers.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY })
+            if (insidePointers.size >= 2 && insidePinch) {
+              const nextDistance = insidePointerDistance()
+              const delta = nextDistance - insidePinch.distance
+              insidePinch = { distance: nextDistance }
+              if (Math.abs(delta) > 0.5) moveInsideCamera(Math.max(-INSIDE_WHEEL_STEP_FT, Math.min(INSIDE_WHEEL_STEP_FT, delta * 0.02)))
+              event.preventDefault()
+              return
+            }
+            if (insideLookDrag && insideLookDrag.pointerId === event.pointerId) {
+              const dx = event.clientX - insideLookDrag.x
+              const dy = event.clientY - insideLookDrag.y
+              insideYaw = insideLookDrag.yaw - dx * INSIDE_LOOK_SENSITIVITY
+              insidePitch = Math.max(-INSIDE_PITCH_LIMIT_RAD, Math.min(INSIDE_PITCH_LIMIT_RAD, insideLookDrag.pitch - dy * INSIDE_LOOK_SENSITIVITY))
+              applyInsideLook()
+              event.preventDefault()
+              return
+            }
           }
           if (!drag) return
           updatePointer(event)
@@ -1694,13 +2100,23 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const onPointerUp = (event: PointerEvent) => {
           const delta = pointerDown ? Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) : 0
           pointerDown = null
-          if (event.button !== 0) return
-          if (insideLookDrag && insideLookDrag.pointerId === event.pointerId) {
-            insideLookDrag = null
+          if (insideMode && insidePointers.has(event.pointerId)) {
+            insidePointers.delete(event.pointerId)
+            if (insidePointers.size === 1) {
+              const [remainingId, remaining] = Array.from(insidePointers.entries())[0]
+              insideLookDrag = { pointerId: remainingId, x: remaining.clientX, y: remaining.clientY, yaw: insideYaw, pitch: insidePitch }
+              insidePinch = null
+            } else if (insidePointers.size >= 2) {
+              insideLookDrag = null
+              insidePinch = { distance: insidePointerDistance() }
+            } else {
+              resetInsidePointers()
+            }
             renderer.domElement.releasePointerCapture?.(event.pointerId)
             event.preventDefault()
             return
           }
+          if (event.button !== 0) return
           if (drag) {
             const completed = drag
             drag = null
@@ -1725,7 +2141,8 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const onWheel = (event: WheelEvent) => {
           if (!insideMode) return
           event.preventDefault()
-          moveInsideCamera(Math.max(-2, Math.min(2, -event.deltaY * 0.012)))
+          const pixelDelta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaMode === 2 ? event.deltaY * 120 : event.deltaY
+          moveInsideCamera(Math.max(-INSIDE_WHEEL_STEP_FT, Math.min(INSIDE_WHEEL_STEP_FT, (-pixelDelta / 100) * INSIDE_WHEEL_STEP_FT)))
         }
 
         const onContextMenu = (event: MouseEvent) => event.preventDefault()
@@ -1744,6 +2161,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         renderer.domElement.addEventListener('pointerdown', onPointerDown)
         renderer.domElement.addEventListener('pointermove', onPointerMove)
         renderer.domElement.addEventListener('pointerup', onPointerUp)
+        renderer.domElement.addEventListener('pointercancel', onPointerUp)
         renderer.domElement.addEventListener('wheel', onWheel, { passive: false })
         renderer.domElement.addEventListener('contextmenu', onContextMenu)
         renderer.domElement.addEventListener('dragover', onDragOver)
@@ -1787,11 +2205,14 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
 
         cleanup = () => {
           window.cancelAnimationFrame(frame)
+          stopInsideJoystick()
           if (invalidate3DRef.current === invalidate) invalidate3DRef.current = null
+          if (insideMoveApiRef.current?.stopJoystick === stopInsideJoystick) insideMoveApiRef.current = null
           controls.removeEventListener('change', invalidate)
           renderer.domElement.removeEventListener('pointerdown', onPointerDown)
           renderer.domElement.removeEventListener('pointermove', onPointerMove)
           renderer.domElement.removeEventListener('pointerup', onPointerUp)
+          renderer.domElement.removeEventListener('pointercancel', onPointerUp)
           renderer.domElement.removeEventListener('wheel', onWheel)
           renderer.domElement.removeEventListener('contextmenu', onContextMenu)
           renderer.domElement.removeEventListener('dragover', onDragOver)
@@ -1852,6 +2273,42 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
     setCameraMode(mode)
     cameraApiRef.current?.[mode]()
   }
+  const updateJoystickFromPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const joystick = joystickRef.current
+    if (!joystick) return
+    const rect = joystick.getBoundingClientRect()
+    const max = Math.max(24, Math.min(rect.width, rect.height) * 0.34)
+    const rawX = event.clientX - (rect.left + rect.width / 2)
+    const rawY = event.clientY - (rect.top + rect.height / 2)
+    const len = Math.hypot(rawX, rawY)
+    const scale = len > max ? max / len : 1
+    const x = rawX * scale
+    const y = rawY * scale
+    setJoystickKnob({ x, y, active: true })
+    insideMoveApiRef.current?.setJoystickVector(x / max, -y / max)
+  }
+  const startJoystick = (event: ReactPointerEvent<HTMLDivElement>) => {
+    joystickPointerRef.current = event.pointerId
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    updateJoystickFromPointer(event)
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  const moveJoystick = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (joystickPointerRef.current !== event.pointerId) return
+    updateJoystickFromPointer(event)
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  const stopJoystick = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (joystickPointerRef.current !== event.pointerId) return
+    joystickPointerRef.current = null
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    insideMoveApiRef.current?.stopJoystick()
+    setJoystickKnob({ x: 0, y: 0, active: false })
+    event.preventDefault()
+    event.stopPropagation()
+  }
 
   return (
     <div className="hub-sketch-3d-layout">
@@ -1883,6 +2340,32 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
             {t(fullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
           </button>
         </div>
+        {cameraMode === 'inside' && state === 'ready' && (
+          <div className="hub-sketch-inside-controls">
+            <div className="hub-sketch-inside-hint">{t('hub_sketch_inside_hint')}</div>
+            <div
+              ref={joystickRef}
+              className={joystickKnob.active ? 'hub-sketch-inside-joystick hub-sketch-inside-joystick-active' : 'hub-sketch-inside-joystick'}
+              role="application"
+              aria-label={t('hub_sketch_inside_joystick')}
+              title={t('hub_sketch_inside_joystick_hint')}
+              onPointerDown={startJoystick}
+              onPointerMove={moveJoystick}
+              onPointerUp={stopJoystick}
+              onPointerCancel={stopJoystick}
+            >
+              <span className="hub-sketch-inside-joy-arrow hub-sketch-inside-joy-arrow-up" aria-hidden="true">↑</span>
+              <span className="hub-sketch-inside-joy-arrow hub-sketch-inside-joy-arrow-right" aria-hidden="true">→</span>
+              <span className="hub-sketch-inside-joy-arrow hub-sketch-inside-joy-arrow-down" aria-hidden="true">↓</span>
+              <span className="hub-sketch-inside-joy-arrow hub-sketch-inside-joy-arrow-left" aria-hidden="true">←</span>
+              <span
+                className="hub-sketch-inside-joy-knob"
+                style={{ transform: `translate(${joystickKnob.x}px, ${joystickKnob.y}px)` }}
+                aria-hidden="true"
+              />
+            </div>
+          </div>
+        )}
         {state === 'loading' && <div className="hub-sketch-3d-overlay muted">{loadingLabel}</div>}
         {state === 'error' && <div className="hub-sketch-3d-overlay error-msg">{errorLabel}</div>}
         {selectedPlaced && (
