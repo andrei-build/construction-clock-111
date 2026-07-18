@@ -3897,6 +3897,29 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-snap .btn {
   width: auto;
 }
+.hub-sketch-tools .btn,
+.hub-sketch-elevation-tools .btn,
+.hub-sketch-3d-camera-tools .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.hub-sketch-layer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  width: auto;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text);
+}
+.hub-sketch-layer-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
 .hub-sketch-canvas-card { padding: 10px; }
 .hub-sketch-svg-shell {
   position: relative;
@@ -4092,6 +4115,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-window,
 .hub-sketch-preview,
 .hub-sketch-opening-hit,
+.hub-sketch-measurement-line,
+.hub-sketch-measurement-hit,
 .hub-sketch-dim-main,
 .hub-sketch-dim-extension,
 .hub-sketch-dim-tick {
@@ -4173,6 +4198,59 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-opening-dim-window .hub-sketch-dim-tick { stroke: #1d4ed8; }
 .hub-sketch-opening-dim-door .hub-sketch-dim-label { fill: #7c2d12; }
 .hub-sketch-opening-dim-window .hub-sketch-dim-label { fill: #1d4ed8; }
+#hub-sketch-measure-arrow path {
+  fill: #047857;
+}
+.hub-sketch-measurement {
+  color: #047857;
+}
+.hub-sketch-measurement-line {
+  stroke: #047857;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  fill: none;
+  pointer-events: none;
+}
+.hub-sketch-measurement-hit {
+  stroke: transparent;
+  stroke-width: 16;
+  stroke-linecap: round;
+  fill: none;
+  cursor: pointer;
+}
+.hub-sketch-measurement-label {
+  fill: #047857;
+  stroke: rgba(255, 255, 255, .96);
+  stroke-width: 3.5;
+  paint-order: stroke;
+  font-weight: 900;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+.hub-sketch-measurement-selected .hub-sketch-measurement-line {
+  stroke: #be123c;
+  stroke-width: 2.2;
+}
+.hub-sketch-measurement-selected .hub-sketch-measurement-label {
+  fill: #be123c;
+}
+.hub-sketch-measurement-preview {
+  opacity: .76;
+  pointer-events: none;
+}
+.hub-sketch-measurement-delete {
+  cursor: pointer;
+}
+.hub-sketch-measurement-delete rect {
+  fill: #be123c;
+  stroke: #ffffff;
+  stroke-width: 1.2;
+}
+.hub-sketch-measurement-delete text {
+  fill: #ffffff;
+  stroke: none;
+  font-weight: 900;
+}
 .hub-sketch-3d-dim-toggle {
   position: absolute;
   top: 10px;
@@ -4200,6 +4278,25 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-3d-dim-toggle span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.hub-sketch-3d-toolbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 7px 9px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.hub-sketch-3d-toolbar-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+.hub-sketch-3d-toolbar-toggle input:disabled {
+  cursor: not-allowed;
 }
 /* SKETCH-3D-2: отделка, плиточная раскладка, свет и выключатели */
 .hub-sketch-3d-layout {
@@ -4449,6 +4546,15 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-size: 12px;
   font-weight: 750;
 }
+.hub-sketch-elevation-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.hub-sketch-elevation-tools .hub-sketch-layer-toggle {
+  color: var(--text);
+}
 .hub-sketch-elevation-svg {
   width: 100%;
   aspect-ratio: 16 / 9;
@@ -4490,6 +4596,71 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   paint-order: stroke;
   font-size: .28px;
   font-weight: 850;
+}
+.hub-sketch-elevation-measurement-line,
+.hub-sketch-elevation-measurement-hit {
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-measurement-line {
+  stroke: #047857;
+  stroke-width: .045;
+  stroke-linecap: round;
+  fill: none;
+}
+.hub-sketch-elevation-measurement-hit {
+  stroke: transparent;
+  stroke-width: .28;
+  stroke-linecap: round;
+  fill: none;
+  cursor: pointer;
+}
+.hub-sketch-elevation-measurement path {
+  fill: #047857;
+}
+.hub-sketch-elevation-measurement text {
+  fill: #047857;
+  stroke: rgba(255,255,255,.94);
+  stroke-width: .08;
+  paint-order: stroke;
+  font-size: .28px;
+  font-weight: 900;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+.hub-sketch-elevation-measurement-selected .hub-sketch-elevation-measurement-line {
+  stroke: #be123c;
+  stroke-width: .06;
+}
+.hub-sketch-elevation-measurement-selected text {
+  fill: #be123c;
+}
+.hub-sketch-elevation-measurement-preview {
+  opacity: .72;
+  pointer-events: none;
+}
+.hub-sketch-elevation-measurement-delete {
+  cursor: pointer;
+}
+.hub-sketch-elevation-measurement-delete rect {
+  fill: #be123c;
+  stroke: #ffffff;
+  stroke-width: .025;
+}
+.hub-sketch-elevation-measurement-delete text {
+  fill: #ffffff;
+  stroke: none;
+  font-size: .25px;
+  font-weight: 900;
+}
+.hub-sketch-3d-measurement-thumb {
+  width: 74px;
+  height: 74px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(4, 120, 87, .22);
+  border-radius: 8px;
+  background: rgba(4, 120, 87, .08);
+  font-size: 28px;
 }
 .hub-sketch-selected-box {
   padding: 10px;

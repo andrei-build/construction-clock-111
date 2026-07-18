@@ -12,6 +12,20 @@ export type Opening = {
   sill?: number
 }
 
+export type SketchMeasurementPoint = {
+  x: number
+  y: number
+  z?: number
+}
+
+export type SketchMeasurement = {
+  id?: string
+  scope?: 'plan' | 'wall' | 'space'
+  wallKey?: string
+  a: SketchMeasurementPoint
+  b: SketchMeasurementPoint
+}
+
 export type SketchTileFinish = {
   kind: 'tile'
   tileWIn?: number
@@ -67,6 +81,7 @@ export type Sketch3DModel = {
   height?: number
   contours: Contour[]
   openings: Opening[]
+  measurements?: SketchMeasurement[]
   finishes?: SketchFinishes
   lights?: SketchLight[]
   switches?: SketchSwitch[]
@@ -206,6 +221,44 @@ export function sanitizeSketchOpenings(value: unknown): Opening[] {
       return opening
     })
     .filter((item): item is Opening => !!item)
+}
+
+function sanitizeMeasurementPoint(value: unknown): SketchMeasurementPoint | null {
+  if (!value || typeof value !== 'object') return null
+  const item = value as Partial<SketchMeasurementPoint>
+  const x = cleanOptionalNumber(item.x, -10000, 10000)
+  const y = cleanOptionalNumber(item.y, -10000, 10000)
+  if (x === undefined || y === undefined) return null
+  const z = cleanOptionalNumber(item.z, -10000, 10000)
+  const point: SketchMeasurementPoint = { x, y }
+  if (z !== undefined) point.z = z
+  return point
+}
+
+export function sanitizeSketchMeasurements(value: unknown): SketchMeasurement[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((raw): SketchMeasurement | null => {
+      if (!raw || typeof raw !== 'object') return null
+      const item = raw as Partial<SketchMeasurement>
+      const a = sanitizeMeasurementPoint(item.a)
+      const b = sanitizeMeasurementPoint(item.b)
+      if (!a || !b) return null
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const dz = (b.z ?? 0) - (a.z ?? 0)
+      if (Math.hypot(dx, dy, dz) <= 0.001) return null
+      const scope = item.scope === 'wall' || item.scope === 'space' || item.scope === 'plan' ? item.scope : undefined
+      const id = cleanId(item.id)
+      const wallKey = typeof item.wallKey === 'string' && WALL_FINISH_KEY_RE.test(item.wallKey) ? item.wallKey : undefined
+      if (scope === 'wall' && !wallKey) return null
+      const measurement: SketchMeasurement = { a, b }
+      if (id) measurement.id = id
+      if (scope) measurement.scope = scope
+      if (scope === 'wall' && wallKey) measurement.wallKey = wallKey
+      return measurement
+    })
+    .filter((item): item is SketchMeasurement => !!item)
 }
 
 export function sanitizeSketchLights(value: unknown): SketchLight[] {

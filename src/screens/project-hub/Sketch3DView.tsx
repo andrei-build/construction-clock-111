@@ -24,6 +24,8 @@ import {
   type Sketch3DModel,
   type SketchLight,
   type SketchLightKind,
+  type SketchMeasurement,
+  type SketchMeasurementPoint,
   type SketchSurfaceFinish,
   type SketchSwitch,
   type SketchTileFinish,
@@ -81,7 +83,7 @@ type OpeningPlacementKind = Opening['kind']
 type PlacementKind = SketchLightKind | 'switch' | OpeningPlacementKind | null
 type Segment = { c: number; s: number; a: Pt; b: Pt }
 type CameraPreset = 'fit' | 'top' | 'angle' | 'inside'
-type InteractiveKind = 'light' | 'switch' | 'catalog' | 'opening'
+type InteractiveKind = 'light' | 'switch' | 'catalog' | 'opening' | 'measurement'
 type InchDraftField = 'tileWIn' | 'tileHIn' | 'groutIn' | 'offsetXIn' | 'offsetYIn'
 type Sketch3DModelWithCatalog = Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }
 type SketchContour = Sketch3DModel['contours'][number]
@@ -95,6 +97,7 @@ type InsideMoveApi = {
 }
 type PhotoRenderSnapshot = { dataUrl: string; width: number; height: number; blank: boolean }
 type PhotoRenderSnapshotApi = { capturePng: () => PhotoRenderSnapshot | null }
+type CeilingVisibilityApi = { setVisible: (visible: boolean) => void }
 type PhotoRenderFacts = {
   room: Record<string, unknown>
   tile: Record<string, unknown>
@@ -588,6 +591,16 @@ function openingInteractiveId(index: number): string {
 function openingIndexFromId(id: string | null): number | null {
   if (!id?.startsWith('opening:')) return null
   const index = Number(id.slice('opening:'.length))
+  return Number.isInteger(index) && index >= 0 ? index : null
+}
+
+function measurementInteractiveId(index: number): string {
+  return `measurement:${index}`
+}
+
+function measurementIndexFromId(id: string | null): number | null {
+  if (!id?.startsWith('measurement:')) return null
+  const index = Number(id.slice('measurement:'.length))
   return Number.isInteger(index) && index >= 0 ? index : null
 }
 
@@ -1150,6 +1163,7 @@ function taggedObject(object: any): { type: InteractiveKind; id: string } | null
         || cur.userData?.itemType === 'switch'
         || cur.userData?.itemType === 'catalog'
         || cur.userData?.itemType === 'opening'
+        || cur.userData?.itemType === 'measurement'
       )
       && typeof cur.userData?.itemId === 'string'
     ) {
@@ -1539,6 +1553,41 @@ function createOpeningDimensionGroup(
   return group
 }
 
+function createSpaceMeasurementGroup(THREE: any, measurement: SketchMeasurement, selected: boolean) {
+  if (measurement.scope !== 'space' || measurement.a.z === undefined || measurement.b.z === undefined) return null
+  const a = new THREE.Vector3(measurement.a.x, measurement.a.y, measurement.a.z)
+  const b = new THREE.Vector3(measurement.b.x, measurement.b.y, measurement.b.z)
+  const length = a.distanceTo(b)
+  if (length <= 0.01) return null
+
+  const group = new THREE.Group()
+  const color = selected ? 0xbe123c : 0x047857
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([a.x, a.y, a.z, b.x, b.y, b.z], 3))
+  const line = new THREE.Line(
+    geometry,
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: selected ? 1 : 0.95, depthTest: false }),
+  )
+  line.renderOrder = 26
+  group.add(line)
+
+  const pointMaterial = new THREE.MeshBasicMaterial({ color, depthTest: false })
+  const radius = selected ? 0.095 : 0.075
+  ;[a, b].forEach((point: any) => {
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 10), pointMaterial)
+    dot.position.copy(point)
+    dot.renderOrder = 27
+    group.add(dot)
+  })
+
+  const label = createDimensionSprite(THREE, formatFeet(length))
+  const midpoint = a.clone().add(b).multiplyScalar(0.5)
+  label.position.copy(midpoint)
+  label.position.y += 0.28
+  group.add(label)
+  return group
+}
+
 export default function Sketch3DView({
   model,
   heightFt,
@@ -1559,6 +1608,7 @@ export default function Sketch3DView({
   const cameraApiRef = useRef<Record<CameraPreset, () => void> | null>(null)
   const insideMoveApiRef = useRef<InsideMoveApi | null>(null)
   const photoSnapshotApiRef = useRef<PhotoRenderSnapshotApi | null>(null)
+  const ceilingVisibilityApiRef = useRef<CeilingVisibilityApi | null>(null)
   const photoRenderBusyRef = useRef(false)
   const joystickRef = useRef<HTMLDivElement | null>(null)
   const joystickPointerRef = useRef<number | null>(null)
@@ -1566,9 +1616,13 @@ export default function Sketch3DView({
   const dimensionsVisibleRef = useRef(false)
   const invalidate3DRef = useRef<(() => void) | null>(null)
   const placementRef = useRef<PlacementKind>(null)
+  const measure3DActiveRef = useRef(false)
+  const measure3DDraftRef = useRef<SketchMeasurementPoint | null>(null)
   const catalogPlacementItemRef = useRef<CatalogItem | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [showDimensions, setShowDimensions] = useState(false)
+  const [showCeiling, setShowCeiling] = useState(false)
+  const [measure3DActive, setMeasure3DActive] = useState(false)
   const [cameraMode, setCameraMode] = useState<CameraPreset>('fit')
   const [surfaceTarget, setSurfaceTarget] = useState<SurfaceTarget>('walls')
   const [selectedWallKey, setSelectedWallKey] = useState<string | null>(null)
@@ -1589,6 +1643,13 @@ export default function Sketch3DView({
   const finishes = useMemo(() => normalizeFinishes(model.finishes), [model.finishes])
   const lights = useMemo(() => model.lights ?? [], [model.lights])
   const switches = useMemo(() => model.switches ?? [], [model.switches])
+  const measurements = useMemo(() => model.measurements ?? [], [model.measurements])
+  const spaceMeasurements = useMemo(
+    () => measurements
+      .map((measurement, index) => ({ measurement, index }))
+      .filter(({ measurement }) => measurement.scope === 'space'),
+    [measurements],
+  )
   const placedItems = useMemo(() => sanitizePlacedCatalogItems(model.placedItems), [model.placedItems])
   const catalogById = useMemo(() => new Map(catalogItems.map((item) => [item.id, item])), [catalogItems])
   const resolvedPlacedItems = useMemo(
@@ -1602,6 +1663,11 @@ export default function Sketch3DView({
   const selectedPlaced = resolvedPlacedItems.find((item) => item.placed.id === selectedId) ?? null
   const selectedOpeningIndex = openingIndexFromId(selectedId)
   const selectedOpening = selectedOpeningIndex !== null ? model.openings[selectedOpeningIndex] ?? null : null
+  const selectedMeasurementIndex = measurementIndexFromId(selectedId)
+  const selectedMeasurement = selectedMeasurementIndex !== null ? measurements[selectedMeasurementIndex] ?? null : null
+  const selectedMeasurementLength = selectedMeasurement?.scope === 'space' && selectedMeasurement.a.z !== undefined && selectedMeasurement.b.z !== undefined
+    ? Math.hypot(selectedMeasurement.b.x - selectedMeasurement.a.x, selectedMeasurement.b.y - selectedMeasurement.a.y, selectedMeasurement.b.z - selectedMeasurement.a.z)
+    : null
   const selectedOpeningMetrics = selectedOpening ? openingMetrics(model, selectedOpening, heightFt) : null
   const catalogPlacementItem = catalogPlacementId ? catalogById.get(catalogPlacementId) ?? null : null
   const fullscreenActive = browserFullscreen || fullscreenFallback
@@ -1656,6 +1722,17 @@ export default function Sketch3DView({
   }, [placement, catalogPlacementItem])
 
   useEffect(() => {
+    measure3DActiveRef.current = measure3DActive
+    if (!measure3DActive) measure3DDraftRef.current = null
+    invalidate3DRef.current?.()
+  }, [measure3DActive])
+
+  useEffect(() => {
+    ceilingVisibilityApiRef.current?.setVisible(cameraMode === 'inside' || showCeiling)
+    invalidate3DRef.current?.()
+  }, [cameraMode, showCeiling])
+
+  useEffect(() => {
     setInchDrafts({})
   }, [surfaceTarget, activeTile.tileWIn, activeTile.tileHIn, activeTile.groutIn, activeTile.offsetXIn, activeTile.offsetYIn])
 
@@ -1669,6 +1746,12 @@ export default function Sketch3DView({
     }
   }, [wallSegments, selectedWallKey, effectiveSelectedWallKey])
 
+  useEffect(() => {
+    if (selectedMeasurementIndex !== null && !measurements[selectedMeasurementIndex]) {
+      setSelectedId(null)
+    }
+  }, [selectedMeasurementIndex, measurements])
+
   const applyModel = (next: Sketch3DModelWithCatalog) => {
     if (!canEdit) return
     onModelChange?.(next)
@@ -1678,6 +1761,13 @@ export default function Sketch3DView({
     const next: Sketch3DModelWithCatalog = { ...model }
     if (nextPlaced.length > 0) next.placedItems = nextPlaced
     else delete next.placedItems
+    applyModel(next)
+  }
+
+  const applyMeasurements = (nextMeasurements: SketchMeasurement[]) => {
+    const next: Sketch3DModelWithCatalog = { ...model }
+    if (nextMeasurements.length > 0) next.measurements = nextMeasurements
+    else delete next.measurements
     applyModel(next)
   }
 
@@ -1812,6 +1902,14 @@ export default function Sketch3DView({
       setSelectedId(null)
       return
     }
+    const measurementIndex = measurementIndexFromId(selectedId)
+    if (measurementIndex !== null) {
+      if (!measurements[measurementIndex]) return
+      applyMeasurements(measurements.filter((_, index) => index !== measurementIndex))
+      setSelectedId(null)
+      measure3DDraftRef.current = null
+      return
+    }
     const nextPlaced = placedItems.filter((item) => item.id !== selectedId)
     const next: Sketch3DModelWithCatalog = {
       ...model,
@@ -1833,6 +1931,8 @@ export default function Sketch3DView({
 
   const selectCatalogPlacement = (item: CatalogItem) => {
     if (!catalogItemHasExactDims(item)) return
+    setMeasure3DActive(false)
+    measure3DDraftRef.current = null
     setCatalogPlacementId((current) => (current === item.id ? null : item.id))
     setPlacement(null)
     setSelectedId(null)
@@ -1874,11 +1974,15 @@ export default function Sketch3DView({
   }, [])
 
   useEffect(() => {
-    if (!canEdit || (!selectedPlaced && !selectedOpening)) return
+    if (!canEdit || (!selectedPlaced && !selectedOpening && !selectedMeasurement && !measure3DActive)) return
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return
-      if (selectedPlaced && event.key.toLowerCase() === 'r') {
+      if (event.key === 'Escape' && measure3DActive) {
+        setMeasure3DActive(false)
+        measure3DDraftRef.current = null
+        event.preventDefault()
+      } else if (selectedPlaced && event.key.toLowerCase() === 'r') {
         rotateSelectedPlaced()
         event.preventDefault()
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -1888,7 +1992,7 @@ export default function Sketch3DView({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, selectedPlaced, selectedOpening, placedItems, selectedId, model.openings])
+  }, [canEdit, selectedPlaced, selectedOpening, selectedMeasurement, measure3DActive, placedItems, selectedId, model.openings, measurements])
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -2178,7 +2282,7 @@ export default function Sketch3DView({
           insideMode = false
           stopInsideJoystick()
           resetInsidePointers()
-          controls.enabled = true
+          controls.enabled = !measure3DActiveRef.current
           camera.fov = orbitFov
           const direction =
             preset === 'top'
@@ -2231,8 +2335,24 @@ export default function Sketch3DView({
         dimensionGroup.visible = dimensionsVisibleRef.current
         scene.add(dimensionGroup)
         dimensionGroupRef.current = dimensionGroup
+        const ceilingGroup = new THREE.Group()
+        ceilingGroup.visible = cameraMode === 'inside' || showCeiling
+        scene.add(ceilingGroup)
+        ceilingVisibilityApiRef.current = {
+          setVisible: (visible: boolean) => {
+            ceilingGroup.visible = visible
+            invalidate()
+          },
+        }
         const wallSurface = finishes.walls.kind === 'tile' ? finishes.walls : { kind: 'paint' as const, color: cleanColor(finishes.wallPaint, DEFAULT_WALL_PAINT) }
         const floorMaterial = createFloorMaterial(THREE, finishes.floor)
+        const ceilingMaterial = new THREE.MeshStandardMaterial({
+          color: 0xf8fafc,
+          roughness: 0.78,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.94,
+        })
         const doorMaterial = new THREE.MeshStandardMaterial({ color: 0xb86b24, roughness: 0.62 })
         const windowMaterial = new THREE.MeshStandardMaterial({
           color: 0x2f80d1,
@@ -2259,6 +2379,14 @@ export default function Sketch3DView({
           floor.receiveShadow = false
           scene.add(floor)
           floorTargets.push(floor)
+
+          const ceilingGeometry = new THREE.ShapeGeometry(shape)
+          ceilingGeometry.rotateX(Math.PI / 2)
+          const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial)
+          ceiling.position.y = height - 0.015
+          ceiling.castShadow = false
+          ceiling.receiveShadow = false
+          ceilingGroup.add(ceiling)
         })
 
         eachSegment(model).forEach((seg) => {
@@ -2478,6 +2606,14 @@ export default function Sketch3DView({
           }
         })
 
+        spaceMeasurements.forEach(({ measurement, index }) => {
+          const group = createSpaceMeasurementGroup(THREE, measurement, selectedId === measurementInteractiveId(index))
+          if (!group) return
+          tagInteractive(group, 'measurement', measurementInteractiveId(index))
+          scene.add(group)
+          itemTargets.push(group)
+        })
+
         const capturePng = (): PhotoRenderSnapshot | null => {
           const canvas = renderer.domElement as HTMLCanvasElement
           const previousDimensionVisibility = dimensionGroup.visible
@@ -2586,6 +2722,65 @@ export default function Sketch3DView({
           return { ...nearest, t: projectWallT(model, wall.c, wall.s, hit.point), yFt: hit.point.y }
         }
 
+        const snapMeasureFt = (valueFt: number) => {
+          const step = Number.isFinite(snapStepFt) && snapStepFt > 0 ? snapStepFt : EIGHTH_IN_FT
+          return Math.round(valueFt / step) * step
+        }
+
+        const measurementSurfacePoint = (): SketchMeasurementPoint | null => {
+          const hits = raycaster.intersectObjects([...wallTargets, ...floorTargets], true)
+          const hit = hits[0]
+          if (!hit) return null
+          const wall = taggedWall(hit.object)
+          if (wall) {
+            const seg = segmentWorld(model, wall.c, wall.s)
+            if (!seg) return null
+            const cell = modelCellFt(model)
+            const ax = seg.a.x * cell
+            const az = seg.a.y * cell
+            const bx = seg.b.x * cell
+            const bz = seg.b.y * cell
+            const len = Math.hypot(bx - ax, bz - az)
+            if (len <= 0.001) return null
+            const rawT = projectWallT(model, wall.c, wall.s, hit.point)
+            const snappedT = Math.max(0, Math.min(1, snapMeasureFt(rawT * len) / len))
+            return {
+              x: ax + (bx - ax) * snappedT,
+              y: Math.max(0, Math.min(height, snapMeasureFt(hit.point.y))),
+              z: az + (bz - az) * snappedT,
+            }
+          }
+          return {
+            x: snapMeasureFt(hit.point.x),
+            y: Math.max(0, Math.min(height, snapMeasureFt(hit.point.y))),
+            z: snapMeasureFt(hit.point.z),
+          }
+        }
+
+        const placeMeasurementAtPointer = (event: PointerEvent) => {
+          if (!canEdit) return
+          updatePointer(event)
+          const point = measurementSurfacePoint()
+          if (!point) return
+          setSelectedId(null)
+          const draft = measure3DDraftRef.current
+          if (!draft) {
+            measure3DDraftRef.current = point
+            return
+          }
+          const length = Math.hypot(point.x - draft.x, point.y - draft.y, (point.z ?? 0) - (draft.z ?? 0))
+          if (length <= 0.01) return
+          const nextMeasurement: SketchMeasurement = {
+            id: makeId('measure'),
+            scope: 'space',
+            a: draft,
+            b: point,
+          }
+          onModelChange?.({ ...model, measurements: [...measurements, nextMeasurement] })
+          setSelectedId(measurementInteractiveId(measurements.length))
+          measure3DDraftRef.current = null
+        }
+
         const placeCatalogAtPointer = (event: { clientX: number; clientY: number }, item: CatalogItem) => {
           if (!canEdit) return
           const dims = catalogDimsFromItem(item)
@@ -2669,6 +2864,14 @@ export default function Sketch3DView({
         const onPointerDown = (event: PointerEvent) => {
           pointerDown = { x: event.clientX, y: event.clientY }
           if (event.button !== 0) return
+          if (measure3DActiveRef.current) {
+            controls.enabled = false
+            drag = null
+            resetInsidePointers()
+            renderer.domElement.setPointerCapture?.(event.pointerId)
+            event.preventDefault()
+            return
+          }
           if (insideMode) {
             insidePointers.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY })
             if (insidePointers.size === 1) {
@@ -2786,6 +2989,12 @@ export default function Sketch3DView({
         const onPointerUp = (event: PointerEvent) => {
           const delta = pointerDown ? Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) : 0
           pointerDown = null
+          if (measure3DActiveRef.current) {
+            renderer.domElement.releasePointerCapture?.(event.pointerId)
+            if (event.button === 0 && delta <= 4) placeMeasurementAtPointer(event)
+            event.preventDefault()
+            return
+          }
           if (insideMode && insidePointers.has(event.pointerId)) {
             insidePointers.delete(event.pointerId)
             if (insidePointers.size === 1) {
@@ -2836,7 +3045,7 @@ export default function Sketch3DView({
         }
 
         const onWheel = (event: WheelEvent) => {
-          if (!insideMode) return
+          if (!insideMode || measure3DActiveRef.current) return
           event.preventDefault()
           const pixelDelta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaMode === 2 ? event.deltaY * 120 : event.deltaY
           moveInsideCamera(Math.max(-INSIDE_WHEEL_STEP_FT, Math.min(INSIDE_WHEEL_STEP_FT, (-pixelDelta / 100) * INSIDE_WHEEL_STEP_FT)))
@@ -2919,6 +3128,7 @@ export default function Sketch3DView({
           observer.disconnect()
           cameraApiRef.current = null
           if (dimensionGroupRef.current === dimensionGroup) dimensionGroupRef.current = null
+          if (ceilingVisibilityApiRef.current?.setVisible) ceilingVisibilityApiRef.current = null
           controls.dispose()
           scene.traverse((object: { geometry?: unknown; material?: unknown }) => disposeObjectWithMaterial(object))
           renderer.dispose()
@@ -2934,7 +3144,7 @@ export default function Sketch3DView({
       cleanup?.()
       host.replaceChildren()
     }
-  }, [model, heightFt, finishes, canEdit, onModelChange, selectedId, t, lights, switches, placedItems, resolvedPlacedItems, fullscreenActive, snapStepFt, openingDefaults])
+  }, [model, heightFt, finishes, canEdit, onModelChange, selectedId, t, lights, switches, placedItems, resolvedPlacedItems, fullscreenActive, snapStepFt, openingDefaults, measure3DActive])
 
   const toggleFullscreen = async () => {
     const shell = shellRef.current
@@ -3116,6 +3326,33 @@ export default function Sketch3DView({
           <button type="button" className={cameraButtonClass('inside')} onClick={() => setCameraPreset('inside')}>
             {t('hub_sketch_camera_inside')}
           </button>
+          <label className="hub-sketch-3d-toolbar-toggle">
+            <input
+              type="checkbox"
+              checked={cameraMode === 'inside' || showCeiling}
+              disabled={cameraMode === 'inside'}
+              onChange={(event) => setShowCeiling(event.target.checked)}
+              aria-label={t('hub_sketch_3d_ceiling')}
+            />
+            <span>{t('hub_sketch_3d_ceiling')}</span>
+          </label>
+          {canEdit && (
+            <button
+              type="button"
+              className={measure3DActive ? 'btn small' : 'btn ghost small'}
+              aria-pressed={measure3DActive}
+              onClick={() => {
+                setMeasure3DActive((current) => !current)
+                measure3DDraftRef.current = null
+                setPlacement(null)
+                setCatalogPlacementId(null)
+                setSelectedId(null)
+              }}
+            >
+              <span aria-hidden="true">📏</span>
+              <span>{t('hub_sketch_tool_measure')}</span>
+            </button>
+          )}
           <button type="button" className="btn ghost small hub-sketch-photo-render-btn" disabled={state !== 'ready' || photoRenderBusy} onClick={startPhotoRender}>
             <span aria-hidden="true">📷</span>
             <span>{t('hub_sketch_photo_render')}</span>
@@ -3130,7 +3367,7 @@ export default function Sketch3DView({
             <span>{t('hub_sketch_photo_render_busy')}</span>
           </div>
         )}
-        {cameraMode === 'inside' && state === 'ready' && (
+        {cameraMode === 'inside' && state === 'ready' && !measure3DActive && (
           <div className="hub-sketch-inside-controls">
             <div className="hub-sketch-inside-hint">{t('hub_sketch_inside_hint')}</div>
             <div
@@ -3197,6 +3434,22 @@ export default function Sketch3DView({
               <div className="muted">
                 {`${t('hub_sketch_dim_left_short')} ${formatOpeningFeet(selectedOpeningMetrics.left)} · ${t('hub_sketch_dim_right_short')} ${formatOpeningFeet(selectedOpeningMetrics.right)}`}
               </div>
+              {canEdit && (
+                <div className="hub-sketch-3d-item-actions">
+                  <button type="button" className="btn ghost small" onClick={removeSelected}>
+                    {t('hub_sketch_3d_remove')}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {selectedMeasurement && selectedMeasurementLength !== null && (
+          <div className="hub-sketch-3d-item-popover hub-sketch-3d-measurement-popover">
+            <div className="hub-sketch-3d-measurement-thumb" aria-hidden="true">📏</div>
+            <div className="hub-sketch-3d-item-popover-body">
+              <div className="item-title">{t('hub_sketch_tool_measure')}</div>
+              <div className="muted">{formatFeet(selectedMeasurementLength)}</div>
               {canEdit && (
                 <div className="hub-sketch-3d-item-actions">
                   <button type="button" className="btn ghost small" onClick={removeSelected}>
@@ -3296,7 +3549,15 @@ export default function Sketch3DView({
                     })}
                   </select>
                 </label>
-                <WallElevation model={model} wall={selectedWall} heightFt={heightFt} finish={activeSurface} />
+                <WallElevation
+                  model={model}
+                  wall={selectedWall}
+                  heightFt={heightFt}
+                  finish={activeSurface}
+                  canEdit={canEdit}
+                  snapStepFt={snapStepFt}
+                  onMeasurementsChange={applyMeasurements}
+                />
                 {selectedWallFinish && (
                   <button type="button" className="btn ghost small" onClick={clearSelectedWallFinish}>
                     {t('hub_sketch_3d_wall_use_all')}
@@ -3473,6 +3734,8 @@ export default function Sketch3DView({
                   className={placement === kind ? 'btn small' : 'btn ghost small'}
                   aria-pressed={placement === kind}
                   onClick={() => {
+                    setMeasure3DActive(false)
+                    measure3DDraftRef.current = null
                     setCatalogPlacementId(null)
                     setPlacement((current) => (current === kind ? null : kind))
                     setSelectedId(null)
@@ -3489,6 +3752,8 @@ export default function Sketch3DView({
                   type="button"
                   className={selectedId === openingInteractiveId(index) ? 'btn small' : 'btn ghost small'}
                   onClick={() => {
+                    setMeasure3DActive(false)
+                    measure3DDraftRef.current = null
                     setPlacement(null)
                     setCatalogPlacementId(null)
                     setSelectedId(openingInteractiveId(index))
@@ -3530,6 +3795,8 @@ export default function Sketch3DView({
                           if (!hasDims) return
                           event.dataTransfer.effectAllowed = 'copy'
                           event.dataTransfer.setData('text/plain', item.id)
+                          setMeasure3DActive(false)
+                          measure3DDraftRef.current = null
                           setCatalogPlacementId(item.id)
                           setPlacement(null)
                           setSelectedId(null)
@@ -3565,6 +3832,8 @@ export default function Sketch3DView({
                   className={placement === kind ? 'btn small' : 'btn ghost small'}
                   aria-pressed={placement === kind}
                   onClick={() => {
+                    setMeasure3DActive(false)
+                    measure3DDraftRef.current = null
                     setCatalogPlacementId(null)
                     setPlacement((current) => (current === kind ? null : kind))
                   }}
@@ -3577,6 +3846,8 @@ export default function Sketch3DView({
                 className={placement === 'switch' ? 'btn small' : 'btn ghost small'}
                 aria-pressed={placement === 'switch'}
                 onClick={() => {
+                  setMeasure3DActive(false)
+                  measure3DDraftRef.current = null
                   setCatalogPlacementId(null)
                   setPlacement((current) => (current === 'switch' ? null : 'switch'))
                 }}
@@ -3586,12 +3857,30 @@ export default function Sketch3DView({
             </div>
             <div className="hub-sketch-object-list">
               {lights.map((light, index) => (
-                <button key={light.id} type="button" className={selectedId === light.id ? 'btn small' : 'btn ghost small'} onClick={() => setSelectedId(light.id)}>
+                <button
+                  key={light.id}
+                  type="button"
+                  className={selectedId === light.id ? 'btn small' : 'btn ghost small'}
+                  onClick={() => {
+                    setMeasure3DActive(false)
+                    measure3DDraftRef.current = null
+                    setSelectedId(light.id)
+                  }}
+                >
                   {lightName(light, index, t)}
                 </button>
               ))}
               {switches.map((sw, index) => (
-                <button key={sw.id} type="button" className={selectedId === sw.id ? 'btn small' : 'btn ghost small'} onClick={() => setSelectedId(sw.id)}>
+                <button
+                  key={sw.id}
+                  type="button"
+                  className={selectedId === sw.id ? 'btn small' : 'btn ghost small'}
+                  onClick={() => {
+                    setMeasure3DActive(false)
+                    measure3DDraftRef.current = null
+                    setSelectedId(sw.id)
+                  }}
+                >
                   {switchName(sw, index, t)}
                 </button>
               ))}

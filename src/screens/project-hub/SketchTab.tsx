@@ -13,10 +13,12 @@ import Sketch3DView from './Sketch3DView'
 import {
   sanitizeSketchFinishes,
   sanitizeSketchLights,
+  sanitizeSketchMeasurements,
   sanitizeSketchOpenings,
   sanitizeSketchSwitches,
   type SketchFinishes,
   type SketchLight,
+  type SketchMeasurement,
   type SketchSwitch,
 } from './sketchFinishes'
 import { sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
@@ -74,6 +76,7 @@ type SketchModel = {
   height?: number
   contours: Contour[]
   openings: Opening[]
+  measurements?: SketchMeasurement[]
   finishes?: SketchFinishes
   lights?: SketchLight[]
   switches?: SketchSwitch[]
@@ -168,10 +171,16 @@ function importWallHeight(value: unknown): number | undefined {
   return Number.isFinite(n) && n > 0 ? snapFeetToPrecision(n) : undefined
 }
 
-type Tool = 'wall' | 'door' | 'window'
+type Tool = 'wall' | 'door' | 'window' | 'measure'
 
 function dist(a: Pt, b: Pt): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+function makeId(prefix: string): string {
+  const maybeCrypto = typeof crypto !== 'undefined' ? crypto : undefined
+  const uuid = maybeCrypto && 'randomUUID' in maybeCrypto ? maybeCrypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `${prefix}-${uuid}`
 }
 
 // Длина контура: сумма сегментов; для замкнутого добавляем ребро замыкания.
@@ -406,6 +415,7 @@ function normalizeOpeningForModel(model: SketchModel, opening: Opening): Opening
 }
 
 function normalizeSketchModelForStorage(model: SketchModel): SketchModel {
+  const measurements = sanitizeSketchMeasurements(model.measurements)
   const next: SketchModel = {
     ...model,
     version: 1,
@@ -415,6 +425,8 @@ function normalizeSketchModelForStorage(model: SketchModel): SketchModel {
       .filter((opening): opening is Opening => !!opening),
   }
   if (model.height !== undefined) next.height = snapFeetToPrecision(wallHeightFt(model))
+  if (measurements.length > 0) next.measurements = measurements
+  else delete next.measurements
   return next
 }
 
@@ -458,6 +470,17 @@ type DimLine2D = {
 
 type OpeningDimLabel = DimLine2D & { kind: Opening['kind'] }
 type SegmentDimLine = DimLine2D & { kind: 'wall' }
+type PlanMeasurementEntry = { measurement: SketchMeasurement; index: number }
+type MeasurementLine2D = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  labelX: number
+  labelY: number
+  angle: number
+  text: string
+}
 
 function contourCenter(contour: Contour): Pt {
   if (contour.points.length === 0) return { x: 0, y: 0 }
@@ -578,6 +601,34 @@ function openingDimLabel(model: SketchModel, opening: Opening, index: number, t:
   return createDimLine(ax, ay, bx, by, normal.nx, normal.ny, offset, screenWorldPx, text, opening.kind) as OpeningDimLabel | null
 }
 
+function isPlanMeasurement(measurement: SketchMeasurement): boolean {
+  return !measurement.scope || measurement.scope === 'plan'
+}
+
+function planMeasurementLine(model: SketchModel, measurement: SketchMeasurement, screenWorldPx: number): MeasurementLine2D | null {
+  const x1 = measurement.a.x * CELL_PX
+  const y1 = measurement.a.y * CELL_PX
+  const x2 = measurement.b.x * CELL_PX
+  const y2 = measurement.b.y * CELL_PX
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const lenPx = Math.hypot(dx, dy)
+  if (lenPx <= 0.01) return null
+  const nx = -dy / lenPx
+  const ny = dx / lenPx
+  const labelGap = 13 * screenWorldPx
+  return {
+    x1,
+    y1,
+    x2,
+    y2,
+    labelX: (x1 + x2) / 2 + nx * labelGap,
+    labelY: (y1 + y2) / 2 + ny * labelGap,
+    angle: readableSvgAngle(dx, dy),
+    text: fmtFt(dist(measurement.a, measurement.b) * modelCellFt(model)),
+  }
+}
+
 function sanitizeName(name: string): string {
   const clean = name.trim().toLowerCase().replace(/[^a-z0-9а-я\-_]+/gi, '-').replace(/^-+|-+$/g, '')
   return clean || 'room'
@@ -604,6 +655,46 @@ function drawCanvasDimLine(ctx: CanvasRenderingContext2D, dim: DimLine2D, viewSc
   ctx.lineWidth = 3 / viewScale
   ctx.strokeText(dim.text, 0, 0)
   ctx.fillText(dim.text, 0, 0)
+  ctx.restore()
+}
+
+function drawCanvasMeasurementLine(ctx: CanvasRenderingContext2D, line: MeasurementLine2D, viewScale: number) {
+  const dx = line.x2 - line.x1
+  const dy = line.y2 - line.y1
+  const len = Math.hypot(dx, dy)
+  if (len <= 0.01) return
+  const ux = dx / len
+  const uy = dy / len
+  const arrow = 8 / viewScale
+  const wing = 4.5 / viewScale
+  const drawArrow = (x: number, y: number, dir: number) => {
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    ctx.lineTo(x - ux * arrow * dir - uy * wing, y - uy * arrow * dir + ux * wing)
+    ctx.lineTo(x - ux * arrow * dir + uy * wing, y - uy * arrow * dir - ux * wing)
+    ctx.closePath()
+    ctx.fill()
+  }
+
+  ctx.save()
+  ctx.strokeStyle = '#047857'
+  ctx.fillStyle = '#047857'
+  ctx.lineWidth = 1.6 / viewScale
+  ctx.beginPath()
+  ctx.moveTo(line.x1, line.y1)
+  ctx.lineTo(line.x2, line.y2)
+  ctx.stroke()
+  drawArrow(line.x1, line.y1, -1)
+  drawArrow(line.x2, line.y2, 1)
+  ctx.translate(line.labelX, line.labelY)
+  ctx.rotate((line.angle * Math.PI) / 180)
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `800 ${Math.max(9 / viewScale, 12 / viewScale)}px sans-serif`
+  ctx.strokeStyle = 'rgba(255, 255, 255, .94)'
+  ctx.lineWidth = 3 / viewScale
+  ctx.strokeText(line.text, 0, 0)
+  ctx.fillText(line.text, 0, 0)
   ctx.restore()
 }
 
@@ -679,6 +770,11 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
     if (!label) return
     drawCanvasDimLine(ctx, label, viewScale, label.kind === 'door' ? '#7c2d12' : '#1d4ed8', 10.5)
   })
+  for (const measurement of model.measurements ?? []) {
+    if (!isPlanMeasurement(measurement)) continue
+    const line = planMeasurementLine(model, measurement, 1 / viewScale)
+    if (line) drawCanvasMeasurementLine(ctx, line, viewScale)
+  }
   ctx.restore()
   // сводка
   const area = model.contours.reduce((s, c) => s + contourArea(c), 0)
@@ -703,6 +799,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
   const [tool, setTool] = useState<Tool>('wall')
   const [snapMode, setSnapMode] = useState<SnapMode>('1ft')
+  const [showMeasurements, setShowMeasurements] = useState(true)
+  const [measurementDraft, setMeasurementDraft] = useState<Pt | null>(null)
+  const [selectedMeasurementIndex, setSelectedMeasurementIndex] = useState<number | null>(null)
   const [hover, setHover] = useState<Pt | null>(null)
   const [hoverSnapped, setHoverSnapped] = useState(false)
   // Габариты проёмов (в футах), задаются перед вставкой.
@@ -936,6 +1035,50 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     return s ? { p: s, snapped: true } : { p: snap(raw), snapped: false }
   }
 
+  const measurementPoint = (raw: Pt): { p: Pt; snapped: boolean } => {
+    const s = snapToExisting(raw)
+    return s ? { p: s, snapped: true } : { p: snap(raw), snapped: false }
+  }
+
+  const removeMeasurement = (index: number) => {
+    const measurements = model.measurements ?? []
+    if (!measurements[index]) return
+    const nextMeasurements = measurements.filter((_, i) => i !== index)
+    const next: SketchModel = { ...model }
+    if (nextMeasurements.length > 0) next.measurements = nextMeasurements
+    else delete next.measurements
+    commit(next)
+    setSelectedMeasurementIndex(null)
+    setMeasurementDraft(null)
+  }
+
+  useEffect(() => {
+    if (!canEdit || viewMode !== '2d') return
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return
+      if (event.key === 'Escape' && tool === 'measure') {
+        setTool('wall')
+        setMeasurementDraft(null)
+        setSelectedMeasurementIndex(null)
+        event.preventDefault()
+        return
+      }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedMeasurementIndex !== null) {
+        removeMeasurement(selectedMeasurementIndex)
+        event.preventDefault()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [canEdit, viewMode, tool, selectedMeasurementIndex, model])
+
+  useEffect(() => {
+    if (selectedMeasurementIndex !== null && !model.measurements?.[selectedMeasurementIndex]) {
+      setSelectedMeasurementIndex(null)
+    }
+  }, [model.measurements, selectedMeasurementIndex])
+
   const handleMove = (e: React.PointerEvent) => {
     if (!canEdit) return
     const raw = pointerCell(e)
@@ -962,6 +1105,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       const wp = wallPoint(raw)
       setHover(wp.p)
       setHoverSnapped(wp.snapped)
+    } else if (tool === 'measure') {
+      const mp = measurementPoint(raw)
+      setHover(mp.p)
+      setHoverSnapped(mp.snapped)
     } else {
       setHover(raw)
       setHoverSnapped(false)
@@ -1116,6 +1263,22 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const raw = pointerCell(e)
     if (!raw) return
 
+    if (tool === 'measure') {
+      const p = measurementPoint(raw).p
+      setShowMeasurements(true)
+      setSelectedMeasurementIndex(null)
+      if (!measurementDraft) {
+        setMeasurementDraft(p)
+        return
+      }
+      if (dist(measurementDraft, p) < 0.01) return
+      const nextMeasurement: SketchMeasurement = { id: makeId('measure'), scope: 'plan', a: measurementDraft, b: p }
+      commit({ ...model, measurements: [...(model.measurements ?? []), nextMeasurement] })
+      setMeasurementDraft(null)
+      setSelectedMeasurementIndex((model.measurements ?? []).length)
+      return
+    }
+
     if (tool === 'wall') {
       const p = wallPoint(raw).p
       const contours = model.contours
@@ -1173,10 +1336,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const clearAll = () => {
-    if (model.contours.length === 0 && model.openings.length === 0 && (model.placedItems ?? []).length === 0) return
+    if (model.contours.length === 0 && model.openings.length === 0 && (model.measurements ?? []).length === 0 && (model.placedItems ?? []).length === 0) return
     setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
     canvasAutoFitRef.current = true
     setModel(EMPTY_MODEL)
+    setMeasurementDraft(null)
+    setSelectedMeasurementIndex(null)
     setStatus(null)
     setError(null)
   }
@@ -1280,14 +1445,18 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       const finishes = sanitizeSketchFinishes(data.finishes)
       const lights = sanitizeSketchLights(data.lights)
       const switches = sanitizeSketchSwitches(data.switches)
+      const measurements = sanitizeSketchMeasurements(data.measurements)
       const placedItems = sanitizePlacedCatalogItems(data.placedItems)
       if (height !== undefined) nextModel.height = height
       if (finishes) nextModel.finishes = finishes
       if (lights.length > 0) nextModel.lights = lights
       if (switches.length > 0) nextModel.switches = switches
+      if (measurements.length > 0) nextModel.measurements = measurements
       if (placedItems.length > 0) nextModel.placedItems = placedItems
       setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
       canvasAutoFitRef.current = true
+      setMeasurementDraft(null)
+      setSelectedMeasurementIndex(null)
       setModel(normalizeSketchModelForStorage(nextModel))
       setName(file.name.replace(/^sketch-/, '').replace(/\.json$/, ''))
       setLoadOpen(false)
@@ -1312,6 +1481,21 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     () => eachSegment(model).map((seg) => segmentDimLine(model, seg, screenWorldPx)).filter((dim): dim is SegmentDimLine => !!dim),
     [model, screenWorldPx],
   )
+  const planMeasurements = useMemo<PlanMeasurementEntry[]>(
+    () => (model.measurements ?? [])
+      .map((measurement, index) => ({ measurement, index }))
+      .filter(({ measurement }) => isPlanMeasurement(measurement)),
+    [model.measurements],
+  )
+  const planMeasurementLines = useMemo(
+    () => planMeasurements
+      .map((entry) => ({ ...entry, line: planMeasurementLine(model, entry.measurement, screenWorldPx) }))
+      .filter((entry): entry is PlanMeasurementEntry & { line: MeasurementLine2D } => !!entry.line),
+    [model, planMeasurements, screenWorldPx],
+  )
+  const measurePreview = measurementDraft && hover
+    ? planMeasurementLine(model, { a: measurementDraft, b: hover, scope: 'plan' }, screenWorldPx)
+    : null
 
   return (
     <section className="hub-tab-panel hub-sketch">
@@ -1325,6 +1509,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               aria-pressed={viewMode === mode}
               onClick={() => {
                 if (mode === '2d') canvasAutoFitRef.current = true
+                setMeasurementDraft(null)
+                setSelectedMeasurementIndex(null)
                 setViewMode(mode)
               }}
             >
@@ -1338,14 +1524,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       {canEdit && viewMode === '2d' && (
         <div className="card hub-sketch-toolbar">
           <div className="hub-sketch-tools">
-            {(['wall', 'door', 'window'] as Tool[]).map((tl) => (
+            {(['wall', 'door', 'window', 'measure'] as Tool[]).map((tl) => (
               <button
                 key={tl}
                 type="button"
                 className={tool === tl ? 'btn small' : 'btn ghost small'}
-                onClick={() => setTool(tl)}
+                aria-pressed={tool === tl}
+                onClick={() => {
+                  setSelectedMeasurementIndex(null)
+                  if (tl === 'measure') {
+                    setTool((current) => (current === 'measure' ? 'wall' : 'measure'))
+                    setMeasurementDraft(null)
+                    setShowMeasurements(true)
+                    return
+                  }
+                  setTool(tl)
+                  setMeasurementDraft(null)
+                }}
               >
-                {t(`hub_sketch_tool_${tl}`)}
+                {tl === 'measure' && <span aria-hidden="true">📏</span>}
+                <span>{t(`hub_sketch_tool_${tl}`)}</span>
               </button>
             ))}
           </div>
@@ -1374,6 +1572,17 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               </button>
             ))}
           </div>
+          <label className="hub-sketch-layer-toggle">
+            <input
+              type="checkbox"
+              checked={showMeasurements}
+              onChange={(e) => {
+                setShowMeasurements(e.target.checked)
+                if (!e.target.checked) setSelectedMeasurementIndex(null)
+              }}
+            />
+            <span>{t('hub_sketch_measurements')}</span>
+          </label>
           {tool === 'door' && (
             <div className="hub-sketch-dims">
               {lengthInput('doorW', 'hub_sketch_width', doorW, 0.5, 20, setDoorW)}
@@ -1415,6 +1624,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 onPointerLeave={handleCanvasPointerLeave}
                 onWheel={handleCanvasWheel}
               >
+          <defs>
+            <marker id="hub-sketch-measure-arrow" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 8 4 L 0 8 z" fill="#047857" />
+            </marker>
+          </defs>
           {/* сетка */}
           <g className="hub-sketch-subgrid">
             {gridLines.subX.map((x) => (
@@ -1491,8 +1705,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             return (
               <g
                 key={`o${i}`}
-                className={canEdit ? 'hub-sketch-opening' : undefined}
-                onPointerDown={canEdit ? startDragOpening(i) : undefined}
+                className={canEdit && tool !== 'measure' ? 'hub-sketch-opening' : undefined}
+                onPointerDown={canEdit && tool !== 'measure' ? startDragOpening(i) : undefined}
               >
                 <line className={cls} x1={x1} y1={y1} x2={x2} y2={y2} />
                 {/* невидимый широкий хит-таргет для захвата пальцем */}
@@ -1520,6 +1734,96 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               </g>
             )
           })}
+
+          {showMeasurements &&
+            planMeasurementLines.map(({ index, line }) => {
+              const selected = selectedMeasurementIndex === index
+              const deleteSize = 18 * screenWorldPx
+              const deleteX = line.labelX + 36 * screenWorldPx
+              const deleteY = line.labelY - 1 * screenWorldPx
+              return (
+                <g
+                  key={`m${index}`}
+                  className={selected ? 'hub-sketch-measurement hub-sketch-measurement-selected' : 'hub-sketch-measurement'}
+                  onClick={(event) => {
+                    if (!canEdit) return
+                    event.stopPropagation()
+                    setSelectedMeasurementIndex(index)
+                    setMeasurementDraft(null)
+                  }}
+                >
+                  <line
+                    className="hub-sketch-measurement-line"
+                    x1={line.x1}
+                    y1={line.y1}
+                    x2={line.x2}
+                    y2={line.y2}
+                    markerStart="url(#hub-sketch-measure-arrow)"
+                    markerEnd="url(#hub-sketch-measure-arrow)"
+                  />
+                  <line className="hub-sketch-measurement-hit" x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} />
+                  <text
+                    className="hub-sketch-measurement-label"
+                    x={line.labelX}
+                    y={line.labelY}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    style={{ fontSize: dimFontSize }}
+                    transform={`rotate(${line.angle} ${line.labelX} ${line.labelY})`}
+                  >
+                    {line.text}
+                  </text>
+                  {selected && (
+                    <g
+                      className="hub-sketch-measurement-delete"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={t('hub_sketch_measurement_delete')}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        removeMeasurement(index)
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return
+                        event.preventDefault()
+                        event.stopPropagation()
+                        removeMeasurement(index)
+                      }}
+                    >
+                      <rect x={deleteX - deleteSize / 2} y={deleteY - deleteSize / 2} width={deleteSize} height={deleteSize} rx={3 * screenWorldPx} />
+                      <text x={deleteX} y={deleteY} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 13 * screenWorldPx }}>
+                        ×
+                      </text>
+                    </g>
+                  )}
+                </g>
+              )
+            })}
+
+          {showMeasurements && canEdit && tool === 'measure' && measurePreview && (
+            <g className="hub-sketch-measurement hub-sketch-measurement-preview">
+              <line
+                className="hub-sketch-measurement-line"
+                x1={measurePreview.x1}
+                y1={measurePreview.y1}
+                x2={measurePreview.x2}
+                y2={measurePreview.y2}
+                markerStart="url(#hub-sketch-measure-arrow)"
+                markerEnd="url(#hub-sketch-measure-arrow)"
+              />
+              <text
+                className="hub-sketch-measurement-label"
+                x={measurePreview.labelX}
+                y={measurePreview.labelY}
+                textAnchor="middle"
+                dominantBaseline="central"
+                style={{ fontSize: dimFontSize }}
+                transform={`rotate(${measurePreview.angle} ${measurePreview.labelX} ${measurePreview.labelY})`}
+              >
+                {measurePreview.text}
+              </text>
+            </g>
+          )}
 
           {/* превью стены: живая длина текущего сегмента при рисовании */}
           {canEdit &&
@@ -1571,7 +1875,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             })()}
 
           {/* превью курсора */}
-          {canEdit && hover && tool === 'wall' && (
+          {canEdit && hover && (tool === 'wall' || tool === 'measure') && (
             <circle
               className={hoverSnapped ? 'hub-sketch-hover hub-sketch-hover-snap' : 'hub-sketch-hover'}
               cx={hover.x * CELL_PX}
