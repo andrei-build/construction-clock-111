@@ -4204,6 +4204,55 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .mail-att-photo { background: rgba(126,160,190,.18); color: var(--text); }
 .mail-att-size { font-size: 12px; }
 .mail-att-later { font-size: 12px; margin-left: auto; font-style: italic; }
+/* MAIL-UX-2: фото-вложение как кнопка (открывает лайтбокс) — без рамки, наследует текст строки. */
+.mail-att-open {
+  border: none; background: none; padding: 0; margin: 0; cursor: pointer;
+  color: inherit; font: inherit; text-align: left;
+}
+.mail-att-open:hover .mail-att-name { text-decoration: underline; }
+/* MAIL-UX-2: картинки в теле письма кликабельны (открывают лайтбокс). */
+.mail-html img { cursor: zoom-in; }
+
+/* MAIL-UX-2: лайтбокс изображений письма — тёмный полноэкранный оверлей ВНУТРИ приложения. */
+.mail-lightbox {
+  position: fixed; inset: 0; z-index: 95;
+  background: rgba(4, 7, 12, .93);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; touch-action: none;
+}
+.mail-lightbox-bar { position: absolute; top: 14px; right: 14px; display: flex; gap: 10px; z-index: 2; }
+.mail-lightbox-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 40px; padding: 0 14px; border: none; border-radius: 8px;
+  background: var(--panel2); color: var(--text);
+  font-size: 14px; font-weight: 600; line-height: 1; cursor: pointer; text-decoration: none;
+}
+.mail-lightbox-btn:hover { background: var(--elevated); }
+.mail-lightbox-btn.disabled { opacity: .5; cursor: default; pointer-events: none; }
+.mail-lightbox-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 46px; height: 46px; border: none; border-radius: 50%;
+  background: var(--panel2); color: var(--text);
+  font-size: 28px; line-height: 1; cursor: pointer; z-index: 2;
+}
+.mail-lightbox-nav:hover { background: var(--elevated); }
+.mail-lightbox-nav.prev { left: 16px; }
+.mail-lightbox-nav.next { right: 16px; }
+.mail-lightbox-stage {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; touch-action: none;
+}
+.mail-lightbox-img {
+  max-width: 94vw; max-height: 90vh; object-fit: contain;
+  user-select: none; -webkit-user-drag: none; will-change: transform;
+}
+.mail-lightbox-msg { color: var(--muted); font-size: 14px; }
+.mail-lightbox-count {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  padding: 4px 12px; border-radius: 999px;
+  background: var(--panel2); color: var(--text); font-size: 13px; z-index: 2;
+}
 
 /* AI-1-UI: «строка-командир» — кнопка «Спроси» в сайдбаре + оверлей-диалог ассистента. */
 .side-ask {

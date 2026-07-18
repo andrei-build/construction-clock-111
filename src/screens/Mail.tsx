@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import VoiceMic from '../components/VoiceMic'
+import MailImageLightbox, { type MailLightboxImage } from '../components/MailImageLightbox'
 import {
   addMailAllowlist,
   createCalendarEvent,
@@ -11,11 +12,13 @@ import {
   getMailAttachments,
   getMailMessageBodies,
   getMailMessagesPage,
+  getProjectFileDownloadUrl,
   markMailSeen,
   sendMail,
   triggerMailSync,
 } from '../lib/api'
 import type { MailAccount, MailAllowlistEntry, MailAttachment, MailListMessage, MailMessageBody } from '../lib/api/mail'
+import type { FileRow } from '../lib/types'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { useLiveRefresh } from '../lib/useLiveRefresh'
@@ -317,6 +320,11 @@ export default function Mail() {
   const [bodyLoadingKey, setBodyLoadingKey] = useState<string | null>(null)
   // Письма, для которых пользователь нажал «Показать изображения» (по умолчанию картинки не грузим).
   const [imagesShownIds, setImagesShownIds] = useState<Set<string>>(() => new Set())
+  // MAIL-UX-2: открытый лайтбокс (объединённый список картинок письма + стартовый индекс). null — закрыт.
+  const [lightbox, setLightbox] = useState<{ images: MailLightboxImage[]; index: number } | null>(null)
+  // MAIL-UX-2: DOM-контейнеры санитизированных HTML-тел по id письма — из них собираем inline-картинки
+  // (реальные <img src> уже показанного тела) для лайтбокса. Заполняется ref-callback'ом при рендере.
+  const bodyRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const [compose, setCompose] = useState<ComposeState | null>(null)
   const [sending, setSending] = useState(false)
   // MAIL-3-UI: модал «Белый список» + его список/форма (owner-only).
@@ -413,7 +421,8 @@ export default function Mail() {
   useLiveRefresh(() => { void load(true).catch(() => {}) }, 60000)
   // MAIL-5-UI: при смене/закрытии открытого треда — закрываем мини-меню «Скрыть навсегда» и
   // сбрасываем «показанные картинки» (следующий тред снова открывается с приватным гейтом картинок).
-  useEffect(() => { setHideMenuMsgId(null); setImagesShownIds(new Set()) }, [openKey])
+  // MAIL-UX-2: закрытый тред → закрываем лайтбокс (его картинки принадлежали письмам этого треда).
+  useEffect(() => { setHideMenuMsgId(null); setImagesShownIds(new Set()); setLightbox(null) }, [openKey])
 
   const activeAccount = useMemo(
     () => accounts.find((a) => a.id === activeId) ?? null,
@@ -777,6 +786,62 @@ export default function Mail() {
       return next
     })
 
+  // MAIL-UX-2: фото-вложения письма, пригодные для лайтбокса — image/* И с r2_key (без ссылки в
+  // лайтбокс не попадают). В том же порядке, что и список вложений.
+  const photoAttachmentsOf = (m: MailListMessage): MailAttachment[] =>
+    (attachmentsByMsg[m.id] ?? []).filter((a) => !!a.r2_key && !!a.mime && a.mime.toLowerCase().startsWith('image/'))
+
+  // MAIL-UX-2: реальные <img> с непустым src из показанного HTML-тела письма (в порядке DOM).
+  const inlineImgEls = (m: MailListMessage): HTMLImageElement[] => {
+    const container = bodyRefs.current.get(m.id)
+    if (!container) return []
+    return Array.from(container.querySelectorAll('img')).filter(
+      (el) => !!(el.currentSrc || el.getAttribute('src')),
+    )
+  }
+
+  // MAIL-UX-2: объединённый список картинок письма для лайтбокса: сначала inline-картинки тела
+  // (в порядке DOM), затем фото-вложения. Каждый элемент сам резолвит свой URL: inline — готовый src
+  // (фиксируем строкой на момент открытия), вложение — подписанная r2-sign ссылка (getProjectFileDownloadUrl).
+  const buildMessageImages = (m: MailListMessage): MailLightboxImage[] => {
+    const inline: MailLightboxImage[] = inlineImgEls(m).map((el, i) => {
+      const src = el.currentSrc || el.getAttribute('src') || ''
+      return { id: `inline:${m.id}:${i}`, name: el.getAttribute('alt'), resolve: () => Promise.resolve(src) }
+    })
+    const atts: MailLightboxImage[] = photoAttachmentsOf(m).map((a) => ({
+      id: `att:${a.id}`,
+      name: a.filename,
+      // getProjectFileDownloadUrl принимает FileRow, но использует только storage_path — подсовываем r2_key.
+      resolve: () => getProjectFileDownloadUrl({ storage_path: a.r2_key } as unknown as FileRow),
+    }))
+    return [...inline, ...atts]
+  }
+
+  const openLightbox = (images: MailLightboxImage[], index: number) => {
+    if (images.length === 0) return
+    setLightbox({ images, index: Math.max(0, index) })
+  }
+
+  // MAIL-UX-2: клик по HTML-телу — если попали в <img> с реальным src, открываем лайтбокс на нём
+  // (preventDefault гасит и переход по ссылке-обёртке, и «открыть картинку в новой вкладке»).
+  const onBodyClick = (e: React.MouseEvent<HTMLDivElement>, m: MailListMessage) => {
+    const img = (e.target as HTMLElement).closest('img')
+    const container = e.currentTarget
+    if (!img || !container.contains(img) || !(img.currentSrc || img.getAttribute('src'))) return
+    e.preventDefault()
+    e.stopPropagation()
+    const idx = inlineImgEls(m).indexOf(img as HTMLImageElement)
+    openLightbox(buildMessageImages(m), idx < 0 ? 0 : idx)
+  }
+
+  // MAIL-UX-2: клик по фото-вложению из списка — открываем лайтбокс на этом вложении (в общем списке
+  // с inline-картинками тела).
+  const onAttachmentClick = (m: MailListMessage, a: MailAttachment) => {
+    const images = buildMessageImages(m)
+    const idx = images.findIndex((im) => im.id === `att:${a.id}`)
+    openLightbox(images, idx < 0 ? 0 : idx)
+  }
+
   // MAIL-5-UI/FIX-1: тело письма. Тело живёт в отдельно догруженной карте bodiesById (лента его не
   // держит). Пока тело не пришло: показываем «загрузка тела…» (если грузится) или snippet (fallback).
   // body_html → консервативно санитайзим и рендерим в изолированном контейнере (картинки под приватным
@@ -807,8 +872,15 @@ export default function Mail() {
               </button>
             </div>
           )}
-          {/* Санитизированный HTML в изолированном контейнере (.mail-html ограничивает влияние на layout). */}
-          <div className="mail-body mail-html" dangerouslySetInnerHTML={{ __html: safe }} />
+          {/* Санитизированный HTML в изолированном контейнере (.mail-html ограничивает влияние на layout).
+              MAIL-UX-2: клик по картинке тела открывает лайтбокс (onBodyClick); ref отдаёт контейнер
+              сборщику inline-картинок. */}
+          <div
+            className="mail-body mail-html"
+            ref={(el) => { if (el) bodyRefs.current.set(m.id, el); else bodyRefs.current.delete(m.id) }}
+            onClick={(e) => onBodyClick(e, m)}
+            dangerouslySetInnerHTML={{ __html: safe }}
+          />
         </>
       )
     }
@@ -832,9 +904,23 @@ export default function Mail() {
           {atts.map((a) => {
             const isImg = !!a.mime && a.mime.toLowerCase().startsWith('image/')
             const size = fmtBytes(a.size_bytes)
+            // MAIL-UX-2: фото-вложение с r2_key открывается в лайтбоксе кликом (как в Gmail). Без
+            // r2_key (ссылки ещё нет) и не-картинки — прежнее поведение (просто строка со сведениями).
+            const canOpen = isImg && !!a.r2_key
             return (
               <li key={a.id} className="mail-attachment">
-                <span className="mail-att-name">📎 {a.filename}</span>
+                {canOpen ? (
+                  <button
+                    type="button"
+                    className="mail-att-open"
+                    onClick={() => onAttachmentClick(m, a)}
+                    title={t('mail_attachment_open')}
+                  >
+                    <span className="mail-att-name">🖼️ {a.filename}</span>
+                  </button>
+                ) : (
+                  <span className="mail-att-name">📎 {a.filename}</span>
+                )}
                 {isImg && <span className="badge mail-att-photo">{t('mail_attachment_photo')}</span>}
                 {size && <span className="mail-att-size muted">{size}</span>}
                 {!a.r2_key && <span className="mail-att-later muted">{t('mail_attachment_later')}</span>}
@@ -1243,6 +1329,22 @@ export default function Mail() {
             <div className="muted mail-allowlist-hint">{t('mail_allowlist_hint')}</div>
           </div>
         </div>
+      )}
+
+      {lightbox && (
+        <MailImageLightbox
+          images={lightbox.images}
+          initialIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+          labels={{
+            close: t('mail_lightbox_close'),
+            prev: t('mail_lightbox_prev'),
+            next: t('mail_lightbox_next'),
+            download: t('mail_lightbox_download'),
+            loading: t('mail_lightbox_loading'),
+            error: t('mail_lightbox_error'),
+          }}
+        />
       )}
 
       {toast && (
