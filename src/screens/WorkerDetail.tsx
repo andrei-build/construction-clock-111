@@ -184,6 +184,30 @@ function formatSize(bytes: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+// DOC-EXPIRY-UI: пороги подсветки истечения документа работника (по files.expires_at, date).
+const DOC_EXPIRY_URGENT_DAYS = 7 // ≤7 дн. (и уже просрочено) — красный «работать нельзя»
+const DOC_EXPIRY_SOON_DAYS = 30 // 8–30 дн. — янтарный «скоро»
+const DOC_DAY_MS = 24 * 60 * 60 * 1000
+
+// Дней до истечения по ЛОКАЛЬНОЙ дате (YYYY-MM-DD). Отрицательное — уже просрочено. Как в Files.tsx.
+function daysUntilExpiry(expiresAt: string): number {
+  const target = new Date(`${expiresAt}T00:00:00`)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Math.round((target.getTime() - today.getTime()) / DOC_DAY_MS)
+}
+
+type DocExpiryLevel = 'expired' | 'urgent' | 'soon' | null
+// Уровень подсветки строки: null (обычный), 'soon' (8–30д), 'urgent' (≤7д), 'expired' (<0).
+function docExpiryLevel(expiresAt: string | null): DocExpiryLevel {
+  if (!expiresAt) return null
+  const d = daysUntilExpiry(expiresAt)
+  if (d < 0) return 'expired'
+  if (d <= DOC_EXPIRY_URGENT_DAYS) return 'urgent'
+  if (d <= DOC_EXPIRY_SOON_DAYS) return 'soon'
+  return null
+}
+
 // F15: разрыв перехода как «Nh Mm» — только для показа, часы/оплату не трогает.
 function fmtGapDuration(ms: number) {
   const totalMin = Math.round(ms / 60000)
@@ -286,6 +310,9 @@ export default function WorkerDetail() {
   const [safetyAcks, setSafetyAcks] = useState<WorkerSafetyAckRow[]>([])
   const [profileFiles, setProfileFiles] = useState<FileRow[]>([])
   const [docsState, setDocsState] = useState<'loading' | 'ready' | 'error'>('loading')
+  // DOC-EXPIRY-UI: черновик типа документа + «действует до» для следующей загрузки файла работника.
+  const [docKindDraft, setDocKindDraft] = useState('')
+  const [docExpiresDraft, setDocExpiresDraft] = useState('')
   // SAFETY-2: текущая версия свода ТБ (для метки «Актуально/Устарело») + заказ СИЗ работнику.
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [ppeBusy, setPpeBusy] = useState(false)
@@ -834,8 +861,14 @@ export default function WorkerDetail() {
     setBusy('profile_file')
     setMsg(null)
     try {
-      const row = await uploadProfileFileToR2(profile, worker.id, file)
+      // DOC-EXPIRY-UI: прикладываем тип документа и «действует до» (обе опциональны) → files.doc_kind/expires_at.
+      const row = await uploadProfileFileToR2(profile, worker.id, file, {
+        doc_kind: docKindDraft || null,
+        expires_at: docExpiresDraft || null,
+      })
       setProfileFiles((rows) => [row, ...rows])
+      setDocKindDraft('')
+      setDocExpiresDraft('')
       setMsg('dossier_file_uploaded')
     } catch (err) {
       setMsg(uploadErrorCode(err) ?? 'dossier_file_upload_failed')
@@ -853,6 +886,25 @@ export default function WorkerDetail() {
     } catch {
       setMsg('dossier_file_download_failed')
     }
+  }
+
+  // DOC-EXPIRY-UI: локализованное имя типа документа (канон insurance/license/w9/other) — иначе как есть.
+  const docKindLabel = (kind: string | null): string => {
+    switch (kind) {
+      case 'insurance': return t('worker_doc_kind_insurance')
+      case 'license': return t('worker_doc_kind_license')
+      case 'w9': return t('worker_doc_kind_w9')
+      case 'other': return t('worker_doc_kind_other')
+      default: return kind || ''
+    }
+  }
+
+  // DOC-EXPIRY-UI: короткая подпись срока для бейджа строки документа (просрочен/сегодня/через N дн.).
+  const docExpiryText = (expiresAt: string): string => {
+    const d = daysUntilExpiry(expiresAt)
+    if (d < 0) return t('files_expired')
+    if (d === 0) return t('files_expires_today')
+    return t('files_expires_in').replace('{n}', String(d))
   }
 
   // TEAM-DOSSIER-1: сохранение контактных/кадровых полей досье (manager+). Пустые → null, кроме
@@ -1756,32 +1808,63 @@ export default function WorkerDetail() {
                   <p className="muted">{t('no_records')}</p>
                 ) : (
                   <div className="worker-docs-list">
-                    {profileFiles.map((row) => (
-                      <div className="worker-doc-row" key={row.id}>
-                        <div className="worker-doc-main">
-                          <div className="item-title">{row.name}</div>
-                          <div className="muted">
-                            {[row.doc_kind, formatSize(row.size_bytes), dateLabel(row.created_at)]
-                              .filter(Boolean)
-                              .join(' · ')}
+                    {profileFiles.map((row) => {
+                      // DOC-EXPIRY-UI: подсветка строки по сроку — просрочено/≤7д красным, 8–30д янтарным.
+                      const level = docExpiryLevel(row.expires_at)
+                      return (
+                        <div className={`worker-doc-row${level ? ` doc-${level}` : ''}`} key={row.id}>
+                          <div className="worker-doc-main">
+                            <div className="item-title">{row.name}</div>
+                            <div className="muted">
+                              {[docKindLabel(row.doc_kind), formatSize(row.size_bytes), dateLabel(row.created_at)]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </div>
+                            {row.expires_at && (
+                              <div className="worker-doc-badges">
+                                <span className={`badge ${level === 'expired' || level === 'urgent' ? 'red' : level === 'soon' ? 'amber' : 'grey'}`}>
+                                  {t('worker_doc_expires_label')}: {dateLabel(`${row.expires_at}T00:00:00`)} · {docExpiryText(row.expires_at)}
+                                </span>
+                              </div>
+                            )}
                           </div>
+                          <button
+                            type="button"
+                            className="btn ghost small"
+                            onClick={() => downloadProfileFile(row)}
+                          >
+                            {t('download')}
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          className="btn ghost small"
-                          onClick={() => downloadProfileFile(row)}
-                        >
-                          {t('download')}
-                        </button>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
                 {canEditProfile && (
-                  <label className={`btn small worker-file-upload ${busy === 'profile_file' ? 'busy' : ''}`} style={{ marginTop: 8, display: 'inline-block' }}>
-                    <input type="file" hidden disabled={busy !== null} onChange={onProfileFilePick} />
-                    {busy === 'profile_file' ? t('loading') : t('dossier_file_upload')}
-                  </label>
+                  // DOC-EXPIRY-UI: перед загрузкой — тип документа (страховка/лицензия/W-9/…) и «действует до».
+                  <div className="worker-doc-upload" style={{ marginTop: 8 }}>
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                      <label className="worker-doc-field">
+                        <span className="muted">{t('worker_doc_kind_label')}</span>
+                        <select value={docKindDraft} onChange={(e) => setDocKindDraft(e.target.value)} disabled={busy !== null}>
+                          <option value="">{t('worker_doc_kind_none')}</option>
+                          <option value="insurance">{t('worker_doc_kind_insurance')}</option>
+                          <option value="license">{t('worker_doc_kind_license')}</option>
+                          <option value="w9">{t('worker_doc_kind_w9')}</option>
+                          <option value="other">{t('worker_doc_kind_other')}</option>
+                        </select>
+                      </label>
+                      <label className="worker-doc-field">
+                        <span className="muted">{t('worker_doc_expires_label')}</span>
+                        <input type="date" value={docExpiresDraft} onChange={(e) => setDocExpiresDraft(e.target.value)} disabled={busy !== null} />
+                      </label>
+                    </div>
+                    <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>{t('worker_doc_expires_hint')}</p>
+                    <label className={`btn small worker-file-upload ${busy === 'profile_file' ? 'busy' : ''}`} style={{ marginTop: 8, display: 'inline-block' }}>
+                      <input type="file" hidden disabled={busy !== null} onChange={onProfileFilePick} />
+                      {busy === 'profile_file' ? t('loading') : t('dossier_file_upload')}
+                    </label>
+                  </div>
                 )}
               </>
             )}

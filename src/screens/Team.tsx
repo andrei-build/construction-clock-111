@@ -3,11 +3,26 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import { useLiveRefresh } from '../lib/useLiveRefresh'
-import { getTeam, getTodayEvents, createWorker, setWorkerCheckoutVideo } from '../lib/api'
+import { getTeam, getTodayEvents, createWorker, setWorkerCheckoutVideo, getExpiringWorkerDocs } from '../lib/api'
+import type { ExpiringWorkerDoc } from '../lib/api'
 import { workedMs, fmtHours, shiftState } from '../lib/time'
 import { buildWorkerDisambiguationMap } from '../lib/worker-utils'
 import { canAssignRole, isManagerWrite, type Profile, type Role, type TimeEvent } from '../lib/types'
 import { useEntityDrawer } from '../components/EntityDrawer'
+
+// DOC-EXPIRY-UI: пороги истечения документов для бейджей/плашки реестра. «Красный» уровень = просрочен
+// или ≤7 дн. (работать нельзя); «янтарный» = 8–30 дн. (скоро). Соответствует WorkerDetail.
+const DOC_EXPIRY_URGENT_DAYS = 7
+const DOC_DAY_MS = 24 * 60 * 60 * 1000
+type DocLevel = 'red' | 'amber'
+// Уровень одного документа по локальной дате expires_at (YYYY-MM-DD): red (≤7д/просрочен) или amber.
+function docLevel(expiresAt: string): DocLevel {
+  const target = new Date(`${expiresAt}T00:00:00`)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const days = Math.round((target.getTime() - today.getTime()) / DOC_DAY_MS)
+  return days <= DOC_EXPIRY_URGENT_DAYS ? 'red' : 'amber'
+}
 
 // TEAM-1: порядок ролевых групп на списке /team. owner/admin закреплены сверху,
 // далее менеджеры · супервайзеры · рабочие · доставщики · сабконтракторы · sales.
@@ -34,6 +49,8 @@ export default function Team() {
   const navigate = useNavigate()
   const [team, setTeam] = useState<Profile[]>([])
   const [events, setEvents] = useState<TimeEvent[]>([])
+  // DOC-EXPIRY-UI: истекающие/просроченные документы всей команды (одним запросом) — для бейджей и плашки.
+  const [expiringDocs, setExpiringDocs] = useState<ExpiringWorkerDoc[]>([])
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
   const [pin, setPin] = useState('')
@@ -43,7 +60,8 @@ export default function Team() {
 
   // LIVE-REFRESH-1: у экрана нет флага loading — load() и так фоновый (обновляет только массивы
   // team/events, не трогает форму добавления и открытый drawer), поэтому его же используем как refetch.
-  const load = () => Promise.all([getTeam(), getTodayEvents()]).then(([tm, e]) => { setTeam(tm); setEvents(e) })
+  const load = () => Promise.all([getTeam(), getTodayEvents(), getExpiringWorkerDocs()])
+    .then(([tm, e, docs]) => { setTeam(tm); setEvents(e); setExpiringDocs(docs) })
   useEffect(() => { load() }, [profile?.id])
 
   // LIVE-REFRESH-1: дашборд «Команда» — мягкий 60с-поллинг (только пока вкладка видима) + рефетч
@@ -66,6 +84,24 @@ export default function Team() {
     () => team.filter((w) => shiftState(byWorker.get(w.id) ?? []).status !== 'off').length,
     [team, byWorker],
   )
+
+  // DOC-EXPIRY-UI: худший уровень документа по работнику (red перекрывает amber) — для бейджа карточки.
+  const docLevelByWorker = useMemo(() => {
+    const m = new Map<string, DocLevel>()
+    for (const d of expiringDocs) {
+      const lvl = docLevel(d.expires_at)
+      if (lvl === 'red' || !m.has(d.profile_id)) m.set(d.profile_id, lvl)
+    }
+    return m
+  }, [expiringDocs])
+
+  // DOC-EXPIRY-UI: сводка для плашки — сколько документов просрочено/≤7д (red) и сколько 8–30д (amber).
+  const docSummary = useMemo(() => {
+    let red = 0
+    let amber = 0
+    for (const d of expiringDocs) (docLevel(d.expires_at) === 'red' ? red++ : amber++)
+    return { red, amber }
+  }, [expiringDocs])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -121,6 +157,14 @@ export default function Team() {
         {t('team_pulse_label')}: {t('on_shift')} {onShiftCount} {t('team_pulse_of')} {team.length}
       </div>
 
+      {/* DOC-EXPIRY-UI: компактная плашка-сводка, если у кого-то в команде истекают/просрочены документы. */}
+      {(docSummary.red > 0 || docSummary.amber > 0) && (
+        <div className={`card doc-expiry-summary ${docSummary.red > 0 ? 'red' : 'amber'}`}>
+          {docSummary.red > 0 && <span>{t('team_docs_summary_expired').replace('{n}', String(docSummary.red))}</span>}
+          {docSummary.amber > 0 && <span>{t('team_docs_summary_expiring').replace('{n}', String(docSummary.amber))}</span>}
+        </div>
+      )}
+
       {!adding && <button className="btn ghost small" onClick={() => setAdding(true)}>+ {t('add_worker')}</button>}
       {adding && (
         <form onSubmit={submit} className="card">
@@ -157,6 +201,15 @@ export default function Team() {
                   <div>
                     <button className="inline-link item-title" onClick={(e) => { e.stopPropagation(); openWorker(w) }}>{workerLabels.get(w.id) ?? w.name}</button>
                     <span className={`badge ${roleBadge(w.role)}`}>{w.role}</span>
+                    {/* DOC-EXPIRY-UI: бейдж истечения документа (red ≤7д/просрочен, amber 8–30д); title поясняет. */}
+                    {docLevelByWorker.get(w.id) && (
+                      <span
+                        className={`badge ${docLevelByWorker.get(w.id)}`}
+                        title={docLevelByWorker.get(w.id) === 'red' ? t('worker_docs_badge_expired') : t('worker_docs_badge_expiring')}
+                      >
+                        ⚠ {t('worker_docs_badge')}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="center">
