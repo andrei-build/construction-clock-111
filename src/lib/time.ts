@@ -1,4 +1,4 @@
-import type { TimeEvent, WorkInterval } from './types'
+import type { TimeEvent, TimeEventType, WorkInterval } from './types'
 
 // Состояние смены из событий дня (ДНК §2: история неизменна, состояние выводится)
 export type ShiftState = { status: 'off' | 'on' | 'break'; since: string | null; projectId: string | null }
@@ -81,9 +81,16 @@ export const DEFAULT_PAID_GAP_ALERT_HOURS = 1
 
 // A worker shift as epoch ms. endMs null = still open (no check-out yet): such a shift
 // can be the NEXT side of a gap (its start is a real check-in) but never the PREV side.
+// PAY-FIX-1: startType/endType — типы событий, которыми смена ОТКРЫЛАСЬ и ЗАКРЫЛАСЬ. Гэп между
+// сменами — оплачиваемый переезд ТОЛЬКО когда предыдущая закрыта check_out, а следующая открыта
+// check_in (см. computeTravelGaps). Разрыв «конец break_start → начало break_end» — это перерыв,
+// он НЕ травел и НЕ оплачивается. Опциональны: заполняются адаптерами intervalsToTravelShifts/
+// eventsToTravelShifts, когда известны типы; при отсутствии гэп травелом не считается.
 export interface TravelShift {
   startMs: number
   endMs: number | null
+  startType?: TimeEventType | null
+  endType?: TimeEventType | null
 }
 
 export interface TravelGap {
@@ -107,13 +114,27 @@ function travelDayKey(ms: number, timeZone: string | null): string {
 // unsorted; we sort by start. A gap is emitted only when the preceding shift is closed
 // (has a check-out) and the following check-in is strictly later AND on the same org-local
 // day. `alertHours` marks (not cuts) gaps that exceed the alert threshold.
+//
+// PAY-FIX-1: приведено к эталонной SQL-логике report_travel_hours (миграция 0064). Гэп между
+// двумя соседними интервалами засчитывается травелом ТОЛЬКО при ОДНОВРЕМЕННОМ выполнении:
+//   (1) предыдущий интервал закрылся событием check_out (endType==='check_out');
+//   (2) следующий интервал открылся событием check_in (startType==='check_in');
+//   (3) оба конца в один org-локальный день (правило c);
+//   (4) начало следующего строго позже конца предыдущего.
+// Разрыв-ПЕРЕРЫВ (предыдущий закончился break_start, следующий начался break_end — так
+// v_work_intervals режет смену на паре break_start/break_end) НЕ травел и НЕ оплачивается.
 export function computeTravelGaps(shifts: TravelShift[], timeZone: string | null, alertHours: number): TravelGap[] {
   const sorted = [...shifts].sort((a, b) => a.startMs - b.startMs)
   const gaps: TravelGap[] = []
   for (let i = 0; i < sorted.length - 1; i++) {
-    const prevEnd = sorted[i].endMs
+    const prev = sorted[i]
+    const next = sorted[i + 1]
+    const prevEnd = prev.endMs
     if (prevEnd === null) continue // open shift has no check-out → no gap after it yet
-    const nextStart = sorted[i + 1].startMs
+    // Правила (1)+(2): травел — только между уходом с объекта и приходом на объект. Перерыв
+    // (конец break_start / начало break_end) сюда не попадает и не оплачивается.
+    if (prev.endType !== 'check_out' || next.startType !== 'check_in') continue
+    const nextStart = next.startMs
     const gapMs = nextStart - prevEnd
     if (gapMs <= 0) continue // overlap or zero → not a gap
     // Rule (c): both check-out and next check-in must be the same org-local day.
@@ -130,6 +151,10 @@ export function intervalsToTravelShifts(intervals: WorkInterval[]): TravelShift[
   return intervals.map((i) => ({
     startMs: new Date(i.start_at).getTime(),
     endMs: i.end_at ? new Date(i.end_at).getTime() : null,
+    // PAY-FIX-1: типы концов интервала (подтянуты в team.ts из time_events). Без них гэп травелом
+    // не считается — та же строгость, что в SQL (нужны именно check_out→check_in).
+    startType: i.start_type ?? null,
+    endType: i.end_type ?? null,
   }))
 }
 
@@ -144,11 +169,13 @@ export function eventsToTravelShifts(events: TimeEvent[]): TravelShift[] {
   for (const e of sorted) {
     if (e.event_type === 'check_in') inAt = new Date(e.event_time).getTime()
     else if (e.event_type === 'check_out' && inAt !== null) {
-      shifts.push({ startMs: inAt, endMs: new Date(e.event_time).getTime() })
+      // PAY-FIX-1: тут смена всегда check_in→check_out (перерывы — внутренние, не режут смену),
+      // поэтому концы всегда travel-годные; проставляем типы, чтобы computeTravelGaps зачёл переезд.
+      shifts.push({ startMs: inAt, endMs: new Date(e.event_time).getTime(), startType: 'check_in', endType: 'check_out' })
       inAt = null
     }
   }
-  if (inAt !== null) shifts.push({ startMs: inAt, endMs: null })
+  if (inAt !== null) shifts.push({ startMs: inAt, endMs: null, startType: 'check_in', endType: null })
   return shifts
 }
 

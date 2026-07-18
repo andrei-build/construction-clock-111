@@ -3,11 +3,46 @@ import { logEvent } from './_shared'
 import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
 
 
+// PAY-FIX-1: строка истории ставок (одна из многих на работника). Порядок выбора актуальной ставки
+// должен совпадать с эталонным SQL report_payroll: `order by effective_from desc limit 1` (+детермин.
+// тай-брейк по created_at desc, чтобы при равных датах результат не «плавал»).
+export interface RateHistoryRow {
+  profile_id: string
+  hourly_rate: number | null
+  effective_from: string | null
+  created_at: string | null
+}
+
+// Чистый выбор актуальной ставки на работника из истории. Сортируем effective_from desc, затем
+// created_at desc и берём ПЕРВУЮ строку по каждому работнику — ту же «самую свежую», что и SQL.
+// Даты — ISO/`YYYY-MM-DD`, поэтому строковое сравнение эквивалентно хронологическому. Вынесено
+// отдельной чистой функцией, чтобы её детерминизм можно было проверить юнит-тестом.
+export function latestRateByWorker(rows: RateHistoryRow[]): ProfileRate[] {
+  const sorted = [...rows].sort((a, b) => {
+    const byEffective = (b.effective_from ?? '').localeCompare(a.effective_from ?? '')
+    if (byEffective !== 0) return byEffective
+    return (b.created_at ?? '').localeCompare(a.created_at ?? '')
+  })
+  const latest = new Map<string, ProfileRate>()
+  for (const row of sorted) {
+    if (!latest.has(row.profile_id)) {
+      latest.set(row.profile_id, { profile_id: row.profile_id, hourly_rate: row.hourly_rate === null ? null : Number(row.hourly_rate) })
+    }
+  }
+  return [...latest.values()]
+}
+
 export async function getVisibleProfileRates(): Promise<ProfileRate[]> {
+  // PAY-FIX-1: раньше строки истории тянулись БЕЗ порядка, и Map/`.find` на стороне расчёта брали
+  // произвольную ставку → деньги «плавали». Теперь читаем историю с детерминированным порядком
+  // (effective_from desc, created_at desc) и оставляем по одной актуальной ставке на работника —
+  // та же ставка, что выбирает SQL report_payroll.
   const { data, error } = await supabase.from('profile_rates')
-    .select('profile_id, hourly_rate')
+    .select('profile_id, hourly_rate, effective_from, created_at')
+    .order('effective_from', { ascending: false })
+    .order('created_at', { ascending: false })
   if (error) return []
-  return (data as ProfileRate[]) ?? []
+  return latestRateByWorker((data ?? []) as RateHistoryRow[])
 }
 
 export async function getCurrentPayPeriod(): Promise<PayPeriod | null> {
