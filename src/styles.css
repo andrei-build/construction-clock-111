@@ -5210,6 +5210,20 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 /* MAIL-UX-2: картинки в теле письма кликабельны (открывают лайтбокс). */
 .mail-html img { cursor: zoom-in; }
 
+/* LIGHTBOX-1: обёртки-кнопки вокруг кликабельных превью (фото задач/досье/каталога) — сбрасываем
+   стандартный вид кнопки, чтобы визуально осталась только миниатюра, но с семантикой кнопки. */
+.task-attach-thumb-btn,
+.drawer-photo-btn,
+.catalog-thumb-btn {
+  padding: 0; border: none; background: none; cursor: zoom-in;
+  display: block; line-height: 0; font: inherit; color: inherit;
+}
+.task-attach-thumb-btn img,
+.drawer-photo-btn img,
+.catalog-thumb-btn img { display: block; width: 100%; height: 100%; }
+.drawer-photo-btn { width: 100%; height: 100%; }
+.catalog-thumb-btn { width: 100%; height: 100%; }
+
 /* MAIL-UX-2: лайтбокс изображений письма — тёмный полноэкранный оверлей ВНУТРИ приложения. */
 .mail-lightbox {
   position: fixed; inset: 0; z-index: 95;

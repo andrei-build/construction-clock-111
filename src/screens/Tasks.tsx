@@ -10,6 +10,7 @@ import {
 import { isManagerRole, isManagerWrite } from '../lib/types'
 import type { Profile, Project, Task, TaskAttachment } from '../lib/types'
 import VoiceMic from '../components/VoiceMic'
+import { useImageLightbox, type LightboxImage } from '../components/ImageLightbox'
 import DeliveryInvoice from '../components/DeliveryInvoice'
 
 // DELIVERY-2: доставка = задача task_type 'delivery' | 'material' (накладная с позициями).
@@ -67,6 +68,8 @@ const EMPTY_FILTERS: FilterState = { project: 'all', type: 'all', status: 'all',
 export default function Tasks() {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
+  // LIGHTBOX-1: фото задач открываем В ПРИЛОЖЕНИИ через общий лайтбокс, не в отдельной вкладке.
+  const lb = useImageLightbox()
   const [tasks, setTasks] = useState<Task[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [team, setTeam] = useState<Profile[]>([])
@@ -416,9 +419,18 @@ export default function Tasks() {
         {photos.length > 0 && (
           <div className="task-attach-thumbs">
             {photos.map((a) => (
-              <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
+              <button
+                key={a.id}
+                type="button"
+                className="task-attach-thumb-btn"
+                onClick={() => {
+                  const withUrl = photos.filter((p) => p.url)
+                  const idx = Math.max(0, withUrl.findIndex((p) => p.id === a.id))
+                  lb.open(withUrl.map<LightboxImage>((p) => ({ id: p.id, name: p.filename ?? null, resolve: () => Promise.resolve(p.url as string) })), idx)
+                }}
+              >
                 <img className="task-attach-thumb" src={a.url} alt={a.filename ?? ''} />
-              </a>
+              </button>
             ))}
           </div>
         )}
@@ -483,6 +495,7 @@ export default function Tasks() {
 
   return (
     <div className="screen tasks-screen">
+      {lb.node}
       <h1>✅ {t('tasks_all_title')}</h1>
 
       {/* DELIVERY-2: переключатель «Задачи / Доставки» — два разных списка (закон Андрея). */}

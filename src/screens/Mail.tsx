@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import VoiceMic from '../components/VoiceMic'
-import MailImageLightbox, { type MailLightboxImage } from '../components/MailImageLightbox'
+import ImageLightbox, { type LightboxImage as MailLightboxImage } from '../components/ImageLightbox'
 import {
   addMailAllowlist,
   createCalendarEvent,
@@ -1332,18 +1332,10 @@ export default function Mail() {
       )}
 
       {lightbox && (
-        <MailImageLightbox
+        <ImageLightbox
           images={lightbox.images}
           initialIndex={lightbox.index}
           onClose={() => setLightbox(null)}
-          labels={{
-            close: t('mail_lightbox_close'),
-            prev: t('mail_lightbox_prev'),
-            next: t('mail_lightbox_next'),
-            download: t('mail_lightbox_download'),
-            loading: t('mail_lightbox_loading'),
-            error: t('mail_lightbox_error'),
-          }}
         />
       )}
 

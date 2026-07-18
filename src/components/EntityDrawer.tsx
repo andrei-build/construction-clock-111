@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AccountForm from './AccountForm'
+import { useImageLightbox, type LightboxImage } from './ImageLightbox'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import {
@@ -839,6 +840,8 @@ function ProjectPanel({ project, close, openWorker }: {
   openWorker: (worker: Profile) => void
 }) {
   const { t } = useI18n()
+  // LIGHTBOX-1: фото досье открываем В ПРИЛОЖЕНИИ (общий лайтбокс), не в отдельной вкладке.
+  const lb = useImageLightbox()
   const { profile } = useAuth()
   const navigate = useNavigate()
   const [team, setTeam] = useState<Profile[]>([])
@@ -933,6 +936,7 @@ function ProjectPanel({ project, close, openWorker }: {
 
   return (
     <>
+      {lb.node}
       <div className="drawer-hero">
         <div className="drawer-avatar project">📁</div>
         <div>
@@ -1006,8 +1010,18 @@ function ProjectPanel({ project, close, openWorker }: {
                 {photos.length === 0 && <div className="card muted">{t('no_photos')}</div>}
                 {photos.length > 0 && (
                   <div className="drawer-photo-grid">
-                    {photos.map((photo) => (
-                      <img key={photo.id} src={photo.url} alt={photo.filename ?? t('photo_preview')} />
+                    {photos.map((photo, i) => (
+                      <button
+                        key={photo.id}
+                        type="button"
+                        className="drawer-photo-btn"
+                        onClick={() => lb.open(
+                          photos.map<LightboxImage>((p) => ({ id: p.id, name: p.filename ?? null, resolve: () => Promise.resolve(p.url) })),
+                          i,
+                        )}
+                      >
+                        <img src={photo.url} alt={photo.filename ?? t('photo_preview')} />
+                      </button>
                     ))}
                   </div>
                 )}

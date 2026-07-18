@@ -1,47 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useI18n } from '../lib/i18n'
 
-// MAIL-UX-2: лайтбокс изображений письма (Gmail-стиль) — тёмный полноэкранный оверлей ВНУТРИ
-// приложения (никаких отдельных вкладок/страниц). Показывает объединённый список картинок одного
-// письма (inline-картинки тела + фото-вложения). Умеет: листание ← →, зум колесом и щипком (pinch),
-// панораму перетаскиванием при зуме, закрытие (крестик / Esc / клик по тёмному фону), скачивание.
-// Компонент api-агностичен: каждый элемент сам умеет резолвить свой URL (resolve) — для inline это
-// готовый src, для вложения — подписанная r2-sign ссылка (её передаёт Mail.tsx). URL кэшируем по id.
+// LIGHTBOX-1: единый лайтбокс изображений для ВСЕГО приложения (Закон Андрея: «все фотографии
+// открываются сначала большим размером по центру окна, а если надо — на весь экран В ПРИЛОЖЕНИИ,
+// не в отдельных ссылках»). Промоутнут из почтового MAIL-UX-2 в общий компонент. Тёмный оверлей
+// ВНУТРИ приложения (никаких новых вкладок/target=_blank для картинок). Умеет: листание ← →,
+// зум колесом и щипком (pinch), панораму перетаскиванием при зуме, «На весь экран» (Fullscreen API),
+// скачивание, закрытие (крестик / Esc / клик по тёмному фону). Компонент api-агностичен: каждый
+// элемент сам резолвит свой URL через resolve() — для готового src это Promise.resolve(src), для
+// файла R2/медиа — подписанная download-ссылка. URL кэшируется по id (resolve дёргаем максимум раз).
 
-export interface MailLightboxImage {
+export interface LightboxImage {
   id: string
   name: string | null
   // Резолвит отображаемый/скачиваемый URL картинки. Лайтбокс дёргает resolve() максимум один раз
-  // на элемент (результат кэшируется по id). Для inline — Promise.resolve(src); для вложения —
-  // getProjectFileDownloadUrl (r2-sign download), тот же путь скачивания, что уже есть.
+  // на элемент (результат кэшируется по id). Reject → статус ошибки для этого элемента.
   resolve: () => Promise<string>
 }
 
-interface Labels {
-  close: string
-  prev: string
-  next: string
-  download: string
-  loading: string
-  error: string
-}
+// MAIL-UX-2 совместимость: старое имя типа сохраняем как алиас.
+export type MailLightboxImage = LightboxImage
 
 interface Props {
-  images: MailLightboxImage[]
+  images: LightboxImage[]
   initialIndex: number
   onClose: () => void
-  labels: Labels
 }
 
 const MIN_SCALE = 1
 const MAX_SCALE = 6
 
-export default function MailImageLightbox({ images, initialIndex, onClose, labels }: Props) {
+export default function ImageLightbox({ images, initialIndex, onClose }: Props) {
+  const { t } = useI18n()
   const [index, setIndex] = useState(() =>
     Math.min(Math.max(0, initialIndex), Math.max(0, images.length - 1)),
   )
   // Кэш резолвнутых URL по id картинки — resolve() каждой дёргаем максимум один раз.
   const [urls, setUrls] = useState<Record<string, string>>({})
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [isFull, setIsFull] = useState(false)
 
   // Зум/панорама текущей картинки. Сбрасываются при листании.
   const [scale, setScale] = useState(1)
@@ -51,6 +48,7 @@ export default function MailImageLightbox({ images, initialIndex, onClose, label
   const current = images[index] ?? null
   const currentUrl = current ? urls[current.id] ?? null : null
 
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
   // Активные указатели (pointerId → координаты) для панорамы/пинча; pinchDist — прошлое расстояние
   // между двумя пальцами (для вычисления коэффициента масштаба).
@@ -78,16 +76,34 @@ export default function MailImageLightbox({ images, initialIndex, onClose, label
     resetView()
   }, [images.length, resetView])
 
-  // Клавиатура: Esc — закрыть, ← → — листать между картинками письма.
+  // Клавиатура: Esc — закрыть, ← → — листать между картинками.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') { if (!document.fullscreenElement) onClose() }
       else if (e.key === 'ArrowLeft') go(-1)
       else if (e.key === 'ArrowRight') go(1)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, go])
+
+  // «На весь экран» через Fullscreen API поверх оверлея. Синхронизируем локальный флаг с реальным
+  // состоянием (пользователь может выйти из fullscreen системным Esc/жестом).
+  useEffect(() => {
+    const onFsChange = () => setIsFull(document.fullscreenElement === rootRef.current)
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  const toggleFullscreen = useCallback(() => {
+    const el = rootRef.current
+    if (!el) return
+    if (document.fullscreenElement) {
+      void document.exitFullscreen?.()
+    } else {
+      void el.requestFullscreen?.().catch(() => {})
+    }
+  }, [])
 
   // Зум колесом мыши. React-обработчик onWheel пассивный (preventDefault не сработает и страница
   // проскроллится), поэтому вешаем нативный слушатель с { passive: false } на сцену.
@@ -141,12 +157,20 @@ export default function MailImageLightbox({ images, initialIndex, onClose, label
 
   const many = images.length > 1
   return (
-    <div className="mail-lightbox" role="dialog" aria-modal="true" onClick={onClose}>
+    <div className="mail-lightbox" role="dialog" aria-modal="true" ref={rootRef} onClick={onClose}>
       <div className="mail-lightbox-bar" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          className="mail-lightbox-btn"
+          aria-label={isFull ? t('lightbox_fullscreen_exit') : t('lightbox_fullscreen')}
+          onClick={toggleFullscreen}
+        >
+          {isFull ? '🗕' : '⛶'} {isFull ? t('lightbox_fullscreen_exit') : t('lightbox_fullscreen')}
+        </button>
         {currentUrl ? (
-          // Скачать: для вложения — подписанная r2-sign ссылка (тот же путь скачивания), для inline —
-          // её src. target=_blank rel=noopener — как остальные R2-скачивания приложения (не уводим
-          // из приложения; при Content-Disposition:attachment вкладка не задерживается).
+          // Скачать: подписанная download-ссылка (или готовый src). target=_blank rel=noopener — это
+          // ЯВНОЕ действие «скачать» (Content-Disposition), а не просмотр картинки; просмотр всегда
+          // остаётся внутри приложения. Как остальные R2-скачивания приложения.
           <a
             className="mail-lightbox-btn"
             href={currentUrl}
@@ -154,12 +178,12 @@ export default function MailImageLightbox({ images, initialIndex, onClose, label
             target="_blank"
             rel="noopener noreferrer"
           >
-            ⬇ {labels.download}
+            ⬇ {t('lightbox_download')}
           </a>
         ) : (
-          <span className="mail-lightbox-btn disabled" aria-disabled="true">⬇ {labels.download}</span>
+          <span className="mail-lightbox-btn disabled" aria-disabled="true">⬇ {t('lightbox_download')}</span>
         )}
-        <button type="button" className="mail-lightbox-btn" aria-label={labels.close} onClick={onClose}>✕</button>
+        <button type="button" className="mail-lightbox-btn" aria-label={t('lightbox_close')} onClick={onClose}>✕</button>
       </div>
 
       {many && (
@@ -167,7 +191,7 @@ export default function MailImageLightbox({ images, initialIndex, onClose, label
           <button
             type="button"
             className="mail-lightbox-nav prev"
-            aria-label={labels.prev}
+            aria-label={t('lightbox_prev')}
             onClick={(e) => { e.stopPropagation(); go(-1) }}
           >
             ‹
@@ -175,7 +199,7 @@ export default function MailImageLightbox({ images, initialIndex, onClose, label
           <button
             type="button"
             className="mail-lightbox-nav next"
-            aria-label={labels.next}
+            aria-label={t('lightbox_next')}
             onClick={(e) => { e.stopPropagation(); go(1) }}
           >
             ›
@@ -192,8 +216,8 @@ export default function MailImageLightbox({ images, initialIndex, onClose, label
         onPointerUp={endPointer}
         onPointerCancel={endPointer}
       >
-        {status === 'loading' && <div className="mail-lightbox-msg">{labels.loading}</div>}
-        {status === 'error' && <div className="mail-lightbox-msg">{labels.error}</div>}
+        {status === 'loading' && <div className="mail-lightbox-msg">{t('lightbox_loading')}</div>}
+        {status === 'error' && <div className="mail-lightbox-msg">{t('lightbox_error')}</div>}
         {status === 'ready' && currentUrl && (
           <img
             className="mail-lightbox-img"
@@ -215,4 +239,19 @@ export default function MailImageLightbox({ images, initialIndex, onClose, label
       )}
     </div>
   )
+}
+
+// Удобный хук: локальное состояние лайтбокса + готовый узел для рендера. Позволяет любому экрану
+// подключить общий лайтбокс тремя строчками: const lb = useImageLightbox(); lb.open(imgs, i); {lb.node}
+export function useImageLightbox() {
+  const [state, setState] = useState<{ images: LightboxImage[]; index: number } | null>(null)
+  const open = useCallback((images: LightboxImage[], index = 0) => {
+    if (images.length === 0) return
+    setState({ images, index: Math.min(Math.max(0, index), images.length - 1) })
+  }, [])
+  const close = useCallback(() => setState(null), [])
+  const node = state
+    ? <ImageLightbox images={state.images} initialIndex={state.index} onClose={close} />
+    : null
+  return { open, close, node }
 }

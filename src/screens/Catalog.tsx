@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { useImageLightbox, type LightboxImage } from '../components/ImageLightbox'
 import VoiceMic from '../components/VoiceMic'
 import {
   getCatalogItems,
@@ -82,6 +83,8 @@ const dims = (item: CatalogItem): string | null => {
 export default function Catalog() {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
+  // LIGHTBOX-1: фото позиций каталога открываем В ПРИЛОЖЕНИИ (общий лайтбокс), не в отдельной вкладке.
+  const lb = useImageLightbox()
   const [items, setItems] = useState<CatalogItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -235,6 +238,7 @@ export default function Catalog() {
 
   return (
     <div className="screen">
+      {lb.node}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <h1>🗂️ {t('catalog_title')}</h1>
         <button type="button" className="btn" onClick={openNew}>{t('catalog_add')}</button>
@@ -269,7 +273,22 @@ export default function Catalog() {
                 <div key={item.id} className={`card catalog-card ${item.is_active ? '' : 'muted'}`}>
                   <div className="catalog-thumb">
                     {item.photo_path
-                      ? <img src={item.photo_path} alt={item.name} loading="lazy" />
+                      ? (
+                        <button
+                          type="button"
+                          className="catalog-thumb-btn"
+                          onClick={() => {
+                            const withPhoto = group.rows.filter((r) => r.photo_path)
+                            const idx = Math.max(0, withPhoto.findIndex((r) => r.id === item.id))
+                            lb.open(
+                              withPhoto.map<LightboxImage>((r) => ({ id: r.id, name: r.name, resolve: () => Promise.resolve(r.photo_path as string) })),
+                              idx,
+                            )
+                          }}
+                        >
+                          <img src={item.photo_path} alt={item.name} loading="lazy" />
+                        </button>
+                      )
                       : <span className="catalog-thumb-empty" aria-hidden="true">🖼️</span>}
                   </div>
                   <div className="catalog-body">

@@ -42,6 +42,7 @@ import type {
   TimeEvent,
 } from '../lib/types'
 import VoiceMic from '../components/VoiceMic'
+import { useImageLightbox, type LightboxImage } from '../components/ImageLightbox'
 import DeliveryInvoice from '../components/DeliveryInvoice'
 import { useEntityDrawer } from '../components/EntityDrawer'
 
@@ -667,6 +668,8 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
 }) {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
+  // LIGHTBOX-1: фото задач открываем В ПРИЛОЖЕНИИ через общий лайтбокс, не в отдельной вкладке.
+  const lb = useImageLightbox()
   const [searchParams] = useSearchParams()
   // NAV-FIX-1: якорь доски задач — прокручиваем к ней при deep-link из KPI-плиток.
   const boardRef = useRef<HTMLElement>(null)
@@ -873,9 +876,18 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
         {photos.length > 0 && (
           <div className="task-attach-thumbs">
             {photos.map((a) => (
-              <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
+              <button
+                key={a.id}
+                type="button"
+                className="task-attach-thumb-btn"
+                onClick={() => {
+                  const withUrl = photos.filter((p) => p.url)
+                  const idx = Math.max(0, withUrl.findIndex((p) => p.id === a.id))
+                  lb.open(withUrl.map<LightboxImage>((p) => ({ id: p.id, name: p.filename ?? null, resolve: () => Promise.resolve(p.url as string) })), idx)
+                }}
+              >
                 <img className="task-attach-thumb" src={a.url} alt={a.filename ?? ''} />
-              </a>
+              </button>
             ))}
           </div>
         )}
@@ -917,6 +929,7 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
 
   return (
     <section ref={boardRef} className="card cc-card cc-board">
+      {lb.node}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <h2>🗂️ {t('cc_board')}</h2>
         <Link className="btn ghost small" to="/archive">📦 {t('cc_open_archive')}</Link>

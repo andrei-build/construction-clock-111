@@ -2018,6 +2018,15 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_lightbox_download: { ru: 'Скачать', en: 'Download', es: 'Descargar' },
   mail_lightbox_loading: { ru: 'Загрузка…', en: 'Loading…', es: 'Cargando…' },
   mail_lightbox_error: { ru: 'Не удалось загрузить изображение', en: 'Could not load image', es: 'No se pudo cargar la imagen' },
+  // LIGHTBOX-1: общий лайтбокс изображений (все фото открываются В ПРИЛОЖЕНИИ, не в отдельных вкладках).
+  lightbox_close: { ru: 'Закрыть', en: 'Close', es: 'Cerrar' },
+  lightbox_prev: { ru: 'Предыдущее', en: 'Previous', es: 'Anterior' },
+  lightbox_next: { ru: 'Следующее', en: 'Next', es: 'Siguiente' },
+  lightbox_download: { ru: 'Скачать', en: 'Download', es: 'Descargar' },
+  lightbox_loading: { ru: 'Загрузка…', en: 'Loading…', es: 'Cargando…' },
+  lightbox_error: { ru: 'Не удалось загрузить изображение', en: 'Could not load image', es: 'No se pudo cargar la imagen' },
+  lightbox_fullscreen: { ru: 'На весь экран', en: 'Fullscreen', es: 'Pantalla completa' },
+  lightbox_fullscreen_exit: { ru: 'Выйти из полноэкранного', en: 'Exit fullscreen', es: 'Salir de pantalla completa' },
   // MAIL-FIX-1: пагинация ленты, догрузка тела, состояние ошибки загрузки.
   mail_load_more: { ru: 'Показать ещё', en: 'Show more', es: 'Mostrar más' },
   mail_loading_more: { ru: 'Загружаем…', en: 'Loading…', es: 'Cargando…' },
