@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { CATALOG_CATEGORIES, getCatalogItems } from '../../lib/api'
+import { CATALOG_CATEGORIES, getCatalogItems, uploadProjectFileToR2 } from '../../lib/api'
 import type { CatalogCategory, CatalogItem } from '../../lib/api'
 import { useI18n } from '../../lib/i18n'
+import { supabase, SUPABASE_KEY, SUPABASE_URL } from '../../lib/supabase'
+import type { Profile, Project } from '../../lib/types'
 import {
   DEFAULT_FLOOR_PAINT,
   DEFAULT_GROUT_COLOR,
@@ -16,6 +18,7 @@ import {
   normalizeFinishes,
   normalizeTileSurface,
   sketchWallKey,
+  type SketchFinishes,
   type Pt,
   type Sketch3DModel,
   type SketchLight,
@@ -69,6 +72,7 @@ const INSIDE_LOOK_SENSITIVITY = 0.004
 const INSIDE_PITCH_LIMIT_RAD = 1.28
 const INSIDE_JOYSTICK_SPEED_FTPS = 4
 const SW_COLOR_LIMIT = 48
+const PHOTO_RENDER_MIME = 'image/png'
 
 type SurfaceTarget = 'walls' | 'wall' | 'floor'
 type PlacementKind = SketchLightKind | 'switch' | null
@@ -86,10 +90,36 @@ type InsideMoveApi = {
   setJoystickVector: (strafe: number, forward: number) => void
   stopJoystick: () => void
 }
+type PhotoRenderSnapshot = { dataUrl: string; width: number; height: number; blank: boolean }
+type PhotoRenderSnapshotApi = { capturePng: () => PhotoRenderSnapshot | null }
+type PhotoRenderFacts = {
+  room: Record<string, unknown>
+  tile: Record<string, unknown>
+  wall_color: Record<string, unknown>
+  items: Array<Record<string, unknown>>
+  extra: Record<string, unknown>
+}
+type PhotoRenderErrorCode = 'no_key' | 'gemini_failed' | 'no_session' | 'snapshot_failed' | 'request_failed'
+type PhotoRenderModalState =
+  | {
+      kind: 'success'
+      imageB64: string
+      mime: string
+      sourceImageB64: string
+      facts: PhotoRenderFacts
+      variant: number
+      saved: boolean
+      saveBusy: boolean
+      saveErrorKey?: string
+    }
+  | { kind: 'error'; messageKey: string }
 
 interface Sketch3DViewProps {
   model: Sketch3DModelWithCatalog
   heightFt: number
+  project?: Pick<Project, 'id' | 'name'> | null
+  profile?: Profile | null
+  sketchName?: string
   canEdit?: boolean
   onModelChange?: (model: Sketch3DModelWithCatalog) => void
   label: string
@@ -555,6 +585,334 @@ function formatFeet(valueFt: number): string {
   return formatFeetInches((Number.isFinite(valueFt) ? valueFt : 0) * 12)
 }
 
+function roundFact(value: number, digits = 3): number {
+  return Number.isFinite(value) ? Number(value.toFixed(digits)) : 0
+}
+
+function feetFact(valueFt: number): Record<string, unknown> {
+  return {
+    value_ft: roundFact(valueFt, 4),
+    text: formatFeet(valueFt),
+  }
+}
+
+function inchesFact(valueIn: number): Record<string, unknown> {
+  return {
+    value_in: roundFact(valueIn, 4),
+    text: formatInches(valueIn),
+  }
+}
+
+function swColorFact(color: string | undefined, fallback: string): Record<string, unknown> {
+  const hex = cleanColor(color, fallback)
+  const sw = SHERWIN_WILLIAMS_COLORS.find((row) => row.hex.toLowerCase() === hex.toLowerCase())
+  return {
+    hex,
+    code: sw?.code ?? null,
+    name: sw?.name ?? null,
+  }
+}
+
+function surfaceFinishFact(surface: SketchSurfaceFinish, fallbackPaint: string): Record<string, unknown> {
+  if (surface.kind === 'tile') {
+    const tile = normalizeTileSurface(surface)
+    return {
+      kind: 'tile',
+      source: 'solid_color',
+      user_photo: false,
+      tile_size: {
+        width: inchesFact(tile.tileWIn ?? 12),
+        height: inchesFact(tile.tileHIn ?? 24),
+      },
+      grout: {
+        width: inchesFact(tile.groutIn ?? DEFAULT_GROUT_IN),
+        color: cleanColor(tile.groutColor, DEFAULT_GROUT_COLOR),
+      },
+      tile_color: cleanColor(tile.tileColor, DEFAULT_TILE_COLOR),
+      offset: {
+        x: inchesFact(tile.offsetXIn ?? 0),
+        y: inchesFact(tile.offsetYIn ?? 0),
+      },
+    }
+  }
+
+  return {
+    kind: 'paint',
+    color: swColorFact(surface.color, fallbackPaint),
+  }
+}
+
+function tileSurfaceFact(surface: SketchSurfaceFinish): Record<string, unknown> | null {
+  return surface.kind === 'tile' ? surfaceFinishFact(surface, DEFAULT_WALL_PAINT) : null
+}
+
+function contourPerimeterFt(contour: SketchContour, cellFt: number): number {
+  let total = 0
+  for (let i = 1; i < contour.points.length; i++) total += dist(contour.points[i - 1], contour.points[i]) * cellFt
+  if (contour.closed && contour.points.length >= 3) total += dist(contour.points[contour.points.length - 1], contour.points[0]) * cellFt
+  return total
+}
+
+function contourAreaFt(contour: SketchContour, cellFt: number): number {
+  return contour.closed && contour.points.length >= 3 ? Math.abs(contourSignedArea(contour)) * cellFt * cellFt : 0
+}
+
+function openingHeightFt(o: Sketch3DModel['openings'][number], roomHeightFt: number): number {
+  const raw = o.kind === 'door' ? DOOR_H_FT : (o.h ?? WIN_H_FT)
+  return Math.max(0.2, Math.min(raw, Math.max(0.2, roomHeightFt)))
+}
+
+function openingSillFt(o: Sketch3DModel['openings'][number], roomHeightFt: number): number {
+  if (o.kind === 'door') return 0
+  const height = openingHeightFt(o, roomHeightFt)
+  return Math.max(0, Math.min(o.sill ?? WIN_SILL_FT, Math.max(0, roomHeightFt - height)))
+}
+
+function safeRenderSlug(value: string | undefined, fallback: string): string {
+  const clean = (value ?? '').trim().toLowerCase().replace(/[^a-z0-9а-я\-_]+/gi, '-').replace(/^-+|-+$/g, '')
+  return clean || fallback
+}
+
+function renderPhotoFileName(baseName: string, variant: number): string {
+  return `render-${baseName}-${Math.max(1, variant)}.png`
+}
+
+function photoImageSrc(imageB64: string, mime: string): string {
+  if (imageB64.startsWith('data:')) return imageB64
+  return `data:${mime || PHOTO_RENDER_MIME};base64,${imageB64}`
+}
+
+async function dataUrlToFile(dataUrl: string, name: string, mime: string): Promise<File> {
+  const response = await fetch(dataUrl)
+  const blob = await response.blob()
+  return new File([blob], name, { type: mime || PHOTO_RENDER_MIME })
+}
+
+class PhotoRenderRequestError extends Error {
+  readonly code: PhotoRenderErrorCode
+  readonly status?: number
+
+  constructor(code: PhotoRenderErrorCode, status?: number) {
+    super(code)
+    this.code = code
+    this.status = status
+  }
+}
+
+async function readRenderErrorText(response: Response): Promise<string | undefined> {
+  try {
+    const body = await response.clone().json()
+    const raw = (body as { error?: unknown; message?: unknown } | null)?.error ?? (body as { message?: unknown } | null)?.message
+    return typeof raw === 'string' && raw.trim() ? raw : undefined
+  } catch {
+    try {
+      const text = await response.text()
+      return text.trim() ? text : undefined
+    } catch {
+      return undefined
+    }
+  }
+}
+
+async function callRenderPhoto(imageB64: string, facts: PhotoRenderFacts): Promise<{ imageB64: string; mime: string }> {
+  const { data: { session } } = await supabase.auth.getSession()
+  const token = session?.access_token
+  if (!token) throw new PhotoRenderRequestError('no_session')
+
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/render-photo`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: SUPABASE_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ image_b64: imageB64, facts }),
+  })
+
+  if (!response.ok) {
+    await readRenderErrorText(response)
+    if (response.status === 503) throw new PhotoRenderRequestError('no_key', response.status)
+    if (response.status === 502) throw new PhotoRenderRequestError('gemini_failed', response.status)
+    throw new PhotoRenderRequestError('request_failed', response.status)
+  }
+
+  const body = await response.json() as { image_b64?: unknown; mime?: unknown }
+  const outB64 = typeof body.image_b64 === 'string' ? body.image_b64 : ''
+  if (!outB64) throw new PhotoRenderRequestError('request_failed')
+  const mime = typeof body.mime === 'string' && body.mime.startsWith('image/') ? body.mime : PHOTO_RENDER_MIME
+  return { imageB64: outB64, mime }
+}
+
+function photoRenderErrorKey(error: unknown): string {
+  const code = error instanceof PhotoRenderRequestError ? error.code : 'request_failed'
+  if (code === 'no_key') return 'hub_sketch_photo_render_no_key'
+  if (code === 'gemini_failed') return 'hub_sketch_photo_render_gemini_failed'
+  if (code === 'no_session') return 'hub_sketch_photo_render_no_session'
+  if (code === 'snapshot_failed') return 'hub_sketch_photo_render_snapshot_failed'
+  return 'hub_sketch_photo_render_failed'
+}
+
+function canvasLooksBlank(renderer: any): boolean {
+  const canvas = renderer.domElement as HTMLCanvasElement | undefined
+  const gl = typeof renderer.getContext === 'function'
+    ? renderer.getContext() as WebGLRenderingContext | WebGL2RenderingContext | null
+    : null
+  if (!canvas || !gl || canvas.width <= 0 || canvas.height <= 0) return true
+
+  const samples = [
+    [0.5, 0.5],
+    [0.25, 0.25],
+    [0.75, 0.25],
+    [0.25, 0.75],
+    [0.75, 0.75],
+  ]
+  const pixel = new Uint8Array(4)
+  let visible = false
+  let nonBlack = false
+  try {
+    samples.forEach(([sx, sy]) => {
+      const x = Math.max(0, Math.min(canvas.width - 1, Math.floor(canvas.width * sx)))
+      const y = Math.max(0, Math.min(canvas.height - 1, Math.floor(canvas.height * sy)))
+      gl.readPixels(x, canvas.height - 1 - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel)
+      if (pixel[3] > 0) visible = true
+      if (pixel[3] > 0 && (pixel[0] > 8 || pixel[1] > 8 || pixel[2] > 8)) nonBlack = true
+    })
+  } catch {
+    return false
+  }
+  return !visible || !nonBlack
+}
+
+function buildPhotoRenderFacts(
+  model: Sketch3DModelWithCatalog,
+  heightFt: number,
+  finishes: Required<SketchFinishes>,
+  resolvedItems: CatalogResolvedPlacedItem[],
+  cameraMode: CameraPreset,
+  sketchName?: string,
+  projectName?: string,
+): PhotoRenderFacts {
+  const cellFt = modelCellFt(model)
+  const bounds = modelBounds(model)
+  const height = Number.isFinite(heightFt) && heightFt > 0 ? heightFt : DEFAULT_WALL_HEIGHT_FT
+  const segments = eachSegment(model)
+  const wallFacts = segments.map((seg, index) => {
+    const key = sketchWallKey(seg.c, seg.s)
+    const override = finishes.wallFinishes[key]
+    const finish = override ?? finishes.walls
+    const lengthFt = dist(seg.a, seg.b) * cellFt
+    return {
+      key,
+      label: `Wall ${index + 1}`,
+      contour: seg.c,
+      segment: seg.s,
+      length: feetFact(lengthFt),
+      finish: surfaceFinishFact(finish, finishes.wallPaint),
+      overrides_default: Boolean(override),
+    }
+  })
+  const wallPaintOverrides = wallFacts
+    .filter((wall) => {
+      const finish = (wall.finish as { kind?: unknown }).kind
+      return finish === 'paint' && wall.overrides_default
+    })
+    .map((wall) => ({
+      key: wall.key,
+      label: wall.label,
+      color: (wall.finish as { color?: unknown }).color ?? null,
+    }))
+  const wallTileOverrides = wallFacts
+    .filter((wall) => (wall.finish as { kind?: unknown }).kind === 'tile' && wall.overrides_default)
+    .map((wall) => ({
+      key: wall.key,
+      label: wall.label,
+      tile: wall.finish,
+    }))
+
+  return {
+    room: {
+      width: feetFact(bounds.width),
+      depth: feetFact(bounds.depth),
+      height: feetFact(height),
+      area_ft2: roundFact(model.contours.reduce((sum, contour) => sum + contourAreaFt(contour, cellFt), 0), 2),
+      perimeter: feetFact(model.contours.reduce((sum, contour) => sum + contourPerimeterFt(contour, cellFt), 0)),
+      wall_count: segments.length,
+      contour_count: model.contours.length,
+    },
+    tile: {
+      floor: tileSurfaceFact(finishes.floor),
+      walls_default: tileSurfaceFact(finishes.walls),
+      per_wall: wallTileOverrides,
+      user_photo: false,
+    },
+    wall_color: {
+      default: finishes.walls.kind === 'paint'
+        ? swColorFact(finishes.walls.color, finishes.wallPaint)
+        : swColorFact(finishes.wallPaint, DEFAULT_WALL_PAINT),
+      per_wall: wallPaintOverrides,
+    },
+    items: resolvedItems.map((resolved) => ({
+      id: resolved.placed.id,
+      catalog_item_id: resolved.placed.catalogItemId,
+      name: resolved.name,
+      category: resolved.category,
+      brand: resolved.brand,
+      model: resolved.model,
+      surface: resolved.placed.surface,
+      dimensions: {
+        width: inchesFact(resolved.widthIn),
+        depth: inchesFact(resolved.depthIn),
+        height: inchesFact(resolved.heightIn),
+      },
+      position_ft: {
+        x: roundFact(resolved.placed.xFt, 4),
+        y: roundFact(resolved.placed.yFt, 4),
+        z: roundFact(resolved.placed.zFt, 4),
+      },
+      rotation_deg: roundFact((resolved.placed.rotationY * 180) / Math.PI, 2),
+      photo_url: resolved.photoPath,
+      missing_catalog_item: resolved.missingCatalogItem,
+    })),
+    extra: {
+      sketch_name: sketchName?.trim() || null,
+      project_name: projectName?.trim() || null,
+      camera_mode: cameraMode,
+      cell_ft: cellFt,
+      dimensions_hidden_for_capture: true,
+      floor_finish: surfaceFinishFact(finishes.floor, DEFAULT_FLOOR_PAINT),
+      wall_finishes: wallFacts,
+      openings: model.openings.map((opening, index) => ({
+        index,
+        kind: opening.kind,
+        contour: opening.c,
+        segment: opening.s,
+        t: roundFact(opening.t, 4),
+        width: feetFact(openingWidthFt(opening)),
+        height: feetFact(openingHeightFt(opening, height)),
+        sill: feetFact(openingSillFt(opening, height)),
+      })),
+      lights: (model.lights ?? []).map((light) => ({
+        id: light.id,
+        kind: light.kind,
+        name: light.name ?? null,
+        position_ft: {
+          x: Number.isFinite(light.xFt) ? roundFact(light.xFt ?? 0, 4) : null,
+          z: Number.isFinite(light.zFt) ? roundFact(light.zFt ?? 0, 4) : null,
+        },
+        wall: Number.isInteger(light.c) && Number.isInteger(light.s) ? { contour: light.c, segment: light.s, t: light.t ?? 0.5 } : null,
+        height: light.heightFt !== undefined ? feetFact(light.heightFt) : null,
+      })),
+      switches: (model.switches ?? []).map((sw) => ({
+        id: sw.id,
+        label: sw.label ?? null,
+        wall: { contour: sw.c, segment: sw.s, t: sw.t },
+        height: sw.heightFt !== undefined ? feetFact(sw.heightFt) : null,
+        controls: sw.controls ?? [],
+      })),
+    },
+  }
+}
+
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
@@ -975,12 +1333,14 @@ function addDimensionLineGroup(
   parent.add(heightLabel)
 }
 
-export default function Sketch3DView({ model, heightFt, canEdit = false, onModelChange, label, loadingLabel, errorLabel }: Sketch3DViewProps) {
+export default function Sketch3DView({ model, heightFt, project, profile, sketchName, canEdit = false, onModelChange, label, loadingLabel, errorLabel }: Sketch3DViewProps) {
   const { t } = useI18n()
   const shellRef = useRef<HTMLDivElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cameraApiRef = useRef<Record<CameraPreset, () => void> | null>(null)
   const insideMoveApiRef = useRef<InsideMoveApi | null>(null)
+  const photoSnapshotApiRef = useRef<PhotoRenderSnapshotApi | null>(null)
+  const photoRenderBusyRef = useRef(false)
   const joystickRef = useRef<HTMLDivElement | null>(null)
   const joystickPointerRef = useRef<number | null>(null)
   const dimensionGroupRef = useRef<any | null>(null)
@@ -1004,6 +1364,8 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const [browserFullscreen, setBrowserFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
   const [joystickKnob, setJoystickKnob] = useState<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false })
+  const [photoRenderBusy, setPhotoRenderBusy] = useState(false)
+  const [photoModal, setPhotoModal] = useState<PhotoRenderModalState | null>(null)
 
   const finishes = useMemo(() => normalizeFinishes(model.finishes), [model.finishes])
   const lights = useMemo(() => model.lights ?? [], [model.lights])
@@ -1025,6 +1387,10 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
     () => CATALOG_CATEGORIES.map((category) => ({ category, rows: catalogItems.filter((item) => item.category === category) }))
       .filter((group) => group.rows.length > 0),
     [catalogItems],
+  )
+  const photoRenderBaseName = useMemo(
+    () => safeRenderSlug(sketchName || project?.name, project?.id?.slice(0, 8) || 'sketch'),
+    [project?.id, project?.name, sketchName],
   )
   const wallSegments = useMemo(() => eachSegment(model), [model])
   const effectiveSelectedWallKey = selectedWallKey && wallSegments.some((seg) => sketchWallKey(seg.c, seg.s) === selectedWallKey)
@@ -1851,6 +2217,30 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           }
         })
 
+        const capturePng = (): PhotoRenderSnapshot | null => {
+          const canvas = renderer.domElement as HTMLCanvasElement
+          const previousDimensionVisibility = dimensionGroup.visible
+          dimensionGroup.visible = false
+          try {
+            controls.update()
+            renderer.render(scene, camera)
+            const blank = canvasLooksBlank(renderer)
+            const dataUrl = canvas.toDataURL(PHOTO_RENDER_MIME)
+            return {
+              dataUrl,
+              width: canvas.width,
+              height: canvas.height,
+              blank: blank || !dataUrl.startsWith(`data:${PHOTO_RENDER_MIME}`) || dataUrl.length < 200,
+            }
+          } catch {
+            return null
+          } finally {
+            dimensionGroup.visible = previousDimensionVisibility
+            renderer.render(scene, camera)
+          }
+        }
+        photoSnapshotApiRef.current = { capturePng }
+
         const raycaster = new THREE.Raycaster()
         const pointer = new THREE.Vector2()
         const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
@@ -2208,6 +2598,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           stopInsideJoystick()
           if (invalidate3DRef.current === invalidate) invalidate3DRef.current = null
           if (insideMoveApiRef.current?.stopJoystick === stopInsideJoystick) insideMoveApiRef.current = null
+          if (photoSnapshotApiRef.current?.capturePng === capturePng) photoSnapshotApiRef.current = null
           controls.removeEventListener('change', invalidate)
           renderer.domElement.removeEventListener('pointerdown', onPointerDown)
           renderer.domElement.removeEventListener('pointermove', onPointerMove)
@@ -2310,6 +2701,87 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
     event.stopPropagation()
   }
 
+  const requestPhotoRender = async (sourceImageB64: string, facts: PhotoRenderFacts, variant: number) => {
+    if (photoRenderBusyRef.current) return
+    photoRenderBusyRef.current = true
+    setPhotoRenderBusy(true)
+    try {
+      const result = await callRenderPhoto(sourceImageB64, facts)
+      setPhotoModal({
+        kind: 'success',
+        imageB64: result.imageB64,
+        mime: result.mime,
+        sourceImageB64,
+        facts,
+        variant,
+        saved: false,
+        saveBusy: false,
+      })
+    } catch (error) {
+      setPhotoModal({ kind: 'error', messageKey: photoRenderErrorKey(error) })
+    } finally {
+      photoRenderBusyRef.current = false
+      setPhotoRenderBusy(false)
+    }
+  }
+
+  const startPhotoRender = async () => {
+    const snapshot = photoSnapshotApiRef.current?.capturePng()
+    if (!snapshot || snapshot.blank) {
+      setPhotoModal({ kind: 'error', messageKey: 'hub_sketch_photo_render_snapshot_failed' })
+      return
+    }
+    const facts = buildPhotoRenderFacts(model, heightFt, finishes, resolvedPlacedItems, cameraMode, sketchName, project?.name)
+    setPhotoModal(null)
+    await requestPhotoRender(snapshot.dataUrl, facts, 1)
+  }
+
+  const requestAnotherPhotoRender = async () => {
+    if (!photoModal || photoModal.kind !== 'success') return
+    await requestPhotoRender(photoModal.sourceImageB64, photoModal.facts, photoModal.variant + 1)
+  }
+
+  const savePhotoRender = async () => {
+    if (!photoModal || photoModal.kind !== 'success') return
+    if (!profile || !project) {
+      setPhotoModal({ ...photoModal, saveErrorKey: 'hub_sketch_photo_render_no_session' })
+      return
+    }
+    const currentVariant = photoModal.variant
+    const currentImage = photoModal.imageB64
+    setPhotoModal({ ...photoModal, saveBusy: true, saveErrorKey: undefined })
+    try {
+      const fileName = renderPhotoFileName(photoRenderBaseName, currentVariant)
+      const file = await dataUrlToFile(photoImageSrc(currentImage, photoModal.mime), fileName, photoModal.mime)
+      await uploadProjectFileToR2(profile, project.id, file)
+      setPhotoModal((current) => (
+        current?.kind === 'success' && current.variant === currentVariant && current.imageB64 === currentImage
+          ? { ...current, saved: true, saveBusy: false, saveErrorKey: undefined }
+          : current
+      ))
+    } catch {
+      setPhotoModal((current) => (
+        current?.kind === 'success' && current.variant === currentVariant && current.imageB64 === currentImage
+          ? { ...current, saveBusy: false, saveErrorKey: 'hub_sketch_photo_render_save_failed' }
+          : current
+      ))
+    }
+  }
+
+  const downloadPhotoRender = () => {
+    if (!photoModal || photoModal.kind !== 'success') return
+    const link = document.createElement('a')
+    link.href = photoImageSrc(photoModal.imageB64, photoModal.mime)
+    link.download = renderPhotoFileName(photoRenderBaseName, photoModal.variant)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  }
+
+  const closePhotoRenderModal = () => {
+    if (!photoRenderBusyRef.current) setPhotoModal(null)
+  }
+
   return (
     <div className="hub-sketch-3d-layout">
       <div ref={shellRef} className={fullscreenActive ? 'hub-sketch-3d-shell hub-sketch-3d-shell-fullscreen' : 'hub-sketch-3d-shell'} role="img" aria-label={label}>
@@ -2336,10 +2808,20 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           <button type="button" className={cameraButtonClass('inside')} onClick={() => setCameraPreset('inside')}>
             {t('hub_sketch_camera_inside')}
           </button>
+          <button type="button" className="btn ghost small hub-sketch-photo-render-btn" disabled={state !== 'ready' || photoRenderBusy} onClick={startPhotoRender}>
+            <span aria-hidden="true">📷</span>
+            <span>{t('hub_sketch_photo_render')}</span>
+          </button>
           <button type="button" className="btn ghost small" aria-pressed={fullscreenActive} onClick={toggleFullscreen}>
             {t(fullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
           </button>
         </div>
+        {photoRenderBusy && (
+          <div className="hub-sketch-photo-render-overlay" role="status" aria-live="polite">
+            <span className="hub-sketch-photo-render-spinner" aria-hidden="true" />
+            <span>{t('hub_sketch_photo_render_busy')}</span>
+          </div>
+        )}
         {cameraMode === 'inside' && state === 'ready' && (
           <div className="hub-sketch-inside-controls">
             <div className="hub-sketch-inside-hint">{t('hub_sketch_inside_hint')}</div>
@@ -2399,6 +2881,60 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           </div>
         )}
       </div>
+
+      {photoModal && (
+        <div className="hub-sketch-render-backdrop" onMouseDown={closePhotoRenderModal}>
+          <div
+            className="card hub-sketch-render-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t(photoModal.kind === 'success' ? 'hub_sketch_photo_render_title' : 'hub_sketch_photo_render_error_title')}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="hub-sketch-render-head">
+              <h3>{t(photoModal.kind === 'success' ? 'hub_sketch_photo_render_title' : 'hub_sketch_photo_render_error_title')}</h3>
+              <button type="button" className="btn ghost small" disabled={photoRenderBusy} onClick={closePhotoRenderModal}>
+                {t('close')}
+              </button>
+            </div>
+
+            {photoModal.kind === 'success' ? (
+              <>
+                <div className="hub-sketch-render-preview">
+                  <img src={photoImageSrc(photoModal.imageB64, photoModal.mime)} alt={t('hub_sketch_photo_render_image_alt')} />
+                </div>
+                {photoModal.saved && <p className="hub-sketch-ok">{t('hub_sketch_photo_render_saved')}</p>}
+                {photoModal.saveErrorKey && <p className="error-msg">{t(photoModal.saveErrorKey)}</p>}
+                <div className="hub-sketch-render-actions">
+                  <button type="button" className="btn" disabled={photoModal.saveBusy || photoRenderBusy || !profile || !project} onClick={savePhotoRender}>
+                    {t('hub_sketch_photo_render_save_files')}
+                  </button>
+                  <button type="button" className="btn ghost" disabled={photoRenderBusy} onClick={downloadPhotoRender}>
+                    {t('download')}
+                  </button>
+                  <button type="button" className="btn ghost" disabled={photoRenderBusy} onClick={requestAnotherPhotoRender}>
+                    {t('hub_sketch_photo_render_another')}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="hub-sketch-render-error">
+                <p>{t(photoModal.messageKey)}</p>
+                <button type="button" className="btn" onClick={closePhotoRenderModal}>
+                  {t('close')}
+                </button>
+              </div>
+            )}
+
+            {photoRenderBusy && (
+              <div className="hub-sketch-render-busy" role="status" aria-live="polite">
+                <span className="hub-sketch-photo-render-spinner" aria-hidden="true" />
+                <span>{t('hub_sketch_photo_render_busy')}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {canEdit && (
         <aside className="hub-sketch-3d-panel" aria-label={t('hub_sketch_3d_panel')}>

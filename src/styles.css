@@ -3967,6 +3967,36 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   line-height: 1.1;
   white-space: nowrap;
 }
+.hub-sketch-photo-render-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hub-sketch-photo-render-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  padding: 18px;
+  text-align: center;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(8, 13, 22, .48);
+  pointer-events: auto;
+}
+.hub-sketch-photo-render-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid rgba(255, 255, 255, .35);
+  border-top-color: #fff;
+  border-radius: 999px;
+  animation: hub-sketch-photo-spin .85s linear infinite;
+}
+@keyframes hub-sketch-photo-spin {
+  to { transform: rotate(360deg); }
+}
 .hub-sketch-inside-controls {
   position: absolute;
   right: 10px;
@@ -4192,6 +4222,81 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin: 0;
   font-size: 14px;
   line-height: 1.2;
+}
+.hub-sketch-render-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, .58);
+}
+.hub-sketch-render-modal {
+  position: relative;
+  width: min(820px, 100%);
+  max-height: 92dvh;
+  margin: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.hub-sketch-render-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.hub-sketch-render-head h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.hub-sketch-render-preview {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0b1220;
+}
+.hub-sketch-render-preview img {
+  width: 100%;
+  max-height: min(64vh, 680px);
+  object-fit: contain;
+  display: block;
+}
+.hub-sketch-render-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hub-sketch-render-actions .btn {
+  width: auto;
+}
+.hub-sketch-render-error {
+  display: grid;
+  gap: 14px;
+}
+.hub-sketch-render-error p {
+  margin: 0;
+}
+.hub-sketch-render-error .btn {
+  justify-self: start;
+}
+.hub-sketch-render-busy {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  padding: 18px;
+  text-align: center;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(8, 13, 22, .58);
+  border-radius: 8px;
 }
 .hub-sketch-segmented,
 .hub-sketch-place-grid,
