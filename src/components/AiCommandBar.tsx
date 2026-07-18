@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
 import VoiceMic from './VoiceMic'
+import { supabase, SUPABASE_URL, SUPABASE_KEY } from '../lib/supabase'
 import {
   getTeam,
   getProjects,
@@ -81,6 +82,36 @@ function summarizePayload(payload: Record<string, unknown>): Array<[string, stri
     .map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)] as [string, string])
 }
 
+// AI-UX-1: на всякий случай убираем markdown при показе (edge v8 уже отдаёт живой текст без разметки,
+// но старые записи в истории или сбой промпта могут содержать ** / ## — рендерим plain-текст «как речь»).
+function stripMarkdown(s: string): string {
+  return s
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/`{1,3}/g, '')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}#{1,6}\s*$/gm, '')
+}
+
+// AI-UX-1: разбор одного SSE-события (блока строк между пустыми строками). Возвращаем имя события и
+// распарсенный data (JSON, а если не JSON — как {text}). Терпимо к отсутствию data/комментариям (: ).
+type SseEvent = { event: string; data: { text?: string; reply?: string; error?: string } | undefined }
+function parseSseEvent(block: string): SseEvent {
+  let event = 'message'
+  const dataLines: string[] = []
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''))
+  }
+  if (dataLines.length === 0) return { event, data: undefined }
+  const raw = dataLines.join('\n')
+  try {
+    return { event, data: JSON.parse(raw) }
+  } catch {
+    return { event, data: { text: raw } }
+  }
+}
+
 // --- AI-2-front: браузерные голосовые фичи (Web Speech API). Ничего не отправляем на сервер:
 // озвучка через window.speechSynthesis, wake-word — локальный webkitSpeechRecognition. ---
 
@@ -136,6 +167,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const [input, setInput] = useState('')
   const [thinking, setThinking] = useState(false)
   const [noKey, setNoKey] = useState(false)
+  // AI-UX-1: живой стрим последнего ответа (печатается по мере прихода SSE) + флаг стрима + раскрытие истории.
+  const [streamText, setStreamText] = useState('')
+  const [streaming, setStreaming] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const streamingRef = useRef(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<number | null>(null)
@@ -290,15 +326,9 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     setProposals(props)
   }, [])
 
-  // AI-VOICE-FIX-1: единый путь отправки вопроса (тот же, что кнопка «Отправить» и голосовой цикл).
-  // Возвращает исход + текст ответа ассистента, чтобы разговорный цикл мог его озвучить.
-  const sendQuestion = useCallback(
-    async (raw: string): Promise<{ kind: 'ok' | 'error' | 'nokey' | 'empty'; reply?: string }> => {
-      const msg = raw.trim()
-      if (!msg || thinkingRef.current) return { kind: 'empty' }
-      cancelSpeech() // прерываем текущую озвучку при новом вопросе
-      setThinking(true)
-      setNoKey(false)
+  // AI-UX-1: обычный (не-стрим) путь — ФОЛБЭК. Тот же контракт, что был до стрима (askAssistant).
+  const sendViaPost = useCallback(
+    async (msg: string): Promise<{ kind: 'ok' | 'error' | 'nokey'; reply?: string }> => {
       const res = await askAssistant(msg)
       if (res.error === 'no_key') { setNoKey(true); setThinking(false); return { kind: 'nokey' } }
       if (res.error) {
@@ -312,7 +342,105 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       const reply = [...msgs].reverse().find((m) => m.role === 'assistant')?.content
       return { kind: 'ok', reply }
     },
-    [cancelSpeech, flashToast, t],
+    [flashToast, t],
+  )
+
+  // AI-VOICE-FIX-1 / AI-UX-1: единый путь отправки вопроса (кнопка «Отправить» и голосовой цикл).
+  // ГЛАВНОЕ: SSE-стрим (body.stream=true) — первые слова печатаются сразу, ощущение живого собеседника.
+  // Заголовки те же, что supabase.functions.invoke (Authorization Bearer + apikey). Если поток недоступен
+  // или упал до первых слов — мягкий фолбэк на обычный POST (sendViaPost), UX не ломается.
+  // Возвращает исход + текст ответа, чтобы разговорный цикл мог его озвучить.
+  const sendQuestion = useCallback(
+    async (raw: string): Promise<{ kind: 'ok' | 'error' | 'nokey' | 'empty'; reply?: string }> => {
+      const msg = raw.trim()
+      if (!msg || thinkingRef.current) return { kind: 'empty' }
+      cancelSpeech() // прерываем текущую озвучку при новом вопросе
+      setThinking(true)
+      setNoKey(false)
+      setStreamText('')
+      setStreaming(true)
+      streamingRef.current = true
+
+      let streamedReply: string | null = null
+      let streamFailed = false
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        const token = session?.access_token
+        if (!token) throw new Error('no_session')
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-assistant`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            apikey: SUPABASE_KEY,
+          },
+          body: JSON.stringify({ message: msg, stream: true }),
+        })
+        if (!resp.ok || !resp.body) {
+          streamFailed = true // не-2xx (в т.ч. no_key) или нет тела → фолбэк на POST
+        } else {
+          const reader = resp.body.getReader()
+          const decoder = new TextDecoder()
+          let buf = ''
+          let acc = ''
+          let errored = false
+          let stop = false
+          while (!stop) {
+            const { value, done } = await reader.read()
+            if (done) break
+            buf = (buf + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
+            let sep: number
+            while ((sep = buf.indexOf('\n\n')) !== -1) {
+              const block = buf.slice(0, sep)
+              buf = buf.slice(sep + 2)
+              if (!block.trim()) continue
+              const ev = parseSseEvent(block)
+              if (ev.event === 'delta') {
+                const text = ev.data?.text
+                if (typeof text === 'string') {
+                  acc += text
+                  if (streamingRef.current && mountedRef.current) setStreamText(stripMarkdown(acc))
+                }
+              } else if (ev.event === 'done') {
+                streamedReply = typeof ev.data?.reply === 'string' && ev.data.reply ? ev.data.reply : acc
+                stop = true
+                break
+              } else if (ev.event === 'error') {
+                errored = true
+                stop = true
+                break
+              }
+            }
+          }
+          try { await reader.cancel() } catch { /* ignore */ }
+          if (streamedReply === null) {
+            // Поток закончился без «done»: если что-то напечаталось — считаем ответом, иначе фолбэк.
+            if (!errored && acc.trim()) streamedReply = acc
+            else streamFailed = true
+          }
+        }
+      } catch {
+        streamFailed = true
+      }
+
+      // ФОЛБЭК: поток недоступен/упал до первых слов → обычный POST (текущий путь). UX цел.
+      if (streamFailed && streamedReply === null) {
+        streamingRef.current = false
+        if (mountedRef.current) { setStreaming(false); setStreamText('') }
+        return await sendViaPost(msg)
+      }
+
+      // Стрим удался: edge уже записал user/assistant-строки и pending-предложения — рефетчим из БД
+      // (переиспользуем существующую логику proposals/истории без изменений).
+      streamingRef.current = false
+      const [msgs, props] = await Promise.all([getAiMessages(), getPendingProposals()])
+      if (mountedRef.current) {
+        setInput(''); setMessages(msgs); setProposals(props)
+        setThinking(false); setStreaming(false); setStreamText('')
+      }
+      return { kind: 'ok', reply: streamedReply ?? undefined }
+    },
+    [cancelSpeech, sendViaPost],
   )
 
   // Глобальные слушатели: Ctrl+K / Cmd+K и AI_OPEN_EVENT (кнопка «Спроси») открывают оверлей.
@@ -344,16 +472,17 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   useEffect(() => {
     if (!open) return
     setNoKey(false)
+    setHistoryOpen(false)
     setLoading(true)
     void load().finally(() => setLoading(false))
     const id = window.setTimeout(() => inputRef.current?.focus(), 40)
     return () => window.clearTimeout(id)
   }, [open, load])
 
-  // Автоскролл ленты вниз при изменении истории (пока открыт).
+  // Автоскролл ленты вниз при изменении истории (пока открыт И раскрыта панель истории).
   useEffect(() => {
-    if (open) historyEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [messages, open])
+    if (open && historyOpen) historyEndRef.current?.scrollIntoView({ block: 'end' })
+  }, [messages, open, historyOpen])
 
   // AI-2-front: при открытии сбрасываем «прайм» озвучки (историю вслух не читаем), при закрытии — глушим речь.
   useEffect(() => {
@@ -676,8 +805,36 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
 
   const wakeSupported = !!SpeechRecognitionImpl
 
-  // AI-VOICE-FIX-1: видимый статус голоса (иконка + подпись) для бейджа и панели.
-  const voiceView: { icon: string; label: string; hint?: string } | null =
+  // AI-UX-1: состояние «сущности»-орба. Отражает то, ЧТО делает ассистент — и зеркалит меня в «слушаю»
+  // (орб пульсирует в ритм моего голоса, micLevel из AI-VOICE-FIX-1). idle — покой (медленный пульс);
+  // listening — слушаю; thinking — думаю (идёт стрим/ответ); speaking — говорю (волны).
+  const micDenied = wakeOn && wakeSupported && voiceStatus === 'denied'
+  const orbState: 'idle' | 'listening' | 'thinking' | 'speaking' =
+    thinking || streaming
+      ? 'thinking'
+      : voiceStatus === 'listening'
+        ? 'listening'
+        : voiceStatus === 'speaking'
+          ? 'speaking'
+          : 'idle'
+  const orbLabel =
+    micDenied
+      ? t('ai_mic_denied_title')
+      : orbState === 'thinking'
+        ? t('ai_thinking')
+        : orbState === 'listening'
+          ? t('ai_status_listening')
+          : orbState === 'speaking'
+            ? t('ai_status_speaking')
+            : t('ai_orb_idle')
+
+  // AI-UX-1: крупный «последний ответ» под орбом — либо живой стрим, либо последний ответ ассистента.
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
+  const lastAnswer = lastAssistant ? stripMarkdown(lastAssistant.content) : ''
+
+  // Бейдж при закрытой панели (оставляем прежним — статус голоса без правки App/Nav).
+  const voicePulsing = voiceStatus === 'wake' || voiceStatus === 'listening'
+  const badgeView: { icon: string; label: string } | null =
     !wakeOn || !wakeSupported
       ? null
       : voiceStatus === 'wake'
@@ -689,26 +846,25 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
             : voiceStatus === 'speaking'
               ? { icon: '🔊', label: t('ai_status_speaking') }
               : voiceStatus === 'denied'
-                ? { icon: '❌', label: t('ai_mic_denied_title'), hint: t('ai_mic_denied_hint') }
+                ? { icon: '❌', label: t('ai_mic_denied_title') }
                 : null
-  const voicePulsing = voiceStatus === 'wake' || voiceStatus === 'listening'
 
   return (
     <>
-      {/* AI-VOICE-FIX-1: fixed-бейдж статуса голоса (без правки App/Nav), виден при закрытой панели. */}
-      {voiceView && !open && (
+      {/* Fixed-бейдж статуса голоса при закрытой панели (без правки App/Nav). */}
+      {badgeView && !open && (
         <div
           className={`ai-listening-badge ai-voice-${voiceStatus}`}
           role="status"
           aria-live="polite"
-          title={voiceView.hint ?? t('ai_wake_hint')}
+          title={t('ai_wake_hint')}
         >
           <span
             className={`ai-listening-dot ${voicePulsing ? 'on' : ''}`}
             aria-hidden="true"
             style={voiceStatus === 'listening' ? { transform: `scale(${1 + micLevel * 0.8})` } : undefined}
           />
-          <span className="ai-listening-text">{voiceView.icon} {voiceView.label}</span>
+          <span className="ai-listening-text">{badgeView.icon} {badgeView.label}</span>
         </div>
       )}
 
@@ -720,15 +876,26 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           aria-labelledby="ai-cmd-title"
           onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
         >
-          <div className="card ai-modal">
-            <div className="ai-head">
-              <div>
-                <h2 id="ai-cmd-title" className="ai-title">{t('ai_title')}</h2>
-                <p className="muted small ai-sub">{t('ai_subtitle')}</p>
+          <div className="card ai-modal ai-modal-v2">
+            {/* Крупный явный крестик закрытия (не мелкий в углу). */}
+            <button type="button" className="ai-close-x" onClick={() => setOpen(false)} aria-label={t('close')}>
+              ✕
+            </button>
+
+            {/* СУЩНОСТЬ: пульсирующий орб + подпись состояния под ним. */}
+            <div className="ai-orb-wrap">
+              <div
+                className={`ai-orb ai-orb-${orbState}${micDenied ? ' ai-orb-denied' : ''}`}
+                style={{ '--mic': orbState === 'listening' ? micLevel : 0 } as React.CSSProperties}
+                aria-hidden="true"
+              >
+                <span className="ai-orb-ring" />
+                <span className="ai-orb-ring ai-orb-ring2" />
+                <span className="ai-orb-core" />
               </div>
-              <button type="button" className="btn ghost ai-close" onClick={() => setOpen(false)} aria-label={t('close')}>
-                ✕
-              </button>
+              <h2 id="ai-cmd-title" className="ai-orb-title">{t('ai_title')}</h2>
+              <p className="ai-orb-label" role="status" aria-live="polite">{orbLabel}</p>
+              {micDenied && <p className="muted small ai-orb-hint">{t('ai_mic_denied_hint')}</p>}
             </div>
 
             {(TTS_SUPPORTED || wakeSupported) && (
@@ -756,110 +923,122 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
               </div>
             )}
 
-            {/* AI-VOICE-FIX-1: статус-индикатор голоса внутри панели (слушаю/думаю/говорю/запрещён). */}
-            {voiceView && (
-              <div className={`ai-voice-status ai-voice-${voiceStatus}`} role="status" aria-live="polite">
-                <span
-                  className={`ai-voice-icon ${voicePulsing ? 'on' : ''}`}
-                  aria-hidden="true"
-                  style={voiceStatus === 'listening' ? { transform: `scale(${1 + micLevel * 0.5})` } : undefined}
-                >
-                  {voiceView.icon}
-                </span>
-                <span className="ai-voice-label">{voiceView.label}</span>
-                {voiceView.hint && <span className="muted small ai-voice-hint">{voiceView.hint}</span>}
+            {noKey && (
+              <div className="ai-nokey" role="alert">
+                <strong>{t('ai_no_key_title')}</strong>
+                <span className="muted small">{t('ai_no_key_desc')}</span>
               </div>
             )}
 
-        <div className="ai-history">
-          {loading ? (
-            <p className="muted small">…</p>
-          ) : messages.length === 0 ? (
-            <p className="muted small ai-empty">{t('ai_empty')}</p>
-          ) : (
-            messages.map((m) => (
-              <div key={m.id} className={`ai-bubble ${m.role === 'user' ? 'ai-bubble-user' : 'ai-bubble-assistant'}`}>
-                {m.content}
+            {/* НЕ ЧАТ: последний ответ крупным текстом, печатается по мере прихода SSE. */}
+            <div className="ai-answer" role="status" aria-live="polite">
+              {loading ? (
+                <p className="ai-answer-text muted">…</p>
+              ) : streaming && streamText ? (
+                <p className="ai-answer-text">{streamText}<span className="ai-caret" aria-hidden="true" /></p>
+              ) : thinking || streaming ? (
+                <p className="ai-answer-text ai-answer-thinking">{t('ai_thinking')}</p>
+              ) : lastAnswer ? (
+                <p className="ai-answer-text">{lastAnswer}</p>
+              ) : (
+                <p className="ai-answer-empty muted">{t('ai_empty')}</p>
+              )}
+            </div>
+
+            {/* История — свёрнута за кнопкой (это ассистент, а не мессенджер). */}
+            {messages.length > 0 && (
+              <div className="ai-history-block">
+                <button
+                  type="button"
+                  className="btn ghost ai-history-toggle"
+                  onClick={() => setHistoryOpen((v) => !v)}
+                  aria-expanded={historyOpen}
+                >
+                  {historyOpen ? t('ai_history_hide') : t('ai_history')} ({messages.length})
+                </button>
+                {historyOpen && (
+                  <div className="ai-history">
+                    {messages.map((m) => (
+                      <div key={m.id} className={`ai-hist-row ai-hist-${m.role}`}>
+                        <span className="ai-hist-role">{m.role === 'user' ? t('ai_hist_you') : t('ai_hist_ai')}</span>
+                        <span className="ai-hist-text">
+                          {m.role === 'assistant' ? stripMarkdown(m.content) : m.content}
+                        </span>
+                      </div>
+                    ))}
+                    <div ref={historyEndRef} />
+                  </div>
+                )}
               </div>
-            ))
-          )}
-          {thinking && <div className="ai-bubble ai-bubble-assistant ai-thinking">{t('ai_thinking')}</div>}
-          <div ref={historyEndRef} />
-        </div>
+            )}
 
-        {proposals.length > 0 && (
-          <div className="ai-proposals">
-            <h3 className="ai-proposals-title">{t('ai_proposals_title')}</h3>
-            {proposals.map((pr) => {
-              const known = KNOWN_ACTIONS.has(pr.action_type)
-              const rows = summarizePayload(pr.payload)
-              return (
-                <div key={pr.id} className="ai-proposal card">
-                  <div className="ai-proposal-title">
-                    {t('ai_proposal_prefix')} {pr.title}
-                  </div>
-                  {rows.length > 0 && (
-                    <dl className="ai-proposal-payload">
-                      {rows.map(([k, v]) => (
-                        <div key={k} className="ai-payload-row">
-                          <dt>{k}</dt>
-                          <dd>{v}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  )}
-                  {!known && <p className="muted small ai-unsupported">{t('ai_unsupported')}</p>}
-                  <div className="row ai-proposal-actions">
-                    {known && (
-                      <button
-                        type="button"
-                        className="btn primary"
-                        disabled={busyId === pr.id}
-                        onClick={() => void executeProposal(pr)}
-                      >
-                        {t('ai_execute')}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn ghost"
-                      disabled={busyId === pr.id}
-                      onClick={() => void rejectProposal(pr)}
-                    >
-                      {t('ai_reject')}
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
+            {proposals.length > 0 && (
+              <div className="ai-proposals">
+                <h3 className="ai-proposals-title">{t('ai_proposals_title')}</h3>
+                {proposals.map((pr) => {
+                  const known = KNOWN_ACTIONS.has(pr.action_type)
+                  const rows = summarizePayload(pr.payload)
+                  return (
+                    <div key={pr.id} className="ai-proposal card">
+                      <div className="ai-proposal-title">
+                        {t('ai_proposal_prefix')} {pr.title}
+                      </div>
+                      {rows.length > 0 && (
+                        <dl className="ai-proposal-payload">
+                          {rows.map(([k, v]) => (
+                            <div key={k} className="ai-payload-row">
+                              <dt>{k}</dt>
+                              <dd>{v}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+                      {!known && <p className="muted small ai-unsupported">{t('ai_unsupported')}</p>}
+                      <div className="row ai-proposal-actions">
+                        {known && (
+                          <button
+                            type="button"
+                            className="btn primary"
+                            disabled={busyId === pr.id}
+                            onClick={() => void executeProposal(pr)}
+                          >
+                            {t('ai_execute')}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          disabled={busyId === pr.id}
+                          onClick={() => void rejectProposal(pr)}
+                        >
+                          {t('ai_reject')}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
 
-        {noKey && (
-          <div className="ai-nokey" role="alert">
-            <strong>{t('ai_no_key_title')}</strong>
-            <span className="muted small">{t('ai_no_key_desc')}</span>
-          </div>
-        )}
-
-        <form className="ai-input-row" onSubmit={submit}>
-          <input
-            ref={inputRef}
-            className="ai-input"
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={t('ai_placeholder')}
-            disabled={thinking}
-          />
-          <VoiceMic
-            lang={lang}
-            title={t('ai_voice_hint')}
-            onResult={(text) => setInput((v) => (v ? `${v} ${text}` : text))}
-          />
-          <button type="submit" className="btn primary" disabled={thinking || !input.trim()}>
-            {thinking ? t('ai_thinking') : t('ai_send')}
-          </button>
+            {/* КРУПНЫЕ ОРГАНЫ: большой микрофон + поле + отправка. */}
+            <form className="ai-input-row" onSubmit={submit}>
+              <input
+                ref={inputRef}
+                className="ai-input"
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={t('ai_placeholder')}
+                disabled={thinking}
+              />
+              <VoiceMic
+                lang={lang}
+                title={t('ai_voice_hint')}
+                onResult={(text) => setInput((v) => (v ? `${v} ${text}` : text))}
+              />
+              <button type="submit" className="btn primary ai-send-btn" disabled={thinking || !input.trim()}>
+                {thinking ? t('ai_thinking') : t('ai_send')}
+              </button>
             </form>
           </div>
 

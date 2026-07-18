@@ -2006,6 +2006,12 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_status_speaking: { ru: 'Говорю…', en: 'Speaking…', es: 'Hablando…' },
   ai_mic_denied_title: { ru: 'Микрофон запрещён', en: 'Microphone blocked', es: 'Micrófono bloqueado' },
   ai_mic_denied_hint: { ru: 'Разрешите доступ к микрофону в настройках сайта (значок 🔒 в адресной строке), чтобы говорить с ассистентом.', en: 'Allow microphone access in your site settings (the 🔒 icon in the address bar) to talk to the assistant.', es: 'Permita el acceso al micrófono en la configuración del sitio (el icono 🔒 en la barra de direcciones) para hablar con el asistente.' },
+  // AI-UX-1: орб-сущность (подпись покоя), свёрнутая история, роли в истории.
+  ai_orb_idle: { ru: 'Готов помочь', en: 'Ready to help', es: 'Listo para ayudar' },
+  ai_history: { ru: 'История', en: 'History', es: 'Historial' },
+  ai_history_hide: { ru: 'Скрыть историю', en: 'Hide history', es: 'Ocultar historial' },
+  ai_hist_you: { ru: 'Вы', en: 'You', es: 'Usted' },
+  ai_hist_ai: { ru: 'Ассистент', en: 'Assistant', es: 'Asistente' },
 
   // DELIVERY-2: доставки как накладная с позициями (delivery_items). Вкладки, бейдж, прогресс,
   // модал-накладная с построчным вводом и отметками водителей.
