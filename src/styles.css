@@ -3911,13 +3911,39 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-door,
 .hub-sketch-window,
 .hub-sketch-preview,
-.hub-sketch-opening-hit {
+.hub-sketch-opening-hit,
+.hub-sketch-dim-main,
+.hub-sketch-dim-extension,
+.hub-sketch-dim-tick {
   vector-effect: non-scaling-stroke;
 }
 .hub-sketch-subgrid line { stroke: #edf1f5; stroke-width: 1; }
 .hub-sketch-grid line { stroke: #d7dee8; stroke-width: 1; }
 .hub-sketch-wall { stroke: #1f2933; stroke-width: 3; fill: rgba(31, 41, 51, .06); stroke-linejoin: round; stroke-linecap: round; }
 .hub-sketch-dim { fill: #334155; font-size: 12px; font-weight: 700; pointer-events: none; }
+.hub-sketch-dim-line,
+.hub-sketch-opening-dim {
+  pointer-events: none;
+}
+.hub-sketch-dim-main,
+.hub-sketch-dim-extension,
+.hub-sketch-dim-tick {
+  stroke: #334155;
+  stroke-width: 1.15;
+  stroke-linecap: round;
+  fill: none;
+}
+.hub-sketch-dim-extension {
+  opacity: .58;
+}
+.hub-sketch-dim-label {
+  fill: #334155;
+  stroke: rgba(255, 255, 255, .94);
+  stroke-width: 3.5;
+  paint-order: stroke;
+  font-weight: 850;
+  letter-spacing: 0;
+}
 .hub-sketch-node { fill: #0f172a; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-door { fill: #b45309; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-window { fill: #2563eb; stroke: #ffffff; stroke-width: 2; }
@@ -3952,19 +3978,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-door { stroke: #b45309; stroke-width: 6; stroke-linecap: butt; }
 .hub-sketch-window { stroke: #2563eb; stroke-width: 6; stroke-linecap: butt; }
 .hub-sketch-opening-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
-.hub-sketch-opening-dim {
-  pointer-events: none;
-}
-.hub-sketch-opening-dim text {
-  stroke: rgba(255, 255, 255, .94);
-  stroke-width: 3.5;
-  paint-order: stroke;
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0;
-}
-.hub-sketch-opening-dim-door text { fill: #7c2d12; }
-.hub-sketch-opening-dim-window text { fill: #1d4ed8; }
+.hub-sketch-opening-dim-door .hub-sketch-dim-main,
+.hub-sketch-opening-dim-door .hub-sketch-dim-extension,
+.hub-sketch-opening-dim-door .hub-sketch-dim-tick { stroke: #7c2d12; }
+.hub-sketch-opening-dim-window .hub-sketch-dim-main,
+.hub-sketch-opening-dim-window .hub-sketch-dim-extension,
+.hub-sketch-opening-dim-window .hub-sketch-dim-tick { stroke: #1d4ed8; }
+.hub-sketch-opening-dim-door .hub-sketch-dim-label { fill: #7c2d12; }
+.hub-sketch-opening-dim-window .hub-sketch-dim-label { fill: #1d4ed8; }
 .hub-sketch-3d-dim-toggle {
   position: absolute;
   top: 10px;

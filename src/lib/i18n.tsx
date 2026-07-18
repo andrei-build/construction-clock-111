@@ -1103,6 +1103,7 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_camera_fit: { ru: 'Вписать', en: 'Fit', es: 'Ajustar' },
   hub_sketch_camera_top: { ru: 'Сверху', en: 'Top', es: 'Arriba' },
   hub_sketch_camera_angle: { ru: 'Угол', en: 'Angle', es: 'Ángulo' },
+  hub_sketch_camera_inside: { ru: 'Внутри', en: 'Inside', es: 'Dentro' },
   hub_sketch_finish: { ru: 'Замкнуть', en: 'Close shape', es: 'Cerrar forma' },
   hub_sketch_undo: { ru: 'Отменить', en: 'Undo', es: 'Deshacer' },
   hub_sketch_clear: { ru: 'Очистить', en: 'Clear', es: 'Limpiar' },

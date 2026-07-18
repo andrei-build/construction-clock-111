@@ -34,6 +34,7 @@ const DEFAULT_GRID_ROWS = 18
 const VIEW_W = DEFAULT_GRID_COLS * CELL_PX
 const VIEW_H = DEFAULT_GRID_ROWS * CELL_PX
 const MIN_VIEW_CELLS = 4
+const MAX_VIEW_CELLS = 4096
 const SUBGRID_HIDE_PX_PER_FT = 18
 const CLOSE_SNAP = 0.45 // клетки — попадание в стартовую точку замыкает контур
 const SEG_HIT = 0.7 // клетки — попадание в сегмент при установке двери/окна
@@ -41,6 +42,9 @@ const ROOM_SNAP = 0.6 // клетки — радиус прилипания но
 const EDGE_FT_SNAP = 0.25 // фута — прилипание проёма к ровному футу при отпускании
 const HISTORY_MAX = 60
 const DEFAULT_WALL_HEIGHT_FT = 8
+const DIM_OFFSET_SCREEN_PX = 24
+const DIM_LABEL_SCREEN_PX = 12
+const DIM_TICK_SCREEN_PX = 8
 
 // Дефолтные габариты проёмов в футах (законы Андрея 17.07).
 const DOOR_W_FT = 3
@@ -230,16 +234,14 @@ function canvasAspect(size: CanvasSize): number {
   return size.width > 0 && size.height > 0 ? size.width / size.height : VIEW_W / VIEW_H
 }
 
-function constrainCanvasView(model: SketchModel, size: CanvasSize, view: CanvasView): CanvasView {
+function normalizeCanvasView(size: CanvasSize, view: CanvasView): CanvasView {
   const aspect = canvasAspect(size)
-  const bounds = sketchBounds(model)
-  const maxModelCells = Math.max(DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, bounds.width + 16, bounds.height + 16)
   const minWidth = MIN_VIEW_CELLS * CELL_PX
-  const maxWidth = maxModelCells * CELL_PX * 4
+  const maxWidth = MAX_VIEW_CELLS * CELL_PX
   const width = Math.max(minWidth, Math.min(maxWidth, Number.isFinite(view.width) ? view.width : VIEW_W))
   const height = width / aspect
-  const cx = Number.isFinite(view.x) ? view.x + view.width / 2 : VIEW_W / 2
-  const cy = Number.isFinite(view.y) ? view.y + view.height / 2 : VIEW_H / 2
+  const cx = Number.isFinite(view.x) && Number.isFinite(view.width) ? view.x + view.width / 2 : 0
+  const cy = Number.isFinite(view.y) && Number.isFinite(view.height) ? view.y + view.height / 2 : 0
   return {
     x: cx - width / 2,
     y: cy - height / 2,
@@ -251,6 +253,16 @@ function constrainCanvasView(model: SketchModel, size: CanvasSize, view: CanvasV
 function fitCanvasView(model: SketchModel, size: CanvasSize): CanvasView {
   const bounds = sketchBounds(model)
   const aspect = canvasAspect(size)
+  if (!bounds.hasPoints) {
+    const width = VIEW_W
+    const height = width / aspect
+    return normalizeCanvasView(size, {
+      x: -width / 2,
+      y: -height / 2,
+      width,
+      height,
+    })
+  }
   const span = Math.max(bounds.width, bounds.height)
   const padCells = bounds.hasPoints ? Math.max(2, Math.min(8, span * 0.08)) : 0
   const minX = bounds.hasPoints ? bounds.minX - padCells : 0
@@ -264,7 +276,7 @@ function fitCanvasView(model: SketchModel, size: CanvasSize): CanvasView {
   const height = width / aspect
   const cx = ((minX + maxX) / 2) * CELL_PX
   const cy = ((minY + maxY) / 2) * CELL_PX
-  return constrainCanvasView(model, size, {
+  return normalizeCanvasView(size, {
     x: cx - width / 2,
     y: cy - height / 2,
     width,
@@ -285,7 +297,7 @@ function canvasViewContainsModel(model: SketchModel, view: CanvasView): boolean 
 function gridLinePositions(startPx: number, endPx: number, stepPx: number, skipEveryOther = false): number[] {
   const start = Math.floor(startPx / stepPx) - 1
   const end = Math.ceil(endPx / stepPx) + 1
-  const count = Math.min(900, Math.max(0, end - start + 1))
+  const count = Math.max(0, end - start + 1)
   return Array.from({ length: count }, (_, i) => start + i)
     .filter((n) => !skipEveryOther || n % 2 !== 0)
     .map((n) => n * stepPx)
@@ -308,21 +320,144 @@ const EMPTY_MODEL: SketchModel = { version: 1, cellFt: CELL_FT, contours: [], op
 
 function fmtFt(valueFt: number): string {
   const safe = Number.isFinite(valueFt) ? valueFt : 0
-  return `${safe.toFixed(1)}′`
+  return `${safe.toFixed(1)} ft`
 }
 
 function fmtLen(cells: number): string {
   return fmtFt(cells * CELL_FT)
 }
 
-type OpeningDimLabel = {
-  x: number
-  y: number
-  lines: string[]
-  kind: Opening['kind']
+type DimLineKind = Opening['kind'] | 'wall'
+
+type DimLine2D = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  ext1x1: number
+  ext1y1: number
+  ext1x2: number
+  ext1y2: number
+  ext2x1: number
+  ext2y1: number
+  ext2x2: number
+  ext2y2: number
+  tick1x1: number
+  tick1y1: number
+  tick1x2: number
+  tick1y2: number
+  tick2x1: number
+  tick2y1: number
+  tick2x2: number
+  tick2y2: number
+  labelX: number
+  labelY: number
+  angle: number
+  text: string
+  kind: DimLineKind
 }
 
-function openingDimLabel(model: SketchModel, opening: Opening, index: number, t: (k: string) => string): OpeningDimLabel | null {
+type OpeningDimLabel = DimLine2D & { kind: Opening['kind'] }
+type SegmentDimLine = DimLine2D & { kind: 'wall' }
+
+function contourCenter(contour: Contour): Pt {
+  if (contour.points.length === 0) return { x: 0, y: 0 }
+  const sum = contour.points.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 })
+  return { x: sum.x / contour.points.length, y: sum.y / contour.points.length }
+}
+
+function readableSvgAngle(dx: number, dy: number): number {
+  let angle = (Math.atan2(dy, dx) * 180) / Math.PI
+  if (angle > 90 || angle < -90) angle += 180
+  return angle
+}
+
+function createDimLine(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  nx: number,
+  ny: number,
+  offsetPx: number,
+  screenWorldPx: number,
+  text: string,
+  kind: DimLineKind,
+): DimLine2D | null {
+  const dx = bx - ax
+  const dy = by - ay
+  const len = Math.hypot(dx, dy)
+  if (len <= 0.01) return null
+  const ux = dx / len
+  const uy = dy / len
+  const gap = 4 * screenWorldPx
+  const tick = DIM_TICK_SCREEN_PX * screenWorldPx
+  const labelGap = DIM_LABEL_SCREEN_PX * screenWorldPx
+  const x1 = ax + nx * offsetPx
+  const y1 = ay + ny * offsetPx
+  const x2 = bx + nx * offsetPx
+  const y2 = by + ny * offsetPx
+  const slashX = (ux + nx) * tick
+  const slashY = (uy + ny) * tick
+  return {
+    x1,
+    y1,
+    x2,
+    y2,
+    ext1x1: ax + nx * gap,
+    ext1y1: ay + ny * gap,
+    ext1x2: x1 + nx * gap,
+    ext1y2: y1 + ny * gap,
+    ext2x1: bx + nx * gap,
+    ext2y1: by + ny * gap,
+    ext2x2: x2 + nx * gap,
+    ext2y2: y2 + ny * gap,
+    tick1x1: x1 - slashX / 2,
+    tick1y1: y1 - slashY / 2,
+    tick1x2: x1 + slashX / 2,
+    tick1y2: y1 + slashY / 2,
+    tick2x1: x2 - slashX / 2,
+    tick2y1: y2 - slashY / 2,
+    tick2x2: x2 + slashX / 2,
+    tick2y2: y2 + slashY / 2,
+    labelX: (x1 + x2) / 2 + nx * labelGap,
+    labelY: (y1 + y2) / 2 + ny * labelGap,
+    angle: readableSvgAngle(dx, dy),
+    text,
+    kind,
+  }
+}
+
+function outsideNormal(model: SketchModel, c: number, ax: number, ay: number, bx: number, by: number): { nx: number; ny: number } {
+  const dx = bx - ax
+  const dy = by - ay
+  const len = Math.hypot(dx, dy) || 1
+  let nx = -dy / len
+  let ny = dx / len
+  const contour = model.contours[c]
+  if (contour?.points.length) {
+    const center = contourCenter(contour)
+    const midX = (ax + bx) / 2 / CELL_PX
+    const midY = (ay + by) / 2 / CELL_PX
+    if ((center.x - midX) * nx + (center.y - midY) * ny > 0) {
+      nx *= -1
+      ny *= -1
+    }
+  }
+  return { nx, ny }
+}
+
+function segmentDimLine(model: SketchModel, seg: { c: number; s: number; a: Pt; b: Pt }, screenWorldPx: number): SegmentDimLine | null {
+  const ax = seg.a.x * CELL_PX
+  const ay = seg.a.y * CELL_PX
+  const bx = seg.b.x * CELL_PX
+  const by = seg.b.y * CELL_PX
+  const { nx, ny } = outsideNormal(model, seg.c, ax, ay, bx, by)
+  const offset = DIM_OFFSET_SCREEN_PX * screenWorldPx
+  return createDimLine(ax, ay, bx, by, nx, ny, offset, screenWorldPx, fmtLen(dist(seg.a, seg.b)), 'wall') as SegmentDimLine | null
+}
+
+function openingDimLabel(model: SketchModel, opening: Opening, index: number, t: (k: string) => string, screenWorldPx: number): OpeningDimLabel | null {
   const g = openingGeom(model, opening)
   if (!g) return null
   const segLenCells = dist(g.a, g.b)
@@ -330,26 +465,47 @@ function openingDimLabel(model: SketchModel, opening: Opening, index: number, t:
   const cellFt = modelCellFt(model)
   const widthFt = openingWidthFt(opening)
   const widthCells = Math.min(widthFt / cellFt, segLenCells)
-  const centerCells = Math.max(0, Math.min(segLenCells, opening.t * segLenCells))
-  const leftFt = Math.max(0, (centerCells - widthCells / 2) * cellFt)
-  const rightFt = Math.max(0, (segLenCells - centerCells - widthCells / 2) * cellFt)
-  const side = (opening.c + opening.s + index) % 2 === 0 ? 1 : -1
-  const offsetPx = 22 + (index % 2) * 14
-  return {
-    x: g.p.x * CELL_PX + (-g.uy) * side * offsetPx,
-    y: g.p.y * CELL_PX + g.ux * side * offsetPx,
-    kind: opening.kind,
-    lines: [
-      `${t('hub_sketch_dim_size_short')} ${fmtFt(widthFt)}×${fmtFt(openingHeightFt(opening))}`,
-      `${t('hub_sketch_dim_floor_short')} ${fmtFt(openingFloorFt(opening))}`,
-      `${t('hub_sketch_dim_left_short')} ${fmtFt(leftFt)} · ${t('hub_sketch_dim_right_short')} ${fmtFt(rightFt)}`,
-    ],
-  }
+  const hx = (g.ux * widthCells * CELL_PX) / 2
+  const hy = (g.uy * widthCells * CELL_PX) / 2
+  const ax = g.p.x * CELL_PX - hx
+  const ay = g.p.y * CELL_PX - hy
+  const bx = g.p.x * CELL_PX + hx
+  const by = g.p.y * CELL_PX + hy
+  const normal = outsideNormal(model, opening.c, g.a.x * CELL_PX, g.a.y * CELL_PX, g.b.x * CELL_PX, g.b.y * CELL_PX)
+  const offset = (16 + (index % 2) * 6) * screenWorldPx
+  const text = opening.kind === 'door'
+    ? `${t('hub_sketch_dim_size_short')} ${fmtFt(widthFt)}×${fmtFt(openingHeightFt(opening))}`
+    : `${t('hub_sketch_dim_size_short')} ${fmtFt(widthFt)}×${fmtFt(openingHeightFt(opening))} · ${t('hub_sketch_dim_floor_short')} ${fmtFt(openingFloorFt(opening))}`
+  return createDimLine(ax, ay, bx, by, normal.nx, normal.ny, offset, screenWorldPx, text, opening.kind) as OpeningDimLabel | null
 }
 
 function sanitizeName(name: string): string {
   const clean = name.trim().toLowerCase().replace(/[^a-z0-9а-я\-_]+/gi, '-').replace(/^-+|-+$/g, '')
   return clean || 'room'
+}
+
+function drawCanvasDimLine(ctx: CanvasRenderingContext2D, dim: DimLine2D, viewScale: number, color: string, fontScale = 12) {
+  ctx.save()
+  ctx.strokeStyle = color
+  ctx.fillStyle = color
+  ctx.lineWidth = 1.2 / viewScale
+  ctx.beginPath()
+  ctx.moveTo(dim.ext1x1, dim.ext1y1); ctx.lineTo(dim.ext1x2, dim.ext1y2)
+  ctx.moveTo(dim.ext2x1, dim.ext2y1); ctx.lineTo(dim.ext2x2, dim.ext2y2)
+  ctx.moveTo(dim.x1, dim.y1); ctx.lineTo(dim.x2, dim.y2)
+  ctx.moveTo(dim.tick1x1, dim.tick1y1); ctx.lineTo(dim.tick1x2, dim.tick1y2)
+  ctx.moveTo(dim.tick2x1, dim.tick2y1); ctx.lineTo(dim.tick2x2, dim.tick2y2)
+  ctx.stroke()
+  ctx.translate(dim.labelX, dim.labelY)
+  ctx.rotate((dim.angle * Math.PI) / 180)
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `800 ${Math.max(9 / viewScale, fontScale / viewScale)}px sans-serif`
+  ctx.strokeStyle = 'rgba(255, 255, 255, .94)'
+  ctx.lineWidth = 3 / viewScale
+  ctx.strokeText(dim.text, 0, 0)
+  ctx.fillText(dim.text, 0, 0)
+  ctx.restore()
 }
 
 // Отрисовка модели в canvas для PNG-превью (без внешних ресурсов — плоский canvas).
@@ -398,14 +554,10 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
     if (c.closed) ctx.closePath()
     ctx.stroke()
   }
-  // подписи длин
-  ctx.fillStyle = '#334155'
-  ctx.font = `${Math.max(10 / viewScale, 11)}px sans-serif`
-  ctx.textAlign = 'center'
+  // размерные линии стен
   for (const seg of eachSegment(model)) {
-    const mx = (seg.a.x + seg.b.x) / 2 * CELL_PX
-    const my = (seg.a.y + seg.b.y) / 2 * CELL_PX
-    ctx.fillText(fmtLen(dist(seg.a, seg.b)), mx, my - 4 / viewScale)
+    const dim = segmentDimLine(model, seg, 1 / viewScale)
+    if (dim) drawCanvasDimLine(ctx, dim, viewScale, '#334155')
   }
   // проёмы — отрезок вдоль стены заданной ширины
   ctx.lineCap = 'butt'
@@ -422,22 +574,11 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
     ctx.lineTo((g.p.x + hx) * CELL_PX, (g.p.y + hy) * CELL_PX)
     ctx.stroke()
   }
-  // постоянные габариты проёмов и отступы до краёв стены
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.font = `800 ${Math.max(9 / viewScale, 10)}px sans-serif`
-  ctx.lineWidth = Math.max(2.5 / viewScale, 3)
+  // постоянные габариты проёмов
   model.openings.forEach((opening, index) => {
-    const label = openingDimLabel(model, opening, index, t)
+    const label = openingDimLabel(model, opening, index, t, 1 / viewScale)
     if (!label) return
-    const lineHeight = Math.max(11 / viewScale, 12)
-    ctx.fillStyle = label.kind === 'door' ? '#7c2d12' : '#1d4ed8'
-    ctx.strokeStyle = 'rgba(255, 255, 255, .92)'
-    label.lines.forEach((line, lineIndex) => {
-      const y = label.y + (lineIndex - 1) * lineHeight
-      ctx.strokeText(line, label.x, y)
-      ctx.fillText(line, label.x, y)
-    })
+    drawCanvasDimLine(ctx, label, viewScale, label.kind === 'door' ? '#7c2d12' : '#1d4ed8', 10.5)
   })
   ctx.restore()
   // сводка
@@ -526,8 +667,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   useEffect(() => {
     if (viewMode !== '2d') return
     setCanvasView((current) => {
-      const normalized = constrainCanvasView(model, canvasSize, current)
-      if (canvasAutoFitRef.current || !canvasViewContainsModel(model, normalized)) {
+      const normalized = normalizeCanvasView(canvasSize, current)
+      if (canvasAutoFitRef.current) {
         canvasAutoFitRef.current = false
         return fitCanvasView(model, canvasSize)
       }
@@ -560,7 +701,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const nextHeight = baseView.height * factor
     const ratioX = (clientX - rect.left) / Math.max(1, rect.width)
     const ratioY = (clientY - rect.top) / Math.max(1, rect.height)
-    return constrainCanvasView(model, canvasSize, {
+    return normalizeCanvasView(canvasSize, {
       x: anchor.x - ratioX * nextWidth,
       y: anchor.y - ratioY * nextHeight,
       width: nextWidth,
@@ -575,8 +716,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const snap = (p: Pt): Pt => ({
-    x: Math.max(0, Math.round(p.x)),
-    y: Math.max(0, Math.round(p.y)),
+    x: Math.round(p.x),
+    y: Math.round(p.y),
   })
 
   // Прилипание новой точки к вершинам/стенам ДРУГИХ контуров (общая стена не дублируется).
@@ -693,7 +834,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         const ratioX = (currentMid.x - rect.left) / Math.max(1, rect.width)
         const ratioY = (currentMid.y - rect.top) / Math.max(1, rect.height)
         canvasAutoFitRef.current = false
-        setCanvasView(constrainCanvasView(model, canvasSize, {
+        setCanvasView(normalizeCanvasView(canvasSize, {
           x: anchor.x - ratioX * nextWidth,
           y: anchor.y - ratioY * nextHeight,
           width: nextWidth,
@@ -715,7 +856,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         canvasAutoFitRef.current = false
         canvasSuppressClickRef.current = true
         canvasPanRef.current = { ...pan, moved: true }
-        setCanvasView(constrainCanvasView(model, canvasSize, {
+        setCanvasView(normalizeCanvasView(canvasSize, {
           ...pan.view,
           x: pan.view.x - dx * (pan.view.width / Math.max(1, canvasSize.width)),
           y: pan.view.y - dy * (pan.view.height / Math.max(1, canvasSize.height)),
@@ -992,6 +1133,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const screenWorldPx = canvasView.width / Math.max(1, canvasSize.width)
   const nodeRadius = Math.max(3, Math.min(18, 5 * screenWorldPx))
   const hoverRadius = Math.max(4, Math.min(20, 6 * screenWorldPx))
+  const dimFontSize = 12 * screenWorldPx
+  const wallDimLines = useMemo(
+    () => eachSegment(model).map((seg) => segmentDimLine(model, seg, screenWorldPx)).filter((dim): dim is SegmentDimLine => !!dim),
+    [model, screenWorldPx],
+  )
 
   return (
     <section className="hub-tab-panel hub-sketch">
@@ -1130,14 +1276,27 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             )
           })}
 
-          {/* подписи длин */}
-          {eachSegment(model).map((seg, i) => {
-            const mx = (seg.a.x + seg.b.x) / 2 * CELL_PX
-            const my = (seg.a.y + seg.b.y) / 2 * CELL_PX
+          {/* размерные линии стен */}
+          {wallDimLines.map((dim, i) => {
             return (
-              <text key={`l${i}`} className="hub-sketch-dim" x={mx} y={my - 5} textAnchor="middle">
-                {fmtLen(dist(seg.a, seg.b))}
-              </text>
+              <g key={`l${i}`} className="hub-sketch-dim-line">
+                <line className="hub-sketch-dim-extension" x1={dim.ext1x1} y1={dim.ext1y1} x2={dim.ext1x2} y2={dim.ext1y2} />
+                <line className="hub-sketch-dim-extension" x1={dim.ext2x1} y1={dim.ext2y1} x2={dim.ext2x2} y2={dim.ext2y2} />
+                <line className="hub-sketch-dim-main" x1={dim.x1} y1={dim.y1} x2={dim.x2} y2={dim.y2} />
+                <line className="hub-sketch-dim-tick" x1={dim.tick1x1} y1={dim.tick1y1} x2={dim.tick1x2} y2={dim.tick1y2} />
+                <line className="hub-sketch-dim-tick" x1={dim.tick2x1} y1={dim.tick2y1} x2={dim.tick2x2} y2={dim.tick2y2} />
+                <text
+                  className="hub-sketch-dim-label"
+                  x={dim.labelX}
+                  y={dim.labelY}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  style={{ fontSize: dimFontSize }}
+                  transform={`rotate(${dim.angle} ${dim.labelX} ${dim.labelY})`}
+                >
+                  {dim.text}
+                </text>
+              </g>
             )
           })}
 
@@ -1160,7 +1319,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             const x2 = (g.p.x + hx) * CELL_PX
             const y2 = (g.p.y + hy) * CELL_PX
             const cls = o.kind === 'door' ? 'hub-sketch-door' : 'hub-sketch-window'
-            const dimLabel = openingDimLabel(model, o, i, t)
+            const dimLabel = openingDimLabel(model, o, i, t, screenWorldPx)
             return (
               <g
                 key={`o${i}`}
@@ -1171,16 +1330,22 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 {/* невидимый широкий хит-таргет для захвата пальцем */}
                 <line className="hub-sketch-opening-hit" x1={x1} y1={y1} x2={x2} y2={y2} />
                 {dimLabel && (
-                  <g
-                    className={`hub-sketch-opening-dim hub-sketch-opening-dim-${dimLabel.kind}`}
-                    transform={`translate(${dimLabel.x} ${dimLabel.y})`}
-                  >
-                    <text textAnchor="middle">
-                      {dimLabel.lines.map((line, lineIndex) => (
-                        <tspan key={`dim-line-${lineIndex}`} x="0" dy={lineIndex === 0 ? -12 : 12}>
-                          {line}
-                        </tspan>
-                      ))}
+                  <g className={`hub-sketch-opening-dim hub-sketch-opening-dim-${dimLabel.kind}`}>
+                    <line className="hub-sketch-dim-extension" x1={dimLabel.ext1x1} y1={dimLabel.ext1y1} x2={dimLabel.ext1x2} y2={dimLabel.ext1y2} />
+                    <line className="hub-sketch-dim-extension" x1={dimLabel.ext2x1} y1={dimLabel.ext2y1} x2={dimLabel.ext2x2} y2={dimLabel.ext2y2} />
+                    <line className="hub-sketch-dim-main" x1={dimLabel.x1} y1={dimLabel.y1} x2={dimLabel.x2} y2={dimLabel.y2} />
+                    <line className="hub-sketch-dim-tick" x1={dimLabel.tick1x1} y1={dimLabel.tick1y1} x2={dimLabel.tick1x2} y2={dimLabel.tick1y2} />
+                    <line className="hub-sketch-dim-tick" x1={dimLabel.tick2x1} y1={dimLabel.tick2y1} x2={dimLabel.tick2x2} y2={dimLabel.tick2y2} />
+                    <text
+                      className="hub-sketch-dim-label"
+                      x={dimLabel.labelX}
+                      y={dimLabel.labelY}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      style={{ fontSize: 10.5 * screenWorldPx }}
+                      transform={`rotate(${dimLabel.angle} ${dimLabel.labelX} ${dimLabel.labelY})`}
+                    >
+                      {dimLabel.text}
                     </text>
                   </g>
                 )}
