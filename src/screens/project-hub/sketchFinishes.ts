@@ -1,3 +1,5 @@
+import { snapOpeningFeetToPrecision } from './inches'
+
 export type Pt = { x: number; y: number }
 export type Contour = { points: Pt[]; closed: boolean }
 export type Opening = {
@@ -98,6 +100,12 @@ function cleanNumber(value: unknown, fallback: number, min: number, max: number)
   return Math.max(min, Math.min(max, n))
 }
 
+function cleanOptionalNumber(value: unknown, min: number, max: number): number | undefined {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return undefined
+  return Math.max(min, Math.min(max, n))
+}
+
 export function cleanColor(value: unknown, fallback: string): string {
   return typeof value === 'string' && HEX_COLOR_RE.test(value) ? value : fallback
 }
@@ -172,6 +180,32 @@ export function sanitizeSketchFinishes(value: unknown): SketchFinishes | undefin
   if (floor) finishes.floor = floor
   if (Object.keys(wallFinishes).length > 0) finishes.wallFinishes = wallFinishes
   return finishes.wallPaint || finishes.walls || finishes.floor || finishes.wallFinishes ? finishes : undefined
+}
+
+export function sanitizeSketchOpenings(value: unknown): Opening[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((raw): Opening | null => {
+      if (!raw || typeof raw !== 'object') return null
+      const item = raw as Partial<Opening>
+      const kind = item.kind
+      if (kind !== 'door' && kind !== 'window') return null
+      if (!Number.isInteger(item.c) || !Number.isInteger(item.s)) return null
+      const opening: Opening = {
+        kind,
+        c: Math.max(0, Number(item.c)),
+        s: Math.max(0, Number(item.s)),
+        t: cleanNumber(item.t, 0.5, 0, 1),
+      }
+      const width = cleanOptionalNumber(item.w, 0.5, 100)
+      const height = cleanOptionalNumber(item.h, 0.5, 100)
+      const sill = cleanOptionalNumber(item.sill, 0, 100)
+      if (width !== undefined) opening.w = snapOpeningFeetToPrecision(width)
+      if (height !== undefined) opening.h = snapOpeningFeetToPrecision(height)
+      if (kind === 'window' && sill !== undefined) opening.sill = snapOpeningFeetToPrecision(sill)
+      return opening
+    })
+    .filter((item): item is Opening => !!item)
 }
 
 export function sanitizeSketchLights(value: unknown): SketchLight[] {

@@ -15,7 +15,7 @@ import { formatFeetInches } from './inches'
 
 const CELL_FT = 1
 const DOOR_W_FT = 3
-const DOOR_H_FT = 6.8
+const DOOR_H_FT = 80 / 12
 const WIN_W_FT = 3
 const WIN_H_FT = 4
 const WIN_SILL_FT = 3
@@ -47,7 +47,7 @@ function openingWidthFt(opening: Opening): number {
 }
 
 function openingHeightFt(opening: Opening): number {
-  return opening.kind === 'door' ? DOOR_H_FT : (opening.h ?? WIN_H_FT)
+  return opening.kind === 'door' ? (opening.h ?? DOOR_H_FT) : (opening.h ?? WIN_H_FT)
 }
 
 function openingFloorFt(opening: Opening): number {
