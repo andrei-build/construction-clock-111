@@ -3767,6 +3767,30 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 
 /* Эскиз помещения (SKETCH-1) */
+.hub-sketch-viewbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.hub-sketch-view-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hub-sketch-height-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+}
+.hub-sketch-height-field input {
+  width: 82px;
+  margin: 0;
+  padding: 10px 12px;
+}
 .hub-sketch-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -3789,6 +3813,29 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border-radius: 8px;
   touch-action: none;
   user-select: none;
+}
+.hub-sketch-3d-shell {
+  position: relative;
+  width: 100%;
+  height: clamp(320px, 58vh, 620px);
+  overflow: hidden;
+  border-radius: 8px;
+  background: #f7f8fb;
+}
+.hub-sketch-3d-canvas,
+.hub-sketch-3d-canvas canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+.hub-sketch-3d-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(247, 248, 251, .72);
 }
 .hub-sketch-grid line { stroke: #e2e6ea; stroke-width: 1; }
 .hub-sketch-wall { stroke: #1f2933; stroke-width: 3; fill: rgba(31, 41, 51, .06); stroke-linejoin: round; stroke-linecap: round; }
