@@ -4101,6 +4101,133 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   align-items: center;
 }
 .hub-sketch-check-row input { margin: 0; }
+.hub-sketch-catalog-hint {
+  margin: 0;
+  font-size: 12px;
+}
+.hub-sketch-catalog-group {
+  min-width: 0;
+}
+.hub-sketch-catalog-group summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+  color: var(--muted);
+}
+.hub-sketch-catalog-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.hub-sketch-catalog-item {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: grab;
+}
+.hub-sketch-catalog-item:hover:not(:disabled),
+.hub-sketch-catalog-item-active {
+  border-color: rgba(37, 99, 235, .72);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .12);
+}
+.hub-sketch-catalog-item:disabled {
+  cursor: not-allowed;
+  opacity: .64;
+}
+.hub-sketch-catalog-thumb {
+  width: 58px;
+  height: 58px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #edf2f7, #dbe4ec);
+  display: grid;
+  place-items: center;
+}
+.hub-sketch-catalog-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.hub-sketch-catalog-thumb-empty {
+  width: 26px;
+  height: 20px;
+  border: 2px solid rgba(15, 23, 42, .28);
+  border-radius: 4px;
+  position: relative;
+}
+.hub-sketch-catalog-thumb-empty::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  height: 7px;
+  border-radius: 7px 7px 2px 2px;
+  background: rgba(15, 23, 42, .22);
+}
+.hub-sketch-catalog-item-body {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  align-content: center;
+  font-size: 12px;
+  line-height: 1.25;
+}
+.hub-sketch-catalog-item-name {
+  font-size: 13px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+.hub-sketch-3d-item-popover {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 4;
+  width: min(360px, calc(100% - 20px));
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(126,160,190,.34);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 12px 34px rgba(15, 23, 42, .16);
+  backdrop-filter: blur(10px);
+}
+.hub-sketch-3d-item-popover-warn {
+  border-color: rgba(220, 38, 38, .52);
+  box-shadow: 0 12px 34px rgba(127, 29, 29, .18);
+}
+.hub-sketch-3d-item-popover .hub-sketch-catalog-thumb {
+  width: 74px;
+  height: 74px;
+}
+.hub-sketch-3d-item-popover-body {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.28;
+}
+.hub-sketch-3d-item-flags,
+.hub-sketch-3d-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.hub-sketch-3d-item-actions .btn {
+  width: auto;
+}
 @media (max-width: 860px) {
   .hub-sketch-3d-layout { grid-template-columns: 1fr; }
   .hub-sketch-3d-panel { max-height: none; }

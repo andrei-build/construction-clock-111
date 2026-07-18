@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { CATALOG_CATEGORIES, getCatalogItems } from '../../lib/api'
+import type { CatalogCategory, CatalogItem } from '../../lib/api'
 import { useI18n } from '../../lib/i18n'
 import {
   DEFAULT_FLOOR_PAINT,
@@ -22,6 +24,25 @@ import {
   type SketchSwitch,
   type SketchTileFinish,
 } from './sketchFinishes'
+import {
+  catalogDimsFromItem,
+  catalogDimsText,
+  catalogItemHasExactDims,
+  movePlacedOnCeiling,
+  movePlacedOnFloor,
+  movePlacedOnWall,
+  nearestCatalogWall,
+  placedCatalogDoesNotFit,
+  placedOnCeiling,
+  placedOnFloor,
+  placedOnWall,
+  resolvePlacedCatalogItem,
+  rotatePlacedCatalogItem,
+  sanitizePlacedCatalogItems,
+  type CatalogResolvedPlacedItem,
+  type CatalogWallHit,
+  type SketchPlacedCatalogItem,
+} from './sketchCatalog'
 
 const CELL_FT = 1
 const DEFAULT_WALL_HEIGHT_FT = 8
@@ -38,12 +59,14 @@ type SurfaceTarget = 'walls' | 'floor'
 type PlacementKind = SketchLightKind | 'switch' | null
 type Segment = { c: number; s: number; a: Pt; b: Pt }
 type CameraPreset = 'fit' | 'top' | 'angle'
+type InteractiveKind = 'light' | 'switch' | 'catalog'
+type Sketch3DModelWithCatalog = Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }
 
 interface Sketch3DViewProps {
-  model: Sketch3DModel
+  model: Sketch3DModelWithCatalog
   heightFt: number
   canEdit?: boolean
-  onModelChange?: (model: Sketch3DModel) => void
+  onModelChange?: (model: Sketch3DModelWithCatalog) => void
   label: string
   loadingLabel: string
   errorLabel: string
@@ -155,6 +178,12 @@ function longestWallIn(model: Sketch3DModel): number {
   return Math.max(12, ...eachSegment(model).map((seg) => dist(seg.a, seg.b) * cellFt * 12))
 }
 
+function segmentLengthFt(model: Sketch3DModel, c: number | undefined, s: number | undefined): number | undefined {
+  if (!Number.isInteger(c) || !Number.isInteger(s)) return undefined
+  const seg = segmentWorld(model, c ?? 0, s ?? 0)
+  return seg ? dist(seg.a, seg.b) * modelCellFt(model) : undefined
+}
+
 function formatFeet(valueFt: number): string {
   const safe = Number.isFinite(valueFt) ? valueFt : 0
   return `${safe.toFixed(1)}′`
@@ -247,7 +276,7 @@ function applyFloorTileUv(geometry: any, surface: SketchSurfaceFinish) {
   uv.needsUpdate = true
 }
 
-function tagInteractive(object: any, type: 'light' | 'switch', id: string) {
+function tagInteractive(object: any, type: InteractiveKind, id: string) {
   object.traverse?.((child: any) => {
     child.userData.itemType = type
     child.userData.itemId = id
@@ -256,10 +285,10 @@ function tagInteractive(object: any, type: 'light' | 'switch', id: string) {
   object.userData.itemId = id
 }
 
-function taggedObject(object: any): { type: 'light' | 'switch'; id: string } | null {
+function taggedObject(object: any): { type: InteractiveKind; id: string } | null {
   let cur = object
   while (cur) {
-    if ((cur.userData?.itemType === 'light' || cur.userData?.itemType === 'switch') && typeof cur.userData?.itemId === 'string') {
+    if ((cur.userData?.itemType === 'light' || cur.userData?.itemType === 'switch' || cur.userData?.itemType === 'catalog') && typeof cur.userData?.itemId === 'string') {
       return { type: cur.userData.itemType, id: cur.userData.itemId }
     }
     cur = cur.parent
@@ -288,6 +317,41 @@ function lightName(light: SketchLight, index: number, t: (k: string) => string):
 
 function switchName(sw: SketchSwitch, index: number, t: (k: string) => string): string {
   return sw.label?.trim() || `${t('hub_sketch_3d_switch')} ${index + 1}`
+}
+
+function catalogCategoryLabelKey(category: CatalogCategory): string {
+  return `catalog_cat_${category}`
+}
+
+function catalogItemDimsText(item: CatalogItem): string | null {
+  if (item.width_in == null || item.depth_in == null || item.height_in == null) return null
+  return catalogDimsText(item.width_in, item.depth_in, item.height_in)
+}
+
+function resolvedCatalogDimsText(item: CatalogResolvedPlacedItem): string {
+  return catalogDimsText(item.widthIn, item.depthIn, item.heightIn)
+}
+
+function catalogBrandModel(brand: string | null | undefined, model: string | null | undefined): string | null {
+  const text = [brand, model].filter(Boolean).join(' · ')
+  return text || null
+}
+
+function catalogColor(category: CatalogCategory): number {
+  switch (category) {
+    case 'shower':
+      return 0x5fa8d3
+    case 'vanity':
+      return 0xc08457
+    case 'cabinet':
+      return 0x7f9f68
+    case 'light':
+      return 0xf4c95d
+    case 'fan':
+      return 0x7c8794
+    default:
+      return 0x9ca3af
+  }
 }
 
 function createLabelSprite(THREE: any, text: string) {
@@ -357,21 +421,50 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
   const [surfaceTarget, setSurfaceTarget] = useState<SurfaceTarget>('walls')
   const [placement, setPlacement] = useState<PlacementKind>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(true)
+  const [catalogError, setCatalogError] = useState(false)
+  const [catalogPlacementId, setCatalogPlacementId] = useState<string | null>(null)
 
   const finishes = useMemo(() => normalizeFinishes(model.finishes), [model.finishes])
   const lights = useMemo(() => model.lights ?? [], [model.lights])
   const switches = useMemo(() => model.switches ?? [], [model.switches])
+  const placedItems = useMemo(() => sanitizePlacedCatalogItems(model.placedItems), [model.placedItems])
+  const catalogById = useMemo(() => new Map(catalogItems.map((item) => [item.id, item])), [catalogItems])
+  const resolvedPlacedItems = useMemo(
+    () => placedItems
+      .map((placed) => resolvePlacedCatalogItem(placed, catalogById.get(placed.catalogItemId) ?? null))
+      .filter((item): item is CatalogResolvedPlacedItem => !!item),
+    [placedItems, catalogById],
+  )
   const selectedLight = lights.find((light) => light.id === selectedId) ?? null
   const selectedSwitch = switches.find((sw) => sw.id === selectedId) ?? null
+  const selectedPlaced = resolvedPlacedItems.find((item) => item.placed.id === selectedId) ?? null
+  const catalogPlacementItem = catalogPlacementId ? catalogById.get(catalogPlacementId) ?? null : null
+  const catalogGroups = useMemo(
+    () => CATALOG_CATEGORIES.map((category) => ({ category, rows: catalogItems.filter((item) => item.category === category) }))
+      .filter((group) => group.rows.length > 0),
+    [catalogItems],
+  )
   const activeSurface = finishes[surfaceTarget]
   const boundsForCuts = modelBounds(model)
   const surfaceHeightIn = surfaceTarget === 'walls' ? Math.max(1, heightFt * 12) : Math.max(12, boundsForCuts.depth * 12)
   const surfaceWidthIn = surfaceTarget === 'walls' ? longestWallIn(model) : Math.max(12, boundsForCuts.width * 12)
   const cutSummary = activeSurface.kind === 'tile' ? calculateTileCuts(activeSurface, surfaceHeightIn, surfaceWidthIn) : null
+  const selectedPlacedDoesNotFit = selectedPlaced
+    ? placedCatalogDoesNotFit(selectedPlaced.placed, selectedPlaced.dims, boundsForCuts, heightFt, segmentLengthFt(model, selectedPlaced.placed.c, selectedPlaced.placed.s))
+    : false
 
-  const applyModel = (next: Sketch3DModel) => {
+  const applyModel = (next: Sketch3DModelWithCatalog) => {
     if (!canEdit) return
     onModelChange?.(next)
+  }
+
+  const applyPlacedItems = (nextPlaced: SketchPlacedCatalogItem[]) => {
+    const next: Sketch3DModelWithCatalog = { ...model }
+    if (nextPlaced.length > 0) next.placedItems = nextPlaced
+    else delete next.placedItems
+    applyModel(next)
   }
 
   const updateSurface = (surface: SketchSurfaceFinish) => {
@@ -403,13 +496,29 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
 
   const removeSelected = () => {
     if (!selectedId) return
-    applyModel({
+    const nextPlaced = placedItems.filter((item) => item.id !== selectedId)
+    const next: Sketch3DModelWithCatalog = {
       ...model,
       lights: lights.filter((light) => light.id !== selectedId),
       switches: switches
         .filter((sw) => sw.id !== selectedId)
         .map((sw) => ({ ...sw, controls: (sw.controls ?? []).filter((id) => id !== selectedId) })),
-    })
+    }
+    if (nextPlaced.length > 0) next.placedItems = nextPlaced
+    else delete next.placedItems
+    applyModel(next)
+    setSelectedId(null)
+  }
+
+  const rotateSelectedPlaced = () => {
+    if (!selectedPlaced) return
+    applyPlacedItems(placedItems.map((item) => (item.id === selectedPlaced.placed.id ? rotatePlacedCatalogItem(item) : item)))
+  }
+
+  const selectCatalogPlacement = (item: CatalogItem) => {
+    if (!catalogItemHasExactDims(item)) return
+    setCatalogPlacementId((current) => (current === item.id ? null : item.id))
+    setPlacement(null)
     setSelectedId(null)
   }
 
@@ -425,6 +534,45 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
       }),
     })
   }
+
+  useEffect(() => {
+    let mounted = true
+    setCatalogLoading(true)
+    setCatalogError(false)
+    getCatalogItems()
+      .then((rows) => {
+        if (mounted) setCatalogItems(rows)
+      })
+      .catch(() => {
+        if (mounted) {
+          setCatalogItems([])
+          setCatalogError(true)
+        }
+      })
+      .finally(() => {
+        if (mounted) setCatalogLoading(false)
+      })
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!canEdit || !selectedPlaced) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return
+      if (event.key.toLowerCase() === 'r') {
+        rotateSelectedPlaced()
+        event.preventDefault()
+      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        removeSelected()
+        event.preventDefault()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [canEdit, selectedPlaced, placedItems])
 
   useEffect(() => {
     dimensionsVisibleRef.current = showDimensions
@@ -783,6 +931,50 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           }
         })
 
+        const catalogWallLength = (placed: SketchPlacedCatalogItem): number | undefined => {
+          if (!Number.isInteger(placed.c) || !Number.isInteger(placed.s)) return undefined
+          const seg = segmentWorld(model, placed.c ?? 0, placed.s ?? 0)
+          return seg ? dist(seg.a, seg.b) * cellFt : undefined
+        }
+
+        const applyCatalogObjectPose = (object: any, placed: SketchPlacedCatalogItem) => {
+          object.position.set(placed.xFt, placed.yFt, placed.zFt)
+          object.rotation.y = placed.rotationY
+        }
+
+        resolvedPlacedItems.forEach((resolved) => {
+          const placed = resolved.placed
+          const doesNotFit = placedCatalogDoesNotFit(placed, resolved.dims, bounds, height, catalogWallLength(placed))
+          const group = new THREE.Group()
+          applyCatalogObjectPose(group, placed)
+          const material = new THREE.MeshStandardMaterial({
+            color: doesNotFit ? 0xdc2626 : resolved.missingCatalogItem ? 0x9ca3af : catalogColor(resolved.category),
+            roughness: 0.58,
+            metalness: resolved.category === 'light' || resolved.category === 'fan' ? 0.12 : 0.04,
+            transparent: resolved.missingCatalogItem,
+            opacity: resolved.missingCatalogItem ? 0.52 : 0.92,
+          })
+          const box = new THREE.Mesh(new THREE.BoxGeometry(resolved.dims.widthFt, resolved.dims.heightFt, resolved.dims.depthFt), material)
+          box.castShadow = true
+          box.receiveShadow = true
+          const edges = new THREE.LineSegments(
+            new THREE.EdgesGeometry(box.geometry),
+            new THREE.LineBasicMaterial({ color: doesNotFit ? 0x991b1b : selectedId === placed.id ? 0x0f172a : 0xffffff, transparent: true, opacity: 0.85 }),
+          )
+          group.add(box, edges)
+          tagInteractive(group, 'catalog', placed.id)
+          scene.add(group)
+          itemTargets.push(group)
+
+          if (selectedId === placed.id) {
+            const warning = doesNotFit ? `\n${t('hub_sketch_3d_not_fit')}` : ''
+            const text = `${resolved.name}\n${resolvedCatalogDimsText(resolved)}${warning}`
+            const sprite = createLabelSprite(THREE, text)
+            sprite.position.set(placed.xFt, placed.yFt + resolved.dims.heightFt / 2 + 0.42, placed.zFt)
+            scene.add(sprite)
+          }
+        })
+
         const raycaster = new THREE.Raycaster()
         const pointer = new THREE.Vector2()
         const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
@@ -790,16 +982,17 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         let pointerDown: { x: number; y: number } | null = null
         let drag:
           | {
-              type: 'light' | 'switch'
+              type: InteractiveKind
               id: string
               moved: boolean
               latestLight?: SketchLight
               latestSwitch?: SketchSwitch
+              latestPlaced?: SketchPlacedCatalogItem
               object: any
             }
           | null = null
 
-        const updatePointer = (event: PointerEvent) => {
+        const updatePointer = (event: { clientX: number; clientY: number }) => {
           const rect = renderer.domElement.getBoundingClientRect()
           pointer.x = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
           pointer.y = -(((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 - 1)
@@ -818,11 +1011,53 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           if (!hit) return null
           const wall = taggedWall(hit.object)
           if (!wall) return null
-          return { ...wall, t: projectWallT(model, wall.c, wall.s, hit.point) }
+          const base = nearestCatalogWall(model, { x: hit.point.x, z: hit.point.z })
+          const side = base && base.c === wall.c && base.s === wall.s ? base.side : 1
+          return { ...wall, t: projectWallT(model, wall.c, wall.s, hit.point), yFt: hit.point.y, side }
+        }
+
+        const catalogWallHitAtPointer = (): CatalogWallHit | null => {
+          const hits = raycaster.intersectObjects(wallTargets, true)
+          const hit = hits[0]
+          if (!hit) return null
+          const wall = taggedWall(hit.object)
+          if (!wall) return null
+          const nearest = nearestCatalogWall(model, { x: hit.point.x, z: hit.point.z })
+          if (!nearest || nearest.c !== wall.c || nearest.s !== wall.s) return null
+          return { ...nearest, t: projectWallT(model, wall.c, wall.s, hit.point), yFt: hit.point.y }
+        }
+
+        const placeCatalogAtPointer = (event: { clientX: number; clientY: number }, item: CatalogItem) => {
+          if (!canEdit) return
+          const dims = catalogDimsFromItem(item)
+          if (!dims) return
+          updatePointer(event)
+          let nextPlaced: SketchPlacedCatalogItem | null = null
+          if (item.category === 'light') {
+            const wallHit = catalogWallHitAtPointer()
+            if (wallHit) nextPlaced = placedOnWall(item, makeId('placed'), wallHit, dims, height, WALL_THICKNESS_FT)
+          }
+          if (!nextPlaced) {
+            const point = floorHitPoint()
+            if (!point) return
+            if (item.category === 'light' || item.category === 'fan') {
+              nextPlaced = placedOnCeiling(item, makeId('placed'), { x: point.x, z: point.z }, dims, height)
+            } else {
+              nextPlaced = placedOnFloor(item, makeId('placed'), { x: point.x, z: point.z }, dims, model, WALL_THICKNESS_FT)
+            }
+          }
+          onModelChange?.({ ...model, placedItems: [...placedItems, nextPlaced] })
+          setSelectedId(nextPlaced.id)
+          setCatalogPlacementId(null)
         }
 
         const placeAtPointer = (event: PointerEvent) => {
-          if (!placement || !canEdit) return
+          if (!canEdit) return
+          if (catalogPlacementItem) {
+            placeCatalogAtPointer(event, catalogPlacementItem)
+            return
+          }
+          if (!placement) return
           updatePointer(event)
           if (placement === 'switch') {
             const anchor = wallHitAnchor()
@@ -865,14 +1100,14 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         const onPointerDown = (event: PointerEvent) => {
           pointerDown = { x: event.clientX, y: event.clientY }
           if (event.button !== 0) return
-          if (!canEdit) return
           updatePointer(event)
           const hit = raycaster.intersectObjects(itemTargets, true)[0]
           const tagged = hit ? taggedObject(hit.object) : null
           if (!tagged) return
+          setSelectedId(tagged.id)
+          if (!canEdit) return
           const object = hit.object.parent ?? hit.object
           drag = { ...tagged, moved: false, object }
-          setSelectedId(tagged.id)
           controls.enabled = false
           renderer.domElement.setPointerCapture?.(event.pointerId)
           event.preventDefault()
@@ -882,7 +1117,24 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           if (!drag) return
           updatePointer(event)
           drag.moved = true
-          if (drag.type === 'switch') {
+          if (drag.type === 'catalog') {
+            const current = resolvedPlacedItems.find((item) => item.placed.id === drag?.id)
+            if (!current) return
+            let nextPlaced: SketchPlacedCatalogItem | null = null
+            if (current.placed.surface === 'wall') {
+              const wallHit = catalogWallHitAtPointer()
+              if (!wallHit) return
+              nextPlaced = movePlacedOnWall(current.placed, wallHit, current.dims, height, WALL_THICKNESS_FT)
+            } else {
+              const point = floorHitPoint()
+              if (!point) return
+              nextPlaced = current.placed.surface === 'ceiling'
+                ? movePlacedOnCeiling(current.placed, { x: point.x, z: point.z }, current.dims, height)
+                : movePlacedOnFloor(current.placed, { x: point.x, z: point.z }, current.dims, model, WALL_THICKNESS_FT)
+            }
+            drag.latestPlaced = nextPlaced
+            applyCatalogObjectPose(drag.object, nextPlaced)
+          } else if (drag.type === 'switch') {
             const anchor = wallHitAnchor()
             const current = switches.find((sw) => sw.id === drag?.id)
             if (!anchor || !current) return
@@ -893,7 +1145,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
               drag.object.position.set(pose.x + pose.nx * (WALL_THICKNESS_FT / 2 + 0.075), pose.y, pose.z + pose.nz * (WALL_THICKNESS_FT / 2 + 0.075))
               drag.object.rotation.y = pose.rotationY
             }
-          } else {
+          } else if (drag.type === 'light') {
             const current = lights.find((light) => light.id === drag?.id)
             if (!current) return
             if (current.kind === 'sconce') {
@@ -932,6 +1184,9 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
             if (completed.moved && completed.latestSwitch) {
               onModelChange?.({ ...model, switches: switches.map((sw) => (sw.id === completed.latestSwitch?.id ? completed.latestSwitch : sw)) })
             }
+            if (completed.moved && completed.latestPlaced) {
+              onModelChange?.({ ...model, placedItems: placedItems.map((item) => (item.id === completed.latestPlaced?.id ? completed.latestPlaced : item)) })
+            }
             renderer.domElement.releasePointerCapture?.(event.pointerId)
             event.preventDefault()
             return
@@ -940,11 +1195,22 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         }
 
         const onContextMenu = (event: MouseEvent) => event.preventDefault()
+        const onDragOver = (event: DragEvent) => {
+          if (!canEdit || !catalogPlacementItem || !catalogItemHasExactDims(catalogPlacementItem)) return
+          event.preventDefault()
+        }
+        const onDrop = (event: DragEvent) => {
+          if (!canEdit || !catalogPlacementItem || !catalogItemHasExactDims(catalogPlacementItem)) return
+          event.preventDefault()
+          placeCatalogAtPointer(event, catalogPlacementItem)
+        }
 
         renderer.domElement.addEventListener('pointerdown', onPointerDown)
         renderer.domElement.addEventListener('pointermove', onPointerMove)
         renderer.domElement.addEventListener('pointerup', onPointerUp)
         renderer.domElement.addEventListener('contextmenu', onContextMenu)
+        renderer.domElement.addEventListener('dragover', onDragOver)
+        renderer.domElement.addEventListener('drop', onDrop)
 
         const clampCameraTarget = () => {
           const panPad = Math.max(4, span * 0.35)
@@ -992,6 +1258,8 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           renderer.domElement.removeEventListener('pointermove', onPointerMove)
           renderer.domElement.removeEventListener('pointerup', onPointerUp)
           renderer.domElement.removeEventListener('contextmenu', onContextMenu)
+          renderer.domElement.removeEventListener('dragover', onDragOver)
+          renderer.domElement.removeEventListener('drop', onDrop)
           observer.disconnect()
           cameraApiRef.current = null
           if (dimensionGroupRef.current === dimensionGroup) dimensionGroupRef.current = null
@@ -1010,7 +1278,7 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
       cleanup?.()
       host.replaceChildren()
     }
-  }, [model, heightFt, finishes, canEdit, onModelChange, placement, selectedId, t, lights, switches])
+  }, [model, heightFt, finishes, canEdit, onModelChange, placement, selectedId, t, lights, switches, placedItems, resolvedPlacedItems, catalogPlacementItem])
 
   const activeTile = normalizeTileSurface(activeSurface)
   const tileSizeValue = `${activeTile.tileWIn ?? 12}x${activeTile.tileHIn ?? 24}`
@@ -1041,6 +1309,36 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
         </div>
         {state === 'loading' && <div className="hub-sketch-3d-overlay muted">{loadingLabel}</div>}
         {state === 'error' && <div className="hub-sketch-3d-overlay error-msg">{errorLabel}</div>}
+        {selectedPlaced && (
+          <div className={`hub-sketch-3d-item-popover ${selectedPlacedDoesNotFit ? 'hub-sketch-3d-item-popover-warn' : ''}`}>
+            <div className="hub-sketch-catalog-thumb">
+              {selectedPlaced.photoPath
+                ? <img src={selectedPlaced.photoPath} alt={selectedPlaced.name} loading="lazy" />
+                : <span className="hub-sketch-catalog-thumb-empty" aria-hidden="true" />}
+            </div>
+            <div className="hub-sketch-3d-item-popover-body">
+              <div className="item-title">{selectedPlaced.name}</div>
+              {catalogBrandModel(selectedPlaced.brand, selectedPlaced.model) && (
+                <div className="muted">{catalogBrandModel(selectedPlaced.brand, selectedPlaced.model)}</div>
+              )}
+              <div className="muted">{t('catalog_dims')}: {resolvedCatalogDimsText(selectedPlaced)}</div>
+              <div className="hub-sketch-3d-item-flags">
+                {selectedPlaced.missingCatalogItem && <span className="badge">{t('hub_sketch_3d_catalog_missing_item')}</span>}
+                {selectedPlacedDoesNotFit && <span className="badge red">{t('hub_sketch_3d_not_fit')}</span>}
+              </div>
+              {canEdit && (
+                <div className="hub-sketch-3d-item-actions">
+                  <button type="button" className="btn ghost small" onClick={rotateSelectedPlaced}>
+                    {t('hub_sketch_3d_rotate')}
+                  </button>
+                  <button type="button" className="btn ghost small" onClick={removeSelected}>
+                    {t('hub_sketch_3d_remove')}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {canEdit && (
@@ -1147,6 +1445,61 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
           </section>
 
           <section className="hub-sketch-3d-section">
+            <h3>{t('hub_sketch_3d_catalog')}</h3>
+            {catalogPlacementItem && (
+              <p className="muted hub-sketch-catalog-hint">{t('hub_sketch_3d_catalog_place_hint')}</p>
+            )}
+            {catalogLoading && <p className="muted">{t('loading')}</p>}
+            {catalogError && <p className="error-msg">{t('load_error')}</p>}
+            {!catalogLoading && !catalogError && catalogItems.length === 0 && (
+              <p className="muted">{t('hub_sketch_3d_catalog_empty')}</p>
+            )}
+            {!catalogLoading && !catalogError && catalogGroups.map((group) => (
+              <details key={group.category} className="hub-sketch-catalog-group" open>
+                <summary>{t(catalogCategoryLabelKey(group.category))}</summary>
+                <div className="hub-sketch-catalog-list">
+                  {group.rows.map((item) => {
+                    const hasDims = catalogItemHasExactDims(item)
+                    const dimsText = catalogItemDimsText(item)
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={catalogPlacementId === item.id ? 'hub-sketch-catalog-item hub-sketch-catalog-item-active' : 'hub-sketch-catalog-item'}
+                        disabled={!hasDims}
+                        draggable={hasDims}
+                        aria-pressed={catalogPlacementId === item.id}
+                        onClick={() => selectCatalogPlacement(item)}
+                        onDragStart={(event) => {
+                          if (!hasDims) return
+                          event.dataTransfer.effectAllowed = 'copy'
+                          event.dataTransfer.setData('text/plain', item.id)
+                          setCatalogPlacementId(item.id)
+                          setPlacement(null)
+                          setSelectedId(null)
+                        }}
+                      >
+                        <span className="hub-sketch-catalog-thumb">
+                          {item.photo_path
+                            ? <img src={item.photo_path} alt={item.name} loading="lazy" />
+                            : <span className="hub-sketch-catalog-thumb-empty" aria-hidden="true" />}
+                        </span>
+                        <span className="hub-sketch-catalog-item-body">
+                          <span className="hub-sketch-catalog-item-name">{item.name}</span>
+                          {catalogBrandModel(item.brand, item.model) && <span className="muted">{catalogBrandModel(item.brand, item.model)}</span>}
+                          <span className={hasDims ? 'muted' : 'error-msg'}>
+                            {hasDims && dimsText ? `${t('catalog_dims')}: ${dimsText}` : t('hub_sketch_3d_catalog_missing_dims')}
+                          </span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </details>
+            ))}
+          </section>
+
+          <section className="hub-sketch-3d-section">
             <h3>{t('hub_sketch_3d_lighting')}</h3>
             <div className="hub-sketch-place-grid" role="group" aria-label={t('hub_sketch_3d_place')}>
               {(['recessed', 'chandelier', 'fan', 'sconce'] as SketchLightKind[]).map((kind) => (
@@ -1155,7 +1508,10 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
                   type="button"
                   className={placement === kind ? 'btn small' : 'btn ghost small'}
                   aria-pressed={placement === kind}
-                  onClick={() => setPlacement((current) => (current === kind ? null : kind))}
+                  onClick={() => {
+                    setCatalogPlacementId(null)
+                    setPlacement((current) => (current === kind ? null : kind))
+                  }}
                 >
                   {lightKindLabel(t, kind)}
                 </button>
@@ -1164,7 +1520,10 @@ export default function Sketch3DView({ model, heightFt, canEdit = false, onModel
                 type="button"
                 className={placement === 'switch' ? 'btn small' : 'btn ghost small'}
                 aria-pressed={placement === 'switch'}
-                onClick={() => setPlacement((current) => (current === 'switch' ? null : 'switch'))}
+                onClick={() => {
+                  setCatalogPlacementId(null)
+                  setPlacement((current) => (current === 'switch' ? null : 'switch'))
+                }}
               >
                 {t('hub_sketch_3d_switch')}
               </button>
