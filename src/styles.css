@@ -4787,6 +4787,157 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .ai-voice-icon.on { animation: none; }
 }
 
+/* ═══ AI-UX-1: редизайн панели ассистента — «сущность»-орб, не-чат, крупные органы ═══════════ */
+.ai-modal-v2 {
+  position: relative;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  padding-top: 26px;
+}
+
+/* Крупный явный крестик закрытия (не мелкий в углу). */
+.ai-close-x {
+  position: absolute; top: 10px; right: 12px; z-index: 2;
+  width: 44px; height: 44px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+  font-size: 22px; line-height: 1; cursor: pointer;
+  transition: background .12s ease, transform .1s ease;
+}
+.ai-close-x:hover { background: var(--elevated); }
+.ai-close-x:active { transform: scale(.94); }
+
+/* СУЩНОСТЬ: пульсирующий орб + подпись. */
+.ai-orb-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.ai-orb {
+  position: relative; width: 132px; height: 132px;
+  display: grid; place-items: center; margin: 2px auto 0;
+}
+.ai-orb-core {
+  grid-area: 1 / 1; width: 96px; height: 96px; border-radius: 50%;
+  background: radial-gradient(circle at 32% 28%, #f6dd84 0%, var(--amber, #c8a93b) 44%, #a5822b 72%, #5f4a17 100%);
+  box-shadow: 0 0 30px 4px rgba(200, 169, 59, .4), inset 0 0 24px rgba(255, 255, 255, .18);
+  will-change: transform, filter, box-shadow;
+}
+.ai-orb-ring {
+  grid-area: 1 / 1; width: 116px; height: 116px; border-radius: 50%;
+  border: 2px solid transparent; opacity: 0; pointer-events: none;
+}
+
+/* Покой — медленный «дыхательный» пульс. */
+.ai-orb-idle .ai-orb-core { animation: ai-orb-breathe 3.6s ease-in-out infinite; }
+
+/* Слушаю — орб пульсирует в ритм микрофона (var --mic 0..1) + переход в холодный цвет. */
+.ai-orb-listening .ai-orb-core {
+  background: radial-gradient(circle at 32% 28%, #cdf5ff 0%, var(--cyan, #69e7ff) 46%, #2ea6c2 74%, #14607a 100%);
+  transform: scale(calc(1 + var(--mic, 0) * 0.30));
+  box-shadow: 0 0 calc(28px + var(--mic, 0) * 46px) 6px rgba(105, 231, 255, .5), inset 0 0 24px rgba(255, 255, 255, .22);
+  transition: transform .08s ease-out, box-shadow .08s ease-out;
+}
+.ai-orb-listening .ai-orb-ring {
+  opacity: 1; border-color: rgba(105, 231, 255, .45);
+  animation: ai-orb-wave 1.8s ease-out infinite;
+}
+
+/* Думаю — переливание (hue) + дыхание + вращающееся кольцо. */
+.ai-orb-thinking .ai-orb-core {
+  animation: ai-orb-hue 2s linear infinite, ai-orb-breathe 2.2s ease-in-out infinite;
+}
+.ai-orb-thinking .ai-orb-ring {
+  opacity: 1; border-top-color: var(--cyan, #69e7ff); border-right-color: var(--amber, #c8a93b);
+  animation: ai-orb-spin 1s linear infinite;
+}
+
+/* Говорю — концентрические волны от орба + мягкий пульс ядра. */
+.ai-orb-speaking .ai-orb-core { animation: ai-orb-breathe 1.5s ease-in-out infinite; }
+.ai-orb-speaking .ai-orb-ring,
+.ai-orb-speaking .ai-orb-ring2 {
+  opacity: 1; border-color: rgba(200, 169, 59, .5);
+  animation: ai-orb-wave 1.5s ease-out infinite;
+}
+.ai-orb-speaking .ai-orb-ring2 { animation-delay: .75s; }
+
+.ai-orb-denied .ai-orb-core {
+  background: radial-gradient(circle at 32% 28%, #f0b4ab 0%, var(--danger, #c0392b) 60%, #7a2119 100%);
+  box-shadow: 0 0 22px 2px rgba(192, 57, 43, .4), inset 0 0 22px rgba(255, 255, 255, .1);
+  animation: none;
+}
+
+@keyframes ai-orb-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 28px 4px rgba(200, 169, 59, .36), inset 0 0 24px rgba(255, 255, 255, .16); }
+  50% { transform: scale(1.06); box-shadow: 0 0 46px 10px rgba(200, 169, 59, .52), inset 0 0 26px rgba(255, 255, 255, .24); }
+}
+@keyframes ai-orb-spin { to { transform: rotate(360deg); } }
+@keyframes ai-orb-hue { to { filter: hue-rotate(360deg); } }
+@keyframes ai-orb-wave {
+  0% { transform: scale(.72); opacity: .6; }
+  100% { transform: scale(1.45); opacity: 0; }
+}
+
+.ai-orb-title { margin: 4px 0 0; font-size: 17px; color: var(--text); text-transform: none; letter-spacing: 0; }
+.ai-orb-label { margin: 0; font-size: 14px; font-weight: 600; color: var(--muted); }
+.ai-orb-hint { margin: 2px 0 0; max-width: 40ch; }
+
+/* НЕ ЧАТ: крупный последний ответ, печатается по мере прихода SSE. */
+.ai-answer {
+  width: 100%; min-height: 48px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 4px 4px;
+}
+.ai-answer-text {
+  margin: 0; font-size: 18px; line-height: 1.5; color: var(--text);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-width: 60ch;
+}
+.ai-answer-thinking { color: var(--muted); font-style: italic; }
+.ai-answer-empty { margin: 0; font-size: 14px; }
+.ai-caret {
+  display: inline-block; width: 2px; height: 1.05em; margin-left: 2px;
+  vertical-align: text-bottom; background: var(--accent, #c8a93b);
+  animation: ai-caret-blink 1s step-end infinite;
+}
+@keyframes ai-caret-blink { 50% { opacity: 0; } }
+
+/* История — свёрнута за кнопкой (компактные строки, НЕ пузыри мессенджера). */
+.ai-history-block { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.ai-history-toggle { width: auto; align-self: center; padding: 6px 16px; font-size: 13px; }
+.ai-history-block .ai-history {
+  text-align: left; max-height: 34vh; gap: 6px;
+  border-top: 1px solid var(--line); padding-top: 8px;
+}
+.ai-hist-row { display: flex; gap: 8px; font-size: 13px; line-height: 1.4; }
+.ai-hist-role {
+  flex: 0 0 auto; min-width: 66px; font-weight: 600;
+  color: var(--muted); text-transform: uppercase; font-size: 11px; padding-top: 1px;
+}
+.ai-hist-you .ai-hist-role { color: var(--accent, #c8a93b); }
+.ai-hist-ai .ai-hist-role { color: var(--cyan, #69e7ff); }
+.ai-hist-text { flex: 1 1 auto; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+/* КРУПНЫЕ ОРГАНЫ: большой микрофон + отправка. */
+.ai-modal-v2 .ai-input-row { width: 100%; }
+.ai-modal-v2 .ai-input { padding: 14px 16px; font-size: 16px; }
+.ai-modal-v2 .voice-mic { width: 52px; height: 52px; flex: 0 0 auto; }
+.ai-modal-v2 .voice-mic svg { width: 26px; height: 26px; }
+.ai-send-btn { width: auto; flex: 0 0 auto; padding: 14px 22px; }
+
+/* Полноэкранный режим на мобильном. */
+@media (max-width: 640px) {
+  .ai-backdrop { padding: 0; }
+  .ai-modal-v2 {
+    width: 100%; max-width: 100%; height: 100%; max-height: 100%;
+    border-radius: 0; margin: 0; overflow-y: auto;
+  }
+  .ai-orb { width: 116px; height: 116px; }
+  .ai-orb-core { width: 84px; height: 84px; }
+  .ai-answer-text { font-size: 17px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-orb-core, .ai-orb-ring, .ai-caret { animation: none !important; }
+  .ai-orb-listening .ai-orb-core { transition: none; }
+}
+
 /* CLIENT-DOSSIER-2: досье клиента — логотип, аватар в списке, напоминания, файлы. */
 .drawer-avatar { overflow: hidden; }
 .drawer-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
