@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import {
@@ -87,6 +87,7 @@ export default function Projects() {
   const { profile } = useAuth()
   const { t } = useI18n()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [profits, setProfits] = useState<ProjectProfit[]>([])
@@ -100,7 +101,12 @@ export default function Projects() {
   const [weekHoursByProject, setWeekHoursByProject] = useState<Map<string, number>>(new Map())
   const [notesByProject, setNotesByProject] = useState<Map<string, { count: number; firstLine: string }>>(new Map())
   // PROJ-1b: контролы над списком — фильтр статуса / сортировка / поиск.
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active')
+  // NAV-FIX-1: стартовый статус можно задать через ?status= (deep-link из KPI «Активные объекты»);
+  // неизвестное значение → прежний дефолт 'active'.
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => {
+    const s = searchParams.get('status')
+    return (['all', 'active', 'paused', 'completed'] as string[]).includes(s ?? '') ? (s as StatusFilter) : 'active'
+  })
   const [sortBy, setSortBy] = useState<ProjectSort>('name')
   const [search, setSearch] = useState('')
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null)

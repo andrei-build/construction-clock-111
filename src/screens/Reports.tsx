@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { getReportRows } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
@@ -73,7 +74,13 @@ function errorMessage(error: unknown) {
 export default function Reports() {
   const { profile } = useAuth()
   const { t } = useI18n()
-  const [kind, setKind] = useState<ReportKind>('hours')
+  const [searchParams] = useSearchParams()
+  // NAV-FIX-1: вкладку отчёта можно открыть сразу нужную через ?tab= (deep-link из KPI «Обзора»:
+  // часы → hours, материалы → expenses). Неизвестное значение → дефолтные «часы».
+  const [kind, setKind] = useState<ReportKind>(() => {
+    const tab = searchParams.get('tab')
+    return reportTabs.includes(tab as ReportKind) ? (tab as ReportKind) : 'hours'
+  })
   const [from, setFrom] = useState(defaultFrom)
   const [to, setTo] = useState(() => dateValue(new Date()))
   const [rows, setRows] = useState<ReportRow[]>([])

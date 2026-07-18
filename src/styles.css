@@ -639,6 +639,25 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin-top: 8px;
   font-size: 11px;
 }
+/* NAV-FIX-1: кликабельные сводные KPI-карточки — кнопка (Командный центр) или ссылка (Обзор),
+   открывают список с уже применённым фильтром. Сбрасываем UA-стиль button/<a> под вид .card. */
+.metric-card.as-button,
+.metric-card.tap {
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  text-decoration: none;
+  display: block;
+  width: 100%;
+  transition: border-color .12s, background .12s, transform .06s;
+}
+.metric-card.as-button:hover,
+.metric-card.tap:hover { background: var(--elevated); border-color: var(--muted2); }
+.metric-card.as-button:active,
+.metric-card.tap:active { transform: translateY(1px); }
+.metric-card.as-button:focus-visible,
+.metric-card.tap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .command-card,
 .payroll-table-wrap,
 .reports-table-wrap,
@@ -771,21 +790,30 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin-inline: auto;
   padding: 12px 16px 0;
 }
+/* NAV-FIX-1: заметная, «живая» кнопка «Назад» — акцентная рамка/текст, тень, крупнее стрелка. */
 .app-back-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px 6px 8px;
-  background: var(--panel);
-  border: 1px solid var(--line);
+  gap: 8px;
+  padding: 9px 16px 9px 12px;
+  background: var(--panel2);
+  border: 1.5px solid var(--accent);
   border-radius: 999px;
   color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,.22);
+  transition: background .12s, border-color .12s, transform .06s, box-shadow .12s;
 }
-.app-back-btn:hover { border-color: var(--muted2); background: var(--panel2); }
-.app-back-btn svg { width: 18px; height: 18px; }
+.app-back-btn:hover {
+  background: var(--elevated);
+  border-color: var(--amber-hover);
+  box-shadow: 0 6px 18px rgba(0,0,0,.28);
+}
+.app-back-btn:active { transform: translateY(1px); }
+.app-back-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.app-back-btn svg { width: 20px; height: 20px; color: var(--accent); }
 
 .project-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .task-card {

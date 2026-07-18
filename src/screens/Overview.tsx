@@ -446,13 +446,17 @@ export default function Overview() {
     new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
 
   const metrics = useMemo(() => {
-    const items: Array<{ key: string; label: string; value: string; tone: MetricTone; note: string }> = [
+    // NAV-FIX-1: каждая KPI-плитка ведёт на экран, где живут её данные (при необходимости с
+    // уже применённым фильтром через query-параметр): на объекте → карта, часы → отчёты (часы),
+    // неоплачено → зарплата, материалы → отчёты (расходы), задачи → доска с фильтром «открытые».
+    const items: Array<{ key: string; label: string; value: string; tone: MetricTone; note: string; to: string }> = [
       {
         key: 'on-site',
         label: t('overview_on_site_kpi'),
         value: `${onSiteRows.length}/${team.length}`,
         tone: onSiteRows.length > 0 ? 'green' : 'grey',
         note: t('overview_crew_profiles'),
+        to: '/map',
       },
       {
         key: 'today',
@@ -460,6 +464,7 @@ export default function Overview() {
         value: `${fmtHours(totalMs)} ${t('h')}`,
         tone: totalMs > 0 ? 'blue' : 'grey',
         note: `${projects.length} ${t('overview_active_projects_short')}`,
+        to: '/reports?tab=hours',
       },
     ]
 
@@ -473,6 +478,7 @@ export default function Overview() {
         value: unpaid ? money(unpaid.amount) : '—',
         tone: unpaid ? (unpaid.amount > 0 ? 'amber' : 'green') : 'grey',
         note: unpaid ? `${formatHoursNumber(unpaid.hours)} ${t('h')}` : '—',
+        to: '/payroll',
       })
       items.push({
         key: 'materials',
@@ -480,6 +486,7 @@ export default function Overview() {
         value: money(materials ?? 0),
         tone: (materials ?? 0) > 0 ? 'blue' : 'grey',
         note: t('materials_cost'),
+        to: '/reports?tab=expenses',
       })
     }
 
@@ -489,6 +496,7 @@ export default function Overview() {
       value: String(tasks.length),
       tone: priorityTasks.length > 0 ? 'amber' : tasks.length > 0 ? 'blue' : 'grey',
       note: `${priorityTasks.length} ${t('overview_urgent_count')}`,
+      to: '/dispatch?hide=1',
     })
 
     return items
@@ -634,11 +642,11 @@ export default function Overview() {
 
       <div className="dashboard-tiles">
         {metrics.map((tile) => (
-          <div key={tile.key} className={`card metric-card ${tile.tone}`}>
+          <Link key={tile.key} to={tile.to} className={`card metric-card tap ${tile.tone}`}>
             <div className="metric-value">{tile.value}</div>
             <div className="muted">{tile.label}</div>
             <div className="metric-note muted">{tile.note}</div>
-          </div>
+          </Link>
         ))}
       </div>
 

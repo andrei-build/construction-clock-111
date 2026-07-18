@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import {
@@ -410,23 +410,32 @@ function TeamMessageWidget({ crew, messages, peopleById, canWrite, onSent, relAg
 // ── (2) KPI задач ──────────────────────────────────────────────────────────────
 function KpiRow({ tasks, projects, onCreate }: { tasks: Task[]; projects: Project[]; onCreate: () => void }) {
   const { t } = useI18n()
+  const navigate = useNavigate()
   const open = tasks.filter((x) => x.status === 'open' || x.status === 'in_progress')
   const urgent = open.filter((x) => x.priority === 'urgent' || x.priority === 'high')
   const unassigned = open.filter((x) => !x.assigned_to)
+  // NAV-FIX-1: каждая KPI-плитка кликабельна и открывает список с уже применённым фильтром.
+  // Открытые/Срочные/Без исполнителя → доска задач ниже (query-параметры читает TaskBoard при
+  // монтировании/смене URL и скроллит к себе). Активные объекты → список проектов с фильтром active.
   const tiles = [
-    { label: t('cc_kpi_open'), value: open.length, tone: open.length > 0 ? 'blue' : 'grey' },
-    { label: t('cc_kpi_urgent'), value: urgent.length, tone: urgent.length > 0 ? 'amber' : 'grey' },
-    { label: t('cc_kpi_unassigned'), value: unassigned.length, tone: unassigned.length > 0 ? 'red' : 'green' },
-    { label: t('cc_kpi_active_projects'), value: projects.length, tone: 'blue' },
+    { label: t('cc_kpi_open'), value: open.length, tone: open.length > 0 ? 'blue' : 'grey', to: '/dispatch?hide=1' },
+    { label: t('cc_kpi_urgent'), value: urgent.length, tone: urgent.length > 0 ? 'amber' : 'grey', to: '/dispatch?hide=1&priority=urgent' },
+    { label: t('cc_kpi_unassigned'), value: unassigned.length, tone: unassigned.length > 0 ? 'red' : 'green', to: '/dispatch?hide=1&assignee=none' },
+    { label: t('cc_kpi_active_projects'), value: projects.length, tone: 'blue', to: '/projects?status=active' },
   ]
   return (
     <section className="card cc-card">
       <div className="dashboard-tiles">
         {tiles.map((tile) => (
-          <div key={tile.label} className={`card metric-card ${tile.tone}`}>
+          <button
+            key={tile.label}
+            type="button"
+            className={`card metric-card as-button ${tile.tone}`}
+            onClick={() => navigate(tile.to)}
+          >
             <div className="metric-value">{tile.value}</div>
             <div className="muted">{tile.label}</div>
-          </div>
+          </button>
         ))}
       </div>
       <button className="btn ghost small" style={{ marginTop: 8 }} onClick={onCreate}>+ {t('cc_create_task_in_project')}</button>
@@ -658,6 +667,9 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
 }) {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
+  const [searchParams] = useSearchParams()
+  // NAV-FIX-1: якорь доски задач — прокручиваем к ней при deep-link из KPI-плиток.
+  const boardRef = useRef<HTMLElement>(null)
 
   // Create form
   const [fProject, setFProject] = useState('')
@@ -678,7 +690,25 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
   // Filters
   const [fltProject, setFltProject] = useState('all')
   const [fltStatus, setFltStatus] = useState('all')
+  // NAV-FIX-1: исполнитель ('all'|'none'|id) и приоритет ('all'|'urgent'=urgent+high|medium|low) —
+  // реальные переиспользуемые фильтры доски; deep-link из KPI-плиток «Срочные»/«Без исполнителя»
+  // выставляет их через query-параметры (см. эффект ниже).
+  const [fltAssignee, setFltAssignee] = useState('all')
+  const [fltPriority, setFltPriority] = useState('all')
   const [hideDone, setHideDone] = useState(false)
+
+  // NAV-FIX-1: применяем фильтр из URL-параметров (deep-link по KPI-плитке с этой же страницы или
+  // из «Обзора»). Срабатывает только когда параметры есть, поэтому ручные правки фильтров не
+  // сбрасываются; после применения прокручиваем доску в зону видимости.
+  useEffect(() => {
+    const hasFilter = ['hide', 'status', 'assignee', 'priority'].some((k) => searchParams.has(k))
+    if (!hasFilter) return
+    setHideDone(searchParams.get('hide') === '1')
+    setFltStatus(searchParams.get('status') ?? 'all')
+    setFltAssignee(searchParams.get('assignee') ?? 'all')
+    setFltPriority(searchParams.get('priority') ?? 'all')
+    boardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [searchParams])
 
   // Card interaction
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -736,9 +766,16 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
         if (fltProject === 'none' ? task.project_id !== null : task.project_id !== fltProject) return false
       }
       if (fltStatus !== 'all' && task.status !== fltStatus) return false
+      if (fltAssignee !== 'all') {
+        if (fltAssignee === 'none' ? task.assigned_to !== null : task.assigned_to !== fltAssignee) return false
+      }
+      // 'urgent' объединяет urgent+high (паритет KPI-плитки «Срочные/важные»).
+      if (fltPriority === 'urgent') {
+        if (task.priority !== 'urgent' && task.priority !== 'high') return false
+      } else if (fltPriority !== 'all' && task.priority !== fltPriority) return false
       return true
     })
-  }, [tasks, hideDone, fltProject, fltStatus])
+  }, [tasks, hideDone, fltProject, fltStatus, fltAssignee, fltPriority])
 
   const loadAttachments = async (taskId: string): Promise<Attachment[]> => {
     try {
@@ -879,7 +916,7 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
   }
 
   return (
-    <section className="card cc-card cc-board">
+    <section ref={boardRef} className="card cc-card cc-board">
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <h2>🗂️ {t('cc_board')}</h2>
         <Link className="btn ghost small" to="/archive">📦 {t('cc_open_archive')}</Link>
@@ -963,6 +1000,24 @@ function TaskBoard({ projects, team, tasks, peopleById, projectName, canWrite, o
               <select value={fltStatus} onChange={(e) => setFltStatus(e.target.value)}>
                 <option value="all">{t('filter_all')}</option>
                 {FILTER_STATUSES.map((st) => <option key={st} value={st}>{t(`task_status_${st}`)}</option>)}
+              </select>
+            </div>
+            {/* NAV-FIX-1: фильтры «исполнитель» и «приоритет» — цели deep-link из KPI-плиток. */}
+            <div>
+              <label>{t('col_assignee')}</label>
+              <select value={fltAssignee} onChange={(e) => setFltAssignee(e.target.value)}>
+                <option value="all">{t('filter_all')}</option>
+                <option value="none">{t('task_unassigned')}</option>
+                {assignableTeam.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label>{t('col_priority')}</label>
+              <select value={fltPriority} onChange={(e) => setFltPriority(e.target.value)}>
+                <option value="all">{t('filter_all')}</option>
+                <option value="urgent">{t('cc_kpi_urgent')}</option>
+                <option value="medium">{t('task_priority_medium')}</option>
+                <option value="low">{t('task_priority_low')}</option>
               </select>
             </div>
             <label className="check-row">
