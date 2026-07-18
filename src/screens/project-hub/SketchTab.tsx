@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../../lib/i18n'
 import {
   createProjectNote,
@@ -10,6 +10,14 @@ import {
 import { isManagerWrite } from '../../lib/types'
 import type { Profile, Project, ProjectHubFile } from '../../lib/types'
 import Sketch3DView from './Sketch3DView'
+import {
+  sanitizeSketchFinishes,
+  sanitizeSketchLights,
+  sanitizeSketchSwitches,
+  type SketchFinishes,
+  type SketchLight,
+  type SketchSwitch,
+} from './sketchFinishes'
 
 interface SketchTabProps {
   project: Project
@@ -48,7 +56,16 @@ type Opening = {
   h?: number // высота окна в футах (только окно)
   sill?: number // высота окна от пола в футах (только окно)
 }
-type SketchModel = { version: 1; cellFt: number; height?: number; contours: Contour[]; openings: Opening[] }
+type SketchModel = {
+  version: 1
+  cellFt: number
+  height?: number
+  contours: Contour[]
+  openings: Opening[]
+  finishes?: SketchFinishes
+  lights?: SketchLight[]
+  switches?: SketchSwitch[]
+}
 type ViewMode = '2d' | '3d'
 
 // Ширина проёма в футах с учётом дефолта по типу.
@@ -487,6 +504,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     commit({ ...model, height: nextHeight })
   }
 
+  const updateModelFrom3D = useCallback((next: SketchModel) => {
+    setModel(next)
+    setStatus(null)
+    setError(null)
+  }, [])
+
   const save = async () => {
     if (!profile || busy) return
     if (model.contours.every((c) => c.points.length < 2)) {
@@ -570,7 +593,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         contours: data.contours,
         openings: Array.isArray(data.openings) ? data.openings : [],
       }
+      const finishes = sanitizeSketchFinishes(data.finishes)
+      const lights = sanitizeSketchLights(data.lights)
+      const switches = sanitizeSketchSwitches(data.switches)
       if (height !== undefined) nextModel.height = height
+      if (finishes) nextModel.finishes = finishes
+      if (lights.length > 0) nextModel.lights = lights
+      if (switches.length > 0) nextModel.switches = switches
       setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
       setModel(nextModel)
       setName(file.name.replace(/^sketch-/, '').replace(/\.json$/, ''))
@@ -820,6 +849,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           <Sketch3DView
             model={model}
             heightFt={heightFt}
+            canEdit={canEdit}
+            onModelChange={updateModelFrom3D}
             label={t('hub_sketch_3d_label')}
             loadingLabel={t('hub_sketch_3d_loading')}
             errorLabel={t('hub_sketch_3d_error')}
