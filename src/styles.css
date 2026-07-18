@@ -3920,6 +3920,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   height: 14px;
   margin: 0;
 }
+.hub-sketch-code-toggle {
+  padding: 6px 8px;
+  border: 1px solid rgba(126,160,190,.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .04);
+}
 .hub-sketch-canvas-card { padding: 10px; }
 .hub-sketch-svg-shell {
   position: relative;
@@ -4117,6 +4123,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-opening-hit,
 .hub-sketch-measurement-line,
 .hub-sketch-measurement-hit,
+.hub-sketch-plan-item *,
+.hub-sketch-code-clearance-line,
+.hub-sketch-code-arc,
 .hub-sketch-dim-main,
 .hub-sketch-dim-extension,
 .hub-sketch-dim-tick {
@@ -4161,6 +4170,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-stat { display: flex; flex-direction: column; gap: 2px; }
 .hub-sketch-stat-value { font-size: 20px; font-weight: 900; line-height: 1.2; font-family: var(--font-numeric); font-variant-numeric: tabular-nums; }
+.hub-sketch-code-stat-ok,
+.hub-sketch-code-stat-warn {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.hub-sketch-code-stat-ok { color: var(--green); }
+.hub-sketch-code-stat-warn { color: var(--red); }
 .hub-sketch-ok { color: var(--green); font-weight: 600; margin: 0; }
 .hub-sketch-save { display: flex; flex-direction: column; gap: 8px; }
 .hub-sketch-name-label { font-size: 13px; }
@@ -4190,6 +4206,76 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-door { stroke: #b45309; stroke-width: 6; stroke-linecap: butt; }
 .hub-sketch-window { stroke: #2563eb; stroke-width: 6; stroke-linecap: butt; }
 .hub-sketch-opening-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
+.hub-sketch-plan-item {
+  pointer-events: none;
+}
+.hub-sketch-plan-item rect,
+.hub-sketch-plan-item ellipse,
+.hub-sketch-plan-item path {
+  fill: rgba(148, 163, 184, .22);
+  stroke: #475569;
+  stroke-width: 1.4;
+}
+.hub-sketch-plan-item-warn rect,
+.hub-sketch-plan-item-warn ellipse,
+.hub-sketch-plan-item-warn path {
+  fill: rgba(220, 38, 38, .14);
+  stroke: #dc2626;
+  stroke-width: 2;
+}
+.hub-sketch-plan-toilet-tank,
+.hub-sketch-plan-toilet-bowl {
+  fill: #f8fafc !important;
+}
+.hub-sketch-plan-toilet-seat {
+  fill: rgba(147, 197, 253, .42) !important;
+  stroke-width: 1.1 !important;
+}
+.hub-sketch-plan-toilet-axis {
+  stroke: rgba(15, 23, 42, .58);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.hub-sketch-plan-item-warn .hub-sketch-plan-toilet-axis {
+  stroke: #dc2626;
+}
+.hub-sketch-code-arc,
+.hub-sketch-code-clearance-line {
+  stroke: #047857;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  fill: none;
+  pointer-events: none;
+}
+.hub-sketch-code-arc {
+  stroke-dasharray: 5 4;
+}
+.hub-sketch-code-clearance-dot {
+  fill: #047857;
+  stroke: #ffffff;
+  stroke-width: 1.1;
+  pointer-events: none;
+}
+.hub-sketch-code-clearance-label {
+  fill: #047857;
+  stroke: rgba(255, 255, 255, .96);
+  stroke-width: 3.8;
+  paint-order: stroke;
+  font-weight: 900;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+.hub-sketch-code-clearance-warn .hub-sketch-code-clearance-line,
+.hub-sketch-code-arc-warn {
+  stroke: #dc2626;
+  stroke-width: 2.2;
+}
+.hub-sketch-code-clearance-warn .hub-sketch-code-clearance-dot {
+  fill: #dc2626;
+}
+.hub-sketch-code-clearance-warn .hub-sketch-code-clearance-label {
+  fill: #b91c1c;
+}
 .hub-sketch-opening-dim-door .hub-sketch-dim-main,
 .hub-sketch-opening-dim-door .hub-sketch-dim-extension,
 .hub-sketch-opening-dim-door .hub-sketch-dim-tick { stroke: #7c2d12; }
@@ -4555,6 +4641,23 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-elevation-tools .hub-sketch-layer-toggle {
   color: var(--text);
 }
+.hub-sketch-elevation-code-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hub-sketch-code-chip {
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid rgba(220, 38, 38, .24);
+  border-radius: 8px;
+  background: rgba(220, 38, 38, .09);
+  color: #b91c1c;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
 .hub-sketch-elevation-svg {
   width: 100%;
   aspect-ratio: 16 / 9;
@@ -4588,6 +4691,27 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   fill: rgba(37, 99, 235, .42);
   stroke: #1d4ed8;
   stroke-width: .04;
+}
+.hub-sketch-elevation-item rect,
+.hub-sketch-elevation-item path,
+.hub-sketch-elevation-item ellipse {
+  fill: rgba(148, 163, 184, .24);
+  stroke: #475569;
+  stroke-width: .035;
+}
+.hub-sketch-elevation-item-warn rect,
+.hub-sketch-elevation-item-warn path,
+.hub-sketch-elevation-item-warn ellipse {
+  fill: rgba(220, 38, 38, .14);
+  stroke: #dc2626;
+  stroke-width: .055;
+}
+.hub-sketch-elevation-toilet rect,
+.hub-sketch-elevation-toilet path {
+  fill: rgba(248, 250, 252, .95);
+}
+.hub-sketch-elevation-toilet ellipse {
+  fill: rgba(147, 197, 253, .42);
 }
 .hub-sketch-elevation-svg text {
   fill: #0f172a;
@@ -4753,6 +4877,33 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border-radius: 7px 7px 2px 2px;
   background: rgba(15, 23, 42, .22);
 }
+.hub-sketch-catalog-thumb-toilet {
+  position: relative;
+  width: 28px;
+  height: 38px;
+}
+.hub-sketch-catalog-thumb-toilet::before,
+.hub-sketch-catalog-thumb-toilet::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 2px solid rgba(15, 23, 42, .42);
+  background: rgba(248, 250, 252, .94);
+}
+.hub-sketch-catalog-thumb-toilet::before {
+  top: 2px;
+  width: 24px;
+  height: 11px;
+  border-radius: 4px;
+}
+.hub-sketch-catalog-thumb-toilet::after {
+  top: 16px;
+  width: 20px;
+  height: 19px;
+  border-radius: 50% 50% 46% 46%;
+  box-shadow: inset 0 0 0 5px rgba(147, 197, 253, .28);
+}
 .hub-sketch-catalog-item-body {
   min-width: 0;
   display: grid;
@@ -4785,6 +4936,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-3d-item-popover-warn {
   border-color: rgba(220, 38, 38, .52);
   box-shadow: 0 12px 34px rgba(127, 29, 29, .18);
+}
+.hub-sketch-code-popover-msg {
+  margin: 0;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.25;
 }
 .hub-sketch-3d-item-popover .hub-sketch-catalog-thumb {
   width: 74px;

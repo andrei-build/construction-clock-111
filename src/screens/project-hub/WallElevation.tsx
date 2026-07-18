@@ -13,6 +13,13 @@ import {
   type SketchSurfaceFinish,
 } from './sketchFinishes'
 import { formatFeetInches } from './inches'
+import {
+  codeClearanceItemIds,
+  formatCodeClearanceMessage,
+  getCodeClearanceChecks,
+  type CodeClearanceCheck,
+} from './code-clearances'
+import { isToiletPlacedCatalogItem, sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
 
 const CELL_FT = 1
 const DOOR_W_FT = 3
@@ -29,12 +36,13 @@ type WallElevationWall = {
 }
 
 interface WallElevationProps {
-  model: Sketch3DModel
+  model: Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }
   wall: WallElevationWall
   heightFt: number
   finish: SketchSurfaceFinish
   canEdit?: boolean
   snapStepFt?: number
+  codeCheckEnabled?: boolean
   onMeasurementsChange?: (measurements: SketchMeasurement[]) => void
 }
 
@@ -48,6 +56,15 @@ type ElevationMeasurementLine = {
   labelY: number
   angle: number
   text: string
+}
+type ElevationPlacedItem = {
+  item: SketchPlacedCatalogItem
+  x: number
+  y: number
+  width: number
+  height: number
+  warning: boolean
+  toilet: boolean
 }
 
 function modelCellFt(model: Sketch3DModel): number {
@@ -94,6 +111,72 @@ function wallKey(wall: WallElevationWall): string {
   return `${wall.c}:${wall.s}`
 }
 
+function itemAxes(item: SketchPlacedCatalogItem): { side: { x: number; z: number }; forward: { x: number; z: number } } {
+  const c = Math.cos(item.rotationY)
+  const s = Math.sin(item.rotationY)
+  return {
+    side: { x: c, z: -s },
+    forward: { x: s, z: c },
+  }
+}
+
+function itemFootprintCorners(item: SketchPlacedCatalogItem, widthFt: number, depthFt: number) {
+  const axes = itemAxes(item)
+  const halfW = widthFt / 2
+  const halfD = depthFt / 2
+  return [
+    { x: item.xFt - axes.side.x * halfW - axes.forward.x * halfD, z: item.zFt - axes.side.z * halfW - axes.forward.z * halfD },
+    { x: item.xFt + axes.side.x * halfW - axes.forward.x * halfD, z: item.zFt + axes.side.z * halfW - axes.forward.z * halfD },
+    { x: item.xFt + axes.side.x * halfW + axes.forward.x * halfD, z: item.zFt + axes.side.z * halfW + axes.forward.z * halfD },
+    { x: item.xFt - axes.side.x * halfW + axes.forward.x * halfD, z: item.zFt - axes.side.z * halfW + axes.forward.z * halfD },
+  ]
+}
+
+function elevationPlacedItems(
+  model: Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] },
+  wall: WallElevationWall,
+  lengthFt: number,
+  height: number,
+  warningIds: Set<string>,
+): ElevationPlacedItem[] {
+  const cellFt = modelCellFt(model)
+  const ax = wall.a.x * cellFt
+  const az = wall.a.y * cellFt
+  const bx = wall.b.x * cellFt
+  const bz = wall.b.y * cellFt
+  const wallLen = Math.hypot(bx - ax, bz - az)
+  if (wallLen <= 0.001) return []
+  const ux = (bx - ax) / wallLen
+  const uz = (bz - az) / wallLen
+  return sanitizePlacedCatalogItems(model.placedItems)
+    .map((item): ElevationPlacedItem | null => {
+      if (item.surface === 'ceiling' || item.category === 'light' || item.category === 'fan') return null
+      if (item.c !== wall.c || item.s !== wall.s) return null
+      const widthIn = Number(item.widthIn)
+      const depthIn = Number(item.depthIn)
+      const heightIn = Number(item.heightIn)
+      if (!Number.isFinite(widthIn) || !Number.isFinite(depthIn) || !Number.isFinite(heightIn) || widthIn <= 0 || depthIn <= 0 || heightIn <= 0) return null
+      const widthFt = widthIn / 12
+      const depthFt = depthIn / 12
+      const heightFt = Math.min(height, heightIn / 12)
+      const projections = itemFootprintCorners(item, widthFt, depthFt).map((point) => (point.x - ax) * ux + (point.z - az) * uz)
+      const minX = Math.max(0, Math.min(lengthFt, Math.min(...projections)))
+      const maxX = Math.max(0, Math.min(lengthFt, Math.max(...projections)))
+      const projectedWidth = Math.max(0.12, maxX - minX)
+      const centerX = Number.isFinite(item.t) ? Math.max(0, Math.min(lengthFt, (item.t ?? 0.5) * lengthFt)) : (minX + maxX) / 2
+      return {
+        item,
+        x: Math.max(0, Math.min(lengthFt - projectedWidth, centerX - projectedWidth / 2)),
+        y: height - heightFt,
+        width: projectedWidth,
+        height: heightFt,
+        warning: warningIds.has(item.id),
+        toilet: isToiletPlacedCatalogItem(item),
+      }
+    })
+    .filter((item): item is ElevationPlacedItem => !!item)
+}
+
 function elevationMeasurementLine(measurement: SketchMeasurement, height: number): ElevationMeasurementLine | null {
   const x1 = measurement.a.x
   const y1 = height - measurement.a.y
@@ -118,7 +201,7 @@ function elevationMeasurementLine(measurement: SketchMeasurement, height: number
   }
 }
 
-export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, snapStepFt = 1 / 96, onMeasurementsChange }: WallElevationProps) {
+export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, snapStepFt = 1 / 96, codeCheckEnabled = true, onMeasurementsChange }: WallElevationProps) {
   const { t } = useI18n()
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [measureTool, setMeasureTool] = useState(false)
@@ -145,6 +228,26 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const tileH = Math.max(1, tile?.tileHIn ?? 24) / 12
   const grout = Math.max(0, tile?.groutIn ?? 0.125) / 12
   const currentWallKey = wallKey(wall)
+  const codeClearanceChecks = useMemo(
+    () => (codeCheckEnabled ? getCodeClearanceChecks(model) : []),
+    [model, codeCheckEnabled],
+  )
+  const codeClearanceViolations = useMemo(
+    () => codeClearanceChecks.filter((check) => !check.ok),
+    [codeClearanceChecks],
+  )
+  const codeWarningItemIds = useMemo(() => codeClearanceItemIds(codeClearanceViolations), [codeClearanceViolations])
+  const wallPlacedItems = useMemo(
+    () => elevationPlacedItems(model, wall, lengthFt, height, codeWarningItemIds),
+    [model, wall, lengthFt, height, codeWarningItemIds],
+  )
+  const wallCodeViolations = useMemo(
+    () => codeClearanceViolations.filter((check) => {
+      const onWall = (entity: CodeClearanceCheck['subject']) => entity.wall && `${entity.wall.c}:${entity.wall.s}` === currentWallKey
+      return onWall(check.subject) || onWall(check.target) || wallPlacedItems.some((entry) => entry.item.id === check.subject.id || entry.item.id === check.target.id)
+    }),
+    [codeClearanceViolations, currentWallKey, wallPlacedItems],
+  )
   const wallMeasurements = useMemo(
     () => (model.measurements ?? [])
       .map((measurement, index) => ({ measurement, index }))
@@ -284,6 +387,15 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           <span>{t('hub_sketch_measurements')}</span>
         </label>
       </div>
+      {codeCheckEnabled && wallCodeViolations.length > 0 && (
+        <div className="hub-sketch-elevation-code-list" role="status" aria-live="polite">
+          {wallCodeViolations.slice(0, 3).map((check) => (
+            <span key={check.id} className="hub-sketch-code-chip">
+              {formatCodeClearanceMessage(check, t)}
+            </span>
+          ))}
+        </div>
+      )}
       <svg
         ref={svgRef}
         className="hub-sketch-elevation-svg"
@@ -338,6 +450,23 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
               <text x={x + width / 2} y={Math.max(0.28, y - 0.14)} textAnchor="middle">
                 {label}
               </text>
+            </g>
+          )
+        })}
+        {wallPlacedItems.map((entry) => {
+          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}`
+          return (
+            <g key={`ei-${entry.item.id}`} className={cls}>
+              <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : t('hub_sketch_code_target_item'))}</title>
+              {entry.toilet ? (
+                <>
+                  <rect x={entry.x + entry.width * 0.08} y={entry.y + entry.height * 0.02} width={entry.width * 0.84} height={entry.height * 0.36} rx={0.05} />
+                  <path d={`M ${entry.x + entry.width * 0.18} ${entry.y + entry.height * 0.38} C ${entry.x + entry.width * 0.2} ${entry.y + entry.height * 0.78}, ${entry.x + entry.width * 0.8} ${entry.y + entry.height * 0.78}, ${entry.x + entry.width * 0.82} ${entry.y + entry.height * 0.38} Z`} />
+                  <ellipse cx={entry.x + entry.width / 2} cy={entry.y + entry.height * 0.56} rx={entry.width * 0.22} ry={entry.height * 0.13} />
+                </>
+              ) : (
+                <rect x={entry.x} y={entry.y} width={entry.width} height={entry.height} rx={0.05} />
+              )}
             </g>
           )
         })}

@@ -33,9 +33,19 @@ import {
 import { formatFeetInches, formatInches, parseInches, snapOpeningFeetToPrecision } from './inches'
 import WallElevation from './WallElevation'
 import {
+  codeClearanceItemIds,
+  formatCodeClearanceIn,
+  formatCodeClearanceMessage,
+  getCodeClearanceChecks,
+  type CodeClearanceCheck,
+} from './code-clearances'
+import {
+  BUILTIN_TOILET_CATALOG_ITEM,
   catalogDimsFromItem,
   catalogDimsText,
   catalogItemHasExactDims,
+  isBuiltinToiletCatalogItem,
+  isToiletPlacedCatalogItem,
   movePlacedOnCeiling,
   movePlacedOnFloor,
   movePlacedOnWall,
@@ -47,6 +57,7 @@ import {
   resolvePlacedCatalogItem,
   rotatePlacedCatalogItem,
   sanitizePlacedCatalogItems,
+  SKETCH_CATALOG_KIND_TOILET,
   type CatalogResolvedPlacedItem,
   type CatalogWallHit,
   type SketchPlacedCatalogItem,
@@ -129,6 +140,7 @@ interface Sketch3DViewProps {
   canEdit?: boolean
   onModelChange?: (model: Sketch3DModelWithCatalog) => void
   snapStepFt?: number
+  codeCheckEnabled?: boolean
   openingDefaults?: {
     doorW: number
     doorH: number
@@ -1215,6 +1227,19 @@ function catalogBrandModel(brand: string | null | undefined, model: string | nul
   return text || null
 }
 
+function withBuiltinCatalogItems(rows: CatalogItem[]): CatalogItem[] {
+  if (rows.some((item) => item.id === BUILTIN_TOILET_CATALOG_ITEM.id)) return rows
+  return [BUILTIN_TOILET_CATALOG_ITEM, ...rows]
+}
+
+function catalogDisplayName(item: CatalogItem, t: (k: string) => string): string {
+  return isBuiltinToiletCatalogItem(item) ? t('hub_sketch_toilet') : item.name
+}
+
+function resolvedCatalogDisplayName(item: CatalogResolvedPlacedItem, t: (k: string) => string): string {
+  return isToiletPlacedCatalogItem(item.placed) ? t('hub_sketch_toilet') : item.name
+}
+
 function catalogColor(category: CatalogCategory): number {
   switch (category) {
     case 'shower':
@@ -1366,6 +1391,49 @@ function addShowerPan(THREE: any, group: any, resolved: CatalogResolvedPlacedIte
   addMeshWithEdges(THREE, group, panFloor, edgeColor, 0.32)
 }
 
+function addToiletFixture(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, warn: boolean, edgeColor: number) {
+  const width = Math.max(0.04, resolved.dims.widthFt)
+  const height = Math.max(0.04, resolved.dims.heightFt)
+  const depth = Math.max(0.04, resolved.dims.depthFt)
+  const floorY = -height / 2
+  const ceramic = new THREE.MeshStandardMaterial({
+    color: warn ? 0xffd6d6 : 0xf8fafc,
+    roughness: 0.32,
+    metalness: 0.02,
+  })
+  const shadow = new THREE.MeshStandardMaterial({ color: warn ? 0xfecaca : 0xe5e7eb, roughness: 0.44, metalness: 0.02 })
+  const water = new THREE.MeshStandardMaterial({ color: 0x9bd5ff, roughness: 0.2, metalness: 0.04, transparent: true, opacity: 0.82 })
+
+  const tankH = Math.max(0.46, height * 0.42)
+  const tankD = Math.max(0.22, depth * 0.24)
+  const tank = new THREE.Mesh(new THREE.BoxGeometry(width * 0.94, tankH, tankD), ceramic)
+  tank.position.set(0, floorY + height - tankH / 2, -depth / 2 + tankD / 2)
+  addMeshWithEdges(THREE, group, tank, edgeColor, warn ? 0.95 : 0.46)
+
+  const baseH = Math.max(0.34, height * 0.2)
+  const base = new THREE.Mesh(new THREE.BoxGeometry(width * 0.42, baseH, depth * 0.34), shadow)
+  base.position.set(0, floorY + baseH / 2, depth * 0.16)
+  addMeshWithEdges(THREE, group, base, edgeColor, warn ? 0.9 : 0.3)
+
+  const bowlH = Math.max(0.42, height * 0.34)
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.42, bowlH, 36), ceramic)
+  bowl.scale.set(width * 0.78, 1, depth * 0.5)
+  bowl.position.set(0, floorY + baseH + bowlH / 2 - 0.04, depth * 0.1)
+  addMeshWithEdges(THREE, group, bowl, edgeColor, warn ? 0.95 : 0.38)
+
+  const seatY = floorY + baseH + bowlH + 0.035
+  const seat = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.045, 12, 40), ceramic)
+  seat.rotation.x = Math.PI / 2
+  seat.scale.set(width * 0.88, depth * 0.68, 1)
+  seat.position.set(0, seatY, depth * 0.1)
+  group.add(seat)
+
+  const waterDisk = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.026, 28), water)
+  waterDisk.scale.set(width * 0.66, 1, depth * 0.42)
+  waterDisk.position.set(0, seatY + 0.01, depth * 0.1)
+  group.add(waterDisk)
+}
+
 function createLabelSprite(THREE: any, text: string) {
   const lines = text.split('\n')
   const canvas = document.createElement('canvas')
@@ -1420,6 +1488,102 @@ function createDimensionSprite(THREE: any, text: string) {
   sprite.scale.set(canvas.width / 210, canvas.height / 210, 1)
   sprite.renderOrder = 21
   return sprite
+}
+
+function createCodeClearanceSprite(THREE: any, text: string, warning: boolean) {
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  canvas.width = 512
+  canvas.height = 86
+  if (ctx) {
+    ctx.font = '800 22px sans-serif'
+    const width = Math.min(680, Math.max(220, Math.ceil(ctx.measureText(text).width + 34)))
+    canvas.width = width
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.fillStyle = warning ? 'rgba(185, 28, 28, .94)' : 'rgba(4, 120, 87, .88)'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.strokeStyle = 'rgba(255, 255, 255, .24)'
+    ctx.lineWidth = 3
+    ctx.strokeRect(1.5, 1.5, canvas.width - 3, canvas.height - 3)
+    ctx.fillStyle = '#ffffff'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.font = '800 22px sans-serif'
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2)
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false })
+  const sprite = new THREE.Sprite(material)
+  sprite.scale.set(canvas.width / 180, canvas.height / 180, 1)
+  sprite.renderOrder = 32
+  return sprite
+}
+
+function createCodeClearanceGroup(
+  THREE: any,
+  checks: CodeClearanceCheck[],
+  t: (key: string) => string,
+  itemId?: string,
+) {
+  const filtered = itemId
+    ? checks.filter((check) => check.subject.id === itemId || check.target.id === itemId)
+    : checks
+  if (filtered.length === 0) return null
+  const group = new THREE.Group()
+  filtered.forEach((check) => {
+    const warning = !check.ok
+    const color = warning ? 0xdc2626 : 0x047857
+    if (check.line) {
+      const y = check.type === 'shower-size' ? 0.2 : 0.14
+      const a = new THREE.Vector3(check.line.a.x, y, check.line.a.z)
+      const b = new THREE.Vector3(check.line.b.x, y, check.line.b.z)
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute([a.x, a.y, a.z, b.x, b.y, b.z], 3))
+      const line = new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity: warning ? 1 : 0.72, depthTest: false }),
+      )
+      line.renderOrder = 30
+      group.add(line)
+      const pointMaterial = new THREE.MeshBasicMaterial({ color, depthTest: false })
+      ;[a, b].forEach((point) => {
+        const dot = new THREE.Mesh(new THREE.SphereGeometry(warning ? 0.055 : 0.04, 12, 8), pointMaterial)
+        dot.position.copy(point)
+        dot.renderOrder = 31
+        group.add(dot)
+      })
+      const label = createCodeClearanceSprite(
+        THREE,
+        warning
+          ? formatCodeClearanceMessage(check, t)
+          : `${formatCodeClearanceIn(check.actualIn)}`,
+        warning,
+      )
+      label.position.set((a.x + b.x) / 2, y + (warning ? 0.46 : 0.32), (a.z + b.z) / 2)
+      group.add(label)
+    }
+    if (check.arc) {
+      const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(check.arc.start.x, 0.16, check.arc.start.z),
+        new THREE.Vector3(
+          check.arc.center.x + (check.arc.start.x + check.arc.end.x - check.arc.center.x * 2) * 0.7,
+          0.16,
+          check.arc.center.z + (check.arc.start.z + check.arc.end.z - check.arc.center.z * 2) * 0.7,
+        ),
+        new THREE.Vector3(check.arc.end.x, 0.16, check.arc.end.z),
+      )
+      const points = curve.getPoints(24)
+      const geometry = new THREE.BufferGeometry().setFromPoints(points)
+      const arc = new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.96, depthTest: false }),
+      )
+      arc.renderOrder = 30
+      group.add(arc)
+    }
+  })
+  return group
 }
 
 function addLine(points: any[], a: any, b: any) {
@@ -1597,6 +1761,7 @@ export default function Sketch3DView({
   canEdit = false,
   onModelChange,
   snapStepFt = EIGHTH_IN_FT,
+  codeCheckEnabled = true,
   openingDefaults,
   label,
   loadingLabel,
@@ -1715,6 +1880,15 @@ export default function Sketch3DView({
   const selectedPlacedDoesNotFit = selectedPlaced
     ? placedCatalogDoesNotFit(selectedPlaced.placed, selectedPlaced.dims, boundsForCuts, heightFt, segmentLengthFt(model, selectedPlaced.placed.c, selectedPlaced.placed.s))
     : false
+  const codeClearanceChecks = useMemo(
+    () => (codeCheckEnabled ? getCodeClearanceChecks(model) : []),
+    [model, codeCheckEnabled],
+  )
+  const codeClearanceViolations = useMemo(() => codeClearanceChecks.filter((check) => !check.ok), [codeClearanceChecks])
+  const codeWarningItemIds = useMemo(() => codeClearanceItemIds(codeClearanceViolations), [codeClearanceViolations])
+  const selectedPlacedCodeViolations = selectedPlaced
+    ? codeClearanceViolations.filter((check) => check.subject.id === selectedPlaced.placed.id || check.target.id === selectedPlaced.placed.id)
+    : []
 
   useEffect(() => {
     placementRef.current = placement
@@ -1957,12 +2131,12 @@ export default function Sketch3DView({
     setCatalogError(false)
     getCatalogItems()
       .then((rows) => {
-        if (mounted) setCatalogItems(rows)
+        if (mounted) setCatalogItems(withBuiltinCatalogItems(rows))
       })
       .catch(() => {
         if (mounted) {
-          setCatalogItems([])
-          setCatalogError(true)
+          setCatalogItems(withBuiltinCatalogItems([]))
+          setCatalogError(false)
         }
       })
       .finally(() => {
@@ -2583,12 +2757,16 @@ export default function Sketch3DView({
         resolvedPlacedItems.forEach((resolved) => {
           const placed = resolved.placed
           const doesNotFit = placedCatalogDoesNotFit(placed, resolved.dims, bounds, height, catalogWallLength(placed))
+          const codeWarn = codeWarningItemIds.has(placed.id)
+          const visualWarn = doesNotFit || codeWarn
           const group = new THREE.Group()
           applyCatalogObjectPose(group, placed)
-          const edgeColor = doesNotFit ? 0x991b1b : selectedId === placed.id ? 0x0f172a : 0xffffff
-          const material = createCatalogMaterial(THREE, resolved, doesNotFit, textureLoader, maxAnisotropy, invalidate)
+          const edgeColor = visualWarn ? 0x991b1b : selectedId === placed.id ? 0x0f172a : 0xffffff
+          const material = createCatalogMaterial(THREE, resolved, visualWarn, textureLoader, maxAnisotropy, invalidate)
           if (placed.surface === 'floor') addContactShadow(THREE, group, resolved.dims.widthFt, resolved.dims.depthFt, resolved.dims.heightFt)
-          if (resolved.category === 'shower' && placed.surface === 'floor') {
+          if (isToiletPlacedCatalogItem(placed)) {
+            addToiletFixture(THREE, group, resolved, visualWarn, edgeColor)
+          } else if (resolved.category === 'shower' && placed.surface === 'floor') {
             addShowerPan(THREE, group, resolved, material, edgeColor)
           } else {
             addCatalogBox(THREE, group, resolved, material, edgeColor)
@@ -2598,13 +2776,21 @@ export default function Sketch3DView({
           itemTargets.push(group)
 
           if (selectedId === placed.id) {
-            const warning = doesNotFit ? `\n${t('hub_sketch_3d_not_fit')}` : ''
-            const text = `${resolved.name}\n${resolvedCatalogDimsText(resolved)}${warning}`
+            const codeWarning = codeClearanceViolations
+              .filter((check) => check.subject.id === placed.id || check.target.id === placed.id)
+              .map((check) => formatCodeClearanceMessage(check, t))[0]
+            const warning = doesNotFit ? `\n${t('hub_sketch_3d_not_fit')}` : codeWarning ? `\n${codeWarning}` : ''
+            const text = `${resolvedCatalogDisplayName(resolved, t)}\n${resolvedCatalogDimsText(resolved)}${warning}`
             const sprite = createLabelSprite(THREE, text)
             sprite.position.set(placed.xFt, placed.yFt + resolved.dims.heightFt / 2 + 0.42, placed.zFt)
             scene.add(sprite)
           }
         })
+
+        if (codeCheckEnabled) {
+          const group = createCodeClearanceGroup(THREE, codeClearanceChecks, t)
+          if (group) scene.add(group)
+        }
 
         spaceMeasurements.forEach(({ measurement, index }) => {
           const group = createSpaceMeasurementGroup(THREE, measurement, selectedId === measurementInteractiveId(index))
@@ -2659,6 +2845,7 @@ export default function Sketch3DView({
         const insidePointers = new Map<number, { clientX: number; clientY: number }>()
         let insidePinch: { distance: number } | null = null
         let openingDragDimensionGroup: any | null = null
+        let catalogDragCodeGroup: any | null = null
 
         const clearOpeningDragDimensions = () => {
           if (!openingDragDimensionGroup) return
@@ -2667,12 +2854,28 @@ export default function Sketch3DView({
           openingDragDimensionGroup = null
         }
 
+        const clearCatalogDragClearances = () => {
+          if (!catalogDragCodeGroup) return
+          scene.remove(catalogDragCodeGroup)
+          catalogDragCodeGroup.traverse?.((object: { geometry?: unknown; material?: unknown }) => disposeObjectWithMaterial(object))
+          catalogDragCodeGroup = null
+        }
+
         const showOpeningDragDimensions = (opening: Opening) => {
           const metrics = openingMetrics(model, opening, height)
           clearOpeningDragDimensions()
           if (!metrics) return
           openingDragDimensionGroup = createOpeningDimensionGroup(THREE, opening, metrics, t)
           scene.add(openingDragDimensionGroup)
+        }
+
+        const showCatalogDragClearances = (placed: SketchPlacedCatalogItem) => {
+          clearCatalogDragClearances()
+          if (!codeCheckEnabled) return
+          const nextPlacedItems = placedItems.map((item) => (item.id === placed.id ? placed : item))
+          const checks = getCodeClearanceChecks({ ...model, placedItems: nextPlacedItems })
+          catalogDragCodeGroup = createCodeClearanceGroup(THREE, checks, t, placed.id)
+          if (catalogDragCodeGroup) scene.add(catalogDragCodeGroup)
         }
 
         const updatePointer = (event: { clientX: number; clientY: number }) => {
@@ -2798,6 +3001,15 @@ export default function Sketch3DView({
               nextPlaced = placedOnCeiling(item, makeId('placed'), { x: point.x, z: point.z }, dims, height)
             } else {
               nextPlaced = placedOnFloor(item, makeId('placed'), { x: point.x, z: point.z }, dims, model, WALL_THICKNESS_FT)
+            }
+          }
+          if (isBuiltinToiletCatalogItem(item)) {
+            nextPlaced = {
+              ...nextPlaced,
+              kind: SKETCH_CATALOG_KIND_TOILET,
+              category: 'other',
+              name: t('hub_sketch_toilet'),
+              model: SKETCH_CATALOG_KIND_TOILET,
             }
           }
           onModelChange?.({ ...model, placedItems: [...placedItems, nextPlaced] })
@@ -2939,6 +3151,7 @@ export default function Sketch3DView({
             }
             drag.latestPlaced = nextPlaced
             applyCatalogObjectPose(drag.object, nextPlaced)
+            showCatalogDragClearances(nextPlaced)
           } else if (drag.type === 'opening') {
             const openingIndex = openingIndexFromId(drag.id)
             const current = openingIndex !== null ? model.openings[openingIndex] : null
@@ -3017,6 +3230,7 @@ export default function Sketch3DView({
             drag = null
             controls.enabled = true
             clearOpeningDragDimensions()
+            clearCatalogDragClearances()
             invalidate()
             if (completed.moved && completed.latestLight) {
               onModelChange?.({ ...model, lights: lights.map((light) => (light.id === completed.latestLight?.id ? completed.latestLight : light)) })
@@ -3113,6 +3327,7 @@ export default function Sketch3DView({
           window.cancelAnimationFrame(frame)
           stopInsideJoystick()
           clearOpeningDragDimensions()
+          clearCatalogDragClearances()
           if (invalidate3DRef.current === invalidate) invalidate3DRef.current = null
           if (insideMoveApiRef.current?.stopJoystick === stopInsideJoystick) insideMoveApiRef.current = null
           if (photoSnapshotApiRef.current?.capturePng === capturePng) photoSnapshotApiRef.current = null
@@ -3144,7 +3359,27 @@ export default function Sketch3DView({
       cleanup?.()
       host.replaceChildren()
     }
-  }, [model, heightFt, finishes, canEdit, onModelChange, selectedId, t, lights, switches, placedItems, resolvedPlacedItems, fullscreenActive, snapStepFt, openingDefaults, measure3DActive])
+  }, [
+    model,
+    heightFt,
+    finishes,
+    canEdit,
+    onModelChange,
+    selectedId,
+    t,
+    lights,
+    switches,
+    placedItems,
+    resolvedPlacedItems,
+    fullscreenActive,
+    snapStepFt,
+    openingDefaults,
+    measure3DActive,
+    codeCheckEnabled,
+    codeClearanceChecks,
+    codeClearanceViolations,
+    codeWarningItemIds,
+  ])
 
   const toggleFullscreen = async () => {
     const shell = shellRef.current
@@ -3396,22 +3631,26 @@ export default function Sketch3DView({
         {state === 'loading' && <div className="hub-sketch-3d-overlay muted">{loadingLabel}</div>}
         {state === 'error' && <div className="hub-sketch-3d-overlay error-msg">{errorLabel}</div>}
         {selectedPlaced && (
-          <div className={`hub-sketch-3d-item-popover ${selectedPlacedDoesNotFit ? 'hub-sketch-3d-item-popover-warn' : ''}`}>
+          <div className={`hub-sketch-3d-item-popover ${selectedPlacedDoesNotFit || selectedPlacedCodeViolations.length > 0 ? 'hub-sketch-3d-item-popover-warn' : ''}`}>
             <div className="hub-sketch-catalog-thumb">
               {selectedPlaced.photoPath
                 ? <img src={selectedPlaced.photoPath} alt={selectedPlaced.name} loading="lazy" />
-                : <span className="hub-sketch-catalog-thumb-empty" aria-hidden="true" />}
+                : <span className={isToiletPlacedCatalogItem(selectedPlaced.placed) ? 'hub-sketch-catalog-thumb-toilet' : 'hub-sketch-catalog-thumb-empty'} aria-hidden="true" />}
             </div>
             <div className="hub-sketch-3d-item-popover-body">
-              <div className="item-title">{selectedPlaced.name}</div>
-              {catalogBrandModel(selectedPlaced.brand, selectedPlaced.model) && (
+              <div className="item-title">{resolvedCatalogDisplayName(selectedPlaced, t)}</div>
+              {!isToiletPlacedCatalogItem(selectedPlaced.placed) && catalogBrandModel(selectedPlaced.brand, selectedPlaced.model) && (
                 <div className="muted">{catalogBrandModel(selectedPlaced.brand, selectedPlaced.model)}</div>
               )}
               <div className="muted">{t('catalog_dims')}: {resolvedCatalogDimsText(selectedPlaced)}</div>
               <div className="hub-sketch-3d-item-flags">
                 {selectedPlaced.missingCatalogItem && <span className="badge">{t('hub_sketch_3d_catalog_missing_item')}</span>}
                 {selectedPlacedDoesNotFit && <span className="badge red">{t('hub_sketch_3d_not_fit')}</span>}
+                {selectedPlacedCodeViolations.length > 0 && <span className="badge red">{t('hub_sketch_code_check')}</span>}
               </div>
+              {selectedPlacedCodeViolations[0] && (
+                <div className="error-msg hub-sketch-code-popover-msg">{formatCodeClearanceMessage(selectedPlacedCodeViolations[0], t)}</div>
+              )}
               {canEdit && (
                 <div className="hub-sketch-3d-item-actions">
                   <button type="button" className="btn ghost small" onClick={rotateSelectedPlaced}>
@@ -3556,6 +3795,7 @@ export default function Sketch3DView({
                   finish={activeSurface}
                   canEdit={canEdit}
                   snapStepFt={snapStepFt}
+                  codeCheckEnabled={codeCheckEnabled}
                   onMeasurementsChange={applyMeasurements}
                 />
                 {selectedWallFinish && (
@@ -3804,12 +4044,12 @@ export default function Sketch3DView({
                       >
                         <span className="hub-sketch-catalog-thumb">
                           {item.photo_path
-                            ? <img src={item.photo_path} alt={item.name} loading="lazy" />
-                            : <span className="hub-sketch-catalog-thumb-empty" aria-hidden="true" />}
+                            ? <img src={item.photo_path} alt={catalogDisplayName(item, t)} loading="lazy" />
+                            : <span className={isBuiltinToiletCatalogItem(item) ? 'hub-sketch-catalog-thumb-toilet' : 'hub-sketch-catalog-thumb-empty'} aria-hidden="true" />}
                         </span>
                         <span className="hub-sketch-catalog-item-body">
-                          <span className="hub-sketch-catalog-item-name">{item.name}</span>
-                          {catalogBrandModel(item.brand, item.model) && <span className="muted">{catalogBrandModel(item.brand, item.model)}</span>}
+                          <span className="hub-sketch-catalog-item-name">{catalogDisplayName(item, t)}</span>
+                          {!isBuiltinToiletCatalogItem(item) && catalogBrandModel(item.brand, item.model) && <span className="muted">{catalogBrandModel(item.brand, item.model)}</span>}
                           <span className={hasDims ? 'muted' : 'error-msg'}>
                             {hasDims && dimsText ? `${t('catalog_dims')}: ${dimsText}` : t('hub_sketch_3d_catalog_missing_dims')}
                           </span>

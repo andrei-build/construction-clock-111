@@ -11,6 +11,14 @@ import { isManagerWrite } from '../../lib/types'
 import type { Profile, Project, ProjectHubFile } from '../../lib/types'
 import Sketch3DView from './Sketch3DView'
 import {
+  codeClearanceEntityLabel,
+  codeClearanceItemIds,
+  formatCodeClearanceIn,
+  formatCodeClearanceMessage,
+  getCodeClearanceChecks,
+  type CodeClearanceCheck,
+} from './code-clearances'
+import {
   sanitizeSketchFinishes,
   sanitizeSketchLights,
   sanitizeSketchMeasurements,
@@ -21,7 +29,7 @@ import {
   type SketchMeasurement,
   type SketchSwitch,
 } from './sketchFinishes'
-import { sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
+import { isToiletPlacedCatalogItem, sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
 import { formatFeetInches, formatInches, parseFeetInches, snapFeetToPrecision, snapOpeningFeetToPrecision } from './inches'
 
 interface SketchTabProps {
@@ -481,6 +489,18 @@ type MeasurementLine2D = {
   angle: number
   text: string
 }
+type PlanCodeClearanceLine = MeasurementLine2D & { id: string; warning: boolean; check: CodeClearanceCheck }
+type PlanCodeClearanceArc = { id: string; d: string; warning: boolean }
+type PlanPlacedItem = {
+  item: SketchPlacedCatalogItem
+  x: number
+  y: number
+  angle: number
+  width: number
+  depth: number
+  warning: boolean
+  toilet: boolean
+}
 
 function contourCenter(contour: Contour): Pt {
   if (contour.points.length === 0) return { x: 0, y: 0 }
@@ -627,6 +647,75 @@ function planMeasurementLine(model: SketchModel, measurement: SketchMeasurement,
     angle: readableSvgAngle(dx, dy),
     text: fmtFt(dist(measurement.a, measurement.b) * modelCellFt(model)),
   }
+}
+
+function planCodeClearanceLine(model: SketchModel, check: CodeClearanceCheck, t: (k: string) => string, screenWorldPx: number): PlanCodeClearanceLine | null {
+  if (!check.line) return null
+  const cellFt = modelCellFt(model)
+  const x1 = (check.line.a.x / cellFt) * CELL_PX
+  const y1 = (check.line.a.z / cellFt) * CELL_PX
+  const x2 = (check.line.b.x / cellFt) * CELL_PX
+  const y2 = (check.line.b.z / cellFt) * CELL_PX
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const lenPx = Math.hypot(dx, dy)
+  if (lenPx <= 0.01) return null
+  const nx = -dy / lenPx
+  const ny = dx / lenPx
+  const labelGap = (check.ok ? 15 : 22) * screenWorldPx
+  const target = codeClearanceEntityLabel(check.target, t)
+  return {
+    id: check.id,
+    x1,
+    y1,
+    x2,
+    y2,
+    labelX: (x1 + x2) / 2 + nx * labelGap,
+    labelY: (y1 + y2) / 2 + ny * labelGap,
+    angle: readableSvgAngle(dx, dy),
+    text: check.ok ? `${formatCodeClearanceIn(check.actualIn)} · ${target}` : formatCodeClearanceMessage(check, t),
+    warning: !check.ok,
+    check,
+  }
+}
+
+function planCodeClearanceArc(model: SketchModel, check: CodeClearanceCheck): PlanCodeClearanceArc | null {
+  if (!check.arc) return null
+  const cellFt = modelCellFt(model)
+  const cx = (check.arc.center.x / cellFt) * CELL_PX
+  const cy = (check.arc.center.z / cellFt) * CELL_PX
+  const sx = (check.arc.start.x / cellFt) * CELL_PX
+  const sy = (check.arc.start.z / cellFt) * CELL_PX
+  const ex = (check.arc.end.x / cellFt) * CELL_PX
+  const ey = (check.arc.end.z / cellFt) * CELL_PX
+  const radius = (check.arc.radiusFt / cellFt) * CELL_PX
+  const start = { x: sx - cx, y: sy - cy }
+  const end = { x: ex - cx, y: ey - cy }
+  const sweep = start.x * end.y - start.y * end.x >= 0 ? 1 : 0
+  return { id: check.id, d: `M ${sx} ${sy} A ${radius} ${radius} 0 0 ${sweep} ${ex} ${ey}`, warning: !check.ok }
+}
+
+function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlacedItem[] {
+  const cellFt = modelCellFt(model)
+  return sanitizePlacedCatalogItems(model.placedItems)
+    .map((item): PlanPlacedItem | null => {
+      if (item.surface === 'ceiling' || item.category === 'light' || item.category === 'fan') return null
+      const widthIn = Number(item.widthIn)
+      const depthIn = Number(item.depthIn)
+      if (!Number.isFinite(widthIn) || !Number.isFinite(depthIn) || widthIn <= 0 || depthIn <= 0) return null
+      const axesAngle = Math.atan2(-Math.sin(item.rotationY), Math.cos(item.rotationY)) * 180 / Math.PI
+      return {
+        item,
+        x: (item.xFt / cellFt) * CELL_PX,
+        y: (item.zFt / cellFt) * CELL_PX,
+        angle: axesAngle,
+        width: (widthIn / 12 / cellFt) * CELL_PX,
+        depth: (depthIn / 12 / cellFt) * CELL_PX,
+        warning: warningIds.has(item.id),
+        toilet: isToiletPlacedCatalogItem(item),
+      }
+    })
+    .filter((item): item is PlanPlacedItem => !!item)
 }
 
 function sanitizeName(name: string): string {
@@ -800,6 +889,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [tool, setTool] = useState<Tool>('wall')
   const [snapMode, setSnapMode] = useState<SnapMode>('1ft')
   const [showMeasurements, setShowMeasurements] = useState(true)
+  const [codeCheckEnabled, setCodeCheckEnabled] = useState(true)
   const [measurementDraft, setMeasurementDraft] = useState<Pt | null>(null)
   const [selectedMeasurementIndex, setSelectedMeasurementIndex] = useState<number | null>(null)
   const [hover, setHover] = useState<Pt | null>(null)
@@ -1493,6 +1583,29 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       .filter((entry): entry is PlanMeasurementEntry & { line: MeasurementLine2D } => !!entry.line),
     [model, planMeasurements, screenWorldPx],
   )
+  const codeClearanceChecks = useMemo(
+    () => (codeCheckEnabled ? getCodeClearanceChecks(model) : []),
+    [model, codeCheckEnabled],
+  )
+  const codeClearanceViolations = useMemo(
+    () => codeClearanceChecks.filter((check) => !check.ok),
+    [codeClearanceChecks],
+  )
+  const codeWarningItemIds = useMemo(() => codeClearanceItemIds(codeClearanceViolations), [codeClearanceViolations])
+  const planItems = useMemo(() => planPlacedItems(model, codeWarningItemIds), [model, codeWarningItemIds])
+  const planCodeClearanceLines = useMemo(
+    () => codeClearanceChecks
+      .map((check) => planCodeClearanceLine(model, check, t, screenWorldPx))
+      .filter((line): line is PlanCodeClearanceLine => !!line),
+    [codeClearanceChecks, model, screenWorldPx, t],
+  )
+  const planCodeClearanceArcs = useMemo(
+    () => codeClearanceChecks
+      .filter((check) => !check.ok)
+      .map((check) => planCodeClearanceArc(model, check))
+      .filter((arc): arc is PlanCodeClearanceArc => !!arc),
+    [codeClearanceChecks, model],
+  )
   const measurePreview = measurementDraft && hover
     ? planMeasurementLine(model, { a: measurementDraft, b: hover, scope: 'plan' }, screenWorldPx)
     : null
@@ -1518,6 +1631,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             </button>
           ))}
         </div>
+        <label className="hub-sketch-layer-toggle hub-sketch-code-toggle">
+          <input
+            type="checkbox"
+            checked={codeCheckEnabled}
+            onChange={(event) => setCodeCheckEnabled(event.target.checked)}
+          />
+          <span>{t('hub_sketch_code_check')}</span>
+        </label>
         {lengthInput('wallHeight', 'hub_sketch_wall_height', heightFt, 1, 30, updateWallHeight, 'hub-sketch-height-field')}
       </div>
 
@@ -1735,6 +1856,78 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             )
           })}
 
+          {planItems.map((entry) => {
+            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}`
+            return (
+              <g
+                key={`pi-${entry.item.id}`}
+                className={className}
+                transform={`translate(${entry.x} ${entry.y}) rotate(${entry.angle})`}
+              >
+                <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : t('hub_sketch_code_target_item'))}</title>
+                {entry.toilet ? (
+                  <>
+                    <rect
+                      className="hub-sketch-plan-toilet-tank"
+                      x={-entry.width * 0.44}
+                      y={-entry.depth * 0.46}
+                      width={entry.width * 0.88}
+                      height={entry.depth * 0.22}
+                      rx={Math.max(1.5, entry.width * 0.08)}
+                    />
+                    <ellipse
+                      className="hub-sketch-plan-toilet-bowl"
+                      cx={0}
+                      cy={entry.depth * 0.1}
+                      rx={entry.width * 0.36}
+                      ry={entry.depth * 0.28}
+                    />
+                    <ellipse
+                      className="hub-sketch-plan-toilet-seat"
+                      cx={0}
+                      cy={entry.depth * 0.1}
+                      rx={entry.width * 0.22}
+                      ry={entry.depth * 0.17}
+                    />
+                    <line className="hub-sketch-plan-toilet-axis" x1={0} y1={-entry.depth * 0.48} x2={0} y2={entry.depth * 0.5} />
+                  </>
+                ) : (
+                  <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(5, entry.width * 0.08, entry.depth * 0.08)} />
+                )}
+              </g>
+            )
+          })}
+
+          {codeCheckEnabled && planCodeClearanceArcs.map((arc) => (
+            <path
+              key={`ca-${arc.id}`}
+              className={arc.warning ? 'hub-sketch-code-arc hub-sketch-code-arc-warn' : 'hub-sketch-code-arc'}
+              d={arc.d}
+            />
+          ))}
+
+          {codeCheckEnabled && planCodeClearanceLines.map((line) => (
+            <g
+              key={`cl-${line.id}`}
+              className={line.warning ? 'hub-sketch-code-clearance hub-sketch-code-clearance-warn' : 'hub-sketch-code-clearance'}
+            >
+              <line className="hub-sketch-code-clearance-line" x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} />
+              <circle className="hub-sketch-code-clearance-dot" cx={line.x1} cy={line.y1} r={Math.max(2.2, 2.8 * screenWorldPx)} />
+              <circle className="hub-sketch-code-clearance-dot" cx={line.x2} cy={line.y2} r={Math.max(2.2, 2.8 * screenWorldPx)} />
+              <text
+                className="hub-sketch-code-clearance-label"
+                x={line.labelX}
+                y={line.labelY}
+                textAnchor="middle"
+                dominantBaseline="central"
+                style={{ fontSize: (line.warning ? 12.5 : 11) * screenWorldPx }}
+                transform={`rotate(${line.angle} ${line.labelX} ${line.labelY})`}
+              >
+                {line.text}
+              </text>
+            </g>
+          ))}
+
           {showMeasurements &&
             planMeasurementLines.map(({ index, line }) => {
               const selected = selectedMeasurementIndex === index
@@ -1903,6 +2096,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             onModelChange={updateModelFrom3D}
             snapStepFt={activeSnapFt}
             openingDefaults={openingDefaults}
+            codeCheckEnabled={codeCheckEnabled}
             label={t('hub_sketch_3d_label')}
             loadingLabel={t('hub_sketch_3d_loading')}
             errorLabel={t('hub_sketch_3d_error')}
@@ -1923,6 +2117,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         <div className="hub-sketch-stat">
           <span className="muted">{t('hub_sketch_contours')}</span>
           <span className="hub-sketch-stat-value">{model.contours.filter((c) => c.points.length >= 2).length}</span>
+        </div>
+        <div className="hub-sketch-stat">
+          <span className="muted">{t('hub_sketch_code_check')}</span>
+          <span className={codeCheckEnabled && codeClearanceViolations.length > 0 ? 'hub-sketch-stat-value hub-sketch-code-stat-warn' : 'hub-sketch-stat-value hub-sketch-code-stat-ok'}>
+            {codeCheckEnabled
+              ? codeClearanceViolations.length > 0
+                ? t('hub_sketch_code_issues').replace('{n}', String(codeClearanceViolations.length))
+                : t('hub_sketch_code_ok')
+              : t('hub_sketch_code_off')}
+          </span>
         </div>
       </div>
 
