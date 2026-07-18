@@ -3105,6 +3105,52 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   flex-direction: column;
   gap: 10px;
 }
+/* CLIENT-ATTACH-1: привязка/создание клиента на существующем проекте */
+.hub-client-attach,
+.hub-client-attach-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hub-client-attach-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.hub-client-attach-search {
+  width: 100%;
+}
+.hub-client-attach-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.hub-client-attach-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #d0d0d0);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+.hub-client-attach-item:hover:not(:disabled) {
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+}
+.hub-client-attach-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.hub-client-manage {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .hub-client-head {
   display: flex;
   align-items: center;
