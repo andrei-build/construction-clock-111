@@ -4,6 +4,7 @@ import { formatInches } from './inches'
 
 export type CatalogPlacementSurface = 'floor' | 'wall' | 'ceiling'
 export type SketchPlacedCatalogKind = 'TOILET'
+export type SketchPlacedCabinetLayer = 'base' | 'wall'
 
 export type SketchPlacedCatalogItem = {
   id: string
@@ -21,6 +22,14 @@ export type SketchPlacedCatalogItem = {
   name?: string
   brand?: string
   model?: string
+  code?: string
+  cabinetPrefix?: string
+  wallId?: string
+  layer?: SketchPlacedCabinetLayer
+  hinge?: 'L' | 'R'
+  filler?: boolean
+  panel?: boolean
+  layoutWarning?: 'overflow' | 'small-filler'
   widthIn?: number
   depthIn?: number
   heightIn?: number
@@ -129,6 +138,18 @@ function cleanPlacedKind(value: unknown): SketchPlacedCatalogKind | undefined {
   return value === SKETCH_CATALOG_KIND_TOILET ? SKETCH_CATALOG_KIND_TOILET : undefined
 }
 
+function cleanPlacedCabinetLayer(value: unknown): SketchPlacedCabinetLayer | undefined {
+  return value === 'base' || value === 'wall' ? value : undefined
+}
+
+function cleanHinge(value: unknown): 'L' | 'R' | undefined {
+  return value === 'L' || value === 'R' ? value : undefined
+}
+
+function cleanLayoutWarning(value: unknown): 'overflow' | 'small-filler' | undefined {
+  return value === 'overflow' || value === 'small-filler' ? value : undefined
+}
+
 function cleanSurface(value: unknown): CatalogPlacementSurface {
   return value === 'wall' || value === 'ceiling' || value === 'floor' ? value : 'floor'
 }
@@ -151,6 +172,10 @@ export function isToiletPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'k
   return item.kind === SKETCH_CATALOG_KIND_TOILET
     || item.catalogItemId === BUILTIN_TOILET_CATALOG_ID
     || String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_TOILET
+}
+
+function isBuiltinSnapshotPlacedItem(item: Pick<SketchPlacedCatalogItem, 'catalogItemId'>): boolean {
+  return item.catalogItemId === BUILTIN_TOILET_CATALOG_ID || item.catalogItemId.startsWith('builtin-cabinet:')
 }
 
 export function catalogDimsFromItem(item: CatalogItem): CatalogDimsFt | null {
@@ -221,10 +246,24 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       const name = cleanString(item.name)
       const brand = cleanString(item.brand)
       const model = cleanString(item.model)
+      const code = cleanString(item.code)
+      const cabinetPrefix = cleanString(item.cabinetPrefix, 40)
+      const wallId = cleanString(item.wallId, 40)
+      const layer = cleanPlacedCabinetLayer(item.layer)
+      const hinge = cleanHinge(item.hinge)
+      const layoutWarning = cleanLayoutWarning(item.layoutWarning)
       const photoPath = cleanString(item.photoPath, 600)
       if (name) placed.name = name
       if (brand) placed.brand = brand
       if (model) placed.model = model
+      if (code) placed.code = code
+      if (cabinetPrefix) placed.cabinetPrefix = cabinetPrefix
+      if (wallId) placed.wallId = wallId
+      if (layer) placed.layer = layer
+      if (hinge) placed.hinge = hinge
+      if (item.filler === true) placed.filler = true
+      if (item.panel === true) placed.panel = true
+      if (layoutWarning) placed.layoutWarning = layoutWarning
       if (photoPath) placed.photoPath = photoPath
       const widthIn = cleanPositive(item.widthIn ?? item.width_in)
       const depthIn = cleanPositive(item.depthIn ?? item.depth_in)
@@ -249,7 +288,7 @@ export function resolvePlacedCatalogItem(placed: SketchPlacedCatalogItem, catalo
   return {
     placed,
     catalogItem,
-    missingCatalogItem: !catalogItem,
+    missingCatalogItem: !catalogItem && !isBuiltinSnapshotPlacedItem(placed),
     category: catalogItem?.category ?? placed.category ?? 'other',
     name: catalogItem?.name ?? placed.name ?? placed.catalogItemId,
     brand: catalogItem?.brand ?? placed.brand ?? null,
