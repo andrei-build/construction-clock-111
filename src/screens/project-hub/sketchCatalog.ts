@@ -3,6 +3,7 @@ import type { Contour } from './sketchFinishes'
 import { formatInches } from './inches'
 
 export type CatalogPlacementSurface = 'floor' | 'wall' | 'ceiling'
+export type SketchPlacedCatalogKind = 'TOILET'
 
 export type SketchPlacedCatalogItem = {
   id: string
@@ -16,6 +17,7 @@ export type SketchPlacedCatalogItem = {
   s?: number
   t?: number
   category?: CatalogCategory
+  kind?: SketchPlacedCatalogKind
   name?: string
   brand?: string
   model?: string
@@ -76,6 +78,28 @@ export type CatalogSceneBounds = {
 
 const CATALOG_CATEGORIES: CatalogCategory[] = ['shower', 'vanity', 'cabinet', 'light', 'fan', 'other']
 const CATALOG_CATEGORY_SET = new Set<string>(CATALOG_CATEGORIES)
+export const SKETCH_CATALOG_KIND_TOILET: SketchPlacedCatalogKind = 'TOILET'
+export const BUILTIN_TOILET_CATALOG_ID = 'builtin-toilet'
+export const BUILTIN_TOILET_CATALOG_ITEM: CatalogItem = {
+  id: BUILTIN_TOILET_CATALOG_ID,
+  org_id: '',
+  category: 'other',
+  name: 'Toilet',
+  brand: null,
+  model: SKETCH_CATALOG_KIND_TOILET,
+  width_in: 15,
+  depth_in: 28,
+  height_in: 30,
+  photo_path: null,
+  price: null,
+  url: null,
+  note: null,
+  is_active: true,
+  sort_order: -100,
+  created_by: null,
+  created_at: '',
+  updated_at: '',
+}
 const IN_TO_FT = 1 / 12
 const FLOOR_WALL_SNAP_FT = 2.25
 const MAX_STORED_TEXT = 140
@@ -101,6 +125,10 @@ function cleanCategory(value: unknown): CatalogCategory | undefined {
   return typeof value === 'string' && CATALOG_CATEGORY_SET.has(value) ? (value as CatalogCategory) : undefined
 }
 
+function cleanPlacedKind(value: unknown): SketchPlacedCatalogKind | undefined {
+  return value === SKETCH_CATALOG_KIND_TOILET ? SKETCH_CATALOG_KIND_TOILET : undefined
+}
+
 function cleanSurface(value: unknown): CatalogPlacementSurface {
   return value === 'wall' || value === 'ceiling' || value === 'floor' ? value : 'floor'
 }
@@ -113,6 +141,16 @@ function normalizeAngle(value: number): number {
 
 export function catalogItemHasExactDims(item: CatalogItem): boolean {
   return cleanPositive(item.width_in) !== undefined && cleanPositive(item.depth_in) !== undefined && cleanPositive(item.height_in) !== undefined
+}
+
+export function isBuiltinToiletCatalogItem(item: Pick<CatalogItem, 'id' | 'model'>): boolean {
+  return item.id === BUILTIN_TOILET_CATALOG_ID || String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_TOILET
+}
+
+export function isToiletPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
+  return item.kind === SKETCH_CATALOG_KIND_TOILET
+    || item.catalogItemId === BUILTIN_TOILET_CATALOG_ID
+    || String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_TOILET
 }
 
 export function catalogDimsFromItem(item: CatalogItem): CatalogDimsFt | null {
@@ -178,6 +216,8 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       if (t !== undefined) placed.t = Math.max(0, Math.min(1, t))
       const category = cleanCategory(item.category)
       if (category) placed.category = category
+      const kind = cleanPlacedKind(item.kind) ?? (String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_TOILET ? SKETCH_CATALOG_KIND_TOILET : undefined)
+      if (kind) placed.kind = kind
       const name = cleanString(item.name)
       const brand = cleanString(item.brand)
       const model = cleanString(item.model)
