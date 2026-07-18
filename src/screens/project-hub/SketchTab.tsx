@@ -24,6 +24,7 @@ import {
   sanitizeSketchMeasurements,
   sanitizeSketchOpenings,
   sanitizeSketchSwitches,
+  sketchWallKey,
   type SketchFinishes,
   type SketchLight,
   type SketchMeasurement,
@@ -31,6 +32,13 @@ import {
 } from './sketchFinishes'
 import { isToiletPlacedCatalogItem, sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
 import { formatFeetInches, formatInches, parseFeetInches, snapFeetToPrecision, snapOpeningFeetToPrecision } from './inches'
+import {
+  cabinetDisplayCode,
+  cabinetScheduleCsv,
+  isCabinetPlacedItem,
+  layoutCabinetRunOnWall,
+  type CabinetLayoutResult,
+} from './cabinetCodes'
 
 interface SketchTabProps {
   project: Project
@@ -179,7 +187,7 @@ function importWallHeight(value: unknown): number | undefined {
   return Number.isFinite(n) && n > 0 ? snapFeetToPrecision(n) : undefined
 }
 
-type Tool = 'wall' | 'door' | 'window' | 'measure'
+type Tool = 'wall' | 'door' | 'window' | 'measure' | 'cabinet'
 
 function dist(a: Pt, b: Pt): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
@@ -424,6 +432,7 @@ function normalizeOpeningForModel(model: SketchModel, opening: Opening): Opening
 
 function normalizeSketchModelForStorage(model: SketchModel): SketchModel {
   const measurements = sanitizeSketchMeasurements(model.measurements)
+  const placedItems = sanitizePlacedCatalogItems(model.placedItems)
   const next: SketchModel = {
     ...model,
     version: 1,
@@ -435,6 +444,8 @@ function normalizeSketchModelForStorage(model: SketchModel): SketchModel {
   if (model.height !== undefined) next.height = snapFeetToPrecision(wallHeightFt(model))
   if (measurements.length > 0) next.measurements = measurements
   else delete next.measurements
+  if (placedItems.length > 0) next.placedItems = placedItems
+  else delete next.placedItems
   return next
 }
 
@@ -500,6 +511,10 @@ type PlanPlacedItem = {
   depth: number
   warning: boolean
   toilet: boolean
+  cabinet: boolean
+  cabinetCode: string
+  filler: boolean
+  layer?: 'base' | 'wall'
 }
 
 function contourCenter(contour: Contour): Pt {
@@ -704,6 +719,7 @@ function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlace
       const depthIn = Number(item.depthIn)
       if (!Number.isFinite(widthIn) || !Number.isFinite(depthIn) || widthIn <= 0 || depthIn <= 0) return null
       const axesAngle = Math.atan2(-Math.sin(item.rotationY), Math.cos(item.rotationY)) * 180 / Math.PI
+      const cabinet = isCabinetPlacedItem(item)
       return {
         item,
         x: (item.xFt / cellFt) * CELL_PX,
@@ -711,8 +727,12 @@ function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlace
         angle: axesAngle,
         width: (widthIn / 12 / cellFt) * CELL_PX,
         depth: (depthIn / 12 / cellFt) * CELL_PX,
-        warning: warningIds.has(item.id),
+        warning: warningIds.has(item.id) || !!item.layoutWarning,
         toilet: isToiletPlacedCatalogItem(item),
+        cabinet,
+        cabinetCode: cabinet ? cabinetDisplayCode(item) : '',
+        filler: item.filler === true,
+        layer: item.layer,
       }
     })
     .filter((item): item is PlanPlacedItem => !!item)
@@ -784,6 +804,57 @@ function drawCanvasMeasurementLine(ctx: CanvasRenderingContext2D, line: Measurem
   ctx.lineWidth = 3 / viewScale
   ctx.strokeText(line.text, 0, 0)
   ctx.fillText(line.text, 0, 0)
+  ctx.restore()
+}
+
+function drawCanvasPlanItem(ctx: CanvasRenderingContext2D, entry: PlanPlacedItem, viewScale: number) {
+  ctx.save()
+  ctx.translate(entry.x, entry.y)
+  ctx.rotate((entry.angle * Math.PI) / 180)
+  ctx.lineWidth = (entry.warning ? 2 : 1.2) / viewScale
+  ctx.strokeStyle = entry.warning ? '#dc2626' : entry.cabinet ? '#395144' : '#475569'
+  ctx.fillStyle = entry.warning ? 'rgba(220, 38, 38, .14)' : entry.cabinet ? (entry.layer === 'wall' ? 'rgba(129, 140, 248, .2)' : 'rgba(127, 159, 104, .28)') : 'rgba(148, 163, 184, .22)'
+
+  if (entry.toilet) {
+    ctx.fillStyle = '#f8fafc'
+    const tankW = entry.width * 0.88
+    const tankH = entry.depth * 0.22
+    ctx.fillRect(-tankW / 2, -entry.depth * 0.46, tankW, tankH)
+    ctx.beginPath()
+    ctx.ellipse(0, entry.depth * 0.1, entry.width * 0.36, entry.depth * 0.28, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+    ctx.restore()
+    return
+  }
+
+  ctx.fillRect(-entry.width / 2, -entry.depth / 2, entry.width, entry.depth)
+  ctx.strokeRect(-entry.width / 2, -entry.depth / 2, entry.width, entry.depth)
+  if (entry.cabinet) {
+    ctx.beginPath()
+    ctx.moveTo(-entry.width / 2, entry.depth / 2 - Math.max(2 / viewScale, entry.depth * 0.12))
+    ctx.lineTo(entry.width / 2, entry.depth / 2 - Math.max(2 / viewScale, entry.depth * 0.12))
+    ctx.stroke()
+    if (entry.filler) {
+      ctx.beginPath()
+      ctx.moveTo(-entry.width / 2, -entry.depth / 2)
+      ctx.lineTo(entry.width / 2, entry.depth / 2)
+      ctx.moveTo(entry.width / 2, -entry.depth / 2)
+      ctx.lineTo(-entry.width / 2, entry.depth / 2)
+      ctx.stroke()
+    }
+    const label = entry.cabinetCode
+    if (label && entry.width > 12 / viewScale && entry.depth > 6 / viewScale) {
+      ctx.fillStyle = entry.warning ? '#991b1b' : '#263f31'
+      ctx.strokeStyle = 'rgba(255, 255, 255, .96)'
+      ctx.lineWidth = 3 / viewScale
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.font = `800 ${Math.max(6 / viewScale, Math.min(10 / viewScale, entry.width / Math.max(5, label.length * 0.58)))}px sans-serif`
+      ctx.strokeText(label, 0, 0)
+      ctx.fillText(label, 0, 0)
+    }
+  }
   ctx.restore()
 }
 
@@ -859,6 +930,7 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
     if (!label) return
     drawCanvasDimLine(ctx, label, viewScale, label.kind === 'door' ? '#7c2d12' : '#1d4ed8', 10.5)
   })
+  planPlacedItems(model, new Set()).forEach((entry) => drawCanvasPlanItem(ctx, entry, viewScale))
   for (const measurement of model.measurements ?? []) {
     if (!isPlanMeasurement(measurement)) continue
     const line = planMeasurementLine(model, measurement, 1 / viewScale)
@@ -901,6 +973,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [winH, setWinH] = useState(WIN_H_FT)
   const [winSill, setWinSill] = useState(WIN_SILL_FT)
   const [feetDrafts, setFeetDrafts] = useState<Partial<Record<FeetDraftField, string>>>({})
+  const [cabinetCodes, setCabinetCodes] = useState('B30 2DB27 W3030')
+  const [selectedCabinetWallKey, setSelectedCabinetWallKey] = useState<string | null>(null)
   // Перетаскивание проёма вдоль стены.
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const dragMovedRef = useRef(false)
@@ -934,6 +1008,19 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [model])
   const activeSnapFt = snapModeStep(snapMode)
   const openingDefaults = useMemo(() => ({ doorW, doorH, winW, winH, winSill }), [doorW, doorH, winW, winH, winSill])
+  const cabinetWallOptions = useMemo(() => eachSegment(model), [model])
+  const effectiveCabinetWallKey = selectedCabinetWallKey && cabinetWallOptions.some((seg) => sketchWallKey(seg.c, seg.s) === selectedCabinetWallKey)
+    ? selectedCabinetWallKey
+    : cabinetWallOptions[0]
+      ? sketchWallKey(cabinetWallOptions[0].c, cabinetWallOptions[0].s)
+      : null
+  const selectedCabinetWall = effectiveCabinetWallKey
+    ? cabinetWallOptions.find((seg) => sketchWallKey(seg.c, seg.s) === effectiveCabinetWallKey) ?? null
+    : null
+  const cabinetLayoutPreview = useMemo<CabinetLayoutResult | null>(
+    () => selectedCabinetWall ? layoutCabinetRunOnWall(model, selectedCabinetWall, cabinetCodes) : null,
+    [model, selectedCabinetWall, cabinetCodes],
+  )
 
   // Снимок в историю перед изменением; затем применяем мутатор.
   const commit = (next: SketchModel) => {
@@ -942,6 +1029,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setStatus(null)
     setError(null)
   }
+
+  useEffect(() => {
+    if (!effectiveCabinetWallKey) {
+      if (selectedCabinetWallKey) setSelectedCabinetWallKey(null)
+      return
+    }
+    if (selectedCabinetWallKey !== effectiveCabinetWallKey) setSelectedCabinetWallKey(effectiveCabinetWallKey)
+  }, [effectiveCabinetWallKey, selectedCabinetWallKey])
 
   useEffect(() => {
     if (viewMode !== '2d') return
@@ -1391,6 +1486,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       return
     }
 
+    if (tool !== 'door' && tool !== 'window') return
+
     // door / window: ставим на ближайший сегмент в пределах порога
     const near = nearestSegment(model, raw)
     if (!near || near.d > SEG_HIT) {
@@ -1442,6 +1539,25 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     commit({ ...model, height: nextHeight })
   }
 
+  const applyCabinetLayout = () => {
+    if (!selectedCabinetWall) {
+      setError('hub_sketch_no_segment')
+      return
+    }
+    const layout = layoutCabinetRunOnWall(model, selectedCabinetWall, cabinetCodes)
+    if (layout.items.length === 0) {
+      setError(layout.invalidCodes.length > 0 ? 'hub_sketch_cabinet_invalid' : 'hub_sketch_cabinet_empty')
+      setStatus(null)
+      return
+    }
+    const wallId = sketchWallKey(selectedCabinetWall.c, selectedCabinetWall.s)
+    const keptItems = sanitizePlacedCatalogItems(model.placedItems)
+      .filter((item) => !(isCabinetPlacedItem(item) && item.wallId === wallId))
+    const next: SketchModel = { ...model, placedItems: [...keptItems, ...layout.items] }
+    commit(next)
+    setStatus(layout.overflow ? 'hub_sketch_cabinet_overflow' : layout.smallFiller ? 'hub_sketch_cabinet_small_filler' : 'hub_sketch_cabinet_placed')
+  }
+
   const updateModelFrom3D = useCallback((next: SketchModel) => {
     setModel(normalizeSketchModelForStorage(next))
     setStatus(null)
@@ -1467,6 +1583,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       if (png) {
         const pngFile = new File([png], `${base}.png`, { type: 'image/png' })
         await uploadProjectFileToR2(profile, project.id, pngFile)
+      }
+      const cabinetCsv = cabinetScheduleCsv(modelForStorage.placedItems ?? [])
+      if (cabinetCsv) {
+        const csvFile = new File([cabinetCsv], `${base}-cabinets.csv`, { type: 'text/csv' })
+        await uploadProjectFileToR2(profile, project.id, csvFile)
       }
       setStatus('hub_sketch_saved')
     } catch (err) {
@@ -1645,7 +1766,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       {canEdit && viewMode === '2d' && (
         <div className="card hub-sketch-toolbar">
           <div className="hub-sketch-tools">
-            {(['wall', 'door', 'window', 'measure'] as Tool[]).map((tl) => (
+            {(['wall', 'door', 'window', 'measure', 'cabinet'] as Tool[]).map((tl) => (
               <button
                 key={tl}
                 type="button"
@@ -1664,6 +1785,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 }}
               >
                 {tl === 'measure' && <span aria-hidden="true">📏</span>}
+                {tl === 'cabinet' && <span aria-hidden="true">▣</span>}
                 <span>{t(`hub_sketch_tool_${tl}`)}</span>
               </button>
             ))}
@@ -1721,6 +1843,54 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_width')}>
                 {WINDOW_WIDTH_PRESETS_FT.map((value) => presetButton(value, setWinW))}
               </div>
+            </div>
+          )}
+          {tool === 'cabinet' && (
+            <div className="hub-sketch-cabinet-tools">
+              <label className="hub-sketch-field hub-sketch-cabinet-wall-select">
+                <span className="muted">{t('hub_sketch_cabinet_wall')}</span>
+                <select
+                  value={effectiveCabinetWallKey ?? ''}
+                  onChange={(event) => setSelectedCabinetWallKey(event.target.value || null)}
+                  disabled={cabinetWallOptions.length === 0}
+                >
+                  {cabinetWallOptions.length === 0 && <option value="">{t('hub_sketch_no_segment')}</option>}
+                  {cabinetWallOptions.map((seg, index) => {
+                    const key = sketchWallKey(seg.c, seg.s)
+                    return (
+                      <option key={key} value={key}>
+                        {`${t('hub_sketch_3d_wall')} ${index + 1} · ${fmtFt(dist(seg.a, seg.b) * modelCellFt(model))}`}
+                      </option>
+                    )
+                  })}
+                </select>
+              </label>
+              <textarea
+                className="hub-sketch-cabinet-code-input"
+                value={cabinetCodes}
+                onChange={(event) => setCabinetCodes(event.target.value)}
+                rows={3}
+                spellCheck={false}
+                placeholder="B30 2DB27 W3030 BEP24-3/4 BF3"
+              />
+              <div className="hub-sketch-cabinet-actions">
+                <button type="button" className="btn small" disabled={!selectedCabinetWall || !cabinetCodes.trim()} onClick={applyCabinetLayout}>
+                  {t('hub_sketch_cabinet_apply')}
+                </button>
+                {cabinetLayoutPreview && (
+                  <span className={cabinetLayoutPreview.overflow || cabinetLayoutPreview.smallFiller || cabinetLayoutPreview.invalidCodes.length > 0 ? 'hub-sketch-cabinet-summary hub-sketch-cabinet-summary-warn' : 'hub-sketch-cabinet-summary'}>
+                    {`${cabinetLayoutPreview.parsed.length} · ${t('hub_sketch_dim_length_short')} ${formatInches(cabinetLayoutPreview.wallLengthIn)}`}
+                    {cabinetLayoutPreview.summaries.map((summary) => ` · ${t(summary.layer === 'base' ? 'hub_sketch_cabinet_base' : 'hub_sketch_cabinet_wall_layer')} ${formatInches(summary.totalWidthIn)}${summary.fillerWidthIn > 0 ? ` + ${formatInches(summary.fillerWidthIn)}` : ''}`).join('')}
+                  </span>
+                )}
+              </div>
+              {cabinetLayoutPreview && cabinetLayoutPreview.invalidCodes.length > 0 && (
+                <div className="error-msg hub-sketch-cabinet-warning">
+                  {`${t('hub_sketch_cabinet_invalid')}: ${cabinetLayoutPreview.invalidCodes.join(', ')}`}
+                </div>
+              )}
+              {cabinetLayoutPreview?.overflow && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_overflow')}</div>}
+              {cabinetLayoutPreview?.smallFiller && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_small_filler')}</div>}
             </div>
           )}
         </div>
@@ -1857,14 +2027,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           })}
 
           {planItems.map((entry) => {
-            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}`
+            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}`
+            const labelFontSize = Math.max(5 * screenWorldPx, Math.min(11 * screenWorldPx, entry.width / Math.max(4, entry.cabinetCode.length * 0.6)))
             return (
               <g
                 key={`pi-${entry.item.id}`}
                 className={className}
                 transform={`translate(${entry.x} ${entry.y}) rotate(${entry.angle})`}
               >
-                <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : t('hub_sketch_code_target_item'))}</title>
+                <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
                 {entry.toilet ? (
                   <>
                     <rect
@@ -1890,6 +2061,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                       ry={entry.depth * 0.17}
                     />
                     <line className="hub-sketch-plan-toilet-axis" x1={0} y1={-entry.depth * 0.48} x2={0} y2={entry.depth * 0.5} />
+                  </>
+                ) : entry.cabinet ? (
+                  <>
+                    <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(3 * screenWorldPx, entry.width * 0.04, entry.depth * 0.04)} />
+                    <line className="hub-sketch-plan-cabinet-front" x1={-entry.width / 2} y1={entry.depth / 2 - Math.max(2 * screenWorldPx, entry.depth * 0.12)} x2={entry.width / 2} y2={entry.depth / 2 - Math.max(2 * screenWorldPx, entry.depth * 0.12)} />
+                    {entry.filler && (
+                      <path className="hub-sketch-plan-cabinet-fill-mark" d={`M ${-entry.width / 2} ${-entry.depth / 2} L ${entry.width / 2} ${entry.depth / 2} M ${entry.width / 2} ${-entry.depth / 2} L ${-entry.width / 2} ${entry.depth / 2}`} />
+                    )}
+                    {entry.cabinetCode && (
+                      <text
+                        className="hub-sketch-plan-cabinet-label"
+                        x={0}
+                        y={0}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        style={{ fontSize: labelFontSize }}
+                      >
+                        {entry.cabinetCode}
+                      </text>
+                    )}
                   </>
                 ) : (
                   <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(5, entry.width * 0.08, entry.depth * 0.08)} />

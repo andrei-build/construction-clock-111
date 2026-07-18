@@ -20,6 +20,13 @@ import {
   type CodeClearanceCheck,
 } from './code-clearances'
 import { isToiletPlacedCatalogItem, sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
+import {
+  CABINET_COUNTERTOP_HEIGHT_IN,
+  CABINET_TOE_KICK_IN,
+  CABINET_WALL_BOTTOM_IN,
+  cabinetDisplayCode,
+  isCabinetPlacedItem,
+} from './cabinetCodes'
 
 const CELL_FT = 1
 const DOOR_W_FT = 3
@@ -65,6 +72,10 @@ type ElevationPlacedItem = {
   height: number
   warning: boolean
   toilet: boolean
+  cabinet: boolean
+  cabinetCode: string
+  filler: boolean
+  layer?: 'base' | 'wall'
 }
 
 function modelCellFt(model: Sketch3DModel): number {
@@ -164,14 +175,21 @@ function elevationPlacedItems(
       const maxX = Math.max(0, Math.min(lengthFt, Math.max(...projections)))
       const projectedWidth = Math.max(0.12, maxX - minX)
       const centerX = Number.isFinite(item.t) ? Math.max(0, Math.min(lengthFt, (item.t ?? 0.5) * lengthFt)) : (minX + maxX) / 2
+      const bottomFt = Math.max(0, Math.min(height, Number.isFinite(item.yFt) ? item.yFt - heightFt / 2 : 0))
+      const drawnHeight = Math.min(heightFt, Math.max(0.08, height - bottomFt))
+      const cabinet = isCabinetPlacedItem(item)
       return {
         item,
         x: Math.max(0, Math.min(lengthFt - projectedWidth, centerX - projectedWidth / 2)),
-        y: height - heightFt,
+        y: Math.max(0, height - bottomFt - drawnHeight),
         width: projectedWidth,
-        height: heightFt,
-        warning: warningIds.has(item.id),
+        height: drawnHeight,
+        warning: warningIds.has(item.id) || !!item.layoutWarning,
         toilet: isToiletPlacedCatalogItem(item),
+        cabinet,
+        cabinetCode: cabinet ? cabinetDisplayCode(item) : '',
+        filler: item.filler === true,
+        layer: item.layer,
       }
     })
     .filter((item): item is ElevationPlacedItem => !!item)
@@ -241,6 +259,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     () => elevationPlacedItems(model, wall, lengthFt, height, codeWarningItemIds),
     [model, wall, lengthFt, height, codeWarningItemIds],
   )
+  const wallCabinetCount = wallPlacedItems.filter((entry) => entry.cabinet).length
   const wallCodeViolations = useMemo(
     () => codeClearanceViolations.filter((check) => {
       const onWall = (entity: CodeClearanceCheck['subject']) => entity.wall && `${entity.wall.c}:${entity.wall.s}` === currentWallKey
@@ -362,6 +381,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
         <span>{`${t('hub_sketch_dim_length_short')}: ${formatLength(lengthFt)}`}</span>
         <span>{`${t('hub_sketch_dim_height_short')}: ${formatLength(height)}`}</span>
         <span>{`${t('hub_sketch_3d_openings')}: ${openings.length}`}</span>
+        {wallCabinetCount > 0 && <span>{`${t('hub_sketch_tool_cabinet')}: ${wallCabinetCount}`}</span>}
       </div>
       <div className="hub-sketch-elevation-tools">
         {canEdit && (
@@ -426,6 +446,18 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             <line key={`y${y}`} x1={0} y1={height - y} x2={lengthFt} y2={height - y} className={Math.abs(y - Math.round(y)) < 0.001 ? 'major' : undefined} />
           ))}
         </g>
+        <g className="hub-sketch-elevation-cabinet-guides">
+          {[
+            { key: 'toe', value: CABINET_TOE_KICK_IN / 12, label: t('hub_sketch_cabinet_toe_guide') },
+            { key: 'counter', value: CABINET_COUNTERTOP_HEIGHT_IN / 12, label: t('hub_sketch_cabinet_counter_guide') },
+            { key: 'wall', value: CABINET_WALL_BOTTOM_IN / 12, label: t('hub_sketch_cabinet_wall_guide') },
+          ].filter((guide) => guide.value < height).map((guide) => (
+            <g key={guide.key}>
+              <line x1={0} y1={height - guide.value} x2={lengthFt} y2={height - guide.value} />
+              <text x={0.08} y={height - guide.value - 0.05} textAnchor="start">{guide.label}</text>
+            </g>
+          ))}
+        </g>
         <rect className="hub-sketch-elevation-outline" x={0} y={0} width={lengthFt} height={height} />
         {openings.map((opening, index) => {
           const width = Math.min(openingWidthFt(opening), lengthFt)
@@ -454,15 +486,42 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           )
         })}
         {wallPlacedItems.map((entry) => {
-          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}`
+          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}`
           return (
             <g key={`ei-${entry.item.id}`} className={cls}>
-              <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : t('hub_sketch_code_target_item'))}</title>
+              <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
               {entry.toilet ? (
                 <>
                   <rect x={entry.x + entry.width * 0.08} y={entry.y + entry.height * 0.02} width={entry.width * 0.84} height={entry.height * 0.36} rx={0.05} />
                   <path d={`M ${entry.x + entry.width * 0.18} ${entry.y + entry.height * 0.38} C ${entry.x + entry.width * 0.2} ${entry.y + entry.height * 0.78}, ${entry.x + entry.width * 0.8} ${entry.y + entry.height * 0.78}, ${entry.x + entry.width * 0.82} ${entry.y + entry.height * 0.38} Z`} />
                   <ellipse cx={entry.x + entry.width / 2} cy={entry.y + entry.height * 0.56} rx={entry.width * 0.22} ry={entry.height * 0.13} />
+                </>
+              ) : entry.cabinet ? (
+                <>
+                  <rect x={entry.x} y={entry.y} width={entry.width} height={entry.height} rx={0.025} />
+                  {entry.layer === 'base' && !entry.filler && (
+                    <>
+                      <rect
+                        className="hub-sketch-elevation-cabinet-toe"
+                        x={entry.x + entry.width * 0.08}
+                        y={entry.y + entry.height - Math.min(entry.height * 0.3, CABINET_TOE_KICK_IN / 12)}
+                        width={entry.width * 0.84}
+                        height={Math.min(entry.height * 0.3, CABINET_TOE_KICK_IN / 12)}
+                        rx={0.015}
+                      />
+                      <line className="hub-sketch-elevation-cabinet-counter" x1={entry.x - 0.02} y1={Math.max(0, height - CABINET_COUNTERTOP_HEIGHT_IN / 12)} x2={entry.x + entry.width + 0.02} y2={Math.max(0, height - CABINET_COUNTERTOP_HEIGHT_IN / 12)} />
+                    </>
+                  )}
+                  <line className="hub-sketch-elevation-cabinet-face" x1={entry.x + entry.width * 0.1} y1={entry.y + entry.height * 0.28} x2={entry.x + entry.width * 0.9} y2={entry.y + entry.height * 0.28} />
+                  <line className="hub-sketch-elevation-cabinet-face" x1={entry.x + entry.width / 2} y1={entry.y + entry.height * 0.28} x2={entry.x + entry.width / 2} y2={entry.y + entry.height * 0.9} />
+                  {entry.filler && (
+                    <path className="hub-sketch-elevation-cabinet-fill-mark" d={`M ${entry.x} ${entry.y} L ${entry.x + entry.width} ${entry.y + entry.height} M ${entry.x + entry.width} ${entry.y} L ${entry.x} ${entry.y + entry.height}`} />
+                  )}
+                  {entry.cabinetCode && (
+                    <text x={entry.x + entry.width / 2} y={entry.y + entry.height / 2} textAnchor="middle" dominantBaseline="central">
+                      {entry.cabinetCode}
+                    </text>
+                  )}
                 </>
               ) : (
                 <rect x={entry.x} y={entry.y} width={entry.width} height={entry.height} rx={0.05} />

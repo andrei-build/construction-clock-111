@@ -4191,6 +4191,54 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-dims { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; }
 .hub-sketch-dim-field { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .hub-sketch-dim-field input { width: 132px; }
+.hub-sketch-cabinet-tools {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(240px, 1fr);
+  gap: 8px 12px;
+  width: 100%;
+  align-items: start;
+}
+.hub-sketch-cabinet-wall-select {
+  margin: 0;
+}
+.hub-sketch-cabinet-code-input {
+  min-height: 72px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.hub-sketch-cabinet-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.hub-sketch-cabinet-summary {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.hub-sketch-cabinet-summary-warn {
+  color: #b45309;
+}
+.hub-sketch-cabinet-warning {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+@media (max-width: 620px) {
+  .hub-sketch-cabinet-tools {
+    grid-template-columns: 1fr;
+  }
+  .hub-sketch-cabinet-actions {
+    grid-column: auto;
+  }
+  .hub-sketch-cabinet-warning {
+    grid-column: auto;
+  }
+}
 .hub-sketch-preset-row {
   display: inline-flex;
   flex-wrap: wrap;
@@ -4238,6 +4286,36 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-plan-item-warn .hub-sketch-plan-toilet-axis {
   stroke: #dc2626;
+}
+.hub-sketch-plan-cabinet rect {
+  fill: rgba(127, 159, 104, .26);
+  stroke: #395144;
+}
+.hub-sketch-plan-cabinet-wall rect {
+  fill: rgba(129, 140, 248, .18);
+  stroke: #4f46e5;
+  stroke-dasharray: 4 3;
+}
+.hub-sketch-plan-cabinet-filler rect {
+  fill: rgba(244, 201, 93, .24);
+}
+.hub-sketch-plan-cabinet-front,
+.hub-sketch-plan-cabinet-fill-mark {
+  stroke: rgba(38, 63, 49, .8);
+  stroke-width: 1.1;
+  fill: none;
+}
+.hub-sketch-plan-cabinet-label {
+  fill: #263f31;
+  stroke: rgba(255, 255, 255, .96);
+  stroke-width: 3.2;
+  paint-order: stroke;
+  font-weight: 900;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+.hub-sketch-plan-item-warn .hub-sketch-plan-cabinet-label {
+  fill: #991b1b;
 }
 .hub-sketch-code-arc,
 .hub-sketch-code-clearance-line {
@@ -4677,6 +4755,19 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: rgba(51, 65, 85, .34);
   stroke-width: .026;
 }
+.hub-sketch-elevation-cabinet-guides line {
+  stroke: rgba(15, 23, 42, .34);
+  stroke-width: .024;
+  stroke-dasharray: .12 .09;
+}
+.hub-sketch-elevation-cabinet-guides text {
+  fill: #475569;
+  stroke: rgba(255,255,255,.92);
+  stroke-width: .07;
+  paint-order: stroke;
+  font-size: .22px;
+  font-weight: 850;
+}
 .hub-sketch-elevation-outline {
   fill: none;
   stroke: #334155;
@@ -4712,6 +4803,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-elevation-toilet ellipse {
   fill: rgba(147, 197, 253, .42);
+}
+.hub-sketch-elevation-cabinet rect {
+  fill: rgba(127, 159, 104, .27);
+  stroke: #395144;
+}
+.hub-sketch-elevation-cabinet-wall rect {
+  fill: rgba(129, 140, 248, .2);
+  stroke: #4f46e5;
+}
+.hub-sketch-elevation-cabinet-filler rect {
+  fill: rgba(244, 201, 93, .24);
+}
+.hub-sketch-elevation-cabinet-toe {
+  fill: rgba(51, 65, 85, .78) !important;
+  stroke: none !important;
+}
+.hub-sketch-elevation-cabinet-counter,
+.hub-sketch-elevation-cabinet-face,
+.hub-sketch-elevation-cabinet-fill-mark {
+  stroke: rgba(38, 63, 49, .82);
+  stroke-width: .025;
+  fill: none;
 }
 .hub-sketch-elevation-svg text {
   fill: #0f172a;

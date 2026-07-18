@@ -62,6 +62,12 @@ import {
   type CatalogWallHit,
   type SketchPlacedCatalogItem,
 } from './sketchCatalog'
+import {
+  CABINET_COUNTERTOP_HEIGHT_IN,
+  CABINET_TOE_KICK_IN,
+  cabinetDisplayCode,
+  isCabinetPlacedItem,
+} from './cabinetCodes'
 import { SHERWIN_WILLIAMS_COLORS } from './sw-colors'
 
 const CELL_FT = 1
@@ -1011,6 +1017,13 @@ function buildPhotoRenderFacts(
       category: resolved.category,
       brand: resolved.brand,
       model: resolved.model,
+      code: resolved.placed.code ?? resolved.model,
+      wall_id: resolved.placed.wallId ?? null,
+      layer: resolved.placed.layer ?? null,
+      hinge: resolved.placed.hinge ?? null,
+      filler: resolved.placed.filler === true,
+      panel: resolved.placed.panel === true,
+      layout_warning: resolved.placed.layoutWarning ?? null,
       surface: resolved.placed.surface,
       dimensions: {
         width: inchesFact(resolved.widthIn),
@@ -1358,6 +1371,73 @@ function addCatalogBox(THREE: any, group: any, resolved: CatalogResolvedPlacedIt
   box.castShadow = false
   box.receiveShadow = false
   addMeshWithEdges(THREE, group, box, edgeColor)
+}
+
+function addCabinetFixture(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, warn: boolean, edgeColor: number) {
+  const placed = resolved.placed
+  const width = Math.max(0.04, resolved.dims.widthFt)
+  const height = Math.max(0.04, resolved.dims.heightFt)
+  const depth = Math.max(0.04, resolved.dims.depthFt)
+  const floorY = -height / 2
+  const isWall = placed.layer === 'wall'
+  const isFiller = placed.filler === true
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: warn ? 0xffd6d6 : isWall ? 0xe6eaf5 : 0xe7e2d8,
+    roughness: 0.5,
+    metalness: 0.02,
+  })
+  const faceMaterial = new THREE.MeshStandardMaterial({
+    color: warn ? 0xfca5a5 : isWall ? 0xf8fafc : 0xf6f0e6,
+    roughness: 0.42,
+    metalness: 0.02,
+  })
+  const accentMaterial = new THREE.MeshStandardMaterial({ color: warn ? 0x991b1b : 0x334155, roughness: 0.58, metalness: 0.03 })
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), bodyMaterial)
+  addMeshWithEdges(THREE, group, body, edgeColor, warn ? 0.9 : 0.44)
+
+  const faceDepth = Math.max(0.018, Math.min(0.045, depth * 0.025))
+  const face = new THREE.Mesh(new THREE.BoxGeometry(width * 0.96, height * 0.9, faceDepth), faceMaterial)
+  face.position.set(0, isWall ? 0 : height * 0.01, depth / 2 + faceDepth / 2)
+  addMeshWithEdges(THREE, group, face, edgeColor, warn ? 0.88 : 0.36)
+
+  const code = cabinetDisplayCode(placed)
+  const drawerLines = placed.cabinetPrefix === 'DB' || placed.cabinetPrefix === '2DB' || /^2?DB/i.test(code)
+  const railCount = isFiller ? 0 : drawerLines ? 3 : 2
+  for (let i = 1; i <= railCount; i++) {
+    const y = floorY + height * (i / (railCount + 1))
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(width * 0.86, 0.018, faceDepth * 1.5), accentMaterial)
+    rail.position.set(0, y, depth / 2 + faceDepth * 1.6)
+    group.add(rail)
+  }
+  if (!isFiller && width > 0.7) {
+    const stile = new THREE.Mesh(new THREE.BoxGeometry(0.018, height * 0.62, faceDepth * 1.5), accentMaterial)
+    stile.position.set(0, floorY + height * 0.5, depth / 2 + faceDepth * 1.6)
+    group.add(stile)
+  }
+  if (isFiller) {
+    const markA = new THREE.Mesh(new THREE.BoxGeometry(width * 1.08, 0.018, faceDepth * 1.5), accentMaterial)
+    markA.rotation.z = Math.atan2(height, width)
+    markA.position.set(0, 0, depth / 2 + faceDepth * 1.8)
+    group.add(markA)
+  }
+
+  if (!isWall && !isFiller) {
+    const toeH = Math.min(height * 0.28, CABINET_TOE_KICK_IN / 12)
+    const toeD = Math.min(depth * 0.35, 3 / 12)
+    const toe = new THREE.Mesh(new THREE.BoxGeometry(width * 0.84, toeH, toeD), accentMaterial)
+    toe.position.set(0, floorY + toeH / 2, depth / 2 - toeD / 2)
+    group.add(toe)
+
+    const counterTopY = CABINET_COUNTERTOP_HEIGHT_IN / 12 - resolved.dims.heightFt / 2
+    const counterThickness = 1.5 / 12
+    const counter = new THREE.Mesh(
+      new THREE.BoxGeometry(width + 0.08, counterThickness, depth + 0.08),
+      new THREE.MeshStandardMaterial({ color: warn ? 0xfecaca : 0xf8fafc, roughness: 0.34, metalness: 0.02 }),
+    )
+    counter.position.y = Math.max(height / 2 + counterThickness / 2, counterTopY - counterThickness / 2)
+    addMeshWithEdges(THREE, group, counter, edgeColor, warn ? 0.72 : 0.28)
+  }
 }
 
 function addShowerPan(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, material: any, edgeColor: number) {
@@ -2766,6 +2846,8 @@ export default function Sketch3DView({
           if (placed.surface === 'floor') addContactShadow(THREE, group, resolved.dims.widthFt, resolved.dims.depthFt, resolved.dims.heightFt)
           if (isToiletPlacedCatalogItem(placed)) {
             addToiletFixture(THREE, group, resolved, visualWarn, edgeColor)
+          } else if (isCabinetPlacedItem(placed)) {
+            addCabinetFixture(THREE, group, resolved, visualWarn, edgeColor)
           } else if (resolved.category === 'shower' && placed.surface === 'floor') {
             addShowerPan(THREE, group, resolved, material, edgeColor)
           } else {
@@ -2780,7 +2862,8 @@ export default function Sketch3DView({
               .filter((check) => check.subject.id === placed.id || check.target.id === placed.id)
               .map((check) => formatCodeClearanceMessage(check, t))[0]
             const warning = doesNotFit ? `\n${t('hub_sketch_3d_not_fit')}` : codeWarning ? `\n${codeWarning}` : ''
-            const text = `${resolvedCatalogDisplayName(resolved, t)}\n${resolvedCatalogDimsText(resolved)}${warning}`
+            const cabinetCode = isCabinetPlacedItem(placed) ? cabinetDisplayCode(placed) : ''
+            const text = `${cabinetCode || resolvedCatalogDisplayName(resolved, t)}\n${resolvedCatalogDimsText(resolved)}${warning}`
             const sprite = createLabelSprite(THREE, text)
             sprite.position.set(placed.xFt, placed.yFt + resolved.dims.heightFt / 2 + 0.42, placed.zFt)
             scene.add(sprite)
@@ -3638,14 +3721,20 @@ export default function Sketch3DView({
                 : <span className={isToiletPlacedCatalogItem(selectedPlaced.placed) ? 'hub-sketch-catalog-thumb-toilet' : 'hub-sketch-catalog-thumb-empty'} aria-hidden="true" />}
             </div>
             <div className="hub-sketch-3d-item-popover-body">
-              <div className="item-title">{resolvedCatalogDisplayName(selectedPlaced, t)}</div>
+              <div className="item-title">{isCabinetPlacedItem(selectedPlaced.placed) ? cabinetDisplayCode(selectedPlaced.placed) : resolvedCatalogDisplayName(selectedPlaced, t)}</div>
               {!isToiletPlacedCatalogItem(selectedPlaced.placed) && catalogBrandModel(selectedPlaced.brand, selectedPlaced.model) && (
                 <div className="muted">{catalogBrandModel(selectedPlaced.brand, selectedPlaced.model)}</div>
               )}
               <div className="muted">{t('catalog_dims')}: {resolvedCatalogDimsText(selectedPlaced)}</div>
+              {isCabinetPlacedItem(selectedPlaced.placed) && (
+                <div className="muted">
+                  {[selectedPlaced.placed.layer ? t(selectedPlaced.placed.layer === 'base' ? 'hub_sketch_cabinet_base' : 'hub_sketch_cabinet_wall_layer') : null, selectedPlaced.placed.hinge ? `${t('hub_sketch_cabinet_hinge')} ${selectedPlaced.placed.hinge}` : null, selectedPlaced.placed.filler ? t('hub_sketch_cabinet_filler') : null].filter(Boolean).join(' · ')}
+                </div>
+              )}
               <div className="hub-sketch-3d-item-flags">
                 {selectedPlaced.missingCatalogItem && <span className="badge">{t('hub_sketch_3d_catalog_missing_item')}</span>}
                 {selectedPlacedDoesNotFit && <span className="badge red">{t('hub_sketch_3d_not_fit')}</span>}
+                {selectedPlaced.placed.layoutWarning && <span className="badge red">{t(selectedPlaced.placed.layoutWarning === 'overflow' ? 'hub_sketch_cabinet_overflow' : 'hub_sketch_cabinet_small_filler')}</span>}
                 {selectedPlacedCodeViolations.length > 0 && <span className="badge red">{t('hub_sketch_code_check')}</span>}
               </div>
               {selectedPlacedCodeViolations[0] && (
