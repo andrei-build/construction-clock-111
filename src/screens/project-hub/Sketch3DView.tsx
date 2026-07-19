@@ -2678,13 +2678,21 @@ export default function Sketch3DView({
     if (activeSurface.kind === 'drywall-patch') return
     const current = activeSurface.coverage?.mode === 'partial'
       ? activeSurface.coverage
-      : { mode: 'partial' as const, bottomFt: 0, heightFt: Math.min(4, heightFt) }
+      : { mode: 'partial' as const, bottomFt: 0, heightFt: Math.min(4, heightFt), regions: [] }
+    if (patch.mode === 'full') {
+      updateSurface({
+        ...activeSurface,
+        coverage: { mode: 'full' as const },
+      })
+      return
+    }
     updateSurface({
       ...activeSurface,
       coverage: {
         ...current,
         ...patch,
-        mode: patch.mode ?? current.mode ?? 'partial',
+        mode: 'partial' as const,
+        regions: patch.regions ?? current.regions ?? [],
       },
     })
   }
@@ -5276,7 +5284,7 @@ export default function Sketch3DView({
                       key={mode}
                       type="button"
                       className={activeFinishCoverageMode === mode ? 'btn small' : 'btn ghost small'}
-                      onClick={() => updateFinishCoverage(mode === 'full' ? { mode: 'full' } : { mode: 'partial', bottomFt: activeCoverage.bottomFt, heightFt: activeFinishCoverageMode === 'partial' ? Math.min(heightFt, Math.max(0.5, activeCoverage.topFt - activeCoverage.bottomFt)) : Math.min(4, heightFt) })}
+                      onClick={() => updateFinishCoverage(mode === 'full' ? { mode: 'full' } : { mode: 'partial' })}
                     >
                       {t(mode === 'full' ? 'hub_sketch_finish_full' : 'hub_sketch_finish_partial')}
                     </button>

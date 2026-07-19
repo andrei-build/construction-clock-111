@@ -3799,7 +3799,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const currentHeightFt = wallHeightFt(modelRef.current)
     const currentCoverage = selectedWallSurface.coverage?.mode === 'partial'
       ? selectedWallSurface.coverage
-      : { mode: 'partial' as const, bottomFt: 0, heightFt: Math.min(4, currentHeightFt) }
+      : { mode: 'partial' as const, bottomFt: 0, heightFt: Math.min(4, currentHeightFt), regions: [] }
     updateSelectedWallSurface({
       ...selectedWallSurface,
       coverage: mode === 'full'
