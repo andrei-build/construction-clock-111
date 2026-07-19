@@ -26,7 +26,7 @@ import {
   type SketchSegmentResizeConflict,
   type SketchSurfaceFinish,
 } from './sketchFinishes'
-import { formatFeetInches, parseFeetInches, snapFeetToPrecision } from './inches'
+import { formatFeetInches, formatInches, parseFeetInches, snapFeetToPrecision } from './inches'
 import {
   codeClearanceItemIds,
   formatCodeClearanceMessage,
@@ -186,6 +186,41 @@ function finishRegionFromPoints(a: ElevationPoint, b: ElevationPoint, id?: strin
 
 function finishRegionArea(region: SketchFinishRegion): number {
   return Math.max(0, region.x1Ft - region.x0Ft) * Math.max(0, region.y1Ft - region.y0Ft)
+}
+
+function formatRegionInches(valueFt: number): string {
+  return formatInches(Math.max(0, Number.isFinite(valueFt) ? valueFt : 0) * 12)
+}
+
+function formatRegionAreaSqft(areaSqft: number): string {
+  const area = Math.max(0, Number.isFinite(areaSqft) ? areaSqft : 0)
+  if (area >= 10) return `${Math.round(area)}`
+  if (area >= 1) return area.toFixed(1).replace(/\.0$/, '')
+  return area.toFixed(2).replace(/0$/, '').replace(/\.0$/, '')
+}
+
+function finishRegionLabel(region: SketchFinishRegion) {
+  const regionWidth = Math.max(0.001, region.x1Ft - region.x0Ft)
+  const regionHeight = Math.max(0.001, region.y1Ft - region.y0Ft)
+  const text = `${formatRegionInches(regionWidth)}×${formatRegionInches(regionHeight)}, ${formatRegionAreaSqft(finishRegionArea(region))} sqft`
+  const inset = Math.max(0.006, Math.min(0.08, Math.min(regionWidth, regionHeight) * 0.12))
+  const maxTextWidth = Math.max(0.001, regionWidth - inset * 2)
+  const maxTextHeight = Math.max(0.001, regionHeight - inset * 2)
+  const fontSize = Math.max(0.01, Math.min(0.24, maxTextHeight * 0.58, maxTextWidth / Math.max(1, text.length * 0.58)))
+  const padX = Math.max(0.003, Math.min(inset, fontSize * 0.55))
+  const padY = Math.max(0.002, Math.min(inset, fontSize * 0.32))
+  const textLength = Math.max(0.001, Math.min(text.length * fontSize * 0.58, Math.max(0.001, regionWidth - padX * 2)))
+  const rectWidth = Math.max(0.001, Math.min(regionWidth, textLength + padX * 2))
+  const rectHeight = Math.max(0.001, Math.min(regionHeight, fontSize * 1.45 + padY * 2))
+  return {
+    text,
+    x: (region.x0Ft + region.x1Ft) / 2,
+    y: (region.y0Ft + region.y1Ft) / 2,
+    fontSize,
+    textLength,
+    rectWidth,
+    rectHeight,
+  }
 }
 
 function moveFinishRegion(region: SketchFinishRegion, dx: number, dy: number, wallLengthFt: number, wallHeightFt: number): SketchFinishRegion {
@@ -399,7 +434,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const tileH = Math.max(1, tile?.tileHIn ?? 24) / 12
   const grout = Math.max(0, tile?.groutIn ?? 0.125) / 12
   const currentWallKey = wallKey(wall)
-  const explicitFinishRegions = finish.coverage?.mode === 'partial' && finish.coverage.regions !== undefined
+  const explicitFinishRegions = finish.coverage?.mode === 'partial'
     ? normalizeFinishRegions(finish.coverage.regions, lengthFt, height)
     : null
   const editableFinishRegions = explicitFinishRegions ?? []
@@ -426,6 +461,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const finishRegionSqft = finishRegions.reduce((sum, region) => sum + finishRegionArea(region), 0)
   const finishLabel = t(finish.kind === 'tile' ? 'hub_sketch_3d_tile' : finish.kind === 'drywall-patch' ? 'hub_sketch_3d_drywall_patch' : 'hub_sketch_3d_paint')
   const showRegionHint = regionEditingEnabled && explicitFinishRegions !== null && editableFinishRegions.length === 0 && !regionDrag
+  const showFinishRegionLabels = finish.coverage?.mode === 'partial' && finishRegions.length > 0
   const codeClearanceChecks = useMemo(
     () => (codeCheckEnabled ? getCodeClearanceChecks(model) : []),
     [model, codeCheckEnabled],
@@ -1132,6 +1168,31 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
               ) : (
                 <rect x={entry.x} y={entry.y} width={entry.width} height={entry.height} rx={0.05} />
               )}
+            </g>
+          )
+        })}
+        {showFinishRegionLabels && finishRegions.map((region, index) => {
+          const label = finishRegionLabel(region)
+          return (
+            <g key={`fr-label-${finishRegionKey(region, index)}`} className="hub-sketch-elevation-region-label" pointerEvents="none">
+              <rect
+                x={label.x - label.rectWidth / 2}
+                y={height - label.y - label.rectHeight / 2}
+                width={label.rectWidth}
+                height={label.rectHeight}
+                rx={Math.min(0.08, label.rectHeight * 0.32)}
+              />
+              <text
+                x={label.x}
+                y={height - label.y}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={label.fontSize}
+                textLength={label.textLength}
+                lengthAdjust="spacingAndGlyphs"
+              >
+                {label.text}
+              </text>
             </g>
           )
         })}

@@ -18,6 +18,11 @@ import {
   SKETCH_CATALOG_KIND_SWITCH,
   type SketchPlacedCatalogItem,
 } from '../src/screens/project-hub/sketchCatalog'
+import {
+  finishCoverageAreaSqft,
+  finishCoverageRegionsFt,
+  normalizeFinishes,
+} from '../src/screens/project-hub/sketchFinishes'
 
 const rectangleModel = {
   version: 1 as const,
@@ -105,7 +110,36 @@ describe('sketch material area aggregation', () => {
     expect(facts.paintAreaSqft).toBe(298)
   })
 
-  it('keeps legacy partial wall coverage without regions as a full-width vertical band', () => {
+  it('treats partial coverage without explicit regions as empty until the user draws a region', () => {
+    const surface = {
+      kind: 'tile' as const,
+      coverage: { mode: 'partial' as const, bottomFt: 2, heightFt: 3 },
+    }
+
+    expect(finishCoverageRegionsFt(surface, 10, 8)).toEqual([])
+    expect(finishCoverageAreaSqft(surface, 10, 8)).toBe(0)
+  })
+
+  it('migrates legacy partial wall coverage into a full-width editable region during normalization', () => {
+    const normalizedSurface = normalizeFinishes({
+      walls: { kind: 'paint', color: '#ffffff' },
+      wallFinishes: {
+        '0:0': {
+          kind: 'tile',
+          tileWIn: 12,
+          tileHIn: 24,
+          coverage: { mode: 'partial', bottomFt: 2, heightFt: 3 },
+        },
+      },
+    }).wallFinishes['0:0']
+
+    expect(normalizedSurface.coverage?.regions).toEqual([
+      { x0Ft: 0, y0Ft: 2, x1Ft: 200, y1Ft: 5 },
+    ])
+    expect(finishCoverageRegionsFt(normalizedSurface, 10, 8)).toEqual([
+      { x0Ft: 0, y0Ft: 2, x1Ft: 10, y1Ft: 5 },
+    ])
+
     const facts = collectSketchMaterialFacts({
       ...rectangleModel,
       finishes: {

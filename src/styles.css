@@ -6478,6 +6478,19 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-size: .3px;
   font-weight: 900;
 }
+.hub-sketch-elevation-region-label rect {
+  fill: rgba(15, 23, 42, .78);
+  stroke: rgba(255,255,255,.82);
+  stroke-width: .018;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-region-label text {
+  fill: #ffffff;
+  stroke: rgba(15, 23, 42, .42);
+  stroke-width: .035;
+  paint-order: stroke;
+  font-weight: 900;
+}
 .hub-sketch-elevation-door {
   fill: rgba(180, 83, 9, .75);
   stroke: #7c2d12;

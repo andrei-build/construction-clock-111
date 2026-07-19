@@ -189,6 +189,7 @@ const WALL_FINISH_KEY_RE = /^\d+:\d+$/
 const tilePatternCanvasCache = new Map<string, HTMLCanvasElement>()
 const MAX_FINISH_REGIONS = 200
 const MIN_FINISH_REGION_SIZE_FT = 1 / 96
+const LEGACY_FINISH_BAND_WIDTH_FT = 200
 
 export function sketchWallKey(c: number, s: number): string {
   return `${c}:${s}`
@@ -527,13 +528,23 @@ function sanitizeCoverage(value: unknown): SketchFinishCoverage | undefined {
   const mode = raw.mode === 'partial' ? 'partial' : raw.mode === 'full' ? 'full' : undefined
   if (!mode) return undefined
   if (mode === 'full') return { mode: 'full' }
+  const bottomFt = cleanOptionalNumber(raw.bottomFt, 0, 30) ?? 0
+  const heightFt = cleanOptionalNumber(raw.heightFt, 0.25, 30) ?? 4
   const coverage: SketchFinishCoverage = {
     mode: 'partial',
-    bottomFt: cleanOptionalNumber(raw.bottomFt, 0, 30) ?? 0,
-    heightFt: cleanOptionalNumber(raw.heightFt, 0.25, 30) ?? 4,
+    bottomFt,
+    heightFt,
   }
   const regions = sanitizeCoverageRegions(raw.regions)
   if (regions !== undefined) coverage.regions = regions
+  else if (raw.bottomFt !== undefined || raw.heightFt !== undefined) {
+    coverage.regions = normalizeFinishRegions([{
+      x0Ft: 0,
+      y0Ft: bottomFt,
+      x1Ft: LEGACY_FINISH_BAND_WIDTH_FT,
+      y1Ft: bottomFt + heightFt,
+    }], LEGACY_FINISH_BAND_WIDTH_FT, 30)
+  }
   return coverage
 }
 
@@ -541,17 +552,14 @@ export function finishCoverageBoundsFt(surface: SketchSurfaceFinish, wallHeightF
   const roomHeight = Number.isFinite(wallHeightFt) && wallHeightFt > 0 ? wallHeightFt : 8
   const coverage = surface.coverage
   if (!coverage || coverage.mode !== 'partial') return { bottomFt: 0, topFt: roomHeight, full: true }
-  if (coverage.regions) {
+  if (coverage.regions !== undefined) {
     const normalized = normalizeFinishRegions(coverage.regions, 200, roomHeight)
     if (normalized.length === 0) return { bottomFt: 0, topFt: 0, full: false }
     const bottom = Math.min(...normalized.map((region) => region.y0Ft))
     const top = Math.max(...normalized.map((region) => region.y1Ft))
     return { bottomFt: bottom, topFt: top, full: bottom <= 0.001 && top >= roomHeight - 0.001 }
   }
-  const bottom = Math.max(0, Math.min(roomHeight, coverage.bottomFt ?? 0))
-  const height = Math.max(0.25, Math.min(roomHeight - bottom, coverage.heightFt ?? roomHeight))
-  const top = Math.max(bottom, Math.min(roomHeight, bottom + height))
-  return { bottomFt: bottom, topFt: top, full: bottom <= 0.001 && top >= roomHeight - 0.001 }
+  return { bottomFt: 0, topFt: 0, full: false }
 }
 
 export function normalizeFinishRegions(regions: SketchFinishRegion[] | undefined, wallLengthFt: number, wallHeightFt: number): SketchFinishRegion[] {
@@ -582,7 +590,7 @@ export function finishCoverageRegionsFt(surface: SketchSurfaceFinish, wallLength
   const height = Number.isFinite(wallHeightFt) && wallHeightFt > 0 ? wallHeightFt : 8
   if (length <= 0 || height <= 0) return []
   if (surface.kind === 'drywall-patch') {
-    if (surface.coverage?.mode === 'partial' && surface.coverage.regions) {
+    if (surface.coverage?.mode === 'partial' && surface.coverage.regions !== undefined) {
       return normalizeFinishRegions(surface.coverage.regions, length, height)
     }
     const patch = normalizeDrywallPatchSurface(surface)
@@ -597,9 +605,8 @@ export function finishCoverageRegionsFt(surface: SketchSurfaceFinish, wallLength
   if (!coverage || coverage.mode !== 'partial') {
     return [{ x0Ft: 0, y0Ft: 0, x1Ft: length, y1Ft: height }]
   }
-  if (coverage.regions) return normalizeFinishRegions(coverage.regions, length, height)
-  const bounds = finishCoverageBoundsFt(surface, height)
-  return normalizeFinishRegions([{ x0Ft: 0, y0Ft: bounds.bottomFt, x1Ft: length, y1Ft: bounds.topFt }], length, height)
+  if (coverage.regions !== undefined) return normalizeFinishRegions(coverage.regions, length, height)
+  return []
 }
 
 export function finishCoverageAreaSqft(surface: SketchSurfaceFinish, wallLengthFt: number, wallHeightFt: number): number {
