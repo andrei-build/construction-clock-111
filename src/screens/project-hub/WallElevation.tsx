@@ -10,6 +10,8 @@ import {
   DEFAULT_TILE_COLOR,
   DEFAULT_WALL_PAINT,
   cleanColor,
+  finishCoverageBoundsFt,
+  normalizeDrywallPatchSurface,
   normalizeTileSurface,
   type Opening,
   type Pt,
@@ -24,7 +26,14 @@ import {
   getCodeClearanceChecks,
   type CodeClearanceCheck,
 } from './code-clearances'
-import { isToiletPlacedCatalogItem, sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
+import {
+  isShowerPanPlacedCatalogItem,
+  isToiletPlacedCatalogItem,
+  sanitizePlacedCatalogItems,
+  showerPanShapeFromPlacedItem,
+  type SketchPlacedCatalogItem,
+  type SketchShowerPanShape,
+} from './sketchCatalog'
 import {
   CABINET_COUNTERTOP_HEIGHT_IN,
   CABINET_TOE_KICK_IN,
@@ -86,6 +95,8 @@ type ElevationPlacedItem = {
   height: number
   warning: boolean
   toilet: boolean
+  showerPan: boolean
+  showerPanShape: SketchShowerPanShape
   cabinet: boolean
   cabinetCode: string
   filler: boolean
@@ -200,6 +211,8 @@ function elevationPlacedItems(
         height: drawnHeight,
         warning: warningIds.has(item.id) || !!item.layoutWarning,
         toilet: isToiletPlacedCatalogItem(item),
+        showerPan: isShowerPanPlacedCatalogItem(item),
+        showerPanShape: showerPanShapeFromPlacedItem(item),
         cabinet,
         cabinetCode: cabinet ? cabinetDisplayCode(item) : '',
         filler: item.filler === true,
@@ -304,7 +317,10 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const isTile = finish.kind === 'tile'
   const tile = isTile ? normalizeTileSurface(finish) : null
   const patternId = `wall-elevation-tile-${wall.c}-${wall.s}`
-  const fill = isTile ? `url(#${patternId})` : cleanColor(finish.kind === 'paint' ? finish.color : undefined, DEFAULT_WALL_PAINT)
+  const patch = finish.kind === 'drywall-patch' ? normalizeDrywallPatchSurface(finish) : null
+  const finishCoverage = finishCoverageBoundsFt(finish, height)
+  const surfaceFill = isTile ? `url(#${patternId})` : cleanColor(finish.kind === 'paint' ? finish.color : patch?.patchColor, DEFAULT_WALL_PAINT)
+  const baseFill = patch ? cleanColor(patch.baseColor, DEFAULT_WALL_PAINT) : DEFAULT_WALL_PAINT
   const groutColor = cleanColor(tile?.groutColor, DEFAULT_GROUT_COLOR)
   const tileColor = cleanColor(tile?.tileColor, DEFAULT_TILE_COLOR)
   const tileW = Math.max(1, tile?.tileWIn ?? 12) / 12
@@ -442,10 +458,11 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
 
   return (
     <div className="hub-sketch-elevation">
-      <div className="hub-sketch-elevation-meta">
+        <div className="hub-sketch-elevation-meta">
         <span>{`${t('hub_sketch_dim_length_short')}: ${formatLength(lengthFt)}`}</span>
         <span>{`${t('hub_sketch_dim_height_short')}: ${formatLength(height)}`}</span>
         <span>{`${t('hub_sketch_3d_openings')}: ${openings.length}`}</span>
+        {!finishCoverage.full && <span>{`${t('hub_sketch_finish_coverage')}: ${formatLength(finishCoverage.topFt - finishCoverage.bottomFt)}`}</span>}
         {wallCabinetCount > 0 && <span>{`${t('hub_sketch_tool_cabinet')}: ${wallCabinetCount}`}</span>}
       </div>
       <div className="hub-sketch-elevation-tools">
@@ -502,7 +519,26 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </pattern>
           )}
         </defs>
-        <rect className="hub-sketch-elevation-wall" x={0} y={0} width={lengthFt} height={height} fill={fill} />
+        <rect className="hub-sketch-elevation-wall" x={0} y={0} width={lengthFt} height={height} fill={baseFill} />
+        {patch ? (
+          <rect
+            className="hub-sketch-elevation-drywall-patch"
+            x={Math.max(0, Math.min(lengthFt - Math.min(lengthFt, patch.widthFt ?? 0), patch.xFt ?? 0))}
+            y={height - Math.max(0, Math.min(height, (patch.yFt ?? 0) + (patch.heightFt ?? 0)))}
+            width={Math.min(lengthFt, patch.widthFt ?? 0)}
+            height={Math.min(height, patch.heightFt ?? 0)}
+            fill={surfaceFill}
+          />
+        ) : (
+          <rect
+            className={finishCoverage.full ? 'hub-sketch-elevation-finish' : 'hub-sketch-elevation-finish hub-sketch-elevation-finish-partial'}
+            x={0}
+            y={height - finishCoverage.topFt}
+            width={lengthFt}
+            height={Math.max(0.001, finishCoverage.topFt - finishCoverage.bottomFt)}
+            fill={surfaceFill}
+          />
+        )}
         <g className="hub-sketch-elevation-grid">
           {ticks(lengthFt, 0.5).map((x) => (
             <line key={`x${x}`} x1={x} y1={0} x2={x} y2={height} className={Math.abs(x - Math.round(x)) < 0.001 ? 'major' : undefined} />
@@ -565,7 +601,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           )
         })}
         {wallPlacedItems.map((entry) => {
-          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}`
+          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.showerPan ? ' hub-sketch-elevation-shower' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}`
           return (
             <g key={`ei-${entry.item.id}`} className={cls}>
               <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
@@ -574,6 +610,15 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
                   <rect x={entry.x + entry.width * 0.08} y={entry.y + entry.height * 0.02} width={entry.width * 0.84} height={entry.height * 0.36} rx={0.05} />
                   <path d={`M ${entry.x + entry.width * 0.18} ${entry.y + entry.height * 0.38} C ${entry.x + entry.width * 0.2} ${entry.y + entry.height * 0.78}, ${entry.x + entry.width * 0.8} ${entry.y + entry.height * 0.78}, ${entry.x + entry.width * 0.82} ${entry.y + entry.height * 0.38} Z`} />
                   <ellipse cx={entry.x + entry.width / 2} cy={entry.y + entry.height * 0.56} rx={entry.width * 0.22} ry={entry.height * 0.13} />
+                </>
+              ) : entry.showerPan ? (
+                <>
+                  {entry.showerPanShape === 'neo-angle' ? (
+                    <path d={`M ${entry.x} ${entry.y} H ${entry.x + entry.width} V ${entry.y + entry.height * 0.62} L ${entry.x + entry.width * 0.62} ${entry.y + entry.height} H ${entry.x} Z`} />
+                  ) : (
+                    <rect x={entry.x} y={entry.y} width={entry.width} height={entry.height} rx={0.03} />
+                  )}
+                  <line className="hub-sketch-elevation-shower-rim" x1={entry.x + entry.width * 0.08} y1={entry.y + entry.height * 0.48} x2={entry.x + entry.width * 0.92} y2={entry.y + entry.height * 0.48} />
                 </>
               ) : entry.cabinet ? (
                 <>

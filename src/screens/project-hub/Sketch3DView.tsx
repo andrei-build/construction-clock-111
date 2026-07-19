@@ -7,6 +7,9 @@ import type { Profile, Project } from '../../lib/types'
 import {
   DEFAULT_DOOR_HEIGHT_FT,
   DEFAULT_DOOR_WIDTH_FT,
+  DEFAULT_DRYWALL_PATCH_COLOR,
+  DEFAULT_DRYWALL_PATCH_HEIGHT_FT,
+  DEFAULT_DRYWALL_PATCH_WIDTH_FT,
   DEFAULT_FLOOR_PAINT,
   DEFAULT_GROUT_COLOR,
   DEFAULT_GROUT_IN,
@@ -17,9 +20,10 @@ import {
   DEFAULT_WINDOW_WIDTH_FT,
   TILE_SIZE_OPTIONS,
   WALL_PAINT_SWATCHES,
-  calculateTileCuts,
   cleanColor,
   createTilePatternCanvas,
+  finishCoverageBoundsFt,
+  normalizeDrywallPatchSurface,
   normalizeFinishes,
   normalizeTileSurface,
   sketchWallKey,
@@ -27,15 +31,17 @@ import {
   type SketchFinishes,
   type Pt,
   type Sketch3DModel,
+  type SketchDrywallPatchFinish,
   type SketchLight,
   type SketchLightKind,
   type SketchMeasurement,
   type SketchMeasurementPoint,
+  type SketchPaintFinish,
   type SketchSurfaceFinish,
   type SketchSwitch,
   type SketchTileFinish,
 } from './sketchFinishes'
-import { formatFeetInches, formatInches, parseInches, snapOpeningFeetToPrecision } from './inches'
+import { formatFeetInches, formatInches, parseFeetInches, parseInches, snapOpeningFeetToPrecision } from './inches'
 import WallElevation from './WallElevation'
 import {
   codeClearanceItemIds,
@@ -45,11 +51,15 @@ import {
   type CodeClearanceCheck,
 } from './code-clearances'
 import {
+  BUILTIN_SHOWER_PAN_CATALOG_ITEMS,
+  BUILTIN_SHOWER_PAN_NEO_CATALOG_ID,
   BUILTIN_TOILET_CATALOG_ITEM,
   catalogDimsFromItem,
   catalogDimsText,
   catalogItemHasExactDims,
   isBuiltinToiletCatalogItem,
+  isBuiltinShowerPanCatalogItem,
+  isShowerPanPlacedCatalogItem,
   isToiletPlacedCatalogItem,
   movePlacedOnCeiling,
   movePlacedOnFloor,
@@ -62,10 +72,14 @@ import {
   resolvePlacedCatalogItem,
   rotatePlacedCatalogItem,
   sanitizePlacedCatalogItems,
+  showerPanShapeFromCatalogItem,
+  showerPanShapeFromPlacedItem,
+  SKETCH_CATALOG_KIND_SHOWER_PAN,
   SKETCH_CATALOG_KIND_TOILET,
   type CatalogResolvedPlacedItem,
   type CatalogWallHit,
   type SketchPlacedCatalogItem,
+  type SketchShowerPanShape,
 } from './sketchCatalog'
 import {
   CABINET_COUNTERTOP_HEIGHT_IN,
@@ -74,6 +88,7 @@ import {
   isCabinetPlacedItem,
 } from './cabinetCodes'
 import { SHERWIN_WILLIAMS_COLORS } from './sw-colors'
+import { DEFAULT_TILE_WASTE_FACTOR, estimateTileLayout, type TileLayoutOpening } from './tileLayout'
 
 const CELL_FT = 1
 const DEFAULT_WALL_HEIGHT_FT = 8
@@ -102,6 +117,7 @@ type Segment = { c: number; s: number; a: Pt; b: Pt }
 type CameraPreset = 'fit' | 'top' | 'angle' | 'inside'
 type InteractiveKind = 'light' | 'switch' | 'catalog' | 'opening' | 'measurement'
 type InchDraftField = 'tileWIn' | 'tileHIn' | 'groutIn' | 'offsetXIn' | 'offsetYIn'
+type FeetDraftField = 'coverageBottomFt' | 'coverageHeightFt' | 'patchXFt' | 'patchYFt' | 'patchWidthFt' | 'patchHeightFt'
 type Sketch3DModelWithCatalog = Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }
 type SketchContour = Sketch3DModel['contours'][number]
 type InsidePoint = { x: number; z: number }
@@ -708,7 +724,18 @@ function swColorFact(color: string | undefined, fallback: string): Record<string
   }
 }
 
-function surfaceFinishFact(surface: SketchSurfaceFinish, fallbackPaint: string): Record<string, unknown> {
+function coverageFact(surface: SketchSurfaceFinish, wallHeightFt: number): Record<string, unknown> | null {
+  if (surface.kind === 'drywall-patch') return null
+  const bounds = finishCoverageBoundsFt(surface, wallHeightFt)
+  return {
+    mode: bounds.full ? 'full' : 'partial',
+    bottom: feetFact(bounds.bottomFt),
+    top: feetFact(bounds.topFt),
+    height: feetFact(bounds.topFt - bounds.bottomFt),
+  }
+}
+
+function surfaceFinishFact(surface: SketchSurfaceFinish, fallbackPaint: string, wallHeightFt = DEFAULT_WALL_HEIGHT_FT): Record<string, unknown> {
   if (surface.kind === 'tile') {
     const tile = normalizeTileSurface(surface)
     return {
@@ -728,17 +755,32 @@ function surfaceFinishFact(surface: SketchSurfaceFinish, fallbackPaint: string):
         x: inchesFact(tile.offsetXIn ?? 0),
         y: inchesFact(tile.offsetYIn ?? 0),
       },
+      coverage: coverageFact(tile, wallHeightFt),
+    }
+  }
+
+  if (surface.kind === 'drywall-patch') {
+    const patch = normalizeDrywallPatchSurface(surface)
+    return {
+      kind: 'drywall-patch',
+      base_color: swColorFact(patch.baseColor, DEFAULT_WALL_PAINT),
+      patch_color: cleanColor(patch.patchColor, DEFAULT_DRYWALL_PATCH_COLOR),
+      x: feetFact(patch.xFt ?? 0),
+      y: feetFact(patch.yFt ?? 0),
+      width: feetFact(patch.widthFt ?? DEFAULT_DRYWALL_PATCH_WIDTH_FT),
+      height: feetFact(patch.heightFt ?? DEFAULT_DRYWALL_PATCH_HEIGHT_FT),
     }
   }
 
   return {
     kind: 'paint',
     color: swColorFact(surface.color, fallbackPaint),
+    coverage: coverageFact(surface, wallHeightFt),
   }
 }
 
-function tileSurfaceFact(surface: SketchSurfaceFinish): Record<string, unknown> | null {
-  return surface.kind === 'tile' ? surfaceFinishFact(surface, DEFAULT_WALL_PAINT) : null
+function tileSurfaceFact(surface: SketchSurfaceFinish, wallHeightFt = DEFAULT_WALL_HEIGHT_FT): Record<string, unknown> | null {
+  return surface.kind === 'tile' ? surfaceFinishFact(surface, DEFAULT_WALL_PAINT, wallHeightFt) : null
 }
 
 function contourPerimeterFt(contour: SketchContour, cellFt: number): number {
@@ -990,7 +1032,7 @@ function buildPhotoRenderFacts(
       contour: seg.c,
       segment: seg.s,
       length: feetFact(lengthFt),
-      finish: surfaceFinishFact(finish, finishes.wallPaint),
+      finish: surfaceFinishFact(finish, finishes.wallPaint, height),
       overrides_default: Boolean(override),
     }
   })
@@ -1023,14 +1065,16 @@ function buildPhotoRenderFacts(
       contour_count: model.contours.length,
     },
     tile: {
-      floor: tileSurfaceFact(finishes.floor),
-      walls_default: tileSurfaceFact(finishes.walls),
+      floor: tileSurfaceFact(finishes.floor, height),
+      walls_default: tileSurfaceFact(finishes.walls, height),
       per_wall: wallTileOverrides,
       user_photo: false,
     },
     wall_color: {
       default: finishes.walls.kind === 'paint'
         ? swColorFact(finishes.walls.color, finishes.wallPaint)
+        : finishes.walls.kind === 'drywall-patch'
+          ? swColorFact(finishes.walls.baseColor, DEFAULT_WALL_PAINT)
         : swColorFact(finishes.wallPaint, DEFAULT_WALL_PAINT),
       per_wall: wallPaintOverrides,
     },
@@ -1069,7 +1113,7 @@ function buildPhotoRenderFacts(
       camera_mode: cameraMode,
       cell_ft: cellFt,
       dimensions_hidden_for_capture: true,
-      floor_finish: surfaceFinishFact(finishes.floor, DEFAULT_FLOOR_PAINT),
+      floor_finish: surfaceFinishFact(finishes.floor, DEFAULT_FLOOR_PAINT, height),
       wall_finishes: wallFacts,
       openings: model.openings.map((opening, index) => ({
         index,
@@ -1164,9 +1208,17 @@ function createTileTexture(THREE: any, surface: SketchSurfaceFinish | undefined)
   return texture
 }
 
-function createWallMaterial(THREE: any, surface: SketchSurfaceFinish, widthFt: number, heightFt: number) {
-  if (surface.kind !== 'tile') {
-    return new THREE.MeshStandardMaterial({ color: cleanColor(surface.color, DEFAULT_WALL_PAINT), roughness: 0.72 })
+function wallBaseColor(surface: SketchSurfaceFinish, fallbackPaint = DEFAULT_WALL_PAINT): string {
+  if (surface.kind === 'paint') return cleanColor(surface.color, fallbackPaint)
+  if (surface.kind === 'drywall-patch') return cleanColor(surface.baseColor, DEFAULT_WALL_PAINT)
+  return fallbackPaint
+}
+
+function createWallMaterial(THREE: any, surface: SketchSurfaceFinish, widthFt: number, heightFt: number, fallbackPaint = DEFAULT_WALL_PAINT) {
+  const coverage = finishCoverageBoundsFt(surface, heightFt)
+  if (surface.kind !== 'tile' || !coverage.full) {
+    const color = surface.kind === 'paint' && !coverage.full ? fallbackPaint : wallBaseColor(surface, fallbackPaint)
+    return new THREE.MeshStandardMaterial({ color, roughness: 0.72 })
   }
   const texture = createTileTexture(THREE, surface)
   const { x, y, tile } = tilePitch(surface)
@@ -1175,9 +1227,58 @@ function createWallMaterial(THREE: any, surface: SketchSurfaceFinish, widthFt: n
   return new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.78 })
 }
 
+function createWallOverlayMaterial(THREE: any, surface: SketchSurfaceFinish, widthFt: number, heightFt: number, fallbackPaint = DEFAULT_WALL_PAINT) {
+  if (surface.kind === 'tile') return createWallMaterial(THREE, { ...surface, coverage: { mode: 'full' } }, widthFt, heightFt, fallbackPaint)
+  if (surface.kind === 'drywall-patch') {
+    return new THREE.MeshStandardMaterial({
+      color: cleanColor(surface.patchColor, DEFAULT_DRYWALL_PATCH_COLOR),
+      roughness: 0.86,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+    })
+  }
+  return new THREE.MeshStandardMaterial({
+    color: cleanColor(surface.color, fallbackPaint),
+    roughness: 0.72,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+  })
+}
+
+function addWallFinishOverlay(THREE: any, wall: any, surface: SketchSurfaceFinish, wallWidthFt: number, wallHeightFt: number, fallbackPaint = DEFAULT_WALL_PAINT) {
+  if (surface.kind === 'drywall-patch') {
+    const patch = normalizeDrywallPatchSurface(surface)
+    const width = Math.max(0.02, Math.min(wallWidthFt, patch.widthFt ?? DEFAULT_DRYWALL_PATCH_WIDTH_FT))
+    const height = Math.max(0.02, Math.min(wallHeightFt, patch.heightFt ?? DEFAULT_DRYWALL_PATCH_HEIGHT_FT))
+    const x = Math.max(0, Math.min(wallWidthFt - width, patch.xFt ?? 0))
+    const y = Math.max(0, Math.min(wallHeightFt - height, patch.yFt ?? 0))
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(width, height, 0.018), createWallOverlayMaterial(THREE, patch, width, height, fallbackPaint))
+    panel.position.set(-wallWidthFt / 2 + x + width / 2, y + height / 2 - wallHeightFt / 2, WALL_THICKNESS_FT / 2 + 0.014)
+    panel.renderOrder = 4
+    wall.add(panel)
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(panel.geometry),
+      new THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.58 }),
+    )
+    edges.position.copy(panel.position)
+    edges.renderOrder = 5
+    wall.add(edges)
+    return
+  }
+
+  const coverage = finishCoverageBoundsFt(surface, wallHeightFt)
+  if (coverage.full) return
+  const height = Math.max(0.02, coverage.topFt - coverage.bottomFt)
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(wallWidthFt, height, 0.018), createWallOverlayMaterial(THREE, surface, wallWidthFt, height, fallbackPaint))
+  panel.position.set(0, coverage.bottomFt + height / 2 - wallHeightFt / 2, WALL_THICKNESS_FT / 2 + 0.014)
+  panel.renderOrder = 4
+  wall.add(panel)
+}
+
 function createFloorMaterial(THREE: any, surface: SketchSurfaceFinish) {
   if (surface.kind !== 'tile') {
-    return new THREE.MeshStandardMaterial({ color: cleanColor(surface.color, DEFAULT_FLOOR_PAINT), roughness: 0.82, side: THREE.DoubleSide })
+    const color = surface.kind === 'drywall-patch' ? cleanColor(surface.baseColor, DEFAULT_FLOOR_PAINT) : cleanColor(surface.color, DEFAULT_FLOOR_PAINT)
+    return new THREE.MeshStandardMaterial({ color, roughness: 0.82, side: THREE.DoubleSide })
   }
   const texture = createTileTexture(THREE, surface)
   return new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.82, side: THREE.DoubleSide })
@@ -1265,16 +1366,24 @@ function catalogBrandModel(brand: string | null | undefined, model: string | nul
 }
 
 function withBuiltinCatalogItems(rows: CatalogItem[]): CatalogItem[] {
-  if (rows.some((item) => item.id === BUILTIN_TOILET_CATALOG_ITEM.id)) return rows
-  return [BUILTIN_TOILET_CATALOG_ITEM, ...rows]
+  const existing = new Set(rows.map((item) => item.id))
+  return [
+    ...(existing.has(BUILTIN_TOILET_CATALOG_ITEM.id) ? [] : [BUILTIN_TOILET_CATALOG_ITEM]),
+    ...BUILTIN_SHOWER_PAN_CATALOG_ITEMS.filter((item) => !existing.has(item.id)),
+    ...rows,
+  ]
 }
 
 function catalogDisplayName(item: CatalogItem, t: (k: string) => string): string {
-  return isBuiltinToiletCatalogItem(item) ? t('hub_sketch_toilet') : item.name
+  if (isBuiltinToiletCatalogItem(item)) return t('hub_sketch_toilet')
+  if (isBuiltinShowerPanCatalogItem(item)) return item.id === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID ? t('hub_sketch_shower_pan_neo') : t('hub_sketch_shower_pan_rect')
+  return item.name
 }
 
 function resolvedCatalogDisplayName(item: CatalogResolvedPlacedItem, t: (k: string) => string): string {
-  return isToiletPlacedCatalogItem(item.placed) ? t('hub_sketch_toilet') : item.name
+  if (isToiletPlacedCatalogItem(item.placed)) return t('hub_sketch_toilet')
+  if (isShowerPanPlacedCatalogItem(item.placed)) return showerPanShapeFromPlacedItem(item.placed) === 'neo-angle' ? t('hub_sketch_shower_pan_neo') : t('hub_sketch_shower_pan_rect')
+  return item.name
 }
 
 function catalogColor(category: CatalogCategory): number {
@@ -1464,10 +1573,71 @@ function addCabinetFixture(THREE: any, group: any, resolved: CatalogResolvedPlac
   }
 }
 
+function showerPanFootprint(shape: SketchShowerPanShape, width: number, depth: number) {
+  if (shape !== 'neo-angle') {
+    return [
+      { x: -width / 2, z: -depth / 2 },
+      { x: width / 2, z: -depth / 2 },
+      { x: width / 2, z: depth / 2 },
+      { x: -width / 2, z: depth / 2 },
+    ]
+  }
+  const cut = Math.min(width, depth) * 0.38
+  return [
+    { x: -width / 2, z: -depth / 2 },
+    { x: width / 2, z: -depth / 2 },
+    { x: width / 2, z: depth / 2 - cut },
+    { x: width / 2 - cut, z: depth / 2 },
+    { x: -width / 2, z: depth / 2 },
+  ]
+}
+
+function createFootprintPrism(THREE: any, points: Array<{ x: number; z: number }>, height: number, material: any) {
+  const positions: number[] = []
+  points.forEach((point) => positions.push(point.x, -height / 2, point.z))
+  points.forEach((point) => positions.push(point.x, height / 2, point.z))
+  const shapePoints = points.map((point) => new THREE.Vector2(point.x, point.z))
+  const triangles = THREE.ShapeUtils.triangulateShape(shapePoints, [])
+  const indices: number[] = []
+  triangles.forEach((tri: number[]) => {
+    indices.push(points.length + tri[0], points.length + tri[1], points.length + tri[2])
+    indices.push(tri[2], tri[1], tri[0])
+  })
+  points.forEach((_, index) => {
+    const next = (index + 1) % points.length
+    indices.push(index, next, points.length + next)
+    indices.push(index, points.length + next, points.length + index)
+  })
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  return new THREE.Mesh(geometry, material)
+}
+
 function addShowerPan(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, material: any, edgeColor: number) {
   const width = Math.max(0.04, resolved.dims.widthFt)
   const height = Math.max(0.08, resolved.dims.heightFt)
   const depth = Math.max(0.04, resolved.dims.depthFt)
+  const shape = showerPanShapeFromPlacedItem(resolved.placed)
+  if (shape === 'neo-angle') {
+    const baseHeight = Math.max(0.05, height * 0.62)
+    const base = createFootprintPrism(THREE, showerPanFootprint(shape, width, depth), baseHeight, material)
+    base.position.y = -height / 2 + baseHeight / 2
+    addMeshWithEdges(THREE, group, base, edgeColor, 0.58)
+
+    const floorWidth = Math.max(0.08, width * 0.78)
+    const floorDepth = Math.max(0.08, depth * 0.78)
+    const panFloor = createFootprintPrism(
+      THREE,
+      showerPanFootprint(shape, floorWidth, floorDepth),
+      0.028,
+      new THREE.MeshStandardMaterial({ color: 0xe9eef0, roughness: 0.42 }),
+    )
+    panFloor.position.y = -height / 2 + baseHeight + 0.018
+    addMeshWithEdges(THREE, group, panFloor, edgeColor, 0.32)
+    return
+  }
   const rim = Math.max(0.08, Math.min(0.28, Math.min(width, depth) * 0.07))
   const baseHeight = Math.max(0.04, Math.min(height * 0.5, height - 0.035))
   const rimHeight = Math.max(0.04, height - baseHeight)
@@ -1909,6 +2079,7 @@ export default function Sketch3DView({
   const [catalogPlacementId, setCatalogPlacementId] = useState<string | null>(null)
   const [paintSearch, setPaintSearch] = useState('')
   const [inchDrafts, setInchDrafts] = useState<Partial<Record<InchDraftField, string>>>({})
+  const [feetDrafts, setFeetDrafts] = useState<Partial<Record<FeetDraftField, string>>>({})
   const [browserFullscreen, setBrowserFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
   const [joystickKnob, setJoystickKnob] = useState<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false })
@@ -1974,6 +2145,8 @@ export default function Sketch3DView({
       ? selectedWallFinish ?? finishes.walls
       : finishes.walls
   const activeTile = useMemo(() => normalizeTileSurface(activeSurface), [activeSurface])
+  const activeDrywallPatch = useMemo(() => normalizeDrywallPatchSurface(activeSurface), [activeSurface])
+  const activeCoverage = useMemo(() => finishCoverageBoundsFt(activeSurface, heightFt), [activeSurface, heightFt])
   const swColorMatches = useMemo(() => {
     const query = paintSearch.trim().toLowerCase()
     const rows = query
@@ -1983,13 +2156,44 @@ export default function Sketch3DView({
   }, [paintSearch])
   const boundsForCuts = modelBounds(model)
   const selectedWallLengthFt = selectedWall ? dist(selectedWall.a, selectedWall.b) * modelCellFt(model) : null
-  const surfaceHeightIn = surfaceTarget === 'floor' ? Math.max(12, boundsForCuts.depth * 12) : Math.max(1, heightFt * 12)
+  const surfaceHeightIn = surfaceTarget === 'floor'
+    ? Math.max(12, boundsForCuts.depth * 12)
+    : Math.max(1, (activeCoverage.topFt - activeCoverage.bottomFt) * 12)
   const surfaceWidthIn = surfaceTarget === 'floor'
     ? Math.max(12, boundsForCuts.width * 12)
     : selectedWallLengthFt
       ? Math.max(12, selectedWallLengthFt * 12)
       : longestWallIn(model)
-  const cutSummary = activeSurface.kind === 'tile' ? calculateTileCuts(activeSurface, surfaceHeightIn, surfaceWidthIn) : null
+  const tileLayoutOpenings = useMemo<TileLayoutOpening[]>(() => {
+    if (surfaceTarget !== 'wall' || !selectedWall || !selectedWallLengthFt) return []
+    return model.openings
+      .filter((opening) => opening.c === selectedWall.c && opening.s === selectedWall.s)
+      .map((opening): TileLayoutOpening | null => {
+        const metrics = openingMetrics(model, opening, heightFt)
+        if (!metrics) return null
+        const widthIn = metrics.width * 12
+        return {
+          xIn: Math.max(0, opening.t * selectedWallLengthFt * 12 - widthIn / 2),
+          yIn: metrics.sill * 12 - activeCoverage.bottomFt * 12,
+          widthIn,
+          heightIn: metrics.height * 12,
+        }
+      })
+      .filter((opening): opening is TileLayoutOpening => !!opening)
+  }, [surfaceTarget, selectedWall, selectedWallLengthFt, model, heightFt, activeCoverage.bottomFt])
+  const tileLayout = activeSurface.kind === 'tile'
+    ? estimateTileLayout({
+        surfaceWidthIn,
+        surfaceHeightIn,
+        tileWIn: activeTile.tileWIn ?? 12,
+        tileHIn: activeTile.tileHIn ?? 24,
+        groutIn: activeTile.groutIn ?? DEFAULT_GROUT_IN,
+        offsetXIn: activeTile.offsetXIn ?? 0,
+        offsetYIn: activeTile.offsetYIn ?? 0,
+        wasteFactor: DEFAULT_TILE_WASTE_FACTOR,
+        openings: tileLayoutOpenings,
+      })
+    : null
   const selectedPlacedDoesNotFit = selectedPlaced
     ? placedCatalogDoesNotFit(selectedPlaced.placed, selectedPlaced.dims, boundsForCuts, heightFt, segmentLengthFt(model, selectedPlaced.placed.c, selectedPlaced.placed.s))
     : false
@@ -2037,6 +2241,10 @@ export default function Sketch3DView({
   useEffect(() => {
     setInchDrafts({})
   }, [surfaceTarget, activeTile.tileWIn, activeTile.tileHIn, activeTile.groutIn, activeTile.offsetXIn, activeTile.offsetYIn])
+
+  useEffect(() => {
+    setFeetDrafts({})
+  }, [surfaceTarget, activeSurface])
 
   useEffect(() => {
     if (wallSegments.length === 0) {
@@ -2120,6 +2328,25 @@ export default function Sketch3DView({
     updateSurface({ ...tile, ...patch, kind: 'tile' })
   }
 
+  const updateFinishCoverage = (patch: Partial<NonNullable<SketchTileFinish['coverage']>>) => {
+    if (activeSurface.kind === 'drywall-patch') return
+    const current = activeSurface.coverage?.mode === 'partial'
+      ? activeSurface.coverage
+      : { mode: 'partial' as const, bottomFt: 0, heightFt: Math.min(4, heightFt) }
+    updateSurface({
+      ...activeSurface,
+      coverage: {
+        ...current,
+        ...patch,
+        mode: patch.mode ?? current.mode ?? 'partial',
+      },
+    })
+  }
+
+  const updateDrywallPatch = (patch: Partial<SketchDrywallPatchFinish>) => {
+    updateSurface({ ...activeDrywallPatch, ...patch, kind: 'drywall-patch' })
+  }
+
   const setInchDraft = (field: InchDraftField, value: string) => {
     setInchDrafts((current) => ({ ...current, [field]: value }))
   }
@@ -2146,6 +2373,40 @@ export default function Sketch3DView({
       event.currentTarget.blur()
     } else if (event.key === 'Escape') {
       setInchDrafts((current) => {
+        const next = { ...current }
+        delete next[field]
+        return next
+      })
+      event.currentTarget.blur()
+    }
+  }
+
+  const setFeetDraft = (field: FeetDraftField, value: string) => {
+    setFeetDrafts((current) => ({ ...current, [field]: value }))
+  }
+
+  const feetInputValue = (field: FeetDraftField, fallback: number): string => {
+    return feetDrafts[field] ?? formatFeet(fallback)
+  }
+
+  const commitFeetDraft = (field: FeetDraftField, fallback: number, min: number, max: number, update: (value: number) => void) => {
+    const raw = feetDrafts[field] ?? formatFeet(fallback)
+    const parsed = parseFeetInches(raw)
+    setFeetDrafts((current) => {
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+    if (!Number.isFinite(parsed)) return
+    update(clampNumber(parsed / 12, min, max))
+  }
+
+  const handleFeetKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>, field: FeetDraftField, fallback: number, min: number, max: number, update: (value: number) => void) => {
+    if (event.key === 'Enter') {
+      commitFeetDraft(field, fallback, min, max, update)
+      event.currentTarget.blur()
+    } else if (event.key === 'Escape') {
+      setFeetDrafts((current) => {
         const next = { ...current }
         delete next[field]
         return next
@@ -2648,7 +2909,9 @@ export default function Sketch3DView({
             invalidate()
           },
         }
-        const wallSurface = finishes.walls.kind === 'tile' ? finishes.walls : { kind: 'paint' as const, color: cleanColor(finishes.wallPaint, DEFAULT_WALL_PAINT) }
+        const wallSurface = finishes.walls.kind === 'paint'
+          ? { kind: 'paint' as const, color: cleanColor(finishes.walls.color, finishes.wallPaint) }
+          : finishes.walls
         const floorMaterial = createFloorMaterial(THREE, finishes.floor)
         const ceilingMaterial = new THREE.MeshStandardMaterial({
           color: 0xf8fafc,
@@ -2701,13 +2964,14 @@ export default function Sketch3DView({
           const len = Math.hypot(dx, dz)
           if (len <= 0.01) return
           const wallFinish = finishes.wallFinishes[sketchWallKey(seg.c, seg.s)] ?? wallSurface
-          const wall = new THREE.Mesh(new THREE.BoxGeometry(len, height, WALL_THICKNESS_FT), createWallMaterial(THREE, wallFinish, len, height))
+          const wall = new THREE.Mesh(new THREE.BoxGeometry(len, height, WALL_THICKNESS_FT), createWallMaterial(THREE, wallFinish, len, height, finishes.wallPaint))
           wall.position.set((a.x + b.x) / 2, height / 2, (a.z + b.z) / 2)
           wall.rotation.y = -Math.atan2(dz, dx)
           wall.castShadow = false
           wall.receiveShadow = false
           wall.userData.wallC = seg.c
           wall.userData.wallS = seg.s
+          addWallFinishOverlay(THREE, wall, wallFinish, len, height, finishes.wallPaint)
           scene.add(wall)
           wallTargets.push(wall)
           wallMeshByKey.set(sketchWallKey(seg.c, seg.s), wall)
@@ -3173,6 +3437,17 @@ export default function Sketch3DView({
               model: SKETCH_CATALOG_KIND_TOILET,
             }
           }
+          if (isBuiltinShowerPanCatalogItem(item)) {
+            const shape = showerPanShapeFromCatalogItem(item)
+            nextPlaced = {
+              ...nextPlaced,
+              kind: SKETCH_CATALOG_KIND_SHOWER_PAN,
+              category: 'shower',
+              name: shape === 'neo-angle' ? t('hub_sketch_shower_pan_neo') : t('hub_sketch_shower_pan_rect'),
+              model: SKETCH_CATALOG_KIND_SHOWER_PAN,
+              showerPanShape: shape,
+            }
+          }
           onModelChange?.({ ...model, placedItems: [...placedItems, nextPlaced] })
           setSelectedId(nextPlaced.id)
           setCatalogPlacementId(null)
@@ -3586,6 +3861,7 @@ export default function Sketch3DView({
 
   const tileSizeValue = `${activeTile.tileWIn ?? 12}x${activeTile.tileHIn ?? 24}`
   const tileSizePresetValue = TILE_SIZE_OPTIONS.some((option) => `${option.w}x${option.h}` === tileSizeValue) ? tileSizeValue : 'custom'
+  const activeFinishCoverageMode = activeSurface.kind !== 'drywall-patch' && activeSurface.coverage?.mode === 'partial' ? 'partial' : 'full'
   const cameraButtonClass = (mode: CameraPreset) => (cameraMode === mode ? 'btn small' : 'btn ghost small')
   const setCameraPreset = (mode: CameraPreset) => {
     setCameraMode(mode)
@@ -3896,7 +4172,7 @@ export default function Sketch3DView({
             <div className="hub-sketch-catalog-thumb">
               {selectedPlaced.photoPath
                 ? <img src={selectedPlaced.photoPath} alt={selectedPlaced.name} loading="lazy" />
-                : <span className={isToiletPlacedCatalogItem(selectedPlaced.placed) ? 'hub-sketch-catalog-thumb-toilet' : 'hub-sketch-catalog-thumb-empty'} aria-hidden="true" />}
+                : <span className={isToiletPlacedCatalogItem(selectedPlaced.placed) ? 'hub-sketch-catalog-thumb-toilet' : isShowerPanPlacedCatalogItem(selectedPlaced.placed) ? 'hub-sketch-catalog-thumb-shower' : 'hub-sketch-catalog-thumb-empty'} aria-hidden="true" />}
             </div>
             <div className="hub-sketch-3d-item-popover-body">
               <div className="item-title">{isCabinetPlacedItem(selectedPlaced.placed) ? cabinetDisplayCode(selectedPlaced.placed) : resolvedCatalogDisplayName(selectedPlaced, t)}</div>
@@ -4118,19 +4394,69 @@ export default function Sketch3DView({
             )}
 
             <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_3d_finish_mode')}>
-              {(['paint', 'tile'] as const).map((kind) => (
-                <button
-                  key={kind}
-                  type="button"
-                  className={activeSurface.kind === kind ? 'btn small' : 'btn ghost small'}
-                  onClick={() => updateSurface(kind === 'tile' ? normalizeTileSurface(activeSurface) : { kind: 'paint', color: surfaceTarget === 'floor' ? DEFAULT_FLOOR_PAINT : activeSurface.kind === 'paint' ? activeSurface.color : finishes.wallPaint })}
-                >
-                  {t(kind === 'paint' ? 'hub_sketch_3d_paint' : 'hub_sketch_3d_tile')}
-                </button>
-              ))}
+              {(['paint', 'tile', ...(surfaceTarget === 'floor' ? [] : ['drywall-patch'] as const)] as const).map((kind) => {
+                const coverage = activeSurface.kind !== 'drywall-patch' ? activeSurface.coverage : undefined
+                const nextPaint: SketchPaintFinish = { kind: 'paint', color: surfaceTarget === 'floor' ? DEFAULT_FLOOR_PAINT : activeSurface.kind === 'paint' ? activeSurface.color : activeSurface.kind === 'drywall-patch' ? activeSurface.baseColor : finishes.wallPaint }
+                if (coverage) nextPaint.coverage = coverage
+                const nextTile = normalizeTileSurface(activeSurface)
+                if (coverage) nextTile.coverage = coverage
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    className={activeSurface.kind === kind ? 'btn small' : 'btn ghost small'}
+                    onClick={() => updateSurface(kind === 'tile' ? nextTile : kind === 'drywall-patch' ? normalizeDrywallPatchSurface(activeSurface) : nextPaint)}
+                  >
+                    {t(kind === 'paint' ? 'hub_sketch_3d_paint' : kind === 'tile' ? 'hub_sketch_3d_tile' : 'hub_sketch_3d_drywall_patch')}
+                  </button>
+                )
+              })}
             </div>
 
-            {surfaceTarget !== 'floor' && (
+            {surfaceTarget !== 'floor' && activeSurface.kind !== 'drywall-patch' && (
+              <div className="hub-sketch-finish-coverage">
+                <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_finish_coverage')}>
+                  {(['full', 'partial'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={activeFinishCoverageMode === mode ? 'btn small' : 'btn ghost small'}
+                      onClick={() => updateFinishCoverage(mode === 'full' ? { mode: 'full' } : { mode: 'partial', bottomFt: activeCoverage.bottomFt, heightFt: activeFinishCoverageMode === 'partial' ? Math.min(heightFt, Math.max(0.5, activeCoverage.topFt - activeCoverage.bottomFt)) : Math.min(4, heightFt) })}
+                    >
+                      {t(mode === 'full' ? 'hub_sketch_finish_full' : 'hub_sketch_finish_partial')}
+                    </button>
+                  ))}
+                </div>
+                {activeFinishCoverageMode === 'partial' && (
+                  <div className="hub-sketch-finish-coverage-grid">
+                    <label className="hub-sketch-field">
+                      <span className="muted">{t('hub_sketch_finish_from_floor')}</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={feetInputValue('coverageBottomFt', activeCoverage.bottomFt)}
+                        onChange={(e) => setFeetDraft('coverageBottomFt', e.target.value)}
+                        onBlur={() => commitFeetDraft('coverageBottomFt', activeCoverage.bottomFt, 0, Math.max(0, heightFt - 0.25), (value) => updateFinishCoverage({ bottomFt: value }))}
+                        onKeyDown={(e) => handleFeetKeyDown(e, 'coverageBottomFt', activeCoverage.bottomFt, 0, Math.max(0, heightFt - 0.25), (value) => updateFinishCoverage({ bottomFt: value }))}
+                      />
+                    </label>
+                    <label className="hub-sketch-field">
+                      <span className="muted">{t('hub_sketch_finish_height')}</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={feetInputValue('coverageHeightFt', activeCoverage.topFt - activeCoverage.bottomFt)}
+                        onChange={(e) => setFeetDraft('coverageHeightFt', e.target.value)}
+                        onBlur={() => commitFeetDraft('coverageHeightFt', activeCoverage.topFt - activeCoverage.bottomFt, 0.25, heightFt, (value) => updateFinishCoverage({ heightFt: value }))}
+                        onKeyDown={(e) => handleFeetKeyDown(e, 'coverageHeightFt', activeCoverage.topFt - activeCoverage.bottomFt, 0.25, heightFt, (value) => updateFinishCoverage({ heightFt: value }))}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {surfaceTarget !== 'floor' && activeSurface.kind !== 'drywall-patch' && (
               <div className="hub-sketch-paint-picker" aria-label={t('hub_sketch_3d_wall_color')}>
                 <div className="hub-sketch-color-row">
                   {WALL_PAINT_SWATCHES.map((color) => (
@@ -4176,6 +4502,63 @@ export default function Sketch3DView({
                     )
                   })}
                 </div>
+              </div>
+            )}
+
+            {activeSurface.kind === 'drywall-patch' && (
+              <div className="hub-sketch-drywall-controls">
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_drywall_base_color')}</span>
+                  <input type="color" value={cleanColor(activeDrywallPatch.baseColor, DEFAULT_WALL_PAINT)} onChange={(e) => updateDrywallPatch({ baseColor: e.target.value })} />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_drywall_patch_color')}</span>
+                  <input type="color" value={cleanColor(activeDrywallPatch.patchColor, DEFAULT_DRYWALL_PATCH_COLOR)} onChange={(e) => updateDrywallPatch({ patchColor: e.target.value })} />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_drywall_x')}</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={feetInputValue('patchXFt', activeDrywallPatch.xFt ?? 0)}
+                    onChange={(e) => setFeetDraft('patchXFt', e.target.value)}
+                    onBlur={() => commitFeetDraft('patchXFt', activeDrywallPatch.xFt ?? 0, 0, selectedWallLengthFt ?? 100, (value) => updateDrywallPatch({ xFt: value }))}
+                    onKeyDown={(e) => handleFeetKeyDown(e, 'patchXFt', activeDrywallPatch.xFt ?? 0, 0, selectedWallLengthFt ?? 100, (value) => updateDrywallPatch({ xFt: value }))}
+                  />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_drywall_y')}</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={feetInputValue('patchYFt', activeDrywallPatch.yFt ?? 0)}
+                    onChange={(e) => setFeetDraft('patchYFt', e.target.value)}
+                    onBlur={() => commitFeetDraft('patchYFt', activeDrywallPatch.yFt ?? 0, 0, heightFt, (value) => updateDrywallPatch({ yFt: value }))}
+                    onKeyDown={(e) => handleFeetKeyDown(e, 'patchYFt', activeDrywallPatch.yFt ?? 0, 0, heightFt, (value) => updateDrywallPatch({ yFt: value }))}
+                  />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_width')}</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={feetInputValue('patchWidthFt', activeDrywallPatch.widthFt ?? DEFAULT_DRYWALL_PATCH_WIDTH_FT)}
+                    onChange={(e) => setFeetDraft('patchWidthFt', e.target.value)}
+                    onBlur={() => commitFeetDraft('patchWidthFt', activeDrywallPatch.widthFt ?? DEFAULT_DRYWALL_PATCH_WIDTH_FT, 0.25, selectedWallLengthFt ?? 100, (value) => updateDrywallPatch({ widthFt: value }))}
+                    onKeyDown={(e) => handleFeetKeyDown(e, 'patchWidthFt', activeDrywallPatch.widthFt ?? DEFAULT_DRYWALL_PATCH_WIDTH_FT, 0.25, selectedWallLengthFt ?? 100, (value) => updateDrywallPatch({ widthFt: value }))}
+                  />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_height')}</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={feetInputValue('patchHeightFt', activeDrywallPatch.heightFt ?? DEFAULT_DRYWALL_PATCH_HEIGHT_FT)}
+                    onChange={(e) => setFeetDraft('patchHeightFt', e.target.value)}
+                    onBlur={() => commitFeetDraft('patchHeightFt', activeDrywallPatch.heightFt ?? DEFAULT_DRYWALL_PATCH_HEIGHT_FT, 0.25, heightFt, (value) => updateDrywallPatch({ heightFt: value }))}
+                    onKeyDown={(e) => handleFeetKeyDown(e, 'patchHeightFt', activeDrywallPatch.heightFt ?? DEFAULT_DRYWALL_PATCH_HEIGHT_FT, 0.25, heightFt, (value) => updateDrywallPatch({ heightFt: value }))}
+                  />
+                </label>
               </div>
             )}
 
@@ -4262,13 +4645,23 @@ export default function Sketch3DView({
                     onKeyDown={(e) => handleInchKeyDown(e, 'offsetXIn', activeTile.offsetXIn ?? 0, -96, 96)}
                   />
                 </label>
-                {cutSummary && (
+                {tileLayout && (
                   <div className="hub-sketch-cut-summary">
-                    <span>{`${t('hub_sketch_3d_rows')}: ${cutSummary.rows}`}</span>
-                    <span>{`${t('hub_sketch_3d_bottom')}: ${formatInches(cutSummary.bottomIn)}`}</span>
-                    <span>{`${t('hub_sketch_3d_top')}: ${formatInches(cutSummary.topIn)}`}</span>
-                    <span>{`${t('hub_sketch_3d_left')}: ${formatInches(cutSummary.leftIn)}`}</span>
-                    <span>{`${t('hub_sketch_3d_right')}: ${formatInches(cutSummary.rightIn)}`}</span>
+                    <span>{`${t('hub_sketch_3d_rows')}: ${tileLayout.rows.count}`}</span>
+                    <span>{`${t('hub_sketch_tile_columns')}: ${tileLayout.columns.count}`}</span>
+                    <span>{`${t('hub_sketch_tile_net')}: ${tileLayout.netAreaSqft.toFixed(2)} ft²`}</span>
+                    <span>{`${t('hub_sketch_tile_order')}: ${tileLayout.grossSqft.toFixed(2)} ft²`}</span>
+                    <span>{`${t('hub_sketch_tile_count')}: ${tileLayout.tileCount}`}</span>
+                    <span>{`${t('hub_sketch_tile_waste')}: ${Math.round(tileLayout.wasteFactor * 100)}%`}</span>
+                    <span>{`${t('hub_sketch_3d_bottom')}: ${formatInches(tileLayout.rows.firstCutIn)}`}</span>
+                    <span>{`${t('hub_sketch_3d_top')}: ${formatInches(tileLayout.rows.lastCutIn)}`}</span>
+                    <span>{`${t('hub_sketch_3d_left')}: ${formatInches(tileLayout.columns.firstCutIn)}`}</span>
+                    <span>{`${t('hub_sketch_3d_right')}: ${formatInches(tileLayout.columns.lastCutIn)}`}</span>
+                    {tileLayout.hasSmallCuts && (
+                      <span className="hub-sketch-cut-warning">
+                        {t('hub_sketch_tile_small_cut').replace('{offset}', formatInches(tileLayout.columns.smallCut ? tileLayout.columns.recommendedOffsetIn : tileLayout.rows.recommendedOffsetIn))}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -4356,7 +4749,7 @@ export default function Sketch3DView({
                         <span className="hub-sketch-catalog-thumb">
                           {item.photo_path
                             ? <img src={item.photo_path} alt={catalogDisplayName(item, t)} loading="lazy" />
-                            : <span className={isBuiltinToiletCatalogItem(item) ? 'hub-sketch-catalog-thumb-toilet' : 'hub-sketch-catalog-thumb-empty'} aria-hidden="true" />}
+                            : <span className={isBuiltinToiletCatalogItem(item) ? 'hub-sketch-catalog-thumb-toilet' : isBuiltinShowerPanCatalogItem(item) ? `hub-sketch-catalog-thumb-shower hub-sketch-catalog-thumb-shower-${showerPanShapeFromCatalogItem(item)}` : 'hub-sketch-catalog-thumb-empty'} aria-hidden="true" />}
                         </span>
                         <span className="hub-sketch-catalog-item-body">
                           <span className="hub-sketch-catalog-item-name">{catalogDisplayName(item, t)}</span>

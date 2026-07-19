@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_DRYWALL_PATCH_COLOR,
   DEFAULT_WALL_PAINT,
+  cleanColor,
   normalizeFinishes,
+  sanitizeSketchFinishes,
   sketchWallKey,
   type SketchFinishes,
 } from '../src/screens/project-hub/sketchFinishes'
@@ -15,7 +18,11 @@ function wallFinishSummary(finishes: SketchFinishes | undefined, key: string) {
   return {
     overridden: Boolean(override),
     kind: surface.kind,
-    color: surface.kind === 'paint' ? surface.color : null,
+    color: surface.kind === 'paint'
+      ? surface.color
+      : surface.kind === 'drywall-patch'
+        ? cleanColor(surface.patchColor, DEFAULT_DRYWALL_PATCH_COLOR)
+        : null,
   }
 }
 
@@ -43,6 +50,41 @@ describe('wall selection panel data', () => {
     expect(summary.overridden).toBe(true)
     expect(summary.kind).toBe('tile')
     expect(summary.color).toBeNull()
+  })
+
+  it('keeps drywall patch wall overrides in version-1 finish JSON', () => {
+    const finishes = sanitizeSketchFinishes({
+      wallFinishes: {
+        [key]: {
+          kind: 'drywall-patch',
+          baseColor: '#123456',
+          patchColor: '#abcdef',
+          xFt: 1,
+          yFt: 2,
+          widthFt: 3,
+          heightFt: 4,
+          ignored: true,
+        },
+      },
+    })
+
+    expect(finishes?.wallFinishes?.[key]).toEqual({
+      kind: 'drywall-patch',
+      baseColor: '#123456',
+      patchColor: '#abcdef',
+      xFt: 1,
+      yFt: 2,
+      widthFt: 3,
+      heightFt: 4,
+    })
+  })
+
+  it('reports a per-wall drywall patch override', () => {
+    const finishes: SketchFinishes = { wallFinishes: { [key]: { kind: 'drywall-patch', patchColor: DEFAULT_DRYWALL_PATCH_COLOR } } }
+    const summary = wallFinishSummary(finishes, key)
+    expect(summary.overridden).toBe(true)
+    expect(summary.kind).toBe('drywall-patch')
+    expect(summary.color).toBe(DEFAULT_DRYWALL_PATCH_COLOR)
   })
 
   it('does not leak one wall override onto another wall', () => {

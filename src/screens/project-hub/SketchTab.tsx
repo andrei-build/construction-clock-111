@@ -25,6 +25,7 @@ import {
   DEFAULT_WINDOW_HEIGHT_FT,
   DEFAULT_WINDOW_SILL_FT,
   DEFAULT_WINDOW_WIDTH_FT,
+  DEFAULT_DRYWALL_PATCH_COLOR,
   DOOR_WIDTH_PRESETS_FT,
   WINDOW_WIDTH_PRESETS_FT,
   OPENING_DEFAULTS_FT,
@@ -42,7 +43,14 @@ import {
   type SketchMeasurement,
   type SketchSwitch,
 } from './sketchFinishes'
-import { isToiletPlacedCatalogItem, sanitizePlacedCatalogItems, type SketchPlacedCatalogItem } from './sketchCatalog'
+import {
+  isShowerPanPlacedCatalogItem,
+  isToiletPlacedCatalogItem,
+  sanitizePlacedCatalogItems,
+  showerPanShapeFromPlacedItem,
+  type SketchPlacedCatalogItem,
+  type SketchShowerPanShape,
+} from './sketchCatalog'
 import { formatFeetInches, formatInches, parseFeetInches, snapFeetToPrecision, snapOpeningFeetToPrecision } from './inches'
 import {
   cabinetDisplayCode,
@@ -527,6 +535,8 @@ type PlanPlacedItem = {
   depth: number
   warning: boolean
   toilet: boolean
+  showerPan: boolean
+  showerPanShape: SketchShowerPanShape
   cabinet: boolean
   cabinetCode: string
   filler: boolean
@@ -818,6 +828,8 @@ function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlace
         depth: (depthIn / 12 / cellFt) * CELL_PX,
         warning: warningIds.has(item.id) || !!item.layoutWarning,
         toilet: isToiletPlacedCatalogItem(item),
+        showerPan: isShowerPanPlacedCatalogItem(item),
+        showerPanShape: showerPanShapeFromPlacedItem(item),
         cabinet,
         cabinetCode: cabinet ? cabinetDisplayCode(item) : '',
         filler: item.filler === true,
@@ -912,6 +924,30 @@ function drawCanvasPlanItem(ctx: CanvasRenderingContext2D, entry: PlanPlacedItem
     ctx.beginPath()
     ctx.ellipse(0, entry.depth * 0.1, entry.width * 0.36, entry.depth * 0.28, 0, 0, Math.PI * 2)
     ctx.fill()
+    ctx.stroke()
+    ctx.restore()
+    return
+  }
+
+  if (entry.showerPan) {
+    ctx.fillStyle = entry.warning ? 'rgba(220, 38, 38, .14)' : 'rgba(95, 168, 211, .22)'
+    ctx.strokeStyle = entry.warning ? '#dc2626' : '#256f9f'
+    ctx.beginPath()
+    if (entry.showerPanShape === 'neo-angle') {
+      ctx.moveTo(-entry.width / 2, -entry.depth / 2)
+      ctx.lineTo(entry.width / 2, -entry.depth / 2)
+      ctx.lineTo(entry.width / 2, entry.depth * 0.12)
+      ctx.lineTo(entry.width * 0.12, entry.depth / 2)
+      ctx.lineTo(-entry.width / 2, entry.depth / 2)
+      ctx.closePath()
+    } else {
+      ctx.rect(-entry.width / 2, -entry.depth / 2, entry.width, entry.depth)
+    }
+    ctx.fill()
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(-entry.width * 0.38, 0)
+    ctx.lineTo(entry.width * 0.38, 0)
     ctx.stroke()
     ctx.restore()
     return
@@ -1145,7 +1181,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     return {
       overridden: Boolean(override),
       kind: surface.kind,
-      color: surface.kind === 'paint' ? cleanColor(surface.color, DEFAULT_WALL_PAINT) : null,
+      color: surface.kind === 'paint'
+        ? cleanColor(surface.color, DEFAULT_WALL_PAINT)
+        : surface.kind === 'drywall-patch'
+          ? cleanColor(surface.patchColor, DEFAULT_DRYWALL_PATCH_COLOR)
+          : null,
     }
   }, [selectedWallKey, model.finishes])
 
@@ -2533,7 +2573,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           ))}
 
           {planItems.map((entry) => {
-            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}`
+            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}`
             const labelFontSize = Math.max(5 * screenWorldPx, Math.min(11 * screenWorldPx, entry.width / Math.max(4, entry.cabinetCode.length * 0.6)))
             return (
               <g
@@ -2567,6 +2607,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                       ry={entry.depth * 0.17}
                     />
                     <line className="hub-sketch-plan-toilet-axis" x1={0} y1={-entry.depth * 0.48} x2={0} y2={entry.depth * 0.5} />
+                  </>
+                ) : entry.showerPan ? (
+                  <>
+                    {entry.showerPanShape === 'neo-angle' ? (
+                      <path d={`M ${-entry.width / 2} ${-entry.depth / 2} H ${entry.width / 2} V ${entry.depth * 0.12} L ${entry.width * 0.12} ${entry.depth / 2} H ${-entry.width / 2} Z`} />
+                    ) : (
+                      <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(5, entry.width * 0.04, entry.depth * 0.04)} />
+                    )}
+                    <line className="hub-sketch-plan-shower-rim" x1={-entry.width * 0.38} y1={0} x2={entry.width * 0.38} y2={0} />
                   </>
                 ) : entry.cabinet ? (
                   <>
@@ -2831,7 +2880,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               {selectedWallFinish?.color && (
                 <span className="hub-sketch-wall-panel-swatch" style={{ backgroundColor: selectedWallFinish.color }} aria-hidden="true" />
               )}
-              {t(selectedWallFinish?.kind === 'tile' ? 'hub_sketch_3d_tile' : 'hub_sketch_3d_paint')}
+              {t(selectedWallFinish?.kind === 'tile' ? 'hub_sketch_3d_tile' : selectedWallFinish?.kind === 'drywall-patch' ? 'hub_sketch_3d_drywall_patch' : 'hub_sketch_3d_paint')}
               {selectedWallFinish && !selectedWallFinish.overridden ? ` · ${t('hub_sketch_wall_panel_finish_default')}` : ''}
             </span>
           </div>
