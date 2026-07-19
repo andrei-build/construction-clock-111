@@ -5,9 +5,10 @@ import type { Profile } from '../types'
 
 // CATALOG-UI-1: каталог позиций (таблица catalog_items, миграция 0065). Позиции потом
 // расставляются в 3D-визуализации. Схема проверена живьём — колонки НЕ выдумываем.
-export type CatalogCategory = 'shower' | 'vanity' | 'cabinet' | 'light' | 'fan' | 'other'
+export type CatalogCategory = 'shower' | 'vanity' | 'cabinet' | 'light' | 'fan' | 'tile' | 'other'
+export type CatalogItemSpecs = Record<string, string>
 
-export const CATALOG_CATEGORIES: CatalogCategory[] = ['shower', 'vanity', 'cabinet', 'light', 'fan', 'other']
+export const CATALOG_CATEGORIES: CatalogCategory[] = ['shower', 'vanity', 'cabinet', 'light', 'fan', 'tile', 'other']
 
 export interface CatalogItem {
   id: string
@@ -21,6 +22,7 @@ export interface CatalogItem {
   height_in: number | null
   photo_path: string | null
   price: number | null
+  specs: CatalogItemSpecs | null
   price_updated_at?: string | null
   url: string | null
   note: string | null
@@ -57,6 +59,7 @@ export interface CatalogItemInput {
   height_in?: number | null
   photo_path?: string | null
   price?: number | null
+  specs?: CatalogItemSpecs | null
   url?: string | null
   note?: string | null
   is_active?: boolean
@@ -64,7 +67,7 @@ export interface CatalogItemInput {
 }
 
 const CATALOG_SELECT =
-  'id, org_id, category, name, brand, model, width_in, depth_in, height_in, photo_path, price, price_updated_at, url, note, is_active, sort_order, created_by, created_at, updated_at'
+  'id, org_id, category, name, brand, model, width_in, depth_in, height_in, photo_path, price, specs, price_updated_at, url, note, is_active, sort_order, created_by, created_at, updated_at'
 
 // Читают все члены орг (кроме роли client) — RLS сам ограничивает выборку своей организацией.
 // Порядок: категория → sort_order → имя, чтобы сгруппировать по разделам в UI.

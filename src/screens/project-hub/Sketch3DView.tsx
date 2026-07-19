@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { CATALOG_CATEGORIES, getCatalogItems, uploadProjectFileToR2 } from '../../lib/api'
 import type { CatalogCategory, CatalogItem } from '../../lib/api'
 import { useI18n } from '../../lib/i18n'
@@ -57,6 +58,9 @@ import {
   catalogDimsFromItem,
   catalogDimsText,
   catalogItemHasExactDims,
+  catalogItemResolvedDimensionsIn,
+  catalogTileFinishPatch,
+  catalogTileSizeFromItem,
   isBuiltinToiletCatalogItem,
   isBuiltinShowerPanCatalogItem,
   isElectricalPlacedCatalogItem,
@@ -122,6 +126,7 @@ type InteractiveKind = 'light' | 'switch' | 'catalog' | 'opening' | 'measurement
 type InchDraftField = 'tileWIn' | 'tileHIn' | 'groutIn' | 'offsetXIn' | 'offsetYIn'
 type FeetDraftField = 'roomHeightFt' | 'coverageBottomFt' | 'coverageHeightFt' | 'patchXFt' | 'patchYFt' | 'patchWidthFt' | 'patchHeightFt'
 type OpeningDefaultDraftField = 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill'
+type TileSourceMode = 'manual' | 'catalog'
 type Sketch3DModelWithCatalog = Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }
 type SketchContour = Sketch3DModel['contours'][number]
 type InsidePoint = { x: number; z: number }
@@ -750,8 +755,11 @@ function surfaceFinishFact(surface: SketchSurfaceFinish, fallbackPaint: string, 
     const tile = normalizeTileSurface(surface)
     return {
       kind: 'tile',
-      source: 'solid_color',
-      user_photo: false,
+      source: tile.catalogItemId ? 'catalog' : 'solid_color',
+      user_photo: Boolean(tile.catalogPhotoPath),
+      catalog_item_id: tile.catalogItemId ?? null,
+      catalog_item_name: tile.catalogItemName ?? null,
+      photo_url: tile.catalogPhotoPath ?? null,
       tile_size: {
         width: inchesFact(tile.tileWIn ?? 12),
         height: inchesFact(tile.tileHIn ?? 24),
@@ -1018,7 +1026,7 @@ function canvasLooksBlank(renderer: any): boolean {
   return !visible || !nonBlack
 }
 
-function buildPhotoRenderFacts(
+export function buildPhotoRenderFacts(
   model: Sketch3DModelWithCatalog,
   heightFt: number,
   finishes: Required<SketchFinishes>,
@@ -1063,6 +1071,11 @@ function buildPhotoRenderFacts(
       label: wall.label,
       tile: wall.finish,
     }))
+  const tilePhotoUsed = [
+    finishes.floor,
+    finishes.walls,
+    ...Object.values(finishes.wallFinishes),
+  ].some((surface) => surface.kind === 'tile' && Boolean(normalizeTileSurface(surface).catalogPhotoPath))
 
   return {
     room: {
@@ -1078,7 +1091,7 @@ function buildPhotoRenderFacts(
       floor: tileSurfaceFact(finishes.floor, height),
       walls_default: tileSurfaceFact(finishes.walls, height),
       per_wall: wallTileOverrides,
-      user_photo: false,
+      user_photo: tilePhotoUsed,
     },
     wall_color: {
       default: finishes.walls.kind === 'paint'
@@ -1115,6 +1128,7 @@ function buildPhotoRenderFacts(
       },
       rotation_deg: roundFact((resolved.placed.rotationY * 180) / Math.PI, 2),
       photo_url: resolved.photoPath,
+      specs: resolved.specs ?? {},
       missing_catalog_item: resolved.missingCatalogItem,
     })),
     extra: {
@@ -1209,12 +1223,63 @@ function tilePitch(surface: SketchSurfaceFinish | undefined): { x: number; y: nu
   }
 }
 
-function createTileTexture(THREE: any, surface: SketchSurfaceFinish | undefined) {
-  const texture = new THREE.CanvasTexture(createTilePatternCanvas(surface))
+function drawCatalogTilePhotoCanvas(canvas: HTMLCanvasElement, surface: SketchSurfaceFinish | undefined, image: CanvasImageSource): boolean {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return false
+  const tile = normalizeTileSurface(surface)
+  const tileW = Math.max(0.01, tile.tileWIn ?? 12)
+  const tileH = Math.max(0.01, tile.tileHIn ?? 24)
+  const grout = Math.max(0, tile.groutIn ?? DEFAULT_GROUT_IN)
+  const pitchW = tileW + grout
+  const pitchH = tileH + grout
+  const pad = 1
+  const w = Math.max(1, Math.round((tileW / pitchW) * canvas.width) - pad)
+  const h = Math.max(1, Math.round((tileH / pitchH) * canvas.height) - pad)
+  const source = image as { width?: number; height?: number; naturalWidth?: number; naturalHeight?: number; videoWidth?: number; videoHeight?: number }
+  const sourceW = source.naturalWidth ?? source.videoWidth ?? source.width ?? 0
+  const sourceH = source.naturalHeight ?? source.videoHeight ?? source.height ?? 0
+  if (!Number.isFinite(sourceW) || !Number.isFinite(sourceH) || sourceW <= 0 || sourceH <= 0) return false
+  const scale = Math.max(w / sourceW, h / sourceH)
+  const cropW = w / scale
+  const cropH = h / scale
+  const sx = Math.max(0, (sourceW - cropW) / 2)
+  const sy = Math.max(0, (sourceH - cropH) / 2)
+  ctx.fillStyle = cleanColor(tile.groutColor, DEFAULT_GROUT_COLOR)
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.drawImage(image, sx, sy, cropW, cropH, 0, 0, w, h)
+  ctx.strokeStyle = 'rgba(255,255,255,.2)'
+  ctx.lineWidth = 2
+  ctx.strokeRect(1, 1, Math.max(1, w - 2), Math.max(1, h - 2))
+  return true
+}
+
+function createTileTexture(
+  THREE: any,
+  surface: SketchSurfaceFinish | undefined,
+  textureLoader?: any,
+  maxAnisotropy = 4,
+  onTextureReady?: () => void,
+) {
+  const canvas = createTilePatternCanvas(surface)
+  const texture = new THREE.CanvasTexture(canvas)
   texture.wrapS = THREE.RepeatWrapping
   texture.wrapT = THREE.RepeatWrapping
   texture.colorSpace = THREE.SRGBColorSpace
-  texture.anisotropy = 4
+  texture.anisotropy = Math.max(1, maxAnisotropy)
+  const tile = normalizeTileSurface(surface)
+  if (tile.catalogPhotoPath && textureLoader) {
+    textureLoader.load(
+      tile.catalogPhotoPath,
+      (loadedTexture: any) => {
+        const image = loadedTexture?.image as CanvasImageSource | undefined
+        if (image && drawCatalogTilePhotoCanvas(canvas, surface, image)) texture.needsUpdate = true
+        loadedTexture?.dispose?.()
+        onTextureReady?.()
+      },
+      undefined,
+      () => onTextureReady?.(),
+    )
+  }
   return texture
 }
 
@@ -1224,21 +1289,39 @@ function wallBaseColor(surface: SketchSurfaceFinish, fallbackPaint = DEFAULT_WAL
   return fallbackPaint
 }
 
-function createWallMaterial(THREE: any, surface: SketchSurfaceFinish, widthFt: number, heightFt: number, fallbackPaint = DEFAULT_WALL_PAINT) {
+function createWallMaterial(
+  THREE: any,
+  surface: SketchSurfaceFinish,
+  widthFt: number,
+  heightFt: number,
+  fallbackPaint = DEFAULT_WALL_PAINT,
+  textureLoader?: any,
+  maxAnisotropy = 4,
+  onTextureReady?: () => void,
+) {
   const coverage = finishCoverageBoundsFt(surface, heightFt)
   if (surface.kind !== 'tile' || !coverage.full) {
     const color = surface.kind === 'paint' && !coverage.full ? fallbackPaint : wallBaseColor(surface, fallbackPaint)
     return new THREE.MeshStandardMaterial({ color, roughness: 0.72 })
   }
-  const texture = createTileTexture(THREE, surface)
+  const texture = createTileTexture(THREE, surface, textureLoader, maxAnisotropy, onTextureReady)
   const { x, y, tile } = tilePitch(surface)
   texture.repeat.set((widthFt * 12) / x, (heightFt * 12) / y)
   texture.offset.set((tile.offsetXIn ?? 0) / x, (tile.offsetYIn ?? 0) / y)
   return new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.78 })
 }
 
-function createWallOverlayMaterial(THREE: any, surface: SketchSurfaceFinish, widthFt: number, heightFt: number, fallbackPaint = DEFAULT_WALL_PAINT) {
-  if (surface.kind === 'tile') return createWallMaterial(THREE, { ...surface, coverage: { mode: 'full' } }, widthFt, heightFt, fallbackPaint)
+function createWallOverlayMaterial(
+  THREE: any,
+  surface: SketchSurfaceFinish,
+  widthFt: number,
+  heightFt: number,
+  fallbackPaint = DEFAULT_WALL_PAINT,
+  textureLoader?: any,
+  maxAnisotropy = 4,
+  onTextureReady?: () => void,
+) {
+  if (surface.kind === 'tile') return createWallMaterial(THREE, { ...surface, coverage: { mode: 'full' } }, widthFt, heightFt, fallbackPaint, textureLoader, maxAnisotropy, onTextureReady)
   if (surface.kind === 'drywall-patch') {
     return new THREE.MeshStandardMaterial({
       color: cleanColor(surface.patchColor, DEFAULT_DRYWALL_PATCH_COLOR),
@@ -1255,14 +1338,24 @@ function createWallOverlayMaterial(THREE: any, surface: SketchSurfaceFinish, wid
   })
 }
 
-function addWallFinishOverlay(THREE: any, wall: any, surface: SketchSurfaceFinish, wallWidthFt: number, wallHeightFt: number, fallbackPaint = DEFAULT_WALL_PAINT) {
+function addWallFinishOverlay(
+  THREE: any,
+  wall: any,
+  surface: SketchSurfaceFinish,
+  wallWidthFt: number,
+  wallHeightFt: number,
+  fallbackPaint = DEFAULT_WALL_PAINT,
+  textureLoader?: any,
+  maxAnisotropy = 4,
+  onTextureReady?: () => void,
+) {
   if (surface.kind === 'drywall-patch') {
     const patch = normalizeDrywallPatchSurface(surface)
     const width = Math.max(0.02, Math.min(wallWidthFt, patch.widthFt ?? DEFAULT_DRYWALL_PATCH_WIDTH_FT))
     const height = Math.max(0.02, Math.min(wallHeightFt, patch.heightFt ?? DEFAULT_DRYWALL_PATCH_HEIGHT_FT))
     const x = Math.max(0, Math.min(wallWidthFt - width, patch.xFt ?? 0))
     const y = Math.max(0, Math.min(wallHeightFt - height, patch.yFt ?? 0))
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(width, height, 0.018), createWallOverlayMaterial(THREE, patch, width, height, fallbackPaint))
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(width, height, 0.018), createWallOverlayMaterial(THREE, patch, width, height, fallbackPaint, textureLoader, maxAnisotropy, onTextureReady))
     panel.position.set(-wallWidthFt / 2 + x + width / 2, y + height / 2 - wallHeightFt / 2, WALL_THICKNESS_FT / 2 + 0.014)
     panel.renderOrder = 4
     wall.add(panel)
@@ -1279,18 +1372,18 @@ function addWallFinishOverlay(THREE: any, wall: any, surface: SketchSurfaceFinis
   const coverage = finishCoverageBoundsFt(surface, wallHeightFt)
   if (coverage.full) return
   const height = Math.max(0.02, coverage.topFt - coverage.bottomFt)
-  const panel = new THREE.Mesh(new THREE.BoxGeometry(wallWidthFt, height, 0.018), createWallOverlayMaterial(THREE, surface, wallWidthFt, height, fallbackPaint))
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(wallWidthFt, height, 0.018), createWallOverlayMaterial(THREE, surface, wallWidthFt, height, fallbackPaint, textureLoader, maxAnisotropy, onTextureReady))
   panel.position.set(0, coverage.bottomFt + height / 2 - wallHeightFt / 2, WALL_THICKNESS_FT / 2 + 0.014)
   panel.renderOrder = 4
   wall.add(panel)
 }
 
-function createFloorMaterial(THREE: any, surface: SketchSurfaceFinish) {
+function createFloorMaterial(THREE: any, surface: SketchSurfaceFinish, textureLoader?: any, maxAnisotropy = 4, onTextureReady?: () => void) {
   if (surface.kind !== 'tile') {
     const color = surface.kind === 'drywall-patch' ? cleanColor(surface.baseColor, DEFAULT_FLOOR_PAINT) : cleanColor(surface.color, DEFAULT_FLOOR_PAINT)
     return new THREE.MeshStandardMaterial({ color, roughness: 0.82, side: THREE.DoubleSide })
   }
-  const texture = createTileTexture(THREE, surface)
+  const texture = createTileTexture(THREE, surface, textureLoader, maxAnisotropy, onTextureReady)
   return new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.82, side: THREE.DoubleSide })
 }
 
@@ -1367,8 +1460,15 @@ function catalogCategoryLabelKey(category: CatalogCategory): string {
 }
 
 function catalogItemDimsText(item: CatalogItem): string | null {
-  if (item.width_in == null || item.depth_in == null || item.height_in == null) return null
-  return catalogDimsText(item.width_in, item.depth_in, item.height_in)
+  const dims = catalogItemResolvedDimensionsIn(item)
+  if (!dims) return null
+  return catalogDimsText(dims.widthIn, dims.depthIn, dims.heightIn)
+}
+
+function catalogTileDimsText(item: CatalogItem): string | null {
+  const size = catalogTileSizeFromItem(item)
+  if (!size) return null
+  return `${formatInches(size.tileWIn)}×${formatInches(size.tileHIn)}`
 }
 
 function resolvedCatalogDimsText(item: CatalogResolvedPlacedItem): string {
@@ -1378,6 +1478,12 @@ function resolvedCatalogDimsText(item: CatalogResolvedPlacedItem): string {
 function catalogBrandModel(brand: string | null | undefined, model: string | null | undefined): string | null {
   const text = [brand, model].filter(Boolean).join(' · ')
   return text || null
+}
+
+function catalogSpecsEntries(specs: CatalogResolvedPlacedItem['specs']): Array<[string, string]> {
+  return Object.entries(specs ?? {})
+    .filter(([key]) => key.trim())
+    .map(([key, value]) => [key, String(value ?? '')])
 }
 
 function withBuiltinCatalogItems(rows: CatalogItem[]): CatalogItem[] {
@@ -1413,6 +1519,8 @@ function catalogColor(category: CatalogCategory): number {
       return 0xf4c95d
     case 'fan':
       return 0x7c8794
+    case 'tile':
+      return 0xa7b7c8
     default:
       return 0x9ca3af
   }
@@ -2063,6 +2171,7 @@ export default function Sketch3DView({
   errorLabel,
 }: Sketch3DViewProps) {
   const { t } = useI18n()
+  const navigate = useNavigate()
   const fullscreenRootRef = useRef<HTMLDivElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cameraApiRef = useRef<Record<CameraPreset, () => void> | null>(null)
@@ -2096,6 +2205,7 @@ export default function Sketch3DView({
   const [catalogLoading, setCatalogLoading] = useState(true)
   const [catalogError, setCatalogError] = useState(false)
   const [catalogPlacementId, setCatalogPlacementId] = useState<string | null>(null)
+  const [tileSourceMode, setTileSourceMode] = useState<TileSourceMode>('manual')
   const [paintSearch, setPaintSearch] = useState('')
   const [inchDrafts, setInchDrafts] = useState<Partial<Record<InchDraftField, string>>>({})
   const [feetDrafts, setFeetDrafts] = useState<Partial<Record<FeetDraftField, string>>>({})
@@ -2143,7 +2253,8 @@ export default function Sketch3DView({
   const catalogPlacementItem = catalogPlacementId ? catalogById.get(catalogPlacementId) ?? null : null
   const fullscreenActive = browserFullscreen || fullscreenFallback
   const catalogGroups = useMemo(
-    () => CATALOG_CATEGORIES.map((category) => ({ category, rows: catalogItems.filter((item) => item.category === category) }))
+    () => CATALOG_CATEGORIES.filter((category) => category !== 'tile')
+      .map((category) => ({ category, rows: catalogItems.filter((item) => item.category === category) }))
       .filter((group) => group.rows.length > 0),
     [catalogItems],
   )
@@ -2168,6 +2279,10 @@ export default function Sketch3DView({
       : finishes.walls
   const activeTile = useMemo(() => normalizeTileSurface(activeSurface), [activeSurface])
   const activeDrywallPatch = useMemo(() => normalizeDrywallPatchSurface(activeSurface), [activeSurface])
+  const catalogTileItems = useMemo(
+    () => catalogItems.filter((item) => item.category === 'tile' && item.is_active !== false),
+    [catalogItems],
+  )
   const activeCoverage = useMemo(() => finishCoverageBoundsFt(activeSurface, heightFt), [activeSurface, heightFt])
   const swColorMatches = useMemo(() => {
     const query = paintSearch.trim().toLowerCase()
@@ -2228,6 +2343,7 @@ export default function Sketch3DView({
   const selectedPlacedCodeViolations = selectedPlaced
     ? codeClearanceViolations.filter((check) => check.subject.id === selectedPlaced.placed.id || check.target.id === selectedPlaced.placed.id)
     : []
+  const selectedPlacedSpecs = selectedPlaced ? catalogSpecsEntries(selectedPlaced.specs) : []
 
   useEffect(() => {
     placementRef.current = placement
@@ -2263,6 +2379,10 @@ export default function Sketch3DView({
   useEffect(() => {
     setInchDrafts({})
   }, [surfaceTarget, activeTile.tileWIn, activeTile.tileHIn, activeTile.groutIn, activeTile.offsetXIn, activeTile.offsetYIn])
+
+  useEffect(() => {
+    setTileSourceMode(activeTile.catalogItemId ? 'catalog' : 'manual')
+  }, [surfaceTarget, activeTile.catalogItemId])
 
   useEffect(() => {
     setFeetDrafts({})
@@ -2352,6 +2472,19 @@ export default function Sketch3DView({
   const updateTile = (patch: Partial<SketchTileFinish>) => {
     const tile = normalizeTileSurface(activeSurface)
     updateSurface({ ...tile, ...patch, kind: 'tile' })
+  }
+
+  const selectCatalogTile = (item: CatalogItem) => {
+    const patch = catalogTileFinishPatch(item)
+    if (!patch) return
+    updateTile(patch)
+    setTileSourceMode('catalog')
+  }
+
+  const selectManualTileSource = () => {
+    setTileSourceMode('manual')
+    if (!activeTile.catalogItemId && !activeTile.catalogPhotoPath && !activeTile.catalogItemName) return
+    updateTile({ catalogItemId: undefined, catalogItemName: undefined, catalogPhotoPath: undefined })
   }
 
   const updateFinishCoverage = (patch: Partial<NonNullable<SketchTileFinish['coverage']>>) => {
@@ -2973,7 +3106,7 @@ export default function Sketch3DView({
         const wallSurface = finishes.walls.kind === 'paint'
           ? { kind: 'paint' as const, color: cleanColor(finishes.walls.color, finishes.wallPaint) }
           : finishes.walls
-        const floorMaterial = createFloorMaterial(THREE, finishes.floor)
+        const floorMaterial = createFloorMaterial(THREE, finishes.floor, textureLoader, maxAnisotropy, invalidate)
         const ceilingMaterial = new THREE.MeshStandardMaterial({
           color: 0xf8fafc,
           roughness: 0.78,
@@ -3025,14 +3158,14 @@ export default function Sketch3DView({
           const len = Math.hypot(dx, dz)
           if (len <= 0.01) return
           const wallFinish = finishes.wallFinishes[sketchWallKey(seg.c, seg.s)] ?? wallSurface
-          const wall = new THREE.Mesh(new THREE.BoxGeometry(len, height, WALL_THICKNESS_FT), createWallMaterial(THREE, wallFinish, len, height, finishes.wallPaint))
+          const wall = new THREE.Mesh(new THREE.BoxGeometry(len, height, WALL_THICKNESS_FT), createWallMaterial(THREE, wallFinish, len, height, finishes.wallPaint, textureLoader, maxAnisotropy, invalidate))
           wall.position.set((a.x + b.x) / 2, height / 2, (a.z + b.z) / 2)
           wall.rotation.y = -Math.atan2(dz, dx)
           wall.castShadow = false
           wall.receiveShadow = false
           wall.userData.wallC = seg.c
           wall.userData.wallS = seg.s
-          addWallFinishOverlay(THREE, wall, wallFinish, len, height, finishes.wallPaint)
+          addWallFinishOverlay(THREE, wall, wallFinish, len, height, finishes.wallPaint, textureLoader, maxAnisotropy, invalidate)
           scene.add(wall)
           wallTargets.push(wall)
           wallMeshByKey.set(sketchWallKey(seg.c, seg.s), wall)
@@ -4363,6 +4496,15 @@ export default function Sketch3DView({
                 <div className="muted">{catalogBrandModel(selectedPlaced.brand, selectedPlaced.model)}</div>
               )}
               <div className="muted">{t('catalog_dims')}: {resolvedCatalogDimsText(selectedPlaced)}</div>
+              {selectedPlacedSpecs.length > 0 && (
+                <div className="catalog-specs-preview" aria-label={t('catalog_specs')}>
+                  {selectedPlacedSpecs.map(([key, value], index) => (
+                    <span key={`${key}-${index}`}>
+                      <strong>{key}</strong>{value ? `: ${value}` : ''}
+                    </span>
+                  ))}
+                </div>
+              )}
               {isCabinetPlacedItem(selectedPlaced.placed) && (
                 <div className="muted">
                   {[selectedPlaced.placed.layer ? t(selectedPlaced.placed.layer === 'base' ? 'hub_sketch_cabinet_base' : 'hub_sketch_cabinet_wall_layer') : null, selectedPlaced.placed.hinge ? `${t('hub_sketch_cabinet_hinge')} ${selectedPlaced.placed.hinge}` : null, selectedPlaced.placed.filler ? t('hub_sketch_cabinet_filler') : null].filter(Boolean).join(' · ')}
@@ -4766,46 +4908,112 @@ export default function Sketch3DView({
 
             {activeSurface.kind === 'tile' && (
               <div className="hub-sketch-tile-controls">
-                <label className="hub-sketch-field">
-                  <span className="muted">{t('hub_sketch_3d_tile_size')}</span>
-                  <select
-                    value={tileSizePresetValue}
-                    onChange={(e) => {
-                      if (e.target.value === 'custom') return
-                      const option = TILE_SIZE_OPTIONS.find((item) => `${item.w}x${item.h}` === e.target.value) ?? TILE_SIZE_OPTIONS[0]
-                      updateTile({ tileWIn: option.w, tileHIn: option.h })
-                    }}
-                  >
-                    <option value="custom">{t('hub_sketch_3d_tile_size_custom')}</option>
-                    {TILE_SIZE_OPTIONS.map((option) => (
-                      <option key={option.key} value={`${option.w}x${option.h}`}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="hub-sketch-field">
-                  <span className="muted">{t('hub_sketch_width')}</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={inchInputValue('tileWIn', activeTile.tileWIn ?? 12)}
-                    onChange={(e) => setInchDraft('tileWIn', e.target.value)}
-                    onBlur={() => commitInchDraft('tileWIn', activeTile.tileWIn ?? 12, 1, 96)}
-                    onKeyDown={(e) => handleInchKeyDown(e, 'tileWIn', activeTile.tileWIn ?? 12, 1, 96)}
-                  />
-                </label>
-                <label className="hub-sketch-field">
-                  <span className="muted">{t('hub_sketch_height')}</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={inchInputValue('tileHIn', activeTile.tileHIn ?? 24)}
-                    onChange={(e) => setInchDraft('tileHIn', e.target.value)}
-                    onBlur={() => commitInchDraft('tileHIn', activeTile.tileHIn ?? 24, 1, 96)}
-                    onKeyDown={(e) => handleInchKeyDown(e, 'tileHIn', activeTile.tileHIn ?? 24, 1, 96)}
-                  />
-                </label>
+                <div className="hub-sketch-tile-source">
+                  <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_3d_tile_size')}>
+                    <button
+                      type="button"
+                      className={tileSourceMode === 'manual' ? 'btn small' : 'btn ghost small'}
+                      onClick={selectManualTileSource}
+                    >
+                      {t('hub_sketch_tile_source_manual')}
+                    </button>
+                    <button
+                      type="button"
+                      className={tileSourceMode === 'catalog' ? 'btn small' : 'btn ghost small'}
+                      onClick={() => setTileSourceMode('catalog')}
+                    >
+                      {t('hub_sketch_tile_source_catalog')}
+                    </button>
+                  </div>
+                  {tileSourceMode === 'catalog' && (
+                    <>
+                      {catalogLoading && <p className="muted">{t('loading')}</p>}
+                      {catalogError && <p className="error-msg">{t('load_error')}</p>}
+                      {!catalogLoading && !catalogError && catalogTileItems.length === 0 && (
+                        <div className="hub-sketch-catalog-empty">
+                          <p className="muted">{t('hub_sketch_tile_catalog_empty')}</p>
+                          <button type="button" className="btn small" onClick={() => navigate('/catalog')}>
+                            {t('hub_sketch_tile_catalog_open')}
+                          </button>
+                        </div>
+                      )}
+                      {!catalogLoading && !catalogError && catalogTileItems.length > 0 && (
+                        <div className="hub-sketch-tile-catalog-grid">
+                          {catalogTileItems.map((item) => {
+                            const tileDims = catalogTileDimsText(item)
+                            const selected = activeTile.catalogItemId === item.id
+                            return (
+                              <button
+                                key={item.id}
+                                type="button"
+                                className={selected ? 'hub-sketch-tile-card hub-sketch-tile-card-active' : 'hub-sketch-tile-card'}
+                                disabled={!tileDims}
+                                aria-pressed={selected}
+                                onClick={() => selectCatalogTile(item)}
+                              >
+                                <span className="hub-sketch-tile-card-thumb">
+                                  {item.photo_path
+                                    ? <img src={item.photo_path} alt={catalogDisplayName(item, t)} loading="lazy" />
+                                    : <span className="hub-sketch-tile-card-empty" aria-hidden="true">▦</span>}
+                                </span>
+                                <span className="hub-sketch-tile-card-body">
+                                  <span className="hub-sketch-tile-card-name">{catalogDisplayName(item, t)}</span>
+                                  <span className={tileDims ? 'muted' : 'error-msg'}>{tileDims ?? t('hub_sketch_tile_catalog_missing_size')}</span>
+                                  {selected && <span className="muted">{t('hub_sketch_tile_catalog_selected')}</span>}
+                                  {selected && activeTile.catalogPhotoPath && <span className="muted">{t('hub_sketch_tile_catalog_photo')}</span>}
+                                </span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                {tileSourceMode === 'manual' && (
+                  <>
+                    <label className="hub-sketch-field">
+                      <span className="muted">{t('hub_sketch_3d_tile_size')}</span>
+                      <select
+                        value={tileSizePresetValue}
+                        onChange={(e) => {
+                          if (e.target.value === 'custom') return
+                          const option = TILE_SIZE_OPTIONS.find((item) => `${item.w}x${item.h}` === e.target.value) ?? TILE_SIZE_OPTIONS[0]
+                          updateTile({ tileWIn: option.w, tileHIn: option.h })
+                        }}
+                      >
+                        <option value="custom">{t('hub_sketch_3d_tile_size_custom')}</option>
+                        {TILE_SIZE_OPTIONS.map((option) => (
+                          <option key={option.key} value={`${option.w}x${option.h}`}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="hub-sketch-field">
+                      <span className="muted">{t('hub_sketch_width')}</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={inchInputValue('tileWIn', activeTile.tileWIn ?? 12)}
+                        onChange={(e) => setInchDraft('tileWIn', e.target.value)}
+                        onBlur={() => commitInchDraft('tileWIn', activeTile.tileWIn ?? 12, 1, 96)}
+                        onKeyDown={(e) => handleInchKeyDown(e, 'tileWIn', activeTile.tileWIn ?? 12, 1, 96)}
+                      />
+                    </label>
+                    <label className="hub-sketch-field">
+                      <span className="muted">{t('hub_sketch_height')}</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={inchInputValue('tileHIn', activeTile.tileHIn ?? 24)}
+                        onChange={(e) => setInchDraft('tileHIn', e.target.value)}
+                        onBlur={() => commitInchDraft('tileHIn', activeTile.tileHIn ?? 24, 1, 96)}
+                        onKeyDown={(e) => handleInchKeyDown(e, 'tileHIn', activeTile.tileHIn ?? 24, 1, 96)}
+                      />
+                    </label>
+                  </>
+                )}
                 <label className="hub-sketch-field">
                   <span className="muted">{t('hub_sketch_3d_grout_width')}</span>
                   <input

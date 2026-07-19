@@ -69,6 +69,9 @@ export type SketchTileFinish = {
   tileColor?: string
   offsetXIn?: number
   offsetYIn?: number
+  catalogItemId?: string
+  catalogItemName?: string
+  catalogPhotoPath?: string
   coverage?: SketchFinishCoverage
 }
 
@@ -514,6 +517,12 @@ function cleanId(value: unknown): string | undefined {
   return trimmed.length > 0 && trimmed.length <= 80 ? trimmed : undefined
 }
 
+function cleanText(value: unknown, max = 140): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed.slice(0, max) : undefined
+}
+
 export function normalizeTileSurface(surface?: SketchSurfaceFinish): SketchTileFinish {
   const tile = surface?.kind === 'tile' ? surface : undefined
   const out: SketchTileFinish = {
@@ -526,6 +535,12 @@ export function normalizeTileSurface(surface?: SketchSurfaceFinish): SketchTileF
     offsetXIn: cleanNumber(tile?.offsetXIn, 0, -96, 96),
     offsetYIn: cleanNumber(tile?.offsetYIn, 0, -96, 96),
   }
+  const catalogItemId = cleanId(tile?.catalogItemId)
+  const catalogItemName = cleanText(tile?.catalogItemName)
+  const catalogPhotoPath = cleanText(tile?.catalogPhotoPath, 600)
+  if (catalogItemId) out.catalogItemId = catalogItemId
+  if (catalogItemName) out.catalogItemName = catalogItemName
+  if (catalogPhotoPath) out.catalogPhotoPath = catalogPhotoPath
   const coverage = sanitizeCoverage(tile?.coverage)
   if (coverage) out.coverage = coverage
   return out
@@ -753,6 +768,7 @@ export function createTilePatternCanvas(surface: SketchSurfaceFinish | undefined
     tile.groutIn ?? DEFAULT_GROUT_IN,
     cleanColor(tile.groutColor, DEFAULT_GROUT_COLOR),
     cleanColor(tile.tileColor, DEFAULT_TILE_COLOR),
+    tile.catalogPhotoPath ?? '',
   ].join('|')
   const cached = tilePatternCanvasCache.get(key)
   if (cached) return cached

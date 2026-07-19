@@ -5115,6 +5115,91 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   display: grid;
   gap: 9px;
 }
+.hub-sketch-tile-source {
+  display: grid;
+  gap: 8px;
+}
+.hub-sketch-tile-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  max-height: 240px;
+  overflow: auto;
+  padding-right: 2px;
+}
+.hub-sketch-tile-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.hub-sketch-tile-card:hover:not(:disabled),
+.hub-sketch-tile-card-active {
+  border-color: rgba(37, 99, 235, .72);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .12);
+}
+.hub-sketch-tile-card:disabled {
+  cursor: not-allowed;
+  opacity: .62;
+}
+.hub-sketch-tile-card-thumb {
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--panel2);
+}
+.hub-sketch-tile-card-thumb img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+.hub-sketch-tile-card-empty {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--muted);
+  font-weight: 900;
+}
+.hub-sketch-tile-card-body {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.hub-sketch-tile-card-name,
+.hub-sketch-tile-card-body .muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hub-sketch-tile-card-name {
+  font-size: 12px;
+  font-weight: 900;
+}
+.hub-sketch-catalog-empty {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+.hub-sketch-catalog-empty p {
+  margin: 0;
+}
+.hub-sketch-catalog-empty .btn {
+  width: fit-content;
+}
 .hub-sketch-finish-coverage,
 .hub-sketch-drywall-controls {
   display: grid;
@@ -6895,6 +6980,17 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .catalog-body { display: flex; flex-direction: column; gap: 4px; }
 .catalog-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
 .catalog-history-toggle { width: fit-content; margin-top: 2px; }
+.catalog-specs-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.catalog-specs-preview span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
 .catalog-price-history {
   display: grid;
   gap: 4px;
@@ -6913,3 +7009,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .catalog-field-voice { display: flex; align-items: flex-start; gap: 6px; }
 .catalog-field-voice input, .catalog-field-voice textarea { flex: 1; }
 .catalog-form-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
+.catalog-specs-editor {
+  display: grid;
+  gap: 7px;
+}
+.catalog-specs-editor label {
+  margin-top: 10px;
+}
+.catalog-specs-hint {
+  margin: 0;
+  font-size: 12px;
+}
+.catalog-spec-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+.catalog-spec-row input {
+  min-width: 0;
+}
+.catalog-spec-remove {
+  width: 34px;
+  min-width: 34px;
+  padding-inline: 0;
+}

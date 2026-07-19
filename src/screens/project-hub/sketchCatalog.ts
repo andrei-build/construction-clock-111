@@ -1,5 +1,5 @@
-import type { CatalogCategory, CatalogItem } from '../../lib/api'
-import type { Contour } from './sketchFinishes'
+import type { CatalogCategory, CatalogItem, CatalogItemSpecs } from '../../lib/api'
+import type { Contour, SketchTileFinish } from './sketchFinishes'
 import { formatInches } from './inches'
 
 export type CatalogPlacementSurface = 'floor' | 'wall' | 'ceiling'
@@ -36,6 +36,7 @@ export type SketchPlacedCatalogItem = {
   depthIn?: number
   heightIn?: number
   photoPath?: string
+  specs?: CatalogItemSpecs
 }
 
 export type CatalogDimsFt = {
@@ -53,6 +54,7 @@ export type CatalogResolvedPlacedItem = {
   brand: string | null
   model: string | null
   photoPath: string | null
+  specs: CatalogItemSpecs | null
   dims: CatalogDimsFt
   widthIn: number
   depthIn: number
@@ -87,7 +89,7 @@ export type CatalogSceneBounds = {
   depth: number
 }
 
-const CATALOG_CATEGORIES: CatalogCategory[] = ['shower', 'vanity', 'cabinet', 'light', 'fan', 'other']
+const CATALOG_CATEGORIES: CatalogCategory[] = ['shower', 'vanity', 'cabinet', 'light', 'fan', 'tile', 'other']
 const CATALOG_CATEGORY_SET = new Set<string>(CATALOG_CATEGORIES)
 export const SKETCH_CATALOG_KIND_TOILET: SketchPlacedCatalogKind = 'TOILET'
 export const SKETCH_CATALOG_KIND_SHOWER_PAN: SketchPlacedCatalogKind = 'SHOWER_PAN'
@@ -110,6 +112,7 @@ export const BUILTIN_TOILET_CATALOG_ITEM: CatalogItem = {
   height_in: 30,
   photo_path: null,
   price: null,
+  specs: null,
   url: null,
   note: null,
   is_active: true,
@@ -131,6 +134,7 @@ export const BUILTIN_SHOWER_PAN_CATALOG_ITEMS: CatalogItem[] = [
     height_in: 4,
     photo_path: null,
     price: null,
+    specs: null,
     url: null,
     note: null,
     is_active: true,
@@ -151,6 +155,7 @@ export const BUILTIN_SHOWER_PAN_CATALOG_ITEMS: CatalogItem[] = [
     height_in: 4,
     photo_path: null,
     price: null,
+    specs: null,
     url: null,
     note: null,
     is_active: true,
@@ -179,6 +184,144 @@ function cleanPositive(value: unknown): number | undefined {
   const n = cleanFinite(value)
   if (n === undefined || n <= 0) return undefined
   return Math.max(0.01, Math.min(1200, n))
+}
+
+function cleanSpecs(value: unknown): CatalogItemSpecs | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: CatalogItemSpecs = {}
+  Object.entries(value as Record<string, unknown>).slice(0, 80).forEach(([key, rawValue]) => {
+    const cleanKey = key.trim().slice(0, MAX_STORED_TEXT)
+    if (!cleanKey) return
+    if (rawValue == null) return
+    const cleanValue = String(rawValue).trim().slice(0, 400)
+    out[cleanKey] = cleanValue
+  })
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+function specEntries(specs: unknown): Array<{ key: string; value: string }> {
+  const clean = cleanSpecs(specs)
+  if (!clean) return []
+  return Object.entries(clean).map(([key, value]) => ({ key, value }))
+}
+
+function normalizeSpecKey(key: string): string {
+  return key
+    .trim()
+    .toLowerCase()
+    .replace(/[“”"']/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function parseInchesFromSpecValue(value: unknown): number | undefined {
+  const direct = cleanPositive(value)
+  if (direct !== undefined) return direct
+  if (typeof value !== 'string') return undefined
+  const text = value.replace(',', '.')
+  const match = text.match(/-?\d+(?:\.\d+)?/)
+  if (!match) return undefined
+  const n = Number(match[0])
+  if (!Number.isFinite(n) || n <= 0) return undefined
+  if (/\b(mm|мм)\b/i.test(text)) return cleanPositive(n / 25.4)
+  if (/\b(cm|см)\b/i.test(text)) return cleanPositive(n / 2.54)
+  if (/\b(ft|feet|foot|фут|фута|футов)\b/i.test(text)) return cleanPositive(n * 12)
+  return cleanPositive(n)
+}
+
+function dimFromSpecKey(key: string): 'widthIn' | 'depthIn' | 'heightIn' | null {
+  const k = normalizeSpecKey(key)
+  if (/^(w|ш)$/.test(k) || /width|wide|ширина|ancho/.test(k)) return 'widthIn'
+  if (/^(d|г)$/.test(k) || /depth|deep|глубина|fondo|profundidad/.test(k)) return 'depthIn'
+  if (/^(h|в)$/.test(k) || /height|high|высота|alto/.test(k)) return 'heightIn'
+  return null
+}
+
+function dimTokenFromText(token: string): 'widthIn' | 'depthIn' | 'heightIn' | null {
+  const k = normalizeSpecKey(token)
+  if (/^(w|ш)$/.test(k) || /width|шир|ancho/.test(k)) return 'widthIn'
+  if (/^(d|г)$/.test(k) || /depth|глуб|fondo|profund/.test(k)) return 'depthIn'
+  if (/^(h|в)$/.test(k) || /height|выс|alto/.test(k)) return 'heightIn'
+  return null
+}
+
+function parseDimensionOrderFromText(text: string): Array<'widthIn' | 'depthIn' | 'heightIn'> | null {
+  const tokens = normalizeSpecKey(text)
+    .split(/[xх×*/\\|,;]+/i)
+    .map((token) => dimTokenFromText(token))
+    .filter((token): token is 'widthIn' | 'depthIn' | 'heightIn' => !!token)
+  const unique = new Set(tokens)
+  return tokens.length >= 2 && unique.size === tokens.length ? tokens : null
+}
+
+function parseDimensionNumbers(value: string): number[] {
+  return value
+    .replace(',', '.')
+    .match(/\d+(?:\.\d+)?/g)
+    ?.map((part) => Number(part))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .slice(0, 3) ?? []
+}
+
+export type CatalogItemResolvedDimensionsIn = {
+  widthIn: number
+  depthIn: number
+  heightIn: number
+}
+
+export type CatalogTileSizeIn = {
+  tileWIn: number
+  tileHIn: number
+}
+
+function catalogSpecDimensions(specs: unknown): Partial<CatalogItemResolvedDimensionsIn> {
+  const out: Partial<CatalogItemResolvedDimensionsIn> = {}
+  specEntries(specs).forEach(({ key, value }) => {
+    const directDim = dimFromSpecKey(key)
+    if (directDim) {
+      const parsed = parseInchesFromSpecValue(value)
+      if (parsed !== undefined) out[directDim] = parsed
+      return
+    }
+
+    const order = parseDimensionOrderFromText(key) ?? parseDimensionOrderFromText(value)
+    if (!order || order.length < 2) return
+    const numbers = parseDimensionNumbers(value)
+    if (numbers.length < order.length) return
+    order.forEach((dim, index) => {
+      const parsed = cleanPositive(numbers[index])
+      if (parsed !== undefined) out[dim] = parsed
+    })
+  })
+  return out
+}
+
+export function catalogItemResolvedDimensionsIn(item: Pick<CatalogItem, 'width_in' | 'depth_in' | 'height_in' | 'specs'>): CatalogItemResolvedDimensionsIn | null {
+  const specDims = catalogSpecDimensions(item.specs)
+  const widthIn = cleanPositive(item.width_in) ?? specDims.widthIn
+  const depthIn = cleanPositive(item.depth_in) ?? specDims.depthIn
+  const heightIn = cleanPositive(item.height_in) ?? specDims.heightIn
+  if (widthIn === undefined || depthIn === undefined || heightIn === undefined) return null
+  return { widthIn, depthIn, heightIn }
+}
+
+export function catalogTileSizeFromItem(item: Pick<CatalogItem, 'width_in' | 'height_in' | 'specs'>): CatalogTileSizeIn | null {
+  const specDims = catalogSpecDimensions(item.specs)
+  const tileWIn = cleanPositive(item.width_in) ?? specDims.widthIn
+  const tileHIn = cleanPositive(item.height_in) ?? specDims.heightIn
+  if (tileWIn === undefined || tileHIn === undefined) return null
+  return { tileWIn, tileHIn }
+}
+
+export function catalogTileFinishPatch(item: Pick<CatalogItem, 'id' | 'name' | 'width_in' | 'height_in' | 'photo_path' | 'specs'>): Pick<SketchTileFinish, 'tileWIn' | 'tileHIn' | 'catalogItemId' | 'catalogItemName' | 'catalogPhotoPath'> | null {
+  const size = catalogTileSizeFromItem(item)
+  if (!size) return null
+  return {
+    tileWIn: size.tileWIn,
+    tileHIn: size.tileHIn,
+    catalogItemId: item.id,
+    catalogItemName: cleanString(item.name) ?? item.id,
+    catalogPhotoPath: cleanString(item.photo_path, 600),
+  }
 }
 
 function cleanCategory(value: unknown): CatalogCategory | undefined {
@@ -220,7 +363,7 @@ function normalizeAngle(value: number): number {
 }
 
 export function catalogItemHasExactDims(item: CatalogItem): boolean {
-  return cleanPositive(item.width_in) !== undefined && cleanPositive(item.depth_in) !== undefined && cleanPositive(item.height_in) !== undefined
+  return catalogItemResolvedDimensionsIn(item) !== null
 }
 
 export function isBuiltinToiletCatalogItem(item: Pick<CatalogItem, 'id' | 'model'>): boolean {
@@ -287,17 +430,16 @@ function isBuiltinSnapshotPlacedItem(item: Pick<SketchPlacedCatalogItem, 'catalo
 }
 
 export function catalogDimsFromItem(item: CatalogItem): CatalogDimsFt | null {
-  const width = cleanPositive(item.width_in)
-  const depth = cleanPositive(item.depth_in)
-  const height = cleanPositive(item.height_in)
-  if (width === undefined || depth === undefined || height === undefined) return null
-  return { widthFt: width * IN_TO_FT, depthFt: depth * IN_TO_FT, heightFt: height * IN_TO_FT }
+  const dims = catalogItemResolvedDimensionsIn(item)
+  if (!dims) return null
+  return { widthFt: dims.widthIn * IN_TO_FT, depthFt: dims.depthIn * IN_TO_FT, heightFt: dims.heightIn * IN_TO_FT }
 }
 
 export function placedCatalogDims(placed: SketchPlacedCatalogItem): CatalogDimsFt | null {
-  const width = cleanPositive(placed.widthIn)
-  const depth = cleanPositive(placed.depthIn)
-  const height = cleanPositive(placed.heightIn)
+  const specDims = catalogSpecDimensions(placed.specs)
+  const width = cleanPositive(placed.widthIn) ?? specDims.widthIn
+  const depth = cleanPositive(placed.depthIn) ?? specDims.depthIn
+  const height = cleanPositive(placed.heightIn) ?? specDims.heightIn
   if (width === undefined || depth === undefined || height === undefined) return null
   return { widthFt: width * IN_TO_FT, depthFt: depth * IN_TO_FT, heightFt: height * IN_TO_FT }
 }
@@ -306,17 +448,20 @@ export function catalogDimsText(widthIn: number, depthIn: number, heightIn: numb
   return `${formatInches(widthIn)}×${formatInches(depthIn)}×${formatInches(heightIn)}`
 }
 
-export function snapshotCatalogItem(item: CatalogItem): Pick<SketchPlacedCatalogItem, 'catalogItemId' | 'category' | 'name' | 'brand' | 'model' | 'widthIn' | 'depthIn' | 'heightIn' | 'photoPath'> {
+export function snapshotCatalogItem(item: CatalogItem): Pick<SketchPlacedCatalogItem, 'catalogItemId' | 'category' | 'name' | 'brand' | 'model' | 'widthIn' | 'depthIn' | 'heightIn' | 'photoPath' | 'specs'> {
+  const dims = catalogItemResolvedDimensionsIn(item)
+  const specs = cleanSpecs(item.specs)
   return {
     catalogItemId: item.id,
     category: item.category,
     name: item.name,
     brand: item.brand ?? undefined,
     model: item.model ?? undefined,
-    widthIn: cleanPositive(item.width_in),
-    depthIn: cleanPositive(item.depth_in),
-    heightIn: cleanPositive(item.height_in),
+    widthIn: dims?.widthIn,
+    depthIn: dims?.depthIn,
+    heightIn: dims?.heightIn,
     photoPath: item.photo_path ?? undefined,
+    specs,
   }
 }
 
@@ -365,6 +510,7 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       const showerPanShape = cleanShowerPanShape(item.showerPanShape ?? item.shower_pan_shape)
       const layoutWarning = cleanLayoutWarning(item.layoutWarning)
       const photoPath = cleanString(item.photoPath, 600)
+      const specs = cleanSpecs(item.specs)
       if (name) placed.name = name
       if (brand) placed.brand = brand
       if (model) placed.model = model
@@ -378,6 +524,7 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       if (item.panel === true) placed.panel = true
       if (layoutWarning) placed.layoutWarning = layoutWarning
       if (photoPath) placed.photoPath = photoPath
+      if (specs) placed.specs = specs
       const widthIn = cleanPositive(item.widthIn ?? item.width_in)
       const depthIn = cleanPositive(item.depthIn ?? item.depth_in)
       const heightIn = cleanPositive(item.heightIn ?? item.height_in)
@@ -394,9 +541,11 @@ export function resolvePlacedCatalogItem(placed: SketchPlacedCatalogItem, catalo
   const snapshotDims = placedCatalogDims(placed)
   const dims = itemDims ?? snapshotDims
   if (!dims) return null
-  const widthIn = catalogItem?.width_in ?? placed.widthIn
-  const depthIn = catalogItem?.depth_in ?? placed.depthIn
-  const heightIn = catalogItem?.height_in ?? placed.heightIn
+  const itemDimsIn = catalogItem ? catalogItemResolvedDimensionsIn(catalogItem) : null
+  const placedSpecDims = catalogSpecDimensions(placed.specs)
+  const widthIn = itemDimsIn?.widthIn ?? cleanPositive(placed.widthIn) ?? placedSpecDims.widthIn
+  const depthIn = itemDimsIn?.depthIn ?? cleanPositive(placed.depthIn) ?? placedSpecDims.depthIn
+  const heightIn = itemDimsIn?.heightIn ?? cleanPositive(placed.heightIn) ?? placedSpecDims.heightIn
   if (widthIn == null || depthIn == null || heightIn == null) return null
   return {
     placed,
@@ -407,6 +556,7 @@ export function resolvePlacedCatalogItem(placed: SketchPlacedCatalogItem, catalo
     brand: catalogItem?.brand ?? placed.brand ?? null,
     model: catalogItem?.model ?? placed.model ?? null,
     photoPath: catalogItem?.photo_path ?? placed.photoPath ?? null,
+    specs: cleanSpecs(catalogItem?.specs) ?? cleanSpecs(placed.specs) ?? null,
     dims,
     widthIn,
     depthIn,

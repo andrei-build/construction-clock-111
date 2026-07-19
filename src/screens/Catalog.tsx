@@ -21,7 +21,14 @@ const CATEGORY_LABEL_KEY: Record<CatalogCategory, string> = {
   cabinet: 'catalog_cat_cabinet',
   light: 'catalog_cat_light',
   fan: 'catalog_cat_fan',
+  tile: 'catalog_cat_tile',
   other: 'catalog_cat_other',
+}
+
+type SpecDraftRow = {
+  id: string
+  key: string
+  value: string
 }
 
 type FormState = {
@@ -37,6 +44,11 @@ type FormState = {
   note: string
   is_active: boolean
   photo_path: string | null
+  specs: SpecDraftRow[]
+}
+
+function makeSpecRow(key = '', value = ''): SpecDraftRow {
+  return { id: `spec-${Date.now()}-${Math.random().toString(36).slice(2)}`, key, value }
 }
 
 const emptyForm = (): FormState => ({
@@ -52,7 +64,13 @@ const emptyForm = (): FormState => ({
   note: '',
   is_active: true,
   photo_path: null,
+  specs: [makeSpecRow()],
 })
+
+const specsToRows = (specs: CatalogItem['specs']): SpecDraftRow[] => {
+  const rows = Object.entries(specs ?? {}).map(([key, value]) => makeSpecRow(key, String(value ?? '')))
+  return rows.length > 0 ? rows : [makeSpecRow()]
+}
 
 const fromItem = (item: CatalogItem): FormState => ({
   category: item.category,
@@ -67,6 +85,7 @@ const fromItem = (item: CatalogItem): FormState => ({
   note: item.note ?? '',
   is_active: item.is_active,
   photo_path: item.photo_path,
+  specs: specsToRows(item.specs),
 })
 
 // Пустая строка/нечисло → null; иначе число. Дюймы и цена опциональны.
@@ -76,10 +95,31 @@ const numOrNull = (s: string): number | null => {
 }
 
 const dims = (item: CatalogItem): string | null => {
+  if (item.category === 'tile') {
+    if (item.width_in == null && item.height_in == null) return null
+    return [item.width_in, item.height_in].map((p) => (p == null ? '—' : p)).join('×')
+  }
   const parts = [item.width_in, item.depth_in, item.height_in]
   if (parts.every((p) => p == null)) return null
   return parts.map((p) => (p == null ? '—' : p)).join('×')
 }
+
+const compactSpecs = (rows: SpecDraftRow[]): CatalogItemInput['specs'] => {
+  const out: NonNullable<CatalogItemInput['specs']> = {}
+  rows.forEach((row) => {
+    const key = row.key.trim()
+    if (!key) return
+    out[key] = row.value.trim()
+  })
+  return Object.keys(out).length > 0 ? out : null
+}
+
+const specsPreview = (specs: CatalogItem['specs']): Array<[string, string]> => (
+  Object.entries(specs ?? {})
+    .filter(([key]) => key.trim())
+    .map(([key, value]) => [key, String(value ?? '')] as [string, string])
+    .slice(0, 3)
+)
 
 const MS_PER_DAY = 86_400_000
 
@@ -237,6 +277,7 @@ export default function Catalog() {
       depth_in: numOrNull(form.depth_in),
       height_in: numOrNull(form.height_in),
       price: numOrNull(form.price),
+      specs: compactSpecs(form.specs),
       url: form.url.trim() || null,
       note: form.note.trim() || null,
       is_active: form.is_active,
@@ -299,6 +340,21 @@ export default function Catalog() {
     }
   }
 
+  function updateSpecRow(id: string, patch: Partial<Pick<SpecDraftRow, 'key' | 'value'>>) {
+    setForm((f) => ({ ...f, specs: f.specs.map((row) => (row.id === id ? { ...row, ...patch } : row)) }))
+  }
+
+  function addSpecRow() {
+    setForm((f) => ({ ...f, specs: [...f.specs, makeSpecRow()] }))
+  }
+
+  function removeSpecRow(id: string) {
+    setForm((f) => {
+      const specs = f.specs.filter((row) => row.id !== id)
+      return { ...f, specs: specs.length > 0 ? specs : [makeSpecRow()] }
+    })
+  }
+
   const priceAgeLabel = (item: CatalogItem): string | null => {
     const days = daysSince(item.price_updated_at)
     if (days == null) return null
@@ -343,6 +399,7 @@ export default function Catalog() {
               const ageLabel = priceAgeLabel(item)
               const itemHistory = priceHistory[item.id] ?? []
               const historyOpen = historyOpenId === item.id
+              const previewSpecs = specsPreview(item.specs)
               return (
                 <div key={item.id} className={`card catalog-card ${item.is_active ? '' : 'muted'}`}>
                   <div className="catalog-thumb">
@@ -372,7 +429,7 @@ export default function Catalog() {
                         {[item.brand, item.model].filter(Boolean).join(' · ')}
                       </div>
                     )}
-                    {d && <div className="muted" style={{ fontSize: 12 }}>{t('catalog_dims')}: {d}</div>}
+                    {d && <div className="muted" style={{ fontSize: 12 }}>{t(item.category === 'tile' ? 'catalog_tile_dims' : 'catalog_dims')}: {d}</div>}
                     <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                       {item.price != null && <span className="item-title">{priceFmt.format(item.price)}</span>}
                       {ageLabel && <span className="badge blue">{ageLabel}</span>}
@@ -384,6 +441,15 @@ export default function Catalog() {
                       )}
                     </div>
                     {item.note && <div className="muted" style={{ fontSize: 12 }}>{item.note}</div>}
+                    {previewSpecs.length > 0 && (
+                      <div className="catalog-specs-preview" aria-label={t('catalog_specs')}>
+                        {previewSpecs.map(([key, value], index) => (
+                          <span key={`${key}-${index}`}>
+                            <strong>{key}</strong>{value ? `: ${value}` : ''}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <button type="button" className="btn small ghost catalog-history-toggle" onClick={() => togglePriceHistory(item)}>
                       {historyOpen ? t('catalog_price_history_hide') : t('catalog_price_history_show')}
                     </button>
@@ -479,6 +545,35 @@ export default function Catalog() {
             <div className="catalog-field-voice">
               <textarea rows={2} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
               <VoiceMic lang={lang} title={t('voice_input')} onResult={(x) => setForm((f) => ({ ...f, note: f.note ? `${f.note} ${x}` : x }))} />
+            </div>
+
+            <div className="catalog-specs-editor">
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <label>{t('catalog_specs')}</label>
+                <button type="button" className="btn small ghost" onClick={addSpecRow}>
+                  {t('catalog_specs_add')}
+                </button>
+              </div>
+              <p className="muted catalog-specs-hint">{t('catalog_specs_hint')}</p>
+              {form.specs.map((row) => (
+                <div key={row.id} className="catalog-spec-row">
+                  <input
+                    type="text"
+                    value={row.key}
+                    placeholder={t('catalog_specs_key')}
+                    onChange={(e) => updateSpecRow(row.id, { key: e.target.value })}
+                  />
+                  <input
+                    type="text"
+                    value={row.value}
+                    placeholder={t('catalog_specs_value')}
+                    onChange={(e) => updateSpecRow(row.id, { value: e.target.value })}
+                  />
+                  <button type="button" className="btn small ghost catalog-spec-remove" aria-label={t('catalog_specs_remove')} onClick={() => removeSpecRow(row.id)}>
+                    ×
+                  </button>
+                </div>
+              ))}
             </div>
 
             <label>{t('catalog_field_photo')}</label>
