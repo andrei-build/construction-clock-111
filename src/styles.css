@@ -6170,8 +6170,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: rgba(248, 250, 252, .95);
 }
 .hub-sketch-wall-finishbar-fullscreen {
-  flex: 1 1 520px;
-  min-width: min(520px, 100%);
+  width: 100%;
+  min-width: 0;
   padding: 0;
   border: 0;
   background: transparent;
@@ -6229,29 +6229,54 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   display: flex;
   flex-direction: column;
   background: #eef2f7;
+  overflow: hidden;
 }
 .hub-sketch-elevation-lightbox-bar {
   flex: 0 0 auto;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  max-height: 34dvh;
-  overflow: auto;
-  padding: 8px 10px;
+  min-height: 58px;
+  padding: calc(7px + env(safe-area-inset-top, 0px)) calc(10px + env(safe-area-inset-right, 0px)) 7px calc(10px + env(safe-area-inset-left, 0px));
   border-bottom: 1px solid rgba(126,160,190,.34);
   background: rgba(248, 250, 252, .98);
   box-shadow: 0 8px 24px rgba(15, 23, 42, .12);
 }
+.hub-sketch-elevation-back {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 1px solid rgba(15, 23, 42, .16);
+  border-radius: 8px;
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .18);
+}
+.hub-sketch-elevation-back:hover,
+.hub-sketch-elevation-back:focus-visible {
+  background: #1e293b;
+  outline: none;
+}
 .hub-sketch-elevation-lightbox-title {
   display: grid;
   gap: 2px;
+  flex: 1 1 auto;
   min-width: 150px;
   margin-right: 4px;
+  overflow-wrap: anywhere;
 }
 .hub-sketch-elevation-lightbox-close {
-  width: 36px;
-  height: 36px;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
   display: inline-grid;
   place-items: center;
   border: 1px solid rgba(126,160,190,.34);
@@ -6265,7 +6290,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-elevation-lightbox-stage {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 12px;
+  padding: 10px;
   overflow: auto;
 }
 .hub-sketch-elevation-lightbox-stage .hub-sketch-elevation {
@@ -6273,8 +6298,101 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   align-content: stretch;
 }
 .hub-sketch-elevation-lightbox-stage .hub-sketch-elevation-svg {
-  min-height: min(72dvh, 760px);
+  min-height: min(82dvh, 920px);
   aspect-ratio: auto;
+}
+.hub-sketch-elevation-finish-toggle {
+  position: absolute;
+  top: 50%;
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  z-index: 5;
+  min-height: 44px;
+  max-width: min(240px, calc(100% - 32px));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 11px 15px;
+  border: 1px solid rgba(237,246,251,.24);
+  border-radius: 999px;
+  background: rgba(13, 21, 34, .88);
+  color: #ffffff;
+  box-shadow: 0 12px 30px rgba(8, 13, 22, .24);
+  transform: translateY(-50%);
+  backdrop-filter: blur(10px);
+}
+.hub-sketch-elevation-finish-toggle:hover:not(:disabled),
+.hub-sketch-elevation-finish-toggle:focus-visible {
+  background: rgba(29, 41, 64, .94);
+  color: #ffffff;
+  outline: none;
+}
+.hub-sketch-elevation-finish-toggle:active:not(:disabled) {
+  transform: translateY(-50%) scale(.98);
+}
+.hub-sketch-elevation-finish-toggle-open {
+  right: calc(clamp(300px, 30vw, 430px) + 28px + env(safe-area-inset-right, 0px));
+  background: rgba(200, 169, 59, .96);
+  color: #070b12;
+}
+.hub-sketch-elevation-finish-panel {
+  --panel: #ffffff;
+  --panel2: #f8fafc;
+  --line: rgba(15, 23, 42, .12);
+  --text: #0f172a;
+  --muted: #475569;
+  position: absolute;
+  z-index: 6;
+  top: calc(72px + env(safe-area-inset-top, 0px));
+  right: calc(14px + env(safe-area-inset-right, 0px));
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  width: clamp(300px, 30vw, 430px);
+  max-width: calc(100% - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  min-width: 0;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid rgba(126,160,190,.32);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .95);
+  color: var(--text);
+  box-shadow: 0 18px 48px rgba(8, 13, 22, .24);
+  backdrop-filter: blur(14px);
+  overscroll-behavior: contain;
+}
+.hub-sketch-elevation-finish-panel-head {
+  position: sticky;
+  top: -10px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -10px -10px 10px;
+  padding: 10px;
+  border-bottom: 1px solid rgba(126,160,190,.24);
+  background: rgba(248, 250, 252, .96);
+  backdrop-filter: blur(14px);
+}
+.hub-sketch-elevation-finish-panel-head h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.2;
+}
+.hub-sketch-elevation-finish-panel .hub-sketch-wall-finishbar-fullscreen {
+  display: grid;
+  align-items: start;
+  justify-items: start;
+  gap: 10px;
+}
+.hub-sketch-elevation-finish-panel .hub-sketch-segmented,
+.hub-sketch-elevation-finish-panel .hub-sketch-wall-finishbar-tile {
+  max-width: 100%;
+}
+.hub-sketch-elevation-finish-panel .hub-sketch-field {
+  width: 100%;
+  min-width: min(180px, 100%);
+  grid-template-columns: minmax(76px, auto) minmax(88px, 1fr);
 }
 .hub-sketch-elevation {
   display: grid;
@@ -7398,12 +7516,51 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     bottom: calc(var(--sketch-phone-rail-h) + var(--safe-bottom) + 12px);
   }
   .hub-sketch-elevation-lightbox {
-    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    padding: 0;
   }
   .hub-sketch-elevation-lightbox-bar {
     align-items: center;
+    justify-content: flex-start;
     overflow-x: auto;
     flex-wrap: nowrap;
+    min-height: 56px;
+    padding: calc(6px + env(safe-area-inset-top, 0px)) calc(8px + env(safe-area-inset-right, 0px)) 6px calc(8px + env(safe-area-inset-left, 0px));
+  }
+  .hub-sketch-elevation-back {
+    flex: 0 0 auto;
+    padding: 10px 14px;
+  }
+  .hub-sketch-elevation-lightbox-title {
+    flex: 1 0 auto;
+    min-width: 118px;
+  }
+  .hub-sketch-elevation-lightbox-stage {
+    padding: 8px;
+  }
+  .hub-sketch-elevation-lightbox-stage .hub-sketch-elevation-svg {
+    min-height: min(72dvh, 680px);
+  }
+  .hub-sketch-elevation-finish-toggle {
+    top: auto;
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    transform: none;
+  }
+  .hub-sketch-elevation-finish-toggle:active:not(:disabled) {
+    transform: scale(.98);
+  }
+  .hub-sketch-elevation-finish-toggle-open {
+    display: none;
+  }
+  .hub-sketch-elevation-finish-panel {
+    top: auto;
+    left: calc(8px + env(safe-area-inset-left, 0px));
+    right: calc(8px + env(safe-area-inset-right, 0px));
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    width: auto;
+    max-width: none;
+    max-height: min(72dvh, 520px);
+    border-radius: 12px 12px 8px 8px;
   }
 }
 
