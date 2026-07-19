@@ -54,10 +54,19 @@ export type SketchMeasurement = {
   b: SketchMeasurementPoint
 }
 
+export type SketchFinishRegion = {
+  id?: string
+  x0Ft: number
+  y0Ft: number
+  x1Ft: number
+  y1Ft: number
+}
+
 export type SketchFinishCoverage = {
   mode?: 'full' | 'partial'
   bottomFt?: number
   heightFt?: number
+  regions?: SketchFinishRegion[]
 }
 
 export type SketchTileFinish = {
@@ -89,6 +98,7 @@ export type SketchDrywallPatchFinish = {
   yFt?: number
   widthFt?: number
   heightFt?: number
+  coverage?: SketchFinishCoverage
 }
 
 export type SketchSurfaceFinish = SketchPaintFinish | SketchTileFinish | SketchDrywallPatchFinish
@@ -177,6 +187,8 @@ export const WALL_PAINT_SWATCHES = ['#f4f1ea', '#e7ebf0', '#dbe7df', '#e9ded3', 
 const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i
 const WALL_FINISH_KEY_RE = /^\d+:\d+$/
 const tilePatternCanvasCache = new Map<string, HTMLCanvasElement>()
+const MAX_FINISH_REGIONS = 200
+const MIN_FINISH_REGION_SIZE_FT = 1 / 96
 
 export function sketchWallKey(c: number, s: number): string {
   return `${c}:${s}`
@@ -475,32 +487,129 @@ export function cleanColor(value: unknown, fallback: string): string {
   return typeof value === 'string' && HEX_COLOR_RE.test(value) ? value : fallback
 }
 
+function cleanRegionId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 && trimmed.length <= 80 ? trimmed : undefined
+}
+
+function sanitizeCoverageRegion(value: unknown): SketchFinishRegion | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Partial<SketchFinishRegion>
+  const x0 = cleanOptionalNumber(raw.x0Ft, 0, 200)
+  const x1 = cleanOptionalNumber(raw.x1Ft, 0, 200)
+  const y0 = cleanOptionalNumber(raw.y0Ft, 0, 30)
+  const y1 = cleanOptionalNumber(raw.y1Ft, 0, 30)
+  if (x0 === undefined || x1 === undefined || y0 === undefined || y1 === undefined) return null
+  const region: SketchFinishRegion = {
+    x0Ft: Math.min(x0, x1),
+    y0Ft: Math.min(y0, y1),
+    x1Ft: Math.max(x0, x1),
+    y1Ft: Math.max(y0, y1),
+  }
+  if (region.x1Ft - region.x0Ft < MIN_FINISH_REGION_SIZE_FT || region.y1Ft - region.y0Ft < MIN_FINISH_REGION_SIZE_FT) return null
+  const id = cleanRegionId(raw.id)
+  if (id) region.id = id
+  return region
+}
+
+function sanitizeCoverageRegions(value: unknown): SketchFinishRegion[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value
+    .slice(0, MAX_FINISH_REGIONS)
+    .map(sanitizeCoverageRegion)
+    .filter((region): region is SketchFinishRegion => !!region)
+}
+
 function sanitizeCoverage(value: unknown): SketchFinishCoverage | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const raw = value as Partial<SketchFinishCoverage>
   const mode = raw.mode === 'partial' ? 'partial' : raw.mode === 'full' ? 'full' : undefined
   if (!mode) return undefined
   if (mode === 'full') return { mode: 'full' }
-  return {
+  const coverage: SketchFinishCoverage = {
     mode: 'partial',
     bottomFt: cleanOptionalNumber(raw.bottomFt, 0, 30) ?? 0,
     heightFt: cleanOptionalNumber(raw.heightFt, 0.25, 30) ?? 4,
   }
+  const regions = sanitizeCoverageRegions(raw.regions)
+  if (regions !== undefined) coverage.regions = regions
+  return coverage
 }
 
 export function finishCoverageBoundsFt(surface: SketchSurfaceFinish, wallHeightFt: number): { bottomFt: number; topFt: number; full: boolean } {
   const roomHeight = Number.isFinite(wallHeightFt) && wallHeightFt > 0 ? wallHeightFt : 8
-  const coverage = surface.kind === 'drywall-patch' ? undefined : surface.coverage
+  const coverage = surface.coverage
   if (!coverage || coverage.mode !== 'partial') return { bottomFt: 0, topFt: roomHeight, full: true }
+  if (coverage.regions) {
+    const normalized = normalizeFinishRegions(coverage.regions, 200, roomHeight)
+    if (normalized.length === 0) return { bottomFt: 0, topFt: 0, full: false }
+    const bottom = Math.min(...normalized.map((region) => region.y0Ft))
+    const top = Math.max(...normalized.map((region) => region.y1Ft))
+    return { bottomFt: bottom, topFt: top, full: bottom <= 0.001 && top >= roomHeight - 0.001 }
+  }
   const bottom = Math.max(0, Math.min(roomHeight, coverage.bottomFt ?? 0))
   const height = Math.max(0.25, Math.min(roomHeight - bottom, coverage.heightFt ?? roomHeight))
   const top = Math.max(bottom, Math.min(roomHeight, bottom + height))
   return { bottomFt: bottom, topFt: top, full: bottom <= 0.001 && top >= roomHeight - 0.001 }
 }
 
+export function normalizeFinishRegions(regions: SketchFinishRegion[] | undefined, wallLengthFt: number, wallHeightFt: number): SketchFinishRegion[] {
+  const length = Number.isFinite(wallLengthFt) && wallLengthFt > 0 ? wallLengthFt : 0
+  const height = Number.isFinite(wallHeightFt) && wallHeightFt > 0 ? wallHeightFt : 8
+  if (!regions || length <= 0 || height <= 0) return []
+  return regions
+    .map((region): SketchFinishRegion | null => {
+      const x0Raw = Number(region.x0Ft)
+      const x1Raw = Number(region.x1Ft)
+      const y0Raw = Number(region.y0Ft)
+      const y1Raw = Number(region.y1Ft)
+      if (![x0Raw, x1Raw, y0Raw, y1Raw].every(Number.isFinite)) return null
+      const x0 = Math.max(0, Math.min(length, Math.min(x0Raw, x1Raw)))
+      const x1 = Math.max(0, Math.min(length, Math.max(x0Raw, x1Raw)))
+      const y0 = Math.max(0, Math.min(height, Math.min(y0Raw, y1Raw)))
+      const y1 = Math.max(0, Math.min(height, Math.max(y0Raw, y1Raw)))
+      if (x1 - x0 < MIN_FINISH_REGION_SIZE_FT || y1 - y0 < MIN_FINISH_REGION_SIZE_FT) return null
+      const out: SketchFinishRegion = { x0Ft: x0, y0Ft: y0, x1Ft: x1, y1Ft: y1 }
+      if (region.id) out.id = region.id
+      return out
+    })
+    .filter((region): region is SketchFinishRegion => !!region)
+}
+
+export function finishCoverageRegionsFt(surface: SketchSurfaceFinish, wallLengthFt: number, wallHeightFt: number): SketchFinishRegion[] {
+  const length = Number.isFinite(wallLengthFt) && wallLengthFt > 0 ? wallLengthFt : 0
+  const height = Number.isFinite(wallHeightFt) && wallHeightFt > 0 ? wallHeightFt : 8
+  if (length <= 0 || height <= 0) return []
+  if (surface.kind === 'drywall-patch') {
+    if (surface.coverage?.mode === 'partial' && surface.coverage.regions) {
+      return normalizeFinishRegions(surface.coverage.regions, length, height)
+    }
+    const patch = normalizeDrywallPatchSurface(surface)
+    return normalizeFinishRegions([{
+      x0Ft: patch.xFt ?? 0,
+      y0Ft: patch.yFt ?? 0,
+      x1Ft: (patch.xFt ?? 0) + (patch.widthFt ?? 0),
+      y1Ft: (patch.yFt ?? 0) + (patch.heightFt ?? 0),
+    }], length, height)
+  }
+  const coverage = surface.coverage
+  if (!coverage || coverage.mode !== 'partial') {
+    return [{ x0Ft: 0, y0Ft: 0, x1Ft: length, y1Ft: height }]
+  }
+  if (coverage.regions) return normalizeFinishRegions(coverage.regions, length, height)
+  const bounds = finishCoverageBoundsFt(surface, height)
+  return normalizeFinishRegions([{ x0Ft: 0, y0Ft: bounds.bottomFt, x1Ft: length, y1Ft: bounds.topFt }], length, height)
+}
+
+export function finishCoverageAreaSqft(surface: SketchSurfaceFinish, wallLengthFt: number, wallHeightFt: number): number {
+  return finishCoverageRegionsFt(surface, wallLengthFt, wallHeightFt)
+    .reduce((sum, region) => sum + Math.max(0, region.x1Ft - region.x0Ft) * Math.max(0, region.y1Ft - region.y0Ft), 0)
+}
+
 export function normalizeDrywallPatchSurface(surface?: SketchSurfaceFinish): SketchDrywallPatchFinish {
   const patch = surface?.kind === 'drywall-patch' ? surface : undefined
-  return {
+  const out: SketchDrywallPatchFinish = {
     kind: 'drywall-patch',
     baseColor: cleanColor(patch?.baseColor, DEFAULT_WALL_PAINT),
     patchColor: cleanColor(patch?.patchColor, DEFAULT_DRYWALL_PATCH_COLOR),
@@ -509,6 +618,9 @@ export function normalizeDrywallPatchSurface(surface?: SketchSurfaceFinish): Ske
     widthFt: cleanOptionalNumber(patch?.widthFt, 0.25, 200) ?? DEFAULT_DRYWALL_PATCH_WIDTH_FT,
     heightFt: cleanOptionalNumber(patch?.heightFt, 0.25, 30) ?? DEFAULT_DRYWALL_PATCH_HEIGHT_FT,
   }
+  const coverage = sanitizeCoverage(patch?.coverage)
+  if (coverage) out.coverage = coverage
+  return out
 }
 
 function cleanId(value: unknown): string | undefined {

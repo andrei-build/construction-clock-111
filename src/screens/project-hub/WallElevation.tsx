@@ -11,12 +11,16 @@ import {
   DEFAULT_WALL_PAINT,
   cleanColor,
   finishCoverageBoundsFt,
+  finishCoverageRegionsFt,
+  normalizeFinishRegions,
   normalizeDrywallPatchSurface,
+  normalizeFinishes,
   normalizeTileSurface,
   resizeSketchSegmentToLength,
   type Opening,
   type Pt,
   type Sketch3DModel,
+  type SketchFinishRegion,
   type SketchMeasurement,
   type SketchSegmentResizeAnchor,
   type SketchSegmentResizeConflict,
@@ -60,6 +64,7 @@ interface WallElevationProps {
   heightFt: number
   finish: SketchSurfaceFinish
   canEdit?: boolean
+  compact?: boolean
   snapStepFt?: number
   codeCheckEnabled?: boolean
   onMeasurementsChange?: (measurements: SketchMeasurement[]) => void
@@ -106,6 +111,15 @@ type ElevationPlacedItem = {
   filler: boolean
   layer?: 'base' | 'wall'
 }
+type FinishRegionHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+type FinishRegionDraftField = 'left' | 'bottom' | 'width' | 'height'
+type FinishRegionDrag =
+  | { type: 'draw'; pointerId: number; start: ElevationPoint; current: ElevationPoint }
+  | { type: 'move'; pointerId: number; index: number; start: ElevationPoint; current: ElevationPoint; original: SketchFinishRegion }
+  | { type: 'resize'; pointerId: number; index: number; handle: FinishRegionHandle; start: ElevationPoint; current: ElevationPoint; original: SketchFinishRegion }
+
+const FINISH_REGION_MIN_FT = 1 / 96
+const FINISH_REGION_HANDLES: FinishRegionHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
 function modelCellFt(model: Sketch3DModel): number {
   return Number.isFinite(model.cellFt) && model.cellFt > 0 ? model.cellFt : CELL_FT
@@ -149,6 +163,54 @@ function readableSvgAngle(dx: number, dy: number): number {
 
 function wallKey(wall: WallElevationWall): string {
   return `${wall.c}:${wall.s}`
+}
+
+function finishRegionId(): string {
+  return `finish-region-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function finishRegionKey(region: SketchFinishRegion, index: number): string {
+  return region.id ?? `${index}:${region.x0Ft}:${region.y0Ft}:${region.x1Ft}:${region.y1Ft}`
+}
+
+function finishRegionFromPoints(a: ElevationPoint, b: ElevationPoint, id?: string): SketchFinishRegion {
+  const region: SketchFinishRegion = {
+    x0Ft: Math.min(a.x, b.x),
+    y0Ft: Math.min(a.y, b.y),
+    x1Ft: Math.max(a.x, b.x),
+    y1Ft: Math.max(a.y, b.y),
+  }
+  if (id) region.id = id
+  return region
+}
+
+function finishRegionArea(region: SketchFinishRegion): number {
+  return Math.max(0, region.x1Ft - region.x0Ft) * Math.max(0, region.y1Ft - region.y0Ft)
+}
+
+function moveFinishRegion(region: SketchFinishRegion, dx: number, dy: number, wallLengthFt: number, wallHeightFt: number): SketchFinishRegion {
+  const width = Math.max(FINISH_REGION_MIN_FT, region.x1Ft - region.x0Ft)
+  const height = Math.max(FINISH_REGION_MIN_FT, region.y1Ft - region.y0Ft)
+  const x0 = Math.max(0, Math.min(Math.max(0, wallLengthFt - width), region.x0Ft + dx))
+  const y0 = Math.max(0, Math.min(Math.max(0, wallHeightFt - height), region.y0Ft + dy))
+  const out: SketchFinishRegion = { x0Ft: x0, y0Ft: y0, x1Ft: x0 + width, y1Ft: y0 + height }
+  if (region.id) out.id = region.id
+  return out
+}
+
+function resizeFinishRegion(region: SketchFinishRegion, handle: FinishRegionHandle, dx: number, dy: number): SketchFinishRegion {
+  const out: SketchFinishRegion = { ...region }
+  if (handle.includes('w')) out.x0Ft = region.x0Ft + dx
+  if (handle.includes('e')) out.x1Ft = region.x1Ft + dx
+  if (handle.includes('s')) out.y0Ft = region.y0Ft + dy
+  if (handle.includes('n')) out.y1Ft = region.y1Ft + dy
+  return out
+}
+
+function finishRegionHandlePoint(region: SketchFinishRegion, handle: FinishRegionHandle): ElevationPoint {
+  const x = handle.includes('w') ? region.x0Ft : handle.includes('e') ? region.x1Ft : (region.x0Ft + region.x1Ft) / 2
+  const y = handle.includes('s') ? region.y0Ft : handle.includes('n') ? region.y1Ft : (region.y0Ft + region.y1Ft) / 2
+  return { x, y }
 }
 
 function itemAxes(item: SketchPlacedCatalogItem): { side: { x: number; z: number }; forward: { x: number; z: number } } {
@@ -301,7 +363,7 @@ function elevationOpeningDims(
   return dims
 }
 
-export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, snapStepFt = 1 / 96, codeCheckEnabled = true, onMeasurementsChange, onModelChange }: WallElevationProps) {
+export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, compact = false, snapStepFt = 1 / 96, codeCheckEnabled = true, onMeasurementsChange, onModelChange }: WallElevationProps) {
   const { t } = useI18n()
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [measureTool, setMeasureTool] = useState(false)
@@ -309,6 +371,9 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const [draft, setDraft] = useState<ElevationPoint | null>(null)
   const [hover, setHover] = useState<ElevationPoint | null>(null)
   const [selectedMeasurementIndex, setSelectedMeasurementIndex] = useState<number | null>(null)
+  const [selectedRegionIndex, setSelectedRegionIndex] = useState<number | null>(null)
+  const [regionDrag, setRegionDrag] = useState<FinishRegionDrag | null>(null)
+  const [regionDrafts, setRegionDrafts] = useState<Partial<Record<FinishRegionDraftField, string>>>({})
   const [wallLengthDraft, setWallLengthDraft] = useState<string | null>(null)
   const [wallLengthConflict, setWallLengthConflict] = useState<SketchSegmentResizeConflict | null>(null)
   const cellFt = modelCellFt(model)
@@ -334,6 +399,33 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const tileH = Math.max(1, tile?.tileHIn ?? 24) / 12
   const grout = Math.max(0, tile?.groutIn ?? 0.125) / 12
   const currentWallKey = wallKey(wall)
+  const explicitFinishRegions = finish.coverage?.mode === 'partial' && finish.coverage.regions !== undefined
+    ? normalizeFinishRegions(finish.coverage.regions, lengthFt, height)
+    : null
+  const editableFinishRegions = explicitFinishRegions ?? []
+  const regionEditingEnabled = canEdit && !compact && !measureTool && finish.coverage?.mode === 'partial'
+  const dragPreviewRegions = useMemo(() => {
+    if (!regionDrag) return editableFinishRegions
+    if (regionDrag.type === 'draw') {
+      const region = normalizeFinishRegions([finishRegionFromPoints(regionDrag.start, regionDrag.current)], lengthFt, height)[0]
+      return region ? [...editableFinishRegions, region] : editableFinishRegions
+    }
+    const dx = regionDrag.current.x - regionDrag.start.x
+    const dy = regionDrag.current.y - regionDrag.start.y
+    const nextRegion = regionDrag.type === 'move'
+      ? moveFinishRegion(regionDrag.original, dx, dy, lengthFt, height)
+      : resizeFinishRegion(regionDrag.original, regionDrag.handle, dx, dy)
+    const normalized = normalizeFinishRegions([nextRegion], lengthFt, height)[0]
+    if (!normalized) return editableFinishRegions
+    return editableFinishRegions.map((region, index) => (index === regionDrag.index ? normalized : region))
+  }, [editableFinishRegions, height, lengthFt, regionDrag])
+  const finishRegions = regionEditingEnabled && (explicitFinishRegions !== null || regionDrag)
+    ? dragPreviewRegions
+    : finishCoverageRegionsFt(finish, lengthFt, height)
+  const selectedRegion = selectedRegionIndex !== null ? editableFinishRegions[selectedRegionIndex] ?? null : null
+  const finishRegionSqft = finishRegions.reduce((sum, region) => sum + finishRegionArea(region), 0)
+  const finishLabel = t(finish.kind === 'tile' ? 'hub_sketch_3d_tile' : finish.kind === 'drywall-patch' ? 'hub_sketch_3d_drywall_patch' : 'hub_sketch_3d_paint')
+  const showRegionHint = regionEditingEnabled && explicitFinishRegions !== null && editableFinishRegions.length === 0 && !regionDrag
   const codeClearanceChecks = useMemo(
     () => (codeCheckEnabled ? getCodeClearanceChecks(model) : []),
     [model, codeCheckEnabled],
@@ -374,6 +466,30 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const wallDimInputW = Math.min(Math.max(1.55, lengthFt * 0.24), Math.max(1.2, lengthFt))
   const wallDimInputH = 0.42
 
+  const snapToGuide = (value: number, guides: number[], threshold: number): number => {
+    let best = value
+    let bestDistance = threshold
+    guides.forEach((guide) => {
+      const distance = Math.abs(value - guide)
+      if (distance <= bestDistance) {
+        best = guide
+        bestDistance = distance
+      }
+    })
+    return best
+  }
+
+  const snapPointToGuides = (point: ElevationPoint): ElevationPoint => {
+    const threshold = Math.max(snapStepFt * 2, 1 / 24)
+    const openingBoxes = openings.map((opening) => elevationOpeningBox(opening, lengthFt, height))
+    const xGuides = [0, lengthFt, ...openingBoxes.flatMap((box) => [box.x, box.x + box.width])]
+    const yGuides = [0, height, ...openingBoxes.flatMap((box) => [box.floor, box.floor + box.openingHeight])]
+    return {
+      x: snapToGuide(point.x, xGuides, threshold),
+      y: snapToGuide(point.y, yGuides, threshold),
+    }
+  }
+
   const svgPoint = (clientX: number, clientY: number): ElevationPoint | null => {
     const svg = svgRef.current
     const matrix = svg?.getScreenCTM()
@@ -382,14 +498,120 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     point.x = clientX
     point.y = clientY
     const local = point.matrixTransform(matrix.inverse())
-    return {
+    return snapPointToGuides({
       x: snapLengthFt(Math.max(0, Math.min(lengthFt, local.x)), snapStepFt),
       y: snapLengthFt(Math.max(0, Math.min(height, height - local.y)), snapStepFt),
-    }
+    })
   }
 
   const updateMeasurements = (nextMeasurements: SketchMeasurement[]) => {
     onMeasurementsChange?.(nextMeasurements)
+  }
+
+  const updateFinishRegions = (regions: SketchFinishRegion[], nextSelectedIndex: number | null = selectedRegionIndex) => {
+    if (!onModelChange) return
+    const normalizedRegions = normalizeFinishRegions(regions, lengthFt, height)
+    const currentCoverage = finish.coverage?.mode === 'partial'
+      ? finish.coverage
+      : { mode: 'partial' as const, bottomFt: 0, heightFt: Math.min(4, height) }
+    const nextSurface = {
+      ...finish,
+      coverage: {
+        ...currentCoverage,
+        mode: 'partial' as const,
+        regions: normalizedRegions,
+      },
+    } as SketchSurfaceFinish
+    const nextFinishes = normalizeFinishes(model.finishes)
+    onModelChange({
+      ...model,
+      finishes: {
+        ...nextFinishes,
+        wallFinishes: {
+          ...nextFinishes.wallFinishes,
+          [currentWallKey]: nextSurface,
+        },
+      },
+    })
+    setSelectedRegionIndex(nextSelectedIndex !== null && normalizedRegions[nextSelectedIndex] ? nextSelectedIndex : null)
+    setRegionDrafts({})
+  }
+
+  const applyRegionDrag = (drag: FinishRegionDrag): { regions: SketchFinishRegion[]; selectedIndex: number | null } | null => {
+    if (drag.type === 'draw') {
+      const region = normalizeFinishRegions([finishRegionFromPoints(drag.start, drag.current, finishRegionId())], lengthFt, height)[0]
+      if (!region) return null
+      return { regions: [...editableFinishRegions, region], selectedIndex: editableFinishRegions.length }
+    }
+    const dx = drag.current.x - drag.start.x
+    const dy = drag.current.y - drag.start.y
+    const nextRegion = drag.type === 'move'
+      ? moveFinishRegion(drag.original, dx, dy, lengthFt, height)
+      : resizeFinishRegion(drag.original, drag.handle, dx, dy)
+    const normalized = normalizeFinishRegions([nextRegion], lengthFt, height)[0]
+    if (!normalized || !editableFinishRegions[drag.index]) return null
+    return {
+      regions: editableFinishRegions.map((region, index) => (index === drag.index ? normalized : region)),
+      selectedIndex: drag.index,
+    }
+  }
+
+  const removeSelectedRegion = () => {
+    if (selectedRegionIndex === null || !editableFinishRegions[selectedRegionIndex]) return
+    updateFinishRegions(editableFinishRegions.filter((_, index) => index !== selectedRegionIndex), null)
+  }
+
+  const regionDraftValue = (field: FinishRegionDraftField, fallbackFt: number): string => regionDrafts[field] ?? formatLength(fallbackFt)
+
+  const commitRegionDraft = (field: FinishRegionDraftField) => {
+    if (!selectedRegion || selectedRegionIndex === null) return
+    const fallback = field === 'left'
+      ? selectedRegion.x0Ft
+      : field === 'bottom'
+        ? selectedRegion.y0Ft
+        : field === 'width'
+          ? selectedRegion.x1Ft - selectedRegion.x0Ft
+          : selectedRegion.y1Ft - selectedRegion.y0Ft
+    const raw = regionDrafts[field] ?? formatLength(fallback)
+    const parsedIn = parseFeetInches(raw)
+    setRegionDrafts((current) => {
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+    if (!Number.isFinite(parsedIn)) return
+    const parsed = parsedIn / 12
+    const width = Math.max(FINISH_REGION_MIN_FT, selectedRegion.x1Ft - selectedRegion.x0Ft)
+    const regionHeight = Math.max(FINISH_REGION_MIN_FT, selectedRegion.y1Ft - selectedRegion.y0Ft)
+    let nextRegion: SketchFinishRegion = { ...selectedRegion }
+    if (field === 'left') {
+      const x0 = Math.max(0, Math.min(Math.max(0, lengthFt - width), parsed))
+      nextRegion = { ...nextRegion, x0Ft: x0, x1Ft: x0 + width }
+    } else if (field === 'bottom') {
+      const y0 = Math.max(0, Math.min(Math.max(0, height - regionHeight), parsed))
+      nextRegion = { ...nextRegion, y0Ft: y0, y1Ft: y0 + regionHeight }
+    } else if (field === 'width') {
+      const nextWidth = Math.max(FINISH_REGION_MIN_FT, Math.min(Math.max(FINISH_REGION_MIN_FT, lengthFt - selectedRegion.x0Ft), parsed))
+      nextRegion = { ...nextRegion, x1Ft: selectedRegion.x0Ft + nextWidth }
+    } else {
+      const nextHeight = Math.max(FINISH_REGION_MIN_FT, Math.min(Math.max(FINISH_REGION_MIN_FT, height - selectedRegion.y0Ft), parsed))
+      nextRegion = { ...nextRegion, y1Ft: selectedRegion.y0Ft + nextHeight }
+    }
+    updateFinishRegions(editableFinishRegions.map((region, index) => (index === selectedRegionIndex ? nextRegion : region)), selectedRegionIndex)
+  }
+
+  const regionDraftKeyDown = (field: FinishRegionDraftField) => (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      commitRegionDraft(field)
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      setRegionDrafts((current) => {
+        const next = { ...current }
+        delete next[field]
+        return next
+      })
+    }
   }
 
   const beginWallLengthEdit = () => {
@@ -398,6 +620,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     setWallLengthConflict(null)
     setSelectedMeasurementIndex(null)
     setDraft(null)
+    setSelectedRegionIndex(null)
   }
 
   const cancelWallLengthEdit = () => {
@@ -427,6 +650,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     if (!measurements[index]) return
     updateMeasurements(measurements.filter((_, i) => i !== index))
     setSelectedMeasurementIndex(null)
+    setSelectedRegionIndex(null)
     setDraft(null)
   }
 
@@ -434,6 +658,9 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     setDraft(null)
     setHover(null)
     setSelectedMeasurementIndex(null)
+    setSelectedRegionIndex(null)
+    setRegionDrafts({})
+    setRegionDrag(null)
     setWallLengthDraft(null)
     setWallLengthConflict(null)
   }, [currentWallKey])
@@ -446,6 +673,13 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }, [measureTool])
 
   useEffect(() => {
+    if (selectedRegionIndex !== null && !editableFinishRegions[selectedRegionIndex]) {
+      setSelectedRegionIndex(null)
+      setRegionDrafts({})
+    }
+  }, [editableFinishRegions, selectedRegionIndex])
+
+  useEffect(() => {
     if (!canEdit) return
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target
@@ -456,6 +690,11 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
         event.preventDefault()
         return
       }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedRegionIndex !== null) {
+        removeSelectedRegion()
+        event.preventDefault()
+        return
+      }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedMeasurementIndex !== null) {
         removeMeasurement(selectedMeasurementIndex)
         event.preventDefault()
@@ -463,11 +702,69 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, measureTool, selectedMeasurementIndex, model, onMeasurementsChange])
+  }, [canEdit, measureTool, selectedMeasurementIndex, selectedRegionIndex, model, onMeasurementsChange, editableFinishRegions])
+
+  const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (!regionEditingEnabled || !onModelChange) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    const point = svgPoint(event.clientX, event.clientY)
+    if (!point) return
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setSelectedRegionIndex(null)
+    setSelectedMeasurementIndex(null)
+    setDraft(null)
+    setRegionDrag({ type: 'draw', pointerId: event.pointerId, start: point, current: point })
+    event.preventDefault()
+  }
 
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (regionDrag && regionDrag.pointerId === event.pointerId) {
+      const point = svgPoint(event.clientX, event.clientY)
+      if (point) setRegionDrag({ ...regionDrag, current: point })
+      event.preventDefault()
+      return
+    }
     if (!canEdit || !measureTool) return
     setHover(svgPoint(event.clientX, event.clientY))
+  }
+
+  const handlePointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (!regionDrag || regionDrag.pointerId !== event.pointerId) return
+    const point = svgPoint(event.clientX, event.clientY)
+    const finalDrag = point ? { ...regionDrag, current: point } : regionDrag
+    const applied = applyRegionDrag(finalDrag)
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    setRegionDrag(null)
+    if (applied) updateFinishRegions(applied.regions, applied.selectedIndex)
+    event.preventDefault()
+  }
+
+  const startRegionMove = (index: number, region: SketchFinishRegion) => (event: ReactPointerEvent<SVGRectElement>) => {
+    if (!regionEditingEnabled || !onModelChange) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    const point = svgPoint(event.clientX, event.clientY)
+    if (!point) return
+    svgRef.current?.setPointerCapture?.(event.pointerId)
+    setSelectedRegionIndex(index)
+    setSelectedMeasurementIndex(null)
+    setDraft(null)
+    setRegionDrag({ type: 'move', pointerId: event.pointerId, index, start: point, current: point, original: region })
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+  const startRegionResize = (index: number, region: SketchFinishRegion, handle: FinishRegionHandle) => (event: ReactPointerEvent<SVGRectElement>) => {
+    if (!regionEditingEnabled || !onModelChange) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    const point = svgPoint(event.clientX, event.clientY)
+    if (!point) return
+    svgRef.current?.setPointerCapture?.(event.pointerId)
+    setSelectedRegionIndex(index)
+    setSelectedMeasurementIndex(null)
+    setDraft(null)
+    setRegionDrag({ type: 'resize', pointerId: event.pointerId, index, handle, start: point, current: point, original: region })
+    event.preventDefault()
+    event.stopPropagation()
   }
 
   const handleClick = (event: ReactMouseEvent<SVGSVGElement>) => {
@@ -476,6 +773,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     if (!point) return
     setShowMeasurements(true)
     setSelectedMeasurementIndex(null)
+    setSelectedRegionIndex(null)
     if (!draft) {
       setDraft(point)
       return
@@ -501,7 +799,8 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }
 
   return (
-    <div className="hub-sketch-elevation">
+    <div className={compact ? 'hub-sketch-elevation hub-sketch-elevation-compact' : 'hub-sketch-elevation'}>
+      {!compact && (
         <div className="hub-sketch-elevation-meta">
         <button
           type="button"
@@ -514,8 +813,11 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
         <span>{`${t('hub_sketch_dim_height_short')}: ${formatLength(height)}`}</span>
         <span>{`${t('hub_sketch_3d_openings')}: ${openings.length}`}</span>
         {!finishCoverage.full && <span>{`${t('hub_sketch_finish_coverage')}: ${formatLength(finishCoverage.topFt - finishCoverage.bottomFt)}`}</span>}
+        {finishRegions.length > 0 && <span>{`${t('hub_sketch_finish_region_area')}: ${finishRegionSqft.toFixed(1)} ft²`}</span>}
         {wallCabinetCount > 0 && <span>{`${t('hub_sketch_tool_cabinet')}: ${wallCabinetCount}`}</span>}
       </div>
+      )}
+      {!compact && (
       <div className="hub-sketch-elevation-tools">
         {canEdit && (
           <button
@@ -540,7 +842,60 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           <span>{t('hub_sketch_measurements')}</span>
         </label>
       </div>
-      {wallLengthConflict && wallLengthDraft !== null && (
+      )}
+      {!compact && selectedRegion && (
+        <div className="hub-sketch-elevation-region-controls" aria-label={t('hub_sketch_finish_region_controls')}>
+          <span className="hub-sketch-elevation-region-title">{t('hub_sketch_finish_region_controls')}</span>
+          <label className="hub-sketch-field">
+            <span className="muted">{t('hub_sketch_drywall_x')}</span>
+            <input
+              type="text"
+              inputMode="text"
+              value={regionDraftValue('left', selectedRegion.x0Ft)}
+              onChange={(event) => setRegionDrafts((current) => ({ ...current, left: event.target.value }))}
+              onBlur={() => commitRegionDraft('left')}
+              onKeyDown={regionDraftKeyDown('left')}
+            />
+          </label>
+          <label className="hub-sketch-field">
+            <span className="muted">{t('hub_sketch_finish_from_floor')}</span>
+            <input
+              type="text"
+              inputMode="text"
+              value={regionDraftValue('bottom', selectedRegion.y0Ft)}
+              onChange={(event) => setRegionDrafts((current) => ({ ...current, bottom: event.target.value }))}
+              onBlur={() => commitRegionDraft('bottom')}
+              onKeyDown={regionDraftKeyDown('bottom')}
+            />
+          </label>
+          <label className="hub-sketch-field">
+            <span className="muted">{t('hub_sketch_width')}</span>
+            <input
+              type="text"
+              inputMode="text"
+              value={regionDraftValue('width', selectedRegion.x1Ft - selectedRegion.x0Ft)}
+              onChange={(event) => setRegionDrafts((current) => ({ ...current, width: event.target.value }))}
+              onBlur={() => commitRegionDraft('width')}
+              onKeyDown={regionDraftKeyDown('width')}
+            />
+          </label>
+          <label className="hub-sketch-field">
+            <span className="muted">{t('hub_sketch_height')}</span>
+            <input
+              type="text"
+              inputMode="text"
+              value={regionDraftValue('height', selectedRegion.y1Ft - selectedRegion.y0Ft)}
+              onChange={(event) => setRegionDrafts((current) => ({ ...current, height: event.target.value }))}
+              onBlur={() => commitRegionDraft('height')}
+              onKeyDown={regionDraftKeyDown('height')}
+            />
+          </label>
+          <button type="button" className="btn ghost small" onClick={removeSelectedRegion}>
+            {t('hub_sketch_finish_region_delete')}
+          </button>
+        </div>
+      )}
+      {!compact && wallLengthConflict && wallLengthDraft !== null && (
         <div className="hub-sketch-elevation-conflict" role="alertdialog" aria-live="polite">
           <span>{t('hub_sketch_dimension_conflict_prompt')}</span>
           <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applyWallLengthDraft('end')}>
@@ -554,7 +909,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           </button>
         </div>
       )}
-      {codeCheckEnabled && wallCodeViolations.length > 0 && (
+      {!compact && codeCheckEnabled && wallCodeViolations.length > 0 && (
         <div className="hub-sketch-elevation-code-list" role="status" aria-live="polite">
           {wallCodeViolations.slice(0, 3).map((check) => (
             <span key={check.id} className="hub-sketch-code-chip">
@@ -565,12 +920,21 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
       )}
       <svg
         ref={svgRef}
-        className="hub-sketch-elevation-svg"
+        className={[
+          'hub-sketch-elevation-svg',
+          compact ? 'hub-sketch-elevation-svg-compact' : '',
+          regionEditingEnabled ? 'hub-sketch-elevation-svg-region-draw' : '',
+        ].filter(Boolean).join(' ')}
         viewBox={viewBox}
         role="img"
         aria-label={t('hub_sketch_3d_wall_elevation')}
+        onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
-        onPointerLeave={() => setHover(null)}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onPointerLeave={() => {
+          if (!regionDrag) setHover(null)
+        }}
         onClick={handleClick}
       >
         <defs>
@@ -585,25 +949,20 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           )}
         </defs>
         <rect className="hub-sketch-elevation-wall" x={0} y={0} width={lengthFt} height={height} fill={baseFill} />
-        {patch ? (
+        {finishRegions.map((region, index) => (
           <rect
-            className="hub-sketch-elevation-drywall-patch"
-            x={Math.max(0, Math.min(lengthFt - Math.min(lengthFt, patch.widthFt ?? 0), patch.xFt ?? 0))}
-            y={height - Math.max(0, Math.min(height, (patch.yFt ?? 0) + (patch.heightFt ?? 0)))}
-            width={Math.min(lengthFt, patch.widthFt ?? 0)}
-            height={Math.min(height, patch.heightFt ?? 0)}
+            key={`finish-${finishRegionKey(region, index)}`}
+            className={[
+              patch ? 'hub-sketch-elevation-drywall-patch' : 'hub-sketch-elevation-finish',
+              finishCoverage.full && finishRegions.length === 1 ? '' : 'hub-sketch-elevation-finish-partial',
+            ].filter(Boolean).join(' ')}
+            x={region.x0Ft}
+            y={height - region.y1Ft}
+            width={Math.max(0.001, region.x1Ft - region.x0Ft)}
+            height={Math.max(0.001, region.y1Ft - region.y0Ft)}
             fill={surfaceFill}
           />
-        ) : (
-          <rect
-            className={finishCoverage.full ? 'hub-sketch-elevation-finish' : 'hub-sketch-elevation-finish hub-sketch-elevation-finish-partial'}
-            x={0}
-            y={height - finishCoverage.topFt}
-            width={lengthFt}
-            height={Math.max(0.001, finishCoverage.topFt - finishCoverage.bottomFt)}
-            fill={surfaceFill}
-          />
-        )}
+        ))}
         <g className="hub-sketch-elevation-grid">
           {ticks(lengthFt, 0.5).map((x) => (
             <line key={`x${x}`} x1={x} y1={0} x2={x} y2={height} className={Math.abs(x - Math.round(x)) < 0.001 ? 'major' : undefined} />
@@ -612,6 +971,14 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             <line key={`y${y}`} x1={0} y1={height - y} x2={lengthFt} y2={height - y} className={Math.abs(y - Math.round(y)) < 0.001 ? 'major' : undefined} />
           ))}
         </g>
+        {showRegionHint && (
+          <g className="hub-sketch-elevation-region-hint" pointerEvents="none">
+            <rect x={Math.max(0.2, lengthFt * 0.08)} y={Math.max(0.2, height * 0.38)} width={Math.max(1.4, lengthFt * 0.84)} height={Math.max(0.55, height * 0.16)} rx={0.08} />
+            <text x={lengthFt / 2} y={height / 2} textAnchor="middle" dominantBaseline="central">
+              {t('hub_sketch_finish_region_hint').replace('{finish}', finishLabel.toLocaleLowerCase())}
+            </text>
+          </g>
+        )}
         <g className="hub-sketch-elevation-cabinet-guides">
           {[
             { key: 'toe', value: CABINET_TOE_KICK_IN / 12, label: t('hub_sketch_cabinet_toe_guide') },
@@ -768,6 +1135,52 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </g>
           )
         })}
+        {regionEditingEnabled && dragPreviewRegions.map((region, index) => {
+          const selected = selectedRegionIndex === index
+          const handleSize = Math.max(0.12, Math.min(0.22, Math.min(lengthFt, height) * 0.03))
+          return (
+            <g
+              key={`fr-edit-${finishRegionKey(region, index)}`}
+              className={selected ? 'hub-sketch-elevation-region hub-sketch-elevation-region-selected' : 'hub-sketch-elevation-region'}
+              onClick={(event) => {
+                event.stopPropagation()
+                setSelectedRegionIndex(index)
+                setSelectedMeasurementIndex(null)
+              }}
+            >
+              <rect
+                className="hub-sketch-elevation-region-hit"
+                x={region.x0Ft}
+                y={height - region.y1Ft}
+                width={Math.max(0.001, region.x1Ft - region.x0Ft)}
+                height={Math.max(0.001, region.y1Ft - region.y0Ft)}
+                onPointerDown={startRegionMove(index, region)}
+              />
+              <rect
+                className="hub-sketch-elevation-region-outline"
+                x={region.x0Ft}
+                y={height - region.y1Ft}
+                width={Math.max(0.001, region.x1Ft - region.x0Ft)}
+                height={Math.max(0.001, region.y1Ft - region.y0Ft)}
+              />
+              {selected && FINISH_REGION_HANDLES.map((handle) => {
+                const point = finishRegionHandlePoint(region, handle)
+                return (
+                  <rect
+                    key={handle}
+                    className={`hub-sketch-elevation-region-handle hub-sketch-elevation-region-handle-${handle}`}
+                    x={point.x - handleSize / 2}
+                    y={height - point.y - handleSize / 2}
+                    width={handleSize}
+                    height={handleSize}
+                    rx={handleSize * 0.18}
+                    onPointerDown={startRegionResize(index, region, handle)}
+                  />
+                )
+              })}
+            </g>
+          )
+        })}
         {showMeasurements && measurementLines.map(({ index, line }) => {
           const selected = selectedMeasurementIndex === index
           const deleteSize = 0.34
@@ -781,6 +1194,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
                 if (!canEdit) return
                 event.stopPropagation()
                 setSelectedMeasurementIndex(index)
+                setSelectedRegionIndex(null)
                 setDraft(null)
               }}
             >

@@ -5745,10 +5745,130 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   flex-wrap: wrap;
   gap: 8px;
 }
+.hub-sketch-wall-finishbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(126,160,190,.22);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, .95);
+}
+.hub-sketch-wall-finishbar-fullscreen {
+  flex: 1 1 520px;
+  min-width: min(520px, 100%);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.hub-sketch-wall-finishbar-swatches,
+.hub-sketch-wall-finishbar-tile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.hub-sketch-wall-finishbar .hub-sketch-field {
+  width: auto;
+  min-width: 160px;
+  grid-template-columns: auto minmax(86px, 1fr);
+  margin: 0;
+}
+.hub-sketch-wall-finishbar-color {
+  min-width: 132px !important;
+}
+.hub-sketch-wall-elevation-mini {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 4;
+  width: min(310px, calc(100% - 24px));
+  pointer-events: none;
+}
+.hub-sketch-wall-elevation-mini-button {
+  width: 100%;
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid rgba(37, 99, 235, .34);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .16);
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 850;
+  text-align: left;
+  cursor: zoom-in;
+  pointer-events: auto;
+}
+.hub-sketch-wall-elevation-mini-button:hover,
+.hub-sketch-wall-elevation-mini-button:focus-visible {
+  border-color: rgba(37, 99, 235, .72);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .16), 0 12px 28px rgba(15, 23, 42, .18);
+  outline: none;
+}
+.hub-sketch-elevation-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1120;
+  display: flex;
+  flex-direction: column;
+  background: #eef2f7;
+}
+.hub-sketch-elevation-lightbox-bar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-height: 34dvh;
+  overflow: auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(126,160,190,.34);
+  background: rgba(248, 250, 252, .98);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .12);
+}
+.hub-sketch-elevation-lightbox-title {
+  display: grid;
+  gap: 2px;
+  min-width: 150px;
+  margin-right: 4px;
+}
+.hub-sketch-elevation-lightbox-close {
+  width: 36px;
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(126,160,190,.34);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.hub-sketch-elevation-lightbox-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+.hub-sketch-elevation-lightbox-stage .hub-sketch-elevation {
+  min-height: 100%;
+  align-content: stretch;
+}
+.hub-sketch-elevation-lightbox-stage .hub-sketch-elevation-svg {
+  min-height: min(72dvh, 760px);
+  aspect-ratio: auto;
+}
 .hub-sketch-elevation {
   display: grid;
   gap: 7px;
   min-width: 0;
+}
+.hub-sketch-elevation-compact {
+  gap: 0;
 }
 .hub-sketch-elevation-meta {
   display: flex;
@@ -5821,6 +5941,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fafc;
+}
+.hub-sketch-elevation-svg-compact {
+  min-height: 96px;
+  aspect-ratio: 16 / 7;
+}
+.hub-sketch-elevation-svg-region-draw {
+  cursor: crosshair;
 }
 .hub-sketch-elevation-wall {
   opacity: .98;
@@ -5904,6 +6031,39 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border-color: #2563eb;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, .16);
 }
+.hub-sketch-elevation-region-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(37, 99, 235, .24);
+  border-radius: 8px;
+  background: rgba(239, 246, 255, .72);
+}
+.hub-sketch-elevation-region-title {
+  align-self: center;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 900;
+}
+.hub-sketch-elevation-region-controls .hub-sketch-field {
+  width: auto;
+  min-width: 140px;
+  grid-template-columns: auto minmax(88px, 1fr);
+  margin: 0;
+}
+.hub-sketch-elevation-region-hint rect {
+  fill: rgba(15, 23, 42, .72);
+  stroke: rgba(255,255,255,.72);
+  stroke-width: .03;
+}
+.hub-sketch-elevation-region-hint text {
+  fill: #ffffff;
+  stroke: none;
+  font-size: .3px;
+  font-weight: 900;
+}
 .hub-sketch-elevation-door {
   fill: rgba(180, 83, 9, .75);
   stroke: #7c2d12;
@@ -5982,6 +6142,48 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: rgba(38, 63, 49, .82);
   stroke-width: .025;
   fill: none;
+}
+.hub-sketch-elevation-region-hit {
+  fill: transparent;
+  stroke: transparent;
+  cursor: move;
+  pointer-events: auto;
+}
+.hub-sketch-elevation-region-outline {
+  fill: none;
+  stroke: #2563eb;
+  stroke-width: .055;
+  stroke-dasharray: .14 .09;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.hub-sketch-elevation-region-selected .hub-sketch-elevation-region-outline {
+  stroke: #0f766e;
+  stroke-width: .075;
+  stroke-dasharray: none;
+}
+.hub-sketch-elevation-region-handle {
+  fill: #ffffff;
+  stroke: #0f766e;
+  stroke-width: .035;
+  vector-effect: non-scaling-stroke;
+  pointer-events: auto;
+}
+.hub-sketch-elevation-region-handle-n,
+.hub-sketch-elevation-region-handle-s {
+  cursor: ns-resize;
+}
+.hub-sketch-elevation-region-handle-e,
+.hub-sketch-elevation-region-handle-w {
+  cursor: ew-resize;
+}
+.hub-sketch-elevation-region-handle-ne,
+.hub-sketch-elevation-region-handle-sw {
+  cursor: nesw-resize;
+}
+.hub-sketch-elevation-region-handle-nw,
+.hub-sketch-elevation-region-handle-se {
+  cursor: nwse-resize;
 }
 .hub-sketch-elevation-svg text {
   fill: #0f172a;

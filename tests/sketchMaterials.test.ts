@@ -75,6 +75,54 @@ describe('sketch material area aggregation', () => {
     expect(facts.paintAreaSqft).toBe(240)
   })
 
+  it('sums tile finish rectangles and clips them to the wall bounds', () => {
+    const facts = collectSketchMaterialFacts({
+      ...rectangleModel,
+      finishes: {
+        walls: { kind: 'paint', color: '#ffffff' },
+        wallFinishes: {
+          '0:0': {
+            kind: 'tile',
+            tileWIn: 12,
+            tileHIn: 24,
+            coverage: {
+              mode: 'partial',
+              regions: [
+                { x0Ft: 1, y0Ft: 1, x1Ft: 4, y1Ft: 3 },
+                { x0Ft: 8, y0Ft: 0, x1Ft: 14, y1Ft: 10 },
+              ],
+            },
+          },
+        },
+      },
+    })
+
+    expect(facts.tileAreas).toHaveLength(1)
+    expect(facts.tileAreaSqft).toBe(22)
+    expect(facts.tileAreas[0].areaSqft).toBe(22)
+    expect(facts.paintAreaSqft).toBe(298)
+  })
+
+  it('keeps legacy partial wall coverage without regions as a full-width vertical band', () => {
+    const facts = collectSketchMaterialFacts({
+      ...rectangleModel,
+      finishes: {
+        walls: { kind: 'paint', color: '#ffffff' },
+        wallFinishes: {
+          '0:0': {
+            kind: 'tile',
+            tileWIn: 12,
+            tileHIn: 24,
+            coverage: { mode: 'partial', bottomFt: 2, heightFt: 3 },
+          },
+        },
+      },
+    })
+
+    expect(facts.tileAreaSqft).toBe(30)
+    expect(facts.paintAreaSqft).toBe(290)
+  })
+
   it('sums drywall patch areas from wall finish overrides and clips them to the wall bounds', () => {
     const facts = collectSketchMaterialFacts({
       ...rectangleModel,
