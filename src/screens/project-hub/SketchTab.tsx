@@ -10,6 +10,7 @@ import {
 import { isManagerWrite } from '../../lib/types'
 import type { Profile, Project, ProjectHubFile } from '../../lib/types'
 import Sketch3DView from './Sketch3DView'
+import WallElevation from './WallElevation'
 import {
   codeClearanceEntityLabel,
   codeClearanceItemIds,
@@ -26,12 +27,16 @@ import {
   DEFAULT_WINDOW_SILL_FT,
   DEFAULT_WINDOW_WIDTH_FT,
   DEFAULT_DRYWALL_PATCH_COLOR,
+  DEFAULT_TILE_COLOR,
   DOOR_WIDTH_PRESETS_FT,
   WINDOW_WIDTH_PRESETS_FT,
   OPENING_DEFAULTS_FT,
   DEFAULT_WALL_PAINT,
+  TILE_SIZE_OPTIONS,
   cleanColor,
+  normalizeDrywallPatchSurface,
   normalizeFinishes,
+  normalizeTileSurface,
   resizeSketchSegmentToLength,
   sanitizeSketchFinishes,
   sanitizeSketchLights,
@@ -45,6 +50,7 @@ import {
   type SketchSegmentRef,
   type SketchSegmentResizeAnchor,
   type SketchSegmentResizeConflict,
+  type SketchSurfaceFinish,
   type SketchSwitch,
 } from './sketchFinishes'
 import {
@@ -1561,6 +1567,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [sketchMaterialsAdded, setSketchMaterialsAdded] = useState<number | null>(null)
   // NAV-FIX-2: общий выбор стены (2D-план ↔ 3D-вид). null = ничего не выбрано.
   const [selectedWallKey, setSelectedWallKey] = useState<string | null>(null)
+  const [wallElevationFullscreen, setWallElevationFullscreen] = useState(false)
   // Перетаскивание проёма вдоль стены.
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [selectedOpeningIndex, setSelectedOpeningIndex] = useState<number | null>(null)
@@ -1670,11 +1677,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const seg = cabinetWallOptions[index]
     return { index, seg, key: selectedWallKey, lengthFt: dist(seg.a, seg.b) * modelCellFt(model) }
   }, [selectedWallKey, cabinetWallOptions, model])
+  const selectedWallSurface = useMemo<SketchSurfaceFinish | null>(() => {
+    if (!selectedWallKey) return null
+    const finishes = normalizeFinishes(model.finishes)
+    return finishes.wallFinishes[selectedWallKey] ?? finishes.walls
+  }, [selectedWallKey, model.finishes])
   const selectedWallFinish = useMemo(() => {
     if (!selectedWallKey) return null
     const finishes = normalizeFinishes(model.finishes)
     const override = finishes.wallFinishes[selectedWallKey]
-    const surface = override ?? finishes.walls
+    const surface = selectedWallSurface ?? finishes.walls
     return {
       overridden: Boolean(override),
       kind: surface.kind,
@@ -1684,7 +1696,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           ? cleanColor(surface.patchColor, DEFAULT_DRYWALL_PATCH_COLOR)
           : null,
     }
-  }, [selectedWallKey, model.finishes])
+  }, [selectedWallKey, selectedWallSurface, model.finishes])
 
   const segmentResizeConflictKeys = useMemo(
     () => new Set((segmentResizeConflict?.segments ?? []).map((segment) => sketchWallKey(segment.c, segment.s))),
@@ -1885,33 +1897,39 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   useEffect(() => {
     if (selectedWallKey && !cabinetWallOptions.some((seg) => sketchWallKey(seg.c, seg.s) === selectedWallKey)) {
       setSelectedWallKey(null)
+      setWallElevationFullscreen(false)
     }
   }, [selectedWallKey, cabinetWallOptions])
 
-  // NAV-FIX-2: Esc снимает выделение стены в обоих видах (2D и 3D).
+  useEffect(() => {
+    if (!selectedWall) setWallElevationFullscreen(false)
+  }, [selectedWall])
+
+  // NAV-FIX-2: Esc снимает выделение стены в обоих видах (2D и 3D), а сначала закрывает fullscreen-развёртку.
   useEffect(() => {
     if (selectedWallKey === null) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableKeyTarget(event.target)) return
       if (event.key === 'Escape') {
-        setSelectedWallKey(null)
+        if (wallElevationFullscreen) setWallElevationFullscreen(false)
+        else setSelectedWallKey(null)
         event.preventDefault()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selectedWallKey])
+  }, [selectedWallKey, wallElevationFullscreen])
 
   // NAV-FIX-2: кнопки панели «Стена N» — только навигация в существующие режимы с уже выбранной стеной.
   const openWallFinish = () => {
     if (!selectedWall) return
-    // выбор общий → Sketch3DView сам наведёт отделку/развёртку (SKETCH-WALL-1) на эту стену.
     setMeasurementDraft(null)
     setSelectedMeasurementIndex(null)
-    setViewMode('3d')
+    setWallElevationFullscreen(true)
   }
   const openWallOpenings = () => {
     if (!selectedWall) return
+    setWallElevationFullscreen(false)
     canvasAutoFitRef.current = false
     setMeasurementDraft(null)
     setViewMode('2d')
@@ -1919,6 +1937,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
   const openWallCabinets = () => {
     if (!selectedWall) return
+    setWallElevationFullscreen(false)
     canvasAutoFitRef.current = false
     setMeasurementDraft(null)
     setViewMode('2d')
@@ -2772,6 +2791,93 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     commit(normalizeSketchModelForStorage(next))
   }, [commit])
 
+  const updateWallElevationModel = useCallback((next: SketchModel) => {
+    canvasAutoFitRef.current = false
+    updateModelFrom3D(next)
+  }, [updateModelFrom3D])
+
+  const updateWallElevationMeasurements = useCallback((measurements: SketchMeasurement[]) => {
+    const next: SketchModel = { ...modelRef.current }
+    if (measurements.length > 0) next.measurements = measurements
+    else delete next.measurements
+    updateWallElevationModel(next)
+  }, [updateWallElevationModel])
+
+  const updateSelectedWallSurface = useCallback((surface: SketchSurfaceFinish) => {
+    if (!selectedWallKey) return
+    const current = modelRef.current
+    const finishes = normalizeFinishes(current.finishes)
+    updateWallElevationModel({
+      ...current,
+      finishes: {
+        ...finishes,
+        wallFinishes: {
+          ...finishes.wallFinishes,
+          [selectedWallKey]: surface,
+        },
+      },
+    })
+  }, [selectedWallKey, updateWallElevationModel])
+
+  const updateSelectedWallCoverageMode = useCallback((mode: 'full' | 'partial') => {
+    if (!selectedWallSurface) return
+    const currentHeightFt = wallHeightFt(modelRef.current)
+    const currentCoverage = selectedWallSurface.coverage?.mode === 'partial'
+      ? selectedWallSurface.coverage
+      : { mode: 'partial' as const, bottomFt: 0, heightFt: Math.min(4, currentHeightFt) }
+    updateSelectedWallSurface({
+      ...selectedWallSurface,
+      coverage: mode === 'full'
+        ? { mode: 'full' as const }
+        : { ...currentCoverage, mode: 'partial' as const, regions: currentCoverage.regions ?? [] },
+    } as SketchSurfaceFinish)
+  }, [selectedWallSurface, updateSelectedWallSurface])
+
+  const updateSelectedWallFinishKind = useCallback((kind: 'paint' | 'tile' | 'drywall-patch') => {
+    if (!selectedWallSurface) return
+    const coverage = selectedWallSurface.coverage
+    if (kind === 'tile') {
+      const tile = normalizeTileSurface(selectedWallSurface)
+      updateSelectedWallSurface({ ...tile, ...(coverage ? { coverage } : {}), kind: 'tile' })
+      return
+    }
+    if (kind === 'drywall-patch') {
+      const patch = normalizeDrywallPatchSurface(selectedWallSurface)
+      updateSelectedWallSurface({ ...patch, ...(coverage ? { coverage } : {}), kind: 'drywall-patch' })
+      return
+    }
+    const color = selectedWallSurface.kind === 'paint'
+      ? cleanColor(selectedWallSurface.color, DEFAULT_WALL_PAINT)
+      : selectedWallSurface.kind === 'drywall-patch'
+        ? cleanColor(selectedWallSurface.baseColor, DEFAULT_WALL_PAINT)
+        : DEFAULT_WALL_PAINT
+    updateSelectedWallSurface({ kind: 'paint', color, ...(coverage ? { coverage } : {}) })
+  }, [selectedWallSurface, updateSelectedWallSurface])
+
+  const updateSelectedWallPaintColor = useCallback((color: string) => {
+    if (!selectedWallSurface) return
+    updateSelectedWallSurface({ ...selectedWallSurface, kind: 'paint', color: cleanColor(color, DEFAULT_WALL_PAINT) } as SketchSurfaceFinish)
+  }, [selectedWallSurface, updateSelectedWallSurface])
+
+  const updateSelectedWallTile = useCallback((patch: Partial<ReturnType<typeof normalizeTileSurface>>) => {
+    if (!selectedWallSurface) return
+    updateSelectedWallSurface({ ...normalizeTileSurface(selectedWallSurface), ...patch, kind: 'tile' })
+  }, [selectedWallSurface, updateSelectedWallSurface])
+
+  const updateSelectedWallDrywallColor = useCallback((field: 'baseColor' | 'patchColor', color: string) => {
+    if (!selectedWallSurface) return
+    updateSelectedWallSurface({ ...normalizeDrywallPatchSurface(selectedWallSurface), [field]: cleanColor(color, field === 'baseColor' ? DEFAULT_WALL_PAINT : DEFAULT_DRYWALL_PATCH_COLOR), kind: 'drywall-patch' })
+  }, [selectedWallSurface, updateSelectedWallSurface])
+
+  const clearSelectedWallSurface = useCallback(() => {
+    if (!selectedWallKey) return
+    const current = modelRef.current
+    const finishes = normalizeFinishes(current.finishes)
+    const wallFinishes = { ...finishes.wallFinishes }
+    delete wallFinishes[selectedWallKey]
+    updateWallElevationModel({ ...current, finishes: { ...finishes, wallFinishes } })
+  }, [selectedWallKey, updateWallElevationModel])
+
   const save = async () => {
     if (!profile || busy) return
     if (model.contours.every((c) => c.points.length < 2)) {
@@ -3130,6 +3236,107 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const sketchMaterialRowsBySection = (section: SketchMaterialRow['section']) =>
     sketchMaterials?.rows.filter((row) => row.section === section) ?? []
+
+  const renderWallElevationFinishControls = (fullscreen = false) => {
+    if (!canEdit || !selectedWall || !selectedWallSurface) return null
+    const coverageMode = selectedWallSurface.coverage?.mode === 'partial' ? 'partial' : 'full'
+    const activeTile = normalizeTileSurface(selectedWallSurface)
+    const tileSizeValue = `${activeTile.tileWIn ?? 12}x${activeTile.tileHIn ?? 24}`
+    const tileSizePresetValue = TILE_SIZE_OPTIONS.some((option) => `${option.w}x${option.h}` === tileSizeValue) ? tileSizeValue : 'custom'
+    return (
+      <div className={fullscreen ? 'hub-sketch-wall-finishbar hub-sketch-wall-finishbar-fullscreen' : 'hub-sketch-wall-finishbar'}>
+        <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_3d_finish_mode')}>
+          {(['paint', 'tile', 'drywall-patch'] as const).map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              className={selectedWallSurface.kind === kind ? 'btn small' : 'btn ghost small'}
+              aria-pressed={selectedWallSurface.kind === kind}
+              onClick={() => updateSelectedWallFinishKind(kind)}
+            >
+              {t(kind === 'paint' ? 'hub_sketch_3d_paint' : kind === 'tile' ? 'hub_sketch_3d_tile' : 'hub_sketch_3d_drywall_patch')}
+            </button>
+          ))}
+        </div>
+        <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_finish_coverage')}>
+          {(['full', 'partial'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={coverageMode === mode ? 'btn small' : 'btn ghost small'}
+              aria-pressed={coverageMode === mode}
+              onClick={() => updateSelectedWallCoverageMode(mode)}
+            >
+              {t(mode === 'full' ? 'hub_sketch_finish_full' : 'hub_sketch_finish_partial')}
+            </button>
+          ))}
+        </div>
+        {selectedWallSurface.kind === 'paint' && (
+          <div className="hub-sketch-wall-finishbar-swatches" aria-label={t('hub_sketch_3d_wall_color')}>
+            <input
+              className="hub-sketch-color-input"
+              type="color"
+              value={cleanColor(selectedWallSurface.color, DEFAULT_WALL_PAINT)}
+              onChange={(event) => updateSelectedWallPaintColor(event.target.value)}
+              aria-label={t('hub_sketch_3d_custom_color')}
+            />
+          </div>
+        )}
+        {selectedWallSurface.kind === 'tile' && (
+          <div className="hub-sketch-wall-finishbar-tile">
+            <label className="hub-sketch-field">
+              <span className="muted">{t('hub_sketch_3d_tile_size')}</span>
+              <select
+                value={tileSizePresetValue}
+                onChange={(event) => {
+                  const option = TILE_SIZE_OPTIONS.find((item) => `${item.w}x${item.h}` === event.target.value)
+                  if (option) updateSelectedWallTile({ tileWIn: option.w, tileHIn: option.h })
+                }}
+              >
+                <option value="custom">{t('hub_sketch_3d_tile_size_custom')}</option>
+                {TILE_SIZE_OPTIONS.map((option) => (
+                  <option key={option.key} value={`${option.w}x${option.h}`}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="hub-sketch-field hub-sketch-wall-finishbar-color">
+              <span className="muted">{t('hub_sketch_3d_tile_color')}</span>
+              <input
+                type="color"
+                value={cleanColor(activeTile.tileColor, DEFAULT_TILE_COLOR)}
+                onChange={(event) => updateSelectedWallTile({ tileColor: event.target.value })}
+              />
+            </label>
+          </div>
+        )}
+        {selectedWallSurface.kind === 'drywall-patch' && (
+          <div className="hub-sketch-wall-finishbar-tile">
+            <label className="hub-sketch-field hub-sketch-wall-finishbar-color">
+              <span className="muted">{t('hub_sketch_drywall_base_color')}</span>
+              <input
+                type="color"
+                value={cleanColor(selectedWallSurface.baseColor, DEFAULT_WALL_PAINT)}
+                onChange={(event) => updateSelectedWallDrywallColor('baseColor', event.target.value)}
+              />
+            </label>
+            <label className="hub-sketch-field hub-sketch-wall-finishbar-color">
+              <span className="muted">{t('hub_sketch_drywall_patch_color')}</span>
+              <input
+                type="color"
+                value={cleanColor(selectedWallSurface.patchColor, DEFAULT_DRYWALL_PATCH_COLOR)}
+                onChange={(event) => updateSelectedWallDrywallColor('patchColor', event.target.value)}
+              />
+            </label>
+          </div>
+        )}
+        {selectedWallFinish?.overridden && (
+          <button type="button" className="btn ghost small" onClick={clearSelectedWallSurface}>
+            {t('hub_sketch_3d_wall_use_all')}
+          </button>
+        )}
+      </div>
+    )
+  }
 
   const renderCanvasControls = () => (
     <div className="hub-sketch-2d-control-stack" role="toolbar" aria-label={t('hub_sketch_2d_canvas_tools')}>
@@ -3531,6 +3738,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               aria-pressed={viewMode === mode}
               onClick={() => {
                 if (mode === '2d') canvasAutoFitRef.current = true
+                setWallElevationFullscreen(false)
                 setMeasurementDraft(null)
                 setSelectedMeasurementIndex(null)
                 setViewMode(mode)
@@ -4094,6 +4302,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             />
           )}
                 </svg>
+                {selectedWall && selectedWallSurface && !wallElevationFullscreen && (
+                  <div className="hub-sketch-wall-elevation-mini">
+                    <button
+                      type="button"
+                      className="hub-sketch-wall-elevation-mini-button"
+                      aria-label={t('hub_sketch_elevation_fullscreen_open')}
+                      onClick={() => setWallElevationFullscreen(true)}
+                    >
+                      <WallElevation
+                        model={model}
+                        wall={selectedWall.seg}
+                        heightFt={heightFt}
+                        finish={selectedWallSurface}
+                        compact
+                        codeCheckEnabled={false}
+                      />
+                      <span>{t('hub_sketch_elevation_fullscreen_open')}</span>
+                    </button>
+                  </div>
+                )}
                 {segmentResizeConflict && segmentLengthEdit && (
                   <div className="hub-sketch-dimension-conflict" role="alertdialog" aria-live="polite">
                     <span>{t('hub_sketch_dimension_conflict_prompt')}</span>
@@ -4149,6 +4377,42 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         )}
       </div>
 
+      {wallElevationFullscreen && selectedWall && selectedWallSurface && (
+        <div className="hub-sketch-elevation-lightbox" role="dialog" aria-modal="true" aria-label={t('hub_sketch_3d_wall_elevation')}>
+          <div className="hub-sketch-elevation-lightbox-bar">
+            <div className="hub-sketch-elevation-lightbox-title">
+              <strong>{`${t('hub_sketch_wall_panel_title')} ${selectedWall.index + 1}`}</strong>
+              <span className="muted">{`${t('hub_sketch_dim_length_short')}: ${fmtFt(selectedWall.lengthFt)}`}</span>
+            </div>
+            {renderWallElevationFinishControls(true)}
+            <button type="button" className="btn ghost small" onClick={() => setWallElevationFullscreen(false)}>
+              {t('hub_sketch_elevation_fullscreen_exit')}
+            </button>
+            <button
+              type="button"
+              className="hub-sketch-elevation-lightbox-close"
+              aria-label={t('lightbox_close')}
+              onClick={() => setWallElevationFullscreen(false)}
+            >
+              ×
+            </button>
+          </div>
+          <div className="hub-sketch-elevation-lightbox-stage">
+            <WallElevation
+              model={model}
+              wall={selectedWall.seg}
+              heightFt={heightFt}
+              finish={selectedWallSurface}
+              canEdit={canEdit}
+              snapStepFt={activeSnapFt}
+              codeCheckEnabled={codeCheckEnabled}
+              onMeasurementsChange={updateWallElevationMeasurements}
+              onModelChange={updateWallElevationModel}
+            />
+          </div>
+        </div>
+      )}
+
       {/* NAV-FIX-2: панель «Стена N» — общая для 2D и 3D; только навигация в существующие режимы */}
       {selectedWall && (
         <div className="card hub-sketch-wall-panel">
@@ -4158,7 +4422,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               type="button"
               className="btn ghost small"
               aria-label={t('hub_sketch_wall_panel_close')}
-              onClick={() => setSelectedWallKey(null)}
+              onClick={() => {
+                setWallElevationFullscreen(false)
+                setSelectedWallKey(null)
+              }}
             >
               ×
             </button>

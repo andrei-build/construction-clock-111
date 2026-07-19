@@ -3,10 +3,11 @@ import type { Profile, ProjectMaterial } from '../../lib/types'
 import { cabinetDisplayCode, isCabinetPlacedItem } from './cabinetCodes'
 import { formatInches } from './inches'
 import {
-  finishCoverageBoundsFt,
+  finishCoverageRegionsFt,
   normalizeFinishes,
   normalizeTileSurface,
   type Contour,
+  type SketchFinishRegion,
   type Opening,
   type SketchFinishes,
   type SketchSwitch,
@@ -237,13 +238,32 @@ function openingAreaSqft(model: SketchMaterialModel, opening: Opening): number {
   return width * height
 }
 
-function openingOverlapSqft(model: SketchMaterialModel, opening: Opening, bottomFt: number, topFt: number): number {
+function openingRectFt(model: SketchMaterialModel, opening: Opening): SketchFinishRegion | null {
   const width = openingWidthFt(model, opening)
-  if (width <= AREA_EPS) return 0
-  const openingBottom = openingFloorFt(opening)
-  const openingTop = openingBottom + openingHeightFt(model, opening)
-  const overlapHeight = Math.max(0, Math.min(topFt, openingTop) - Math.max(bottomFt, openingBottom))
-  return overlapHeight > AREA_EPS ? width * overlapHeight : 0
+  const height = openingHeightFt(model, opening)
+  const lengthFt = segmentLengthFt(model, opening.c, opening.s)
+  if (!lengthFt || width <= AREA_EPS || height <= AREA_EPS) return null
+  const openingWidth = Math.min(width, lengthFt)
+  const x0 = Math.max(0, Math.min(lengthFt - openingWidth, opening.t * lengthFt - openingWidth / 2))
+  const x1 = x0 + openingWidth
+  const y0 = openingFloorFt(opening)
+  return {
+    x0Ft: x0,
+    y0Ft: y0,
+    x1Ft: x1,
+    y1Ft: y0 + height,
+  }
+}
+
+function rectOverlapSqft(a: SketchFinishRegion, b: SketchFinishRegion): number {
+  const width = Math.max(0, Math.min(a.x1Ft, b.x1Ft) - Math.max(a.x0Ft, b.x0Ft))
+  const height = Math.max(0, Math.min(a.y1Ft, b.y1Ft) - Math.max(a.y0Ft, b.y0Ft))
+  return width > AREA_EPS && height > AREA_EPS ? width * height : 0
+}
+
+function openingRegionOverlapSqft(model: SketchMaterialModel, opening: Opening, region: SketchFinishRegion): number {
+  const openingRect = openingRectFt(model, opening)
+  return openingRect ? rectOverlapSqft(region, openingRect) : 0
 }
 
 function surfaceTileArea(
@@ -279,14 +299,18 @@ function collectTileAreas(model: SketchMaterialModel): SketchTileArea[] {
     const wallKey = `${seg.c}:${seg.s}`
     const surface = finishes.wallFinishes[wallKey] ?? finishes.walls
     if (surface.kind !== 'tile') return
-    const coverage = finishCoverageBoundsFt(surface, height)
-    const coverageHeight = Math.max(0, coverage.topFt - coverage.bottomFt)
-    if (coverageHeight <= AREA_EPS) return
-    const openingOverlap = (model.openings ?? [])
-      .filter((opening) => opening.c === seg.c && opening.s === seg.s)
-      .reduce((sum, opening) => sum + openingOverlapSqft(model, opening, coverage.bottomFt, coverage.topFt), 0)
-    const areaSqft = Math.max(0, seg.lengthFt * coverageHeight - openingOverlap)
-    const perimeterLnft = areaSqft > AREA_EPS ? 2 * (seg.lengthFt + coverageHeight) : null
+    const regions = finishCoverageRegionsFt(surface, seg.lengthFt, height)
+    if (regions.length === 0) return
+    const openings = (model.openings ?? []).filter((opening) => opening.c === seg.c && opening.s === seg.s)
+    const grossArea = regions.reduce((sum, region) => sum + (region.x1Ft - region.x0Ft) * (region.y1Ft - region.y0Ft), 0)
+    const openingOverlap = regions.reduce(
+      (sum, region) => sum + openings.reduce((inner, opening) => inner + openingRegionOverlapSqft(model, opening, region), 0),
+      0,
+    )
+    const areaSqft = Math.max(0, grossArea - openingOverlap)
+    const perimeterLnft = areaSqft > AREA_EPS
+      ? regions.reduce((sum, region) => sum + 2 * ((region.x1Ft - region.x0Ft) + (region.y1Ft - region.y0Ft)), 0)
+      : null
     const area = surfaceTileArea(model, surface, areaSqft, perimeterLnft, `wall:${wallKey}`, `Wall ${index + 1}`)
     if (area) tileAreas.push(area)
   })
@@ -324,10 +348,14 @@ function collectPatchArea(model: SketchMaterialModel): number {
     const wallKey = `${seg.c}:${seg.s}`
     const surface = finishes.wallFinishes[wallKey] ?? finishes.walls
     if (surface.kind !== 'drywall-patch') return sum
-    const width = Math.max(0, Math.min(seg.lengthFt - Math.max(0, finite(surface.xFt) ?? 0), positive(surface.widthFt) ?? 0))
-    const patchY = Math.max(0, finite(surface.yFt) ?? 0)
-    const patchHeight = Math.max(0, Math.min(height - patchY, positive(surface.heightFt) ?? 0))
-    return sum + width * patchHeight
+    const regions = finishCoverageRegionsFt(surface, seg.lengthFt, height)
+    const openings = (model.openings ?? []).filter((opening) => opening.c === seg.c && opening.s === seg.s)
+    const area = regions.reduce((regionSum, region) => {
+      const gross = (region.x1Ft - region.x0Ft) * (region.y1Ft - region.y0Ft)
+      const openingOverlap = openings.reduce((inner, opening) => inner + openingRegionOverlapSqft(model, opening, region), 0)
+      return regionSum + Math.max(0, gross - openingOverlap)
+    }, 0)
+    return sum + area
   }, 0)
 }
 
