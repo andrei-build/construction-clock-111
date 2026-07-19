@@ -171,9 +171,11 @@ type SketchModel = {
   placedItems?: SketchPlacedCatalogItem[]
 }
 type ViewMode = '2d' | '3d'
+type SketchCameraPreset = 'fit' | 'top' | 'angle' | 'inside'
 type CanvasSize = { width: number; height: number }
 type CanvasView = { x: number; y: number; width: number; height: number }
 type SnapMode = '1ft' | '6in' | '1in' | '1_8in'
+type SketchMode = 'wall' | 'opening' | 'finish' | 'cabinet' | 'plumbing' | 'light' | 'measure' | 'markup'
 type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill'
 type SegmentLengthEdit = { ref: SketchSegmentRef; value: string }
 type OpeningOffsetEdit = { index: number; side: OpeningOffsetSide; value: string }
@@ -184,6 +186,19 @@ const SNAP_OPTIONS: Array<{ mode: SnapMode; stepFt: number; labelKey: string }> 
   { mode: '1in', stepFt: 1 / 12, labelKey: 'hub_sketch_snap_1in' },
   { mode: '1_8in', stepFt: EIGHTH_IN_FT, labelKey: 'hub_sketch_snap_1_8in' },
 ]
+
+const SKETCH_MODE_OPTIONS: Array<{ mode: SketchMode; labelKey: string; icon: string }> = [
+  { mode: 'wall', labelKey: 'hub_sketch_mode_wall', icon: '▰' },
+  { mode: 'opening', labelKey: 'hub_sketch_mode_opening', icon: '▯' },
+  { mode: 'finish', labelKey: 'hub_sketch_mode_finish', icon: '◧' },
+  { mode: 'cabinet', labelKey: 'hub_sketch_mode_cabinet', icon: '▣' },
+  { mode: 'plumbing', labelKey: 'hub_sketch_mode_plumbing', icon: '⌁' },
+  { mode: 'light', labelKey: 'hub_sketch_mode_light', icon: '✦' },
+  { mode: 'measure', labelKey: 'hub_sketch_mode_measure', icon: '⌖' },
+  { mode: 'markup', labelKey: 'hub_sketch_mode_markup', icon: '✎' },
+]
+
+const MODES_WITH_3D_CONTEXT = new Set<SketchMode>(['opening', 'finish', 'plumbing', 'light', 'measure'])
 
 // Ширина проёма в футах с учётом дефолта по типу.
 function openingWidthFt(o: Opening): number {
@@ -1535,6 +1550,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [history, setHistory] = useState<SketchHistory<SketchModel>>(() => emptySketchHistory())
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
   const [tool, setTool] = useState<Tool>('wall')
+  const [activeMode, setActiveMode] = useState<SketchMode>('wall')
   const [snapMode, setSnapMode] = useState<SnapMode>('1ft')
   const [showMeasurements, setShowMeasurements] = useState(true)
   const [codeCheckEnabled, setCodeCheckEnabled] = useState(true)
@@ -1607,6 +1623,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [canvasBrowserFullscreen, setCanvasBrowserFullscreen] = useState(false)
   const [canvasFullscreenFallback, setCanvasFullscreenFallback] = useState(false)
   const [threeDFullscreenRequest, setThreeDFullscreenRequest] = useState(0)
+  const [threeDCameraPresetRequest, setThreeDCameraPresetRequest] = useState<{ mode: SketchCameraPreset; key: number } | null>(null)
 
   const stats = useMemo(() => buildSketchContourStats(model), [model])
   const activeSnapFt = snapModeStep(snapMode)
@@ -1836,6 +1853,51 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     applyOpeningT(index, centerOpeningT(segmentLengthFt, openingWidthFt(opening)))
   }
 
+  const updateOpeningAt = (index: number, patch: Partial<Opening>) => {
+    const current = modelRef.current
+    const opening = current.openings[index]
+    if (!opening) return
+    const nextOpening = normalizeOpeningForModel(current, { ...opening, ...patch })
+    if (!nextOpening) return
+    const nextModel = {
+      ...current,
+      openings: current.openings.map((item, itemIndex) => (itemIndex === index ? nextOpening : item)),
+    }
+    canvasAutoFitRef.current = false
+    selectedOpeningIndexRef.current = index
+    setSelectedOpeningIndex(index)
+    commit(nextModel)
+  }
+
+  const updateSelectedOpeningWidth = (valueFt: number) => {
+    const index = selectedOpeningIndexRef.current
+    if (index === null) return
+    updateOpeningAt(index, { w: Math.max(0.5, snapOpeningFeetToPrecision(valueFt)) })
+  }
+
+  const updateSelectedOpeningHeight = (valueFt: number) => {
+    const index = selectedOpeningIndexRef.current
+    if (index === null) return
+    updateOpeningAt(index, { h: Math.max(0.5, snapOpeningFeetToPrecision(valueFt)) })
+  }
+
+  const updateSelectedOpeningFloor = (valueFt: number) => {
+    const index = selectedOpeningIndexRef.current
+    if (index === null) return
+    updateOpeningAt(index, { sill: Math.max(0, snapOpeningFeetToPrecision(valueFt)) })
+  }
+
+  const removeSelectedOpening = () => {
+    const index = selectedOpeningIndexRef.current
+    const current = modelRef.current
+    if (index === null || !current.openings[index]) return
+    commit({ ...current, openings: current.openings.filter((_, itemIndex) => itemIndex !== index) })
+    selectedOpeningIndexRef.current = null
+    setSelectedOpeningIndex(null)
+    setOpeningOffsetEdit(null)
+    setOpeningSnapGuide(null)
+  }
+
   const beginOpeningOffsetEdit = (index: number, side: OpeningOffsetSide, valueFt: number) => {
     if (!canEdit) return
     setSelectedOpeningIndex(index)
@@ -1924,12 +1986,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   // NAV-FIX-2: кнопки панели «Стена N» — только навигация в существующие режимы с уже выбранной стеной.
   const openWallFinish = () => {
     if (!selectedWall) return
+    setActiveMode('finish')
     setMeasurementDraft(null)
     setSelectedMeasurementIndex(null)
     setWallElevationFullscreen(true)
   }
   const openWallOpenings = () => {
     if (!selectedWall) return
+    setActiveMode('opening')
     setWallElevationFullscreen(false)
     canvasAutoFitRef.current = false
     setMeasurementDraft(null)
@@ -1938,12 +2002,59 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
   const openWallCabinets = () => {
     if (!selectedWall) return
+    setActiveMode('cabinet')
     setWallElevationFullscreen(false)
     canvasAutoFitRef.current = false
     setMeasurementDraft(null)
     setViewMode('2d')
     setTool('cabinet')
     setSelectedCabinetWallKey(selectedWall.key)
+  }
+
+  const selectSketchMode = (mode: SketchMode) => {
+    setActiveMode(mode)
+    setWallElevationFullscreen(false)
+    setOpeningOffsetEdit(null)
+    setOpeningSnapGuide(null)
+
+    if (mode === 'wall') {
+      setViewMode('2d')
+      setTool('wall')
+      setMeasurementDraft(null)
+      setSelectedMeasurementIndex(null)
+      return
+    }
+    if (mode === 'opening') {
+      setViewMode('2d')
+      setTool((current) => (current === 'window' ? 'window' : 'door'))
+      setMeasurementDraft(null)
+      setSelectedMeasurementIndex(null)
+      return
+    }
+    if (mode === 'cabinet') {
+      setViewMode('2d')
+      setTool('cabinet')
+      setMeasurementDraft(null)
+      setSelectedMeasurementIndex(null)
+      return
+    }
+    if (mode === 'measure') {
+      setTool('measure')
+      setShowMeasurements(true)
+      setMeasurementDraft(null)
+      return
+    }
+    if (mode === 'finish' || mode === 'plumbing' || mode === 'light') {
+      setViewMode('3d')
+      setTool('wall')
+      setMeasurementDraft(null)
+      setSelectedMeasurementIndex(null)
+      return
+    }
+    setViewMode('2d')
+    setTool('wall')
+    setMeasurementDraft(null)
+    setSelectedMeasurementIndex(null)
   }
 
   useEffect(() => {
@@ -2466,11 +2577,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedMeasurementIndex !== null) {
         removeMeasurement(selectedMeasurementIndex)
         event.preventDefault()
+        return
+      }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedOpeningIndex !== null) {
+        removeSelectedOpening()
+        event.preventDefault()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, viewMode, tool, selectedMeasurementIndex, model])
+  }, [canEdit, viewMode, tool, selectedMeasurementIndex, selectedOpeningIndex, model])
 
   useEffect(() => {
     if (selectedMeasurementIndex !== null && !model.measurements?.[selectedMeasurementIndex]) {
@@ -2612,6 +2728,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     selectedOpeningIndexRef.current = i
     setDragIdx(i)
     setSelectedOpeningIndex(i)
+    setActiveMode('opening')
     setSelectedWallKey(null)
     setSelectedMeasurementIndex(null)
     setMeasurementDraft(null)
@@ -2651,6 +2768,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
     if (tool === 'measure') {
       const p = measurementPoint(raw).p
+      setActiveMode('measure')
       setShowMeasurements(true)
       setSelectedMeasurementIndex(null)
       if (!measurementDraft) {
@@ -2715,6 +2833,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     commit({ ...model, openings: [...model.openings, opening] })
     selectedOpeningIndexRef.current = nextIndex
     setSelectedOpeningIndex(nextIndex)
+    setActiveMode('opening')
   }
 
   const finishShape = () => {
@@ -3435,99 +3554,60 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     </div>
   )
 
-  const renderSketchToolbar = (fullscreen = false) => (
-    <div className={fullscreen ? 'hub-sketch-toolbar hub-sketch-toolbar-fullscreen' : 'card hub-sketch-toolbar'}>
-      {fullscreen && (
-        <div className="hub-sketch-fullscreen-meta-tools">
-          {renderViewModeToggle(true)}
-          <label className="hub-sketch-layer-toggle hub-sketch-code-toggle">
-            <input
-              type="checkbox"
-              checked={codeCheckEnabled}
-              onChange={(event) => setCodeCheckEnabled(event.target.checked)}
-            />
-            <span>{t('hub_sketch_code_check')}</span>
-          </label>
-          {lengthInput('wallHeight', 'hub_sketch_wall_height', heightFt, 1, 30, updateWallHeight, 'hub-sketch-height-field')}
+  const renderSketchContextPanel = (fullscreen = false) => {
+    const activeModeMeta = SKETCH_MODE_OPTIONS.find((option) => option.mode === activeMode) ?? SKETCH_MODE_OPTIONS[0]
+    return (
+      <aside className={fullscreen ? 'hub-sketch-context-panel hub-sketch-context-panel-fullscreen' : 'hub-sketch-context-panel'} aria-label={t('hub_sketch_context_panel')}>
+        <div className="hub-sketch-context-head">
+          <span className="hub-sketch-context-icon" aria-hidden="true">{activeModeMeta.icon}</span>
+          <h3>{t(activeModeMeta.labelKey)}</h3>
         </div>
-      )}
-      <div className="hub-sketch-tools">
-        {(['wall', 'door', 'window', 'measure', 'cabinet', 'outlet', 'switch'] as Tool[]).map((tl) => (
-          <button
-            key={tl}
-            type="button"
-            className={tool === tl ? 'btn small' : 'btn ghost small'}
-            aria-pressed={tool === tl}
-            onClick={() => {
-              setSelectedMeasurementIndex(null)
-              if (tl === 'measure') {
-                setTool((current) => (current === 'measure' ? 'wall' : 'measure'))
-                setMeasurementDraft(null)
-                setShowMeasurements(true)
-                return
-              }
-              setTool(tl)
-              setMeasurementDraft(null)
-            }}
-          >
-            {tl === 'measure' && <span aria-hidden="true">📏</span>}
-            {tl === 'cabinet' && <span aria-hidden="true">▣</span>}
-            {tl === 'outlet' && <span aria-hidden="true">⊙</span>}
-            {tl === 'switch' && <span aria-hidden="true">⏽</span>}
-            <span>{t(`hub_sketch_tool_${tl}`)}</span>
-          </button>
-        ))}
-      </div>
-      <div className="hub-sketch-actions">
-        <button type="button" className="btn ghost small" disabled={!canClose} onClick={finishShape}>
-          {t('hub_sketch_finish')}
-        </button>
-        <button type="button" className="btn ghost small" disabled={!canCenterOpening} onClick={centerSelectedOpening}>
-          {t('hub_sketch_opening_center')}
-        </button>
-        <button type="button" className="btn ghost small" disabled={!canUndo} onClick={undo}>
-          {t('hub_sketch_undo')}
-        </button>
-        <button type="button" className="btn ghost small" onClick={clearAll}>
-          {t('hub_sketch_clear')}
-        </button>
-        {fullscreen && (
-          <>
-            <button type="button" className="btn ghost small" onClick={fitCanvasToModel}>
-              {t('hub_sketch_camera_fit')}
+
+        {activeMode === 'wall' && (
+          <div className="hub-sketch-context-section">
+            <button type="button" className="btn small" disabled={!canClose} onClick={finishShape}>
+              {t('hub_sketch_finish')}
             </button>
-            <button type="button" className="btn ghost small" aria-pressed={canvasFullscreenActive} onClick={toggleCanvasFullscreen}>
-              {t(canvasFullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
+            <button type="button" className="btn ghost small" onClick={clearAll}>
+              {t('hub_sketch_clear')}
             </button>
-          </>
+            <div className="hub-sketch-context-stats" aria-label={t('hub_sketch_stats')}>
+              <div>
+                <span className="muted">{t('hub_sketch_area')}</span>
+                <strong>{stats.totalArea.toFixed(1)} ft²</strong>
+              </div>
+              <div>
+                <span className="muted">{t('hub_sketch_perimeter')}</span>
+                <strong>{fmtFt(stats.totalPerimeter)}</strong>
+              </div>
+              <div>
+                <span className="muted">{t('hub_sketch_contours')}</span>
+                <strong>{model.contours.filter((c) => c.points.length >= 2).length}</strong>
+              </div>
+            </div>
+          </div>
         )}
-      </div>
-      <div className="hub-sketch-snap" role="group" aria-label={t('hub_sketch_snap')}>
-        <span className="muted">{t('hub_sketch_snap')}</span>
-        {SNAP_OPTIONS.map((option) => (
-          <button
-            key={option.mode}
-            type="button"
-            className={snapMode === option.mode ? 'btn small' : 'btn ghost small'}
-            aria-pressed={snapMode === option.mode}
-            onClick={() => setSnapMode(option.mode)}
-          >
-            {t(option.labelKey)}
-          </button>
-        ))}
-      </div>
-      <label className="hub-sketch-layer-toggle">
-        <input
-          type="checkbox"
-          checked={showMeasurements}
-          onChange={(e) => {
-            setShowMeasurements(e.target.checked)
-            if (!e.target.checked) setSelectedMeasurementIndex(null)
-          }}
-        />
-        <span>{t('hub_sketch_measurements')}</span>
-      </label>
-      {tool === 'door' && (
+
+        {activeMode === 'opening' && (
+          <div className="hub-sketch-context-section">
+            <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_3d_openings')}>
+              {(['door', 'window'] as const).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className={tool === kind ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={tool === kind}
+                  onClick={() => {
+                    setTool(kind)
+                    setMeasurementDraft(null)
+                    setSelectedMeasurementIndex(null)
+                  }}
+                >
+                  {t(kind === 'door' ? 'hub_sketch_tool_door' : 'hub_sketch_tool_window')}
+                </button>
+              ))}
+            </div>
+            {tool === 'door' && (
         <div className="hub-sketch-dims">
           {lengthInput('doorW', 'hub_sketch_width', doorW, 0.5, 20, setDoorW)}
           {lengthInput('doorH', 'hub_sketch_height', doorH, 0.5, 20, setDoorH)}
@@ -3539,7 +3619,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           </div>
         </div>
       )}
-      {tool === 'window' && (
+            {tool === 'window' && (
         <div className="hub-sketch-dims">
           {lengthInput('winW', 'hub_sketch_width', winW, 0.5, 20, setWinW)}
           {lengthInput('winH', 'hub_sketch_height', winH, 0.5, 20, setWinH)}
@@ -3549,7 +3629,18 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           </div>
         </div>
       )}
-      {tool === 'cabinet' && (
+            <div className="hub-sketch-actions">
+              <button type="button" className="btn ghost small" disabled={!canCenterOpening} onClick={centerSelectedOpening}>
+                {t('hub_sketch_opening_center')}
+              </button>
+              <button type="button" className="btn ghost small" disabled={selectedOpeningIndex === null} onClick={removeSelectedOpening}>
+                {t('hub_sketch_3d_remove')}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeMode === 'cabinet' && (
         <div className="hub-sketch-cabinet-tools">
           <label className="hub-sketch-field hub-sketch-cabinet-wall-select">
             <span className="muted">{t('hub_sketch_cabinet_wall')}</span>
@@ -3766,13 +3857,184 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           {cabinetLayoutPreview?.smallFiller && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_small_filler')}</div>}
         </div>
       )}
-    </div>
-  )
+        {activeMode === 'measure' && (
+          <div className="hub-sketch-context-section">
+            <button
+              type="button"
+              className={tool === 'measure' ? 'btn small' : 'btn ghost small'}
+              aria-pressed={tool === 'measure'}
+              onClick={() => {
+                setTool('measure')
+                setShowMeasurements(true)
+                setMeasurementDraft(null)
+              }}
+            >
+              {t('hub_sketch_tool_measure')}
+            </button>
+            <label className="hub-sketch-layer-toggle">
+              <input
+                type="checkbox"
+                checked={showMeasurements}
+                onChange={(e) => {
+                  setShowMeasurements(e.target.checked)
+                  if (!e.target.checked) setSelectedMeasurementIndex(null)
+                }}
+              />
+              <span>{t('hub_sketch_measurements')}</span>
+            </label>
+            <button type="button" className="btn ghost small" disabled={selectedMeasurementIndex === null} onClick={() => selectedMeasurementIndex !== null && removeMeasurement(selectedMeasurementIndex)}>
+              {t('hub_sketch_measurement_delete')}
+            </button>
+          </div>
+        )}
 
-  return (
-    <section className="hub-tab-panel hub-sketch">
-      <div className="card hub-sketch-viewbar">
-        {renderViewModeToggle()}
+        {activeMode === 'light' && (
+          <div className="hub-sketch-context-section">
+            <button type="button" className="btn small" onClick={() => setViewMode('3d')}>
+              {t('hub_sketch_view_3d')}
+            </button>
+            <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_material_section_electrical')}>
+              {(['outlet', 'switch'] as const).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className={tool === kind ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={tool === kind}
+                  onClick={() => {
+                    setViewMode('2d')
+                    setTool(kind)
+                    setMeasurementDraft(null)
+                    setSelectedMeasurementIndex(null)
+                  }}
+                >
+                  {t(kind === 'outlet' ? 'hub_sketch_outlet' : 'hub_sketch_switch')}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(activeMode === 'finish' || activeMode === 'plumbing') && (
+          <div className="hub-sketch-context-section">
+            <button type="button" className="btn small" onClick={() => setViewMode('3d')}>
+              {t('hub_sketch_view_3d')}
+            </button>
+            {activeMode === 'finish' && selectedWall && (
+              <button type="button" className="btn ghost small" onClick={openWallFinish}>
+                {t('hub_sketch_wall_panel_finish_action')}
+              </button>
+            )}
+          </div>
+        )}
+
+        {activeMode === 'markup' && (
+          <div className="hub-sketch-context-section">
+            <label className="muted hub-sketch-name-label">{t('hub_sketch_name')}</label>
+            <input
+              className="hub-sketch-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="room-1"
+              disabled={busy}
+            />
+            <div className="hub-sketch-material-options">
+              <label className="hub-sketch-layer-toggle">
+                <input
+                  type="checkbox"
+                  checked={includePrimer}
+                  onChange={(event) => setIncludePrimer(event.target.checked)}
+                />
+                <span>{t('hub_sketch_material_include_primer')}</span>
+              </label>
+              <label className="hub-sketch-layer-toggle">
+                <input
+                  type="checkbox"
+                  checked={includeTexture}
+                  onChange={(event) => setIncludeTexture(event.target.checked)}
+                />
+                <span>{t('hub_sketch_material_include_texture')}</span>
+              </label>
+            </div>
+            <div className="hub-sketch-save-actions">
+              <button type="button" className="btn small" disabled={busy} onClick={save}>
+                {busy ? t('saving') : t('hub_sketch_save')}
+              </button>
+              <button type="button" className="btn ghost small" disabled={busy} onClick={calcMaterial}>
+                {t('hub_sketch_material')}
+              </button>
+              <button type="button" className="btn ghost small" disabled={sketchMaterialsBusy} onClick={runSketchMaterials}>
+                {sketchMaterialsBusy ? t('loading') : t('hub_sketch_materials_from_sketch')}
+              </button>
+              <button type="button" className="btn ghost small" disabled={loadBusy} onClick={openLoader}>
+                {t('hub_sketch_load')}
+              </button>
+            </div>
+            {loadOpen && (
+              <div className="hub-sketch-load-list">
+                {loadBusy && <p className="muted">{t('loading')}</p>}
+                {!loadBusy && saved.length === 0 && <p className="muted">{t('hub_sketch_load_empty')}</p>}
+                {!loadBusy &&
+                  saved.map((f) => (
+                    <button key={f.id} type="button" className="btn ghost small hub-sketch-load-item" onClick={() => importSketch(f)}>
+                      {f.name.replace(/^sketch-/, '').replace(/\.json$/, '')}
+                    </button>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
+      </aside>
+    )
+  }
+
+  const request3DCameraPreset = (mode: SketchCameraPreset, preserveFullscreen = false) => {
+    switchSketchViewMode('3d', preserveFullscreen)
+    setThreeDCameraPresetRequest((current) => ({ mode, key: (current?.key ?? 0) + 1 }))
+  }
+
+  const runViewPreset = (mode: SketchCameraPreset, preserveFullscreen = false) => {
+    if (mode === 'fit' && viewMode === '2d') {
+      fitCanvasToModel()
+      return
+    }
+    request3DCameraPreset(mode, preserveFullscreen)
+  }
+
+  const renderSketchTopbar = (fullscreen = false) => (
+    <div className={fullscreen ? 'hub-sketch-topbar hub-sketch-topbar-fullscreen' : 'card hub-sketch-topbar'}>
+      <div className="hub-sketch-topbar-group hub-sketch-topbar-left">
+        {renderViewModeToggle(fullscreen)}
+        <div className="hub-sketch-view-preset-group" role="group" aria-label={t('hub_sketch_view_controls')}>
+          <button type="button" className="btn ghost small" onClick={() => runViewPreset('fit', fullscreen)}>
+            {t('hub_sketch_camera_fit')}
+          </button>
+          <button type="button" className="btn ghost small" onClick={() => runViewPreset('top', fullscreen)}>
+            {t('hub_sketch_camera_top')}
+          </button>
+          <button type="button" className="btn ghost small" onClick={() => runViewPreset('angle', fullscreen)}>
+            {t('hub_sketch_camera_angle')}
+          </button>
+          <button type="button" className="btn ghost small" onClick={() => runViewPreset('inside', fullscreen)}>
+            {t('hub_sketch_camera_inside')}
+          </button>
+        </div>
+      </div>
+      <div className="hub-sketch-topbar-group hub-sketch-topbar-center">
+        {lengthInput('wallHeight', 'hub_sketch_wall_height', heightFt, 1, 30, updateWallHeight, 'hub-sketch-height-field')}
+        <div className="hub-sketch-snap hub-sketch-snap-compact" role="group" aria-label={t('hub_sketch_snap')}>
+          <span className="muted">{t('hub_sketch_snap')}</span>
+          {SNAP_OPTIONS.map((option) => (
+            <button
+              key={option.mode}
+              type="button"
+              className={snapMode === option.mode ? 'btn small' : 'btn ghost small'}
+              aria-pressed={snapMode === option.mode}
+              onClick={() => setSnapMode(option.mode)}
+            >
+              {t(option.labelKey)}
+            </button>
+          ))}
+        </div>
         <label className="hub-sketch-layer-toggle hub-sketch-code-toggle">
           <input
             type="checkbox"
@@ -3781,19 +4043,172 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           />
           <span>{t('hub_sketch_code_check')}</span>
         </label>
-        {lengthInput('wallHeight', 'hub_sketch_wall_height', heightFt, 1, 30, updateWallHeight, 'hub-sketch-height-field')}
       </div>
+      <div className="hub-sketch-topbar-group hub-sketch-topbar-right">
+        <button type="button" className="btn ghost small" onClick={() => selectSketchMode('markup')}>
+          {t('hub_sketch_mode_markup')}
+        </button>
+        {viewMode === '2d' && (
+          <button type="button" className="btn ghost small" aria-pressed={canvasFullscreenActive} onClick={toggleCanvasFullscreen}>
+            {t(canvasFullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
+          </button>
+        )}
+      </div>
+    </div>
+  )
 
-      {canEdit && viewMode === '2d' && !canvasFullscreenActive && renderSketchToolbar()}
+  const renderModeRail = (fullscreen = false) => (
+    <nav className={fullscreen ? 'hub-sketch-mode-rail hub-sketch-mode-rail-fullscreen' : 'hub-sketch-mode-rail'} aria-label={t('hub_sketch_mode_rail')}>
+      {SKETCH_MODE_OPTIONS.map((option) => (
+        <button
+          key={option.mode}
+          type="button"
+          className={activeMode === option.mode ? 'hub-sketch-mode-btn hub-sketch-mode-btn-active' : 'hub-sketch-mode-btn'}
+          aria-label={t(option.labelKey)}
+          aria-pressed={activeMode === option.mode}
+          title={t(option.labelKey)}
+          onClick={() => selectSketchMode(option.mode)}
+        >
+          <span className="hub-sketch-mode-icon" aria-hidden="true">{option.icon}</span>
+          <span className="hub-sketch-mode-label">{t(option.labelKey)}</span>
+        </button>
+      ))}
+    </nav>
+  )
 
-      <div className="card hub-sketch-canvas-card">
+  const renderSketchPropertiesPanel = () => {
+    const selectedMeasurement = selectedMeasurementIndex !== null ? model.measurements?.[selectedMeasurementIndex] ?? null : null
+    if (!selectedWall && !selectedOpening && !selectedMeasurement) return null
+    return (
+      <aside className="hub-sketch-properties-panel" aria-label={t('hub_sketch_properties_panel')}>
+        {selectedWall && (
+          <section className="hub-sketch-properties-section">
+            <div className="hub-sketch-properties-head">
+              <h3>{`${t('hub_sketch_wall_panel_title')} ${selectedWall.index + 1}`}</h3>
+              <button
+                type="button"
+                className="btn ghost small"
+                aria-label={t('hub_sketch_wall_panel_close')}
+                onClick={() => {
+                  setWallElevationFullscreen(false)
+                  setSelectedWallKey(null)
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div className="hub-sketch-wall-panel-facts">
+              <span className="muted">{t('hub_sketch_dim_length_short')}</span>
+              <span className="hub-sketch-stat-value">{fmtFt(selectedWall.lengthFt)}</span>
+              <span className="muted">{t('hub_sketch_wall_height')}</span>
+              <span className="hub-sketch-stat-value">{fmtFt(heightFt)}</span>
+              <span className="muted">{t('hub_sketch_wall_panel_finish')}</span>
+              <span className="hub-sketch-wall-panel-finish">
+                {selectedWallFinish?.color && (
+                  <span className="hub-sketch-wall-panel-swatch" style={{ backgroundColor: selectedWallFinish.color }} aria-hidden="true" />
+                )}
+                {t(selectedWallFinish?.kind === 'tile' ? 'hub_sketch_3d_tile' : selectedWallFinish?.kind === 'drywall-patch' ? 'hub_sketch_3d_drywall_patch' : 'hub_sketch_3d_paint')}
+                {selectedWallFinish && !selectedWallFinish.overridden ? ` · ${t('hub_sketch_wall_panel_finish_default')}` : ''}
+              </span>
+            </div>
+            {canEdit && (
+              <div className="hub-sketch-wall-panel-actions">
+                <button type="button" className="btn small" onClick={openWallFinish}>
+                  {t('hub_sketch_wall_panel_finish_action')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={openWallOpenings}>
+                  {t('hub_sketch_wall_panel_openings')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={openWallCabinets}>
+                  {t('hub_sketch_wall_panel_cabinets')}
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {selectedOpening && selectedOpeningIndex !== null && (
+          <section className="hub-sketch-properties-section">
+            <div className="hub-sketch-properties-head">
+              <h3>{t(selectedOpening.kind === 'door' ? 'hub_sketch_tool_door' : 'hub_sketch_tool_window')}</h3>
+              <button
+                type="button"
+                className="btn ghost small"
+                aria-label={t('hub_sketch_wall_panel_close')}
+                onClick={() => {
+                  selectedOpeningIndexRef.current = null
+                  setSelectedOpeningIndex(null)
+                  setOpeningOffsetEdit(null)
+                }}
+              >
+                ×
+              </button>
+            </div>
+            {lengthInput('doorW', 'hub_sketch_width', openingWidthFt(selectedOpening), 0.5, 20, updateSelectedOpeningWidth)}
+            {lengthInput('doorH', 'hub_sketch_height', openingHeightFt(selectedOpening), 0.5, 20, updateSelectedOpeningHeight)}
+            {selectedOpening.kind === 'window' && lengthInput('winSill', 'hub_sketch_sill', openingFloorFt(selectedOpening), 0, 20, updateSelectedOpeningFloor)}
+            <div className="hub-sketch-wall-panel-actions">
+              <button type="button" className="btn ghost small" disabled={!canCenterOpening} onClick={centerSelectedOpening}>
+                {t('hub_sketch_opening_center')}
+              </button>
+              <button type="button" className="btn ghost small" onClick={removeSelectedOpening}>
+                {t('hub_sketch_3d_remove')}
+              </button>
+            </div>
+          </section>
+        )}
+
+        {selectedMeasurement && (
+          <section className="hub-sketch-properties-section">
+            <div className="hub-sketch-properties-head">
+              <h3>{t('hub_sketch_tool_measure')}</h3>
+              <button type="button" className="btn ghost small" aria-label={t('hub_sketch_wall_panel_close')} onClick={() => setSelectedMeasurementIndex(null)}>
+                ×
+              </button>
+            </div>
+            <span className="hub-sketch-stat-value">{fmtFt(dist(selectedMeasurement.a, selectedMeasurement.b) * modelCellFt(model))}</span>
+            {canEdit && selectedMeasurementIndex !== null && (
+              <button type="button" className="btn ghost small" onClick={() => removeMeasurement(selectedMeasurementIndex)}>
+                {t('hub_sketch_measurement_delete')}
+              </button>
+            )}
+          </section>
+        )}
+      </aside>
+    )
+  }
+
+  const use3DContextPanel = canEdit && viewMode === '3d' && MODES_WITH_3D_CONTEXT.has(activeMode)
+  const hasPropertiesPanel = Boolean(selectedWall || selectedOpening || (selectedMeasurementIndex !== null && model.measurements?.[selectedMeasurementIndex]))
+  const workspaceClass = [
+    'hub-sketch-workspace',
+    use3DContextPanel ? 'hub-sketch-workspace-no-context' : '',
+    hasPropertiesPanel ? 'hub-sketch-workspace-has-properties' : '',
+  ].filter(Boolean).join(' ')
+
+  return (
+    <section className="hub-tab-panel hub-sketch">
+      {renderSketchTopbar()}
+
+      <div className={workspaceClass}>
+        {canEdit && renderModeRail()}
+        {canEdit && !use3DContextPanel && renderSketchContextPanel()}
+
+        <div className="hub-sketch-main">
+          <div className="card hub-sketch-canvas-card">
         {viewMode === '2d' ? (
           <>
             <div
               ref={svgShellRef}
               className={canvasFullscreenActive ? 'hub-sketch-svg-shell hub-sketch-svg-shell-fullscreen' : 'hub-sketch-svg-shell'}
             >
-              {canEdit && canvasFullscreenActive && renderSketchToolbar(true)}
+              {canvasFullscreenActive && renderSketchTopbar(true)}
+              {canEdit && canvasFullscreenActive && (
+                <div className="hub-sketch-fullscreen-context-row">
+                  {renderModeRail(true)}
+                  {renderSketchContextPanel(true)}
+                </div>
+              )}
               <div className="hub-sketch-svg-stage">
                 <svg
                   ref={svgRef}
@@ -4192,6 +4607,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                   onClick={(event) => {
                     if (!canEdit) return
                     event.stopPropagation()
+                    setActiveMode('measure')
                     setSelectedMeasurementIndex(index)
                     setMeasurementDraft(null)
                   }}
@@ -4395,6 +4811,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             onCodeCheckChange={setCodeCheckEnabled}
             pickedWallKey={selectedWallKey}
             onPickWall={setSelectedWallKey}
+            contextMode={activeMode}
+            cameraPresetRequest={threeDCameraPresetRequest}
             fullscreenRequestKey={threeDFullscreenRequest}
             viewModeControl={renderViewModeToggle(true)}
             label={t('hub_sketch_3d_label')}
@@ -4402,6 +4820,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             errorLabel={t('hub_sketch_3d_error')}
           />
         )}
+          </div>
+        </div>
+        {renderSketchPropertiesPanel()}
       </div>
 
       {wallElevationFullscreen && selectedWall && selectedWallSurface && (
@@ -4441,139 +4862,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         </div>
       )}
 
-      {/* NAV-FIX-2: панель «Стена N» — общая для 2D и 3D; только навигация в существующие режимы */}
-      {selectedWall && (
-        <div className="card hub-sketch-wall-panel">
-          <div className="hub-sketch-wall-panel-head">
-            <h3>{`${t('hub_sketch_wall_panel_title')} ${selectedWall.index + 1}`}</h3>
-            <button
-              type="button"
-              className="btn ghost small"
-              aria-label={t('hub_sketch_wall_panel_close')}
-              onClick={() => {
-                setWallElevationFullscreen(false)
-                setSelectedWallKey(null)
-              }}
-            >
-              ×
-            </button>
-          </div>
-          <div className="hub-sketch-wall-panel-facts">
-            <span className="muted">{t('hub_sketch_dim_length_short')}</span>
-            <span className="hub-sketch-stat-value">{fmtFt(selectedWall.lengthFt)}</span>
-            <span className="muted">{t('hub_sketch_wall_height')}</span>
-            <span className="hub-sketch-stat-value">{fmtFt(heightFt)}</span>
-            <span className="muted">{t('hub_sketch_wall_panel_finish')}</span>
-            <span className="hub-sketch-wall-panel-finish">
-              {selectedWallFinish?.color && (
-                <span className="hub-sketch-wall-panel-swatch" style={{ backgroundColor: selectedWallFinish.color }} aria-hidden="true" />
-              )}
-              {t(selectedWallFinish?.kind === 'tile' ? 'hub_sketch_3d_tile' : selectedWallFinish?.kind === 'drywall-patch' ? 'hub_sketch_3d_drywall_patch' : 'hub_sketch_3d_paint')}
-              {selectedWallFinish && !selectedWallFinish.overridden ? ` · ${t('hub_sketch_wall_panel_finish_default')}` : ''}
-            </span>
-          </div>
-          {canEdit && (
-            <div className="hub-sketch-wall-panel-actions">
-              <button type="button" className="btn small" onClick={openWallFinish}>
-                {t('hub_sketch_wall_panel_finish_action')}
-              </button>
-              <button type="button" className="btn ghost small" onClick={openWallOpenings}>
-                {t('hub_sketch_wall_panel_openings')}
-              </button>
-              <button type="button" className="btn ghost small" onClick={openWallCabinets}>
-                {t('hub_sketch_wall_panel_cabinets')}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* сводка */}
-      <div className="card hub-sketch-stats">
-        <div className="hub-sketch-stat">
-          <span className="muted">{t('hub_sketch_area')}</span>
-          <span className="hub-sketch-stat-value">{stats.totalArea.toFixed(1)} ft²</span>
-        </div>
-        <div className="hub-sketch-stat">
-          <span className="muted">{t('hub_sketch_perimeter')}</span>
-          <span className="hub-sketch-stat-value">{fmtFt(stats.totalPerimeter)}</span>
-        </div>
-        <div className="hub-sketch-stat">
-          <span className="muted">{t('hub_sketch_contours')}</span>
-          <span className="hub-sketch-stat-value">{model.contours.filter((c) => c.points.length >= 2).length}</span>
-        </div>
-        <div className="hub-sketch-stat">
-          <span className="muted">{t('hub_sketch_code_check')}</span>
-          <span className={codeCheckEnabled && codeClearanceViolations.length > 0 ? 'hub-sketch-stat-value hub-sketch-code-stat-warn' : 'hub-sketch-stat-value hub-sketch-code-stat-ok'}>
-            {codeCheckEnabled
-              ? codeClearanceViolations.length > 0
-                ? t('hub_sketch_code_issues').replace('{n}', String(codeClearanceViolations.length))
-                : t('hub_sketch_code_ok')
-              : t('hub_sketch_code_off')}
-          </span>
-        </div>
-      </div>
-
       {status && <p className="hub-sketch-ok">{t(status)}</p>}
       {error && <p className="error-msg">{t(error)}</p>}
-
-      {canEdit && (
-        <div className="card hub-sketch-save">
-          <label className="muted hub-sketch-name-label">{t('hub_sketch_name')}</label>
-          <input
-            className="hub-sketch-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="room-1"
-            disabled={busy}
-          />
-          <div className="hub-sketch-material-options">
-            <label className="hub-sketch-layer-toggle">
-              <input
-                type="checkbox"
-                checked={includePrimer}
-                onChange={(event) => setIncludePrimer(event.target.checked)}
-              />
-              <span>{t('hub_sketch_material_include_primer')}</span>
-            </label>
-            <label className="hub-sketch-layer-toggle">
-              <input
-                type="checkbox"
-                checked={includeTexture}
-                onChange={(event) => setIncludeTexture(event.target.checked)}
-              />
-              <span>{t('hub_sketch_material_include_texture')}</span>
-            </label>
-          </div>
-          <div className="hub-sketch-save-actions">
-            <button type="button" className="btn small" disabled={busy} onClick={save}>
-              {busy ? t('saving') : t('hub_sketch_save')}
-            </button>
-            <button type="button" className="btn ghost small" disabled={busy} onClick={calcMaterial}>
-              {t('hub_sketch_material')}
-            </button>
-            <button type="button" className="btn ghost small" disabled={sketchMaterialsBusy} onClick={runSketchMaterials}>
-              {sketchMaterialsBusy ? t('loading') : t('hub_sketch_materials_from_sketch')}
-            </button>
-            <button type="button" className="btn ghost small" disabled={loadBusy} onClick={openLoader}>
-              {t('hub_sketch_load')}
-            </button>
-          </div>
-
-          {loadOpen && (
-            <div className="hub-sketch-load-list">
-              {loadBusy && <p className="muted">{t('loading')}</p>}
-              {!loadBusy && saved.length === 0 && <p className="muted">{t('hub_sketch_load_empty')}</p>}
-              {!loadBusy &&
-                saved.map((f) => (
-                  <button key={f.id} type="button" className="btn ghost small hub-sketch-load-item" onClick={() => importSketch(f)}>
-                    {f.name.replace(/^sketch-/, '').replace(/\.json$/, '')}
-                  </button>
-                ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {sketchMaterials && (
         <div className="card hub-sketch-materials-result">

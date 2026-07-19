@@ -122,8 +122,10 @@ const PHOTO_REFERENCE_MAX_BYTES = 8 * 1024 * 1024
 type SurfaceTarget = 'walls' | 'wall' | 'floor'
 type OpeningPlacementKind = Opening['kind']
 type PlacementKind = SketchLightKind | 'switch' | OpeningPlacementKind | null
+type SketchContextMode = 'wall' | 'opening' | 'finish' | 'cabinet' | 'plumbing' | 'light' | 'measure' | 'markup'
 type Segment = { c: number; s: number; a: Pt; b: Pt }
 type CameraPreset = 'fit' | 'top' | 'angle' | 'inside'
+type CameraPresetRequest = { mode: CameraPreset; key: number }
 type InteractiveKind = 'light' | 'switch' | 'catalog' | 'opening' | 'measurement'
 type InchDraftField = 'tileWIn' | 'tileHIn' | 'groutIn' | 'offsetXIn' | 'offsetYIn'
 type FeetDraftField = 'roomHeightFt' | 'coverageBottomFt' | 'coverageHeightFt' | 'patchXFt' | 'patchYFt' | 'patchWidthFt' | 'patchHeightFt'
@@ -230,6 +232,8 @@ interface Sketch3DViewProps {
   openingDefaults?: Sketch3DOpeningDefaults
   onOpeningDefaultsChange?: (patch: Partial<Sketch3DOpeningDefaults>) => void
   snapControls?: Array<{ key: string; label: string; active: boolean; onSelect: () => void }>
+  contextMode?: SketchContextMode
+  cameraPresetRequest?: CameraPresetRequest | null
   fullscreenRequestKey?: number
   viewModeControl?: ReactNode
   label: string
@@ -2250,6 +2254,8 @@ export default function Sketch3DView({
   openingDefaults,
   onOpeningDefaultsChange,
   snapControls,
+  contextMode,
+  cameraPresetRequest,
   fullscreenRequestKey = 0,
   viewModeControl,
   label,
@@ -2353,11 +2359,16 @@ export default function Sketch3DView({
     setFullscreenFallback(true)
   }, [fullscreenRequestKey])
 
+  const catalogPanelCategories = useMemo<CatalogCategory[]>(() => {
+    if (contextMode === 'plumbing') return ['shower', 'vanity', 'other']
+    if (contextMode === 'light') return ['light', 'fan']
+    return CATALOG_CATEGORIES.filter((category) => category !== 'tile')
+  }, [contextMode])
   const catalogGroups = useMemo(
-    () => CATALOG_CATEGORIES.filter((category) => category !== 'tile')
+    () => catalogPanelCategories
       .map((category) => ({ category, rows: catalogItems.filter((item) => item.category === category) }))
       .filter((group) => group.rows.length > 0),
-    [catalogItems],
+    [catalogItems, catalogPanelCategories],
   )
   const photoRenderBaseName = useMemo(
     () => safeRenderSlug(sketchName || project?.name, project?.id?.slice(0, 8) || 'sketch'),
@@ -2448,6 +2459,13 @@ export default function Sketch3DView({
   const selectedPlacedSpecs = selectedPlaced ? catalogSpecsEntries(selectedPlaced.specs) : []
   const selectedShowerPan = selectedPlaced && isShowerPanPlacedCatalogItem(selectedPlaced.placed) ? selectedPlaced : null
   const selectedShowerPanFinish = selectedShowerPan?.placed.panFinish ? normalizeTileSurface(selectedShowerPan.placed.panFinish) : null
+  const showAllContextSections = !contextMode
+  const show3DFinishes = showAllContextSections || contextMode === 'finish'
+  const show3DOpenings = showAllContextSections || contextMode === 'opening'
+  const show3DPlumbing = showAllContextSections || contextMode === 'plumbing'
+  const show3DLighting = showAllContextSections || contextMode === 'light'
+  const show3DMeasure = showAllContextSections || contextMode === 'measure'
+  const show3DPanel = canEdit && (show3DFinishes || show3DOpenings || show3DPlumbing || show3DLighting || show3DMeasure)
 
   useEffect(() => {
     placementRef.current = placement
@@ -4296,6 +4314,11 @@ export default function Sketch3DView({
     setCameraMode(mode)
     cameraApiRef.current?.[mode]()
   }
+  useEffect(() => {
+    if (!cameraPresetRequest) return
+    setCameraPreset(cameraPresetRequest.mode)
+  }, [cameraPresetRequest?.key])
+
   const renderOpeningDefaultControl = (field: OpeningDefaultDraftField, labelKey: string, valueFt: number, minFt: number, maxFt: number) => (
     <label className="hub-sketch-3d-toolbar-field">
       <span>{t(labelKey)}</span>
@@ -4649,7 +4672,7 @@ export default function Sketch3DView({
   const closeSnapshotPanel = () => setSnapshotPanel(null)
 
   return (
-    <div ref={fullscreenRootRef} className={fullscreenActive ? 'hub-sketch-3d-layout hub-sketch-3d-layout-fullscreen' : 'hub-sketch-3d-layout'}>
+    <div ref={fullscreenRootRef} className={fullscreenActive ? 'hub-sketch-3d-layout hub-sketch-3d-layout-fullscreen' : show3DPanel ? 'hub-sketch-3d-layout' : 'hub-sketch-3d-layout hub-sketch-3d-layout-no-panel'}>
       <div className={fullscreenActive ? 'hub-sketch-3d-shell hub-sketch-3d-shell-fullscreen' : 'hub-sketch-3d-shell'} role="img" aria-label={label}>
         <div ref={hostRef} className="hub-sketch-3d-canvas" />
         <label className="hub-sketch-3d-dim-toggle">
@@ -4685,7 +4708,7 @@ export default function Sketch3DView({
             />
             <span>{t('hub_sketch_3d_ceiling')}</span>
           </label>
-          {canEdit && (
+          {canEdit && showAllContextSections && (
             <button
               type="button"
               className={measure3DActive ? 'btn small' : 'btn ghost small'}
@@ -5139,8 +5162,9 @@ export default function Sketch3DView({
         </div>
       )}
 
-      {canEdit && (
+      {show3DPanel && (
         <aside className="hub-sketch-3d-panel" aria-label={t('hub_sketch_3d_panel')}>
+          {show3DFinishes && (
           <section className="hub-sketch-3d-section">
             <h3>{t('hub_sketch_3d_finishes')}</h3>
             <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_3d_surface')}>
@@ -5531,7 +5555,9 @@ export default function Sketch3DView({
               </div>
             )}
           </section>
+          )}
 
+          {show3DOpenings && (
           <section className="hub-sketch-3d-section">
             <h3>{t('hub_sketch_3d_openings')}</h3>
             <div className="hub-sketch-place-grid" role="group" aria-label={t('hub_sketch_3d_place_opening')}>
@@ -5572,7 +5598,59 @@ export default function Sketch3DView({
               ))}
             </div>
           </section>
+          )}
 
+          {show3DMeasure && (
+          <section className="hub-sketch-3d-section">
+            <h3>{t('hub_sketch_tool_measure')}</h3>
+            <button
+              type="button"
+              className={measure3DActive ? 'btn small' : 'btn ghost small'}
+              aria-pressed={measure3DActive}
+              onClick={() => {
+                setMeasure3DActive((current) => !current)
+                measure3DDraftRef.current = null
+                setPlacement(null)
+                setCatalogPlacementId(null)
+                setSelectedId(null)
+              }}
+            >
+              <span aria-hidden="true">📏</span>
+              <span>{t('hub_sketch_tool_measure')}</span>
+            </button>
+            <label className="hub-sketch-3d-toolbar-toggle hub-sketch-3d-panel-toggle">
+              <input
+                type="checkbox"
+                checked={showDimensions}
+                onChange={(e) => setShowDimensions(e.target.checked)}
+                aria-label={t('hub_sketch_3d_dimensions')}
+              />
+              <span>{t('hub_sketch_3d_dimensions')}</span>
+            </label>
+            <div className="hub-sketch-object-list">
+              {spaceMeasurements.map(({ measurement, index }) => (
+                <button
+                  key={measurementInteractiveId(index)}
+                  type="button"
+                  className={selectedId === measurementInteractiveId(index) ? 'btn small' : 'btn ghost small'}
+                  onClick={() => {
+                    setMeasure3DActive(false)
+                    measure3DDraftRef.current = null
+                    setPlacement(null)
+                    setCatalogPlacementId(null)
+                    setSelectedId(measurementInteractiveId(index))
+                  }}
+                >
+                  {formatFeet(measurement.a.z !== undefined && measurement.b.z !== undefined
+                    ? Math.hypot(measurement.b.x - measurement.a.x, measurement.b.y - measurement.a.y, measurement.b.z - measurement.a.z)
+                    : 0)}
+                </button>
+              ))}
+            </div>
+          </section>
+          )}
+
+          {show3DPlumbing && (
           <section className="hub-sketch-3d-section">
             <h3>{t('hub_sketch_3d_catalog')}</h3>
             {catalogPlacementItem && (
@@ -5581,6 +5659,9 @@ export default function Sketch3DView({
             {catalogLoading && <p className="muted">{t('loading')}</p>}
             {catalogError && <p className="error-msg">{t('load_error')}</p>}
             {!catalogLoading && !catalogError && catalogItems.length === 0 && (
+              <p className="muted">{t('hub_sketch_3d_catalog_empty')}</p>
+            )}
+            {!catalogLoading && !catalogError && catalogItems.length > 0 && catalogGroups.length === 0 && (
               <p className="muted">{t('hub_sketch_3d_catalog_empty')}</p>
             )}
             {!catalogLoading && !catalogError && catalogGroups.map((group) => (
@@ -5629,7 +5710,9 @@ export default function Sketch3DView({
               </details>
             ))}
           </section>
+          )}
 
+          {show3DLighting && (
           <section className="hub-sketch-3d-section">
             <h3>{t('hub_sketch_3d_lighting')}</h3>
             <div className="hub-sketch-place-grid" role="group" aria-label={t('hub_sketch_3d_place')}>
@@ -5694,8 +5777,9 @@ export default function Sketch3DView({
               ))}
             </div>
           </section>
+          )}
 
-          {(selectedLight || selectedSwitch) && (
+          {show3DLighting && (selectedLight || selectedSwitch) && (
             <section className="hub-sketch-3d-section hub-sketch-selected-box">
               <h3>{selectedLight ? lightName(selectedLight, lights.findIndex((light) => light.id === selectedLight.id), t) : selectedSwitch ? switchName(selectedSwitch, switches.findIndex((sw) => sw.id === selectedSwitch.id), t) : ''}</h3>
               {selectedSwitch && (
