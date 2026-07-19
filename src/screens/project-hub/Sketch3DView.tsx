@@ -2304,6 +2304,7 @@ export default function Sketch3DView({
   const [openingDefaultDrafts, setOpeningDefaultDrafts] = useState<Partial<Record<OpeningDefaultDraftField, string>>>({})
   const [browserFullscreen, setBrowserFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
+  const [panelOverlayOpen, setPanelOverlayOpen] = useState(false)
   const [joystickKnob, setJoystickKnob] = useState<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false })
   const [photoRenderBusy, setPhotoRenderBusy] = useState(false)
   const [photoModal, setPhotoModal] = useState<PhotoRenderModalState | null>(null)
@@ -2357,6 +2358,7 @@ export default function Sketch3DView({
     if (fullscreenRequestKey <= 0) return
     setBrowserFullscreen(false)
     setFullscreenFallback(true)
+    setPanelOverlayOpen(false)
   }, [fullscreenRequestKey])
 
   const catalogPanelCategories = useMemo<CatalogCategory[]>(() => {
@@ -2466,6 +2468,10 @@ export default function Sketch3DView({
   const show3DLighting = showAllContextSections || contextMode === 'light'
   const show3DMeasure = showAllContextSections || contextMode === 'measure'
   const show3DPanel = canEdit && (show3DFinishes || show3DOpenings || show3DPlumbing || show3DLighting || show3DMeasure)
+
+  useEffect(() => {
+    if (fullscreenActive || !show3DPanel) setPanelOverlayOpen(false)
+  }, [fullscreenActive, show3DPanel])
 
   useEffect(() => {
     placementRef.current = placement
@@ -4287,6 +4293,7 @@ export default function Sketch3DView({
       invalidate3DRef.current?.()
       return
     }
+    setPanelOverlayOpen(false)
     if (root.requestFullscreen) {
       try {
         await root.requestFullscreen()
@@ -4670,11 +4677,31 @@ export default function Sketch3DView({
   }
 
   const closeSnapshotPanel = () => setSnapshotPanel(null)
+  const sketch3DPanelId = 'hub-sketch-3d-panel'
+  const sketch3DLayoutClassName = [
+    'hub-sketch-3d-layout',
+    fullscreenActive ? 'hub-sketch-3d-layout-fullscreen' : '',
+    show3DPanel ? 'hub-sketch-3d-layout-has-panel' : 'hub-sketch-3d-layout-no-panel',
+    show3DPanel && panelOverlayOpen ? 'hub-sketch-3d-layout-panel-open' : '',
+  ].filter(Boolean).join(' ')
+  const panelToggleLabel = t(panelOverlayOpen ? 'hub_sketch_3d_panel_hide' : 'hub_sketch_3d_panel_show')
 
   return (
-    <div ref={fullscreenRootRef} className={fullscreenActive ? 'hub-sketch-3d-layout hub-sketch-3d-layout-fullscreen' : show3DPanel ? 'hub-sketch-3d-layout' : 'hub-sketch-3d-layout hub-sketch-3d-layout-no-panel'}>
+    <div ref={fullscreenRootRef} className={sketch3DLayoutClassName}>
       <div className={fullscreenActive ? 'hub-sketch-3d-shell hub-sketch-3d-shell-fullscreen' : 'hub-sketch-3d-shell'} role="img" aria-label={label}>
         <div ref={hostRef} className="hub-sketch-3d-canvas" />
+        {show3DPanel && (
+          <button
+            type="button"
+            className={panelOverlayOpen ? 'btn small hub-sketch-3d-panel-toggle hub-sketch-3d-panel-toggle-open' : 'btn ghost small hub-sketch-3d-panel-toggle'}
+            aria-controls={sketch3DPanelId}
+            aria-expanded={panelOverlayOpen}
+            aria-label={panelToggleLabel}
+            onClick={() => setPanelOverlayOpen((open) => !open)}
+          >
+            {panelToggleLabel}
+          </button>
+        )}
         <label className="hub-sketch-3d-dim-toggle">
           <input
             type="checkbox"
@@ -5162,8 +5189,14 @@ export default function Sketch3DView({
         </div>
       )}
 
-      {show3DPanel && (
-        <aside className="hub-sketch-3d-panel" aria-label={t('hub_sketch_3d_panel')}>
+      {show3DPanel && panelOverlayOpen && (
+        <aside id={sketch3DPanelId} className="hub-sketch-3d-panel" aria-label={t('hub_sketch_3d_panel')}>
+          <div className="hub-sketch-3d-panel-head">
+            <h2>{t('hub_sketch_3d_panel')}</h2>
+            <button type="button" className="btn ghost small hub-sketch-3d-panel-close" onClick={() => setPanelOverlayOpen(false)}>
+              {t('hub_sketch_3d_panel_hide')}
+            </button>
+          </div>
           {show3DFinishes && (
           <section className="hub-sketch-3d-section">
             <h3>{t('hub_sketch_3d_finishes')}</h3>
@@ -5618,7 +5651,7 @@ export default function Sketch3DView({
               <span aria-hidden="true">📏</span>
               <span>{t('hub_sketch_tool_measure')}</span>
             </button>
-            <label className="hub-sketch-3d-toolbar-toggle hub-sketch-3d-panel-toggle">
+            <label className="hub-sketch-3d-toolbar-toggle">
               <input
                 type="checkbox"
                 checked={showDimensions}
