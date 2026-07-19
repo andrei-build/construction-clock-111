@@ -4252,6 +4252,68 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   max-width: 320px;
 }
 .hub-sketch-save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.hub-sketch-material-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.hub-sketch-materials-result {
+  display: grid;
+  gap: 10px;
+}
+.hub-sketch-materials-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.hub-sketch-materials-head h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+.hub-sketch-materials-head p {
+  margin: 0;
+}
+.hub-sketch-material-table {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+.hub-sketch-material-table-head,
+.hub-sketch-material-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(72px, .4fr) minmax(72px, .4fr) minmax(180px, 1.2fr);
+  gap: 8px;
+  min-width: 620px;
+  align-items: baseline;
+}
+.hub-sketch-material-table-head {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.hub-sketch-material-section {
+  display: grid;
+  gap: 5px;
+}
+.hub-sketch-material-section h4 {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.hub-sketch-material-row {
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+}
+.hub-sketch-material-name {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
 .hub-sketch-load-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .hub-sketch-load-item { width: auto; }
 /* SKETCH-2D-2: габариты проёмов, живой размер сегмента, прилипание комнат */
@@ -4392,6 +4454,24 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-plan-shower-rim {
   stroke: rgba(37, 111, 159, .82);
   stroke-width: 1.2;
+}
+.hub-sketch-plan-electrical rect {
+  stroke-width: 1.7;
+}
+.hub-sketch-plan-outlet rect {
+  fill: rgba(59, 130, 246, .14);
+  stroke: #1d4ed8;
+}
+.hub-sketch-plan-switch rect {
+  fill: rgba(245, 158, 11, .16);
+  stroke: #b45309;
+}
+.hub-sketch-plan-electrical-mark {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  color: #1f2937;
+  stroke-linecap: round;
 }
 .hub-sketch-code-arc,
 .hub-sketch-code-clearance-line {
@@ -5220,6 +5300,24 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-catalog-thumb-shower-neo-angle {
   clip-path: polygon(0 0, 100% 0, 100% 58%, 58% 100%, 0 100%);
+}
+.hub-sketch-3d-electrical-thumb {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 24px;
+  font-weight: 900;
+}
+.hub-sketch-3d-electrical-thumb-outlet {
+  color: #1d4ed8;
+  background: rgba(59, 130, 246, .14);
+}
+.hub-sketch-3d-electrical-thumb-switch {
+  color: #b45309;
+  background: rgba(245, 158, 11, .16);
 }
 .hub-sketch-catalog-item-body {
   min-width: 0;

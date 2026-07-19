@@ -3,7 +3,7 @@ import type { Contour } from './sketchFinishes'
 import { formatInches } from './inches'
 
 export type CatalogPlacementSurface = 'floor' | 'wall' | 'ceiling'
-export type SketchPlacedCatalogKind = 'TOILET' | 'SHOWER_PAN'
+export type SketchPlacedCatalogKind = 'TOILET' | 'SHOWER_PAN' | 'OUTLET' | 'SWITCH'
 export type SketchPlacedCabinetLayer = 'base' | 'wall'
 export type SketchShowerPanShape = 'rect' | 'neo-angle'
 
@@ -91,9 +91,13 @@ const CATALOG_CATEGORIES: CatalogCategory[] = ['shower', 'vanity', 'cabinet', 'l
 const CATALOG_CATEGORY_SET = new Set<string>(CATALOG_CATEGORIES)
 export const SKETCH_CATALOG_KIND_TOILET: SketchPlacedCatalogKind = 'TOILET'
 export const SKETCH_CATALOG_KIND_SHOWER_PAN: SketchPlacedCatalogKind = 'SHOWER_PAN'
+export const SKETCH_CATALOG_KIND_OUTLET: SketchPlacedCatalogKind = 'OUTLET'
+export const SKETCH_CATALOG_KIND_SWITCH: SketchPlacedCatalogKind = 'SWITCH'
 export const BUILTIN_TOILET_CATALOG_ID = 'builtin-toilet'
 export const BUILTIN_SHOWER_PAN_RECT_CATALOG_ID = 'builtin-shower-pan-60x32'
 export const BUILTIN_SHOWER_PAN_NEO_CATALOG_ID = 'builtin-shower-pan-neo-36'
+export const BUILTIN_OUTLET_CATALOG_ID = 'builtin-outlet'
+export const BUILTIN_SWITCH_CATALOG_ID = 'builtin-switch'
 export const BUILTIN_TOILET_CATALOG_ITEM: CatalogItem = {
   id: BUILTIN_TOILET_CATALOG_ID,
   org_id: '',
@@ -184,6 +188,8 @@ function cleanCategory(value: unknown): CatalogCategory | undefined {
 function cleanPlacedKind(value: unknown): SketchPlacedCatalogKind | undefined {
   if (value === SKETCH_CATALOG_KIND_TOILET) return SKETCH_CATALOG_KIND_TOILET
   if (value === SKETCH_CATALOG_KIND_SHOWER_PAN) return SKETCH_CATALOG_KIND_SHOWER_PAN
+  if (value === SKETCH_CATALOG_KIND_OUTLET) return SKETCH_CATALOG_KIND_OUTLET
+  if (value === SKETCH_CATALOG_KIND_SWITCH) return SKETCH_CATALOG_KIND_SWITCH
   return undefined
 }
 
@@ -243,6 +249,22 @@ export function isShowerPanPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem,
     || item.category === 'shower'
 }
 
+export function isOutletPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
+  return item.kind === SKETCH_CATALOG_KIND_OUTLET
+    || item.catalogItemId === BUILTIN_OUTLET_CATALOG_ID
+    || String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_OUTLET
+}
+
+export function isSwitchPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
+  return item.kind === SKETCH_CATALOG_KIND_SWITCH
+    || item.catalogItemId === BUILTIN_SWITCH_CATALOG_ID
+    || String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_SWITCH
+}
+
+export function isElectricalPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
+  return isOutletPlacedCatalogItem(item) || isSwitchPlacedCatalogItem(item)
+}
+
 export function showerPanShapeFromCatalogItem(item: Pick<CatalogItem, 'id' | 'model'>): SketchShowerPanShape {
   const model = String(item.model ?? '').toUpperCase()
   return item.id === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID || model.includes('NEO') ? 'neo-angle' : 'rect'
@@ -259,6 +281,8 @@ function isBuiltinSnapshotPlacedItem(item: Pick<SketchPlacedCatalogItem, 'catalo
   return item.catalogItemId === BUILTIN_TOILET_CATALOG_ID
     || item.catalogItemId === BUILTIN_SHOWER_PAN_RECT_CATALOG_ID
     || item.catalogItemId === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID
+    || item.catalogItemId === BUILTIN_OUTLET_CATALOG_ID
+    || item.catalogItemId === BUILTIN_SWITCH_CATALOG_ID
     || item.catalogItemId.startsWith('builtin-cabinet:')
 }
 
