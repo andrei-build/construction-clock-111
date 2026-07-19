@@ -81,6 +81,14 @@ import {
   type SketchMaterialRow,
   type SketchMaterialsResult,
 } from './sketchMaterials'
+import {
+  emptySketchHistory,
+  recordSketchHistory,
+  redoSketchHistory,
+  undoSketchHistory,
+  SKETCH_HISTORY_LIMIT,
+  type SketchHistory,
+} from './sketchHistory'
 
 interface SketchTabProps {
   project: Project
@@ -100,7 +108,7 @@ const MIN_MINOR_GRID_SCREEN_PX = 8
 const CLOSE_SNAP = 0.45 // клетки — попадание в стартовую точку замыкает контур
 const SEG_HIT = 0.7 // клетки — попадание в сегмент при установке двери/окна
 const ROOM_SNAP = 0.6 // клетки — радиус прилипания новой комнаты к существующим вершинам/стенам
-const HISTORY_MAX = 60
+const ZOOM_BUTTON_STEP = 1.2
 const DEFAULT_WALL_HEIGHT_FT = 8
 const DIM_OFFSET_SCREEN_PX = 24
 const DIM_LABEL_SCREEN_PX = 12
@@ -183,6 +191,13 @@ function parseLengthFt(value: string): number {
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
+}
+
+function isEditableKeyTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
 }
 
 function snapLengthFt(valueFt: number, stepFt: number): number {
@@ -1182,7 +1197,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const canEdit = profile ? isManagerWrite(profile.role) : false
 
   const [model, setModel] = useState<SketchModel>(EMPTY_MODEL)
-  const [history, setHistory] = useState<SketchModel[]>([])
+  const [history, setHistory] = useState<SketchHistory<SketchModel>>(() => emptySketchHistory())
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
   const [tool, setTool] = useState<Tool>('wall')
   const [snapMode, setSnapMode] = useState<SnapMode>('1ft')
@@ -1250,6 +1265,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const activeSnapFt = snapModeStep(snapMode)
   const activeSnapFtRef = useRef(activeSnapFt)
   const canvasFullscreenActive = canvasBrowserFullscreen || canvasFullscreenFallback
+  const canUndo = history.undo.length > 0
+  const canRedo = history.redo.length > 0
   const openingDefaults = useMemo(() => ({ doorW, doorH, winW, winH, winSill }), [doorW, doorH, winW, winH, winSill])
   const cabinetWallOptions = useMemo(() => eachSegment(model), [model])
   const effectiveCabinetWallKey = selectedCabinetWallKey && cabinetWallOptions.some((seg) => sketchWallKey(seg.c, seg.s) === selectedCabinetWallKey)
@@ -1330,17 +1347,28 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     activeSnapFtRef.current = activeSnapFt
   }, [activeSnapFt])
 
-  // Снимок в историю перед изменением; затем применяем мутатор.
-  const commit = (next: SketchModel) => {
-    setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
-    setModel(next)
+  const clearModelChangeState = useCallback(() => {
     setSketchMaterials(null)
     setSketchMaterialsAdded(null)
     setStatus(null)
     setError(null)
     setSegmentLengthEdit(null)
     setSegmentResizeConflict(null)
-  }
+  }, [])
+
+  // Снимок в историю перед изменением; затем применяем мутатор.
+  const commit = useCallback((next: SketchModel) => {
+    const current = modelRef.current
+    setHistory((h) => recordSketchHistory(h, current, SKETCH_HISTORY_LIMIT))
+    modelRef.current = next
+    setModel(next)
+    clearModelChangeState()
+  }, [clearModelChangeState])
+
+  const recordHistoryStep = useCallback(() => {
+    setHistory((h) => recordSketchHistory(h, modelRef.current, SKETCH_HISTORY_LIMIT))
+    clearModelChangeState()
+  }, [clearModelChangeState])
 
   const beginSegmentLengthEdit = (dim: SegmentDimLine) => {
     if (!canEdit) return
@@ -1404,8 +1432,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   useEffect(() => {
     if (selectedWallKey === null) return
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return
+      if (isEditableKeyTarget(event.target)) return
       if (event.key === 'Escape') {
         setSelectedWallKey(null)
         event.preventDefault()
@@ -1670,6 +1697,21 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     })
   }
 
+  const zoomCanvasToCenter = (factor: number) => {
+    const svg = svgRef.current
+    if (!svg) return
+    const rect = svg.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return
+    const centerX = rect.left + rect.width / 2
+    const centerY = rect.top + rect.height / 2
+    canvasAutoFitRef.current = false
+    setCanvasView((view) => {
+      const nextView = zoomCanvasAt(centerX, centerY, factor, view)
+      canvasViewRef.current = nextView
+      return nextView
+    })
+  }
+
   // Координаты указателя → клетки сетки (без округления).
   const pointerCell = (e: React.PointerEvent | React.MouseEvent): Pt | null => {
     return pointerCellAt(e.clientX, e.clientY)
@@ -1880,8 +1922,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   useEffect(() => {
     if (!canEdit || viewMode !== '2d') return
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return
+      if (isEditableKeyTarget(event.target)) return
       if (event.key === 'Escape' && tool === 'measure') {
         setTool('wall')
         setMeasurementDraft(null)
@@ -2031,9 +2072,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const startDragOpening = (i: number) => (e: React.PointerEvent) => {
     if (!canEdit) return
     e.stopPropagation()
-    setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
-    setStatus(null)
-    setError(null)
+    recordHistoryStep()
     // любое взаимодействие с проёмом подавляет следующий click (иначе поставили бы новую точку/проём)
     dragMovedRef.current = true
     dragIdxRef.current = i
@@ -2152,29 +2191,56 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     commit({ ...model, contours: contours.map((c, i) => (i === contours.length - 1 ? { ...c, closed: true } : c)) })
   }
 
-  const undo = () => {
-    if (history.length === 0) return
-    const prev = history[history.length - 1]
-    setHistory((h) => h.slice(0, -1))
-    setModel(prev)
-    setSketchMaterials(null)
-    setSketchMaterialsAdded(null)
-    setStatus(null)
-    setError(null)
-  }
+  const undo = useCallback(() => {
+    const result = undoSketchHistory(history, modelRef.current, SKETCH_HISTORY_LIMIT)
+    if (!result) return
+    setHistory(result.history)
+    modelRef.current = result.current
+    setModel(result.current)
+    setMeasurementDraft(null)
+    setSelectedMeasurementIndex(null)
+    dragIdxRef.current = null
+    setDragIdx(null)
+    clearModelChangeState()
+  }, [history, clearModelChangeState])
+
+  const redo = useCallback(() => {
+    const result = redoSketchHistory(history, modelRef.current, SKETCH_HISTORY_LIMIT)
+    if (!result) return
+    setHistory(result.history)
+    modelRef.current = result.current
+    setModel(result.current)
+    setMeasurementDraft(null)
+    setSelectedMeasurementIndex(null)
+    dragIdxRef.current = null
+    setDragIdx(null)
+    clearModelChangeState()
+  }, [history, clearModelChangeState])
 
   const clearAll = () => {
     if (model.contours.length === 0 && model.openings.length === 0 && (model.measurements ?? []).length === 0 && (model.placedItems ?? []).length === 0) return
-    setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
     canvasAutoFitRef.current = true
-    setModel(EMPTY_MODEL)
+    commit(EMPTY_MODEL)
     setMeasurementDraft(null)
     setSelectedMeasurementIndex(null)
-    setSketchMaterials(null)
-    setSketchMaterialsAdded(null)
-    setStatus(null)
-    setError(null)
   }
+
+  useEffect(() => {
+    if (!canEdit) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableKeyTarget(event.target)) return
+      if (event.altKey || (!event.ctrlKey && !event.metaKey)) return
+      const key = event.key.toLowerCase()
+      const isUndo = key === 'z' && !event.shiftKey
+      const isRedo = key === 'y' || (key === 'z' && event.shiftKey)
+      if (!isUndo && !isRedo) return
+      event.preventDefault()
+      if (isUndo) undo()
+      else redo()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [canEdit, undo, redo])
 
   const updateWallHeight = (value: number) => {
     const nextHeight = Number.isFinite(value) && value > 0 ? value : DEFAULT_WALL_HEIGHT_FT
@@ -2202,12 +2268,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const updateModelFrom3D = useCallback((next: SketchModel) => {
-    setModel(normalizeSketchModelForStorage(next))
-    setSketchMaterials(null)
-    setSketchMaterialsAdded(null)
-    setStatus(null)
-    setError(null)
-  }, [])
+    commit(normalizeSketchModelForStorage(next))
+  }, [commit])
 
   const save = async () => {
     if (!profile || busy) return
@@ -2355,11 +2417,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       if (switches.length > 0) nextModel.switches = switches
       if (measurements.length > 0) nextModel.measurements = measurements
       if (placedItems.length > 0) nextModel.placedItems = placedItems
-      setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
       canvasAutoFitRef.current = true
       setMeasurementDraft(null)
       setSelectedMeasurementIndex(null)
-      setModel(normalizeSketchModelForStorage(nextModel))
+      commit(normalizeSketchModelForStorage(nextModel))
       setName(file.name.replace(/^sketch-/, '').replace(/\.json$/, ''))
       setLoadOpen(false)
       setStatus('hub_sketch_loaded')
@@ -2474,6 +2535,61 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const sketchMaterialRowsBySection = (section: SketchMaterialRow['section']) =>
     sketchMaterials?.rows.filter((row) => row.section === section) ?? []
 
+  const renderCanvasControls = () => (
+    <div className="hub-sketch-2d-control-stack" role="toolbar" aria-label={t('hub_sketch_2d_canvas_tools')}>
+      <div className="hub-sketch-2d-control-group" role="group" aria-label={t('hub_sketch_history_controls')}>
+        <button
+          type="button"
+          className="hub-sketch-round-btn"
+          disabled={!canEdit || !canUndo}
+          aria-label={t('hub_sketch_step_back')}
+          title={t('hub_sketch_step_back')}
+          onClick={undo}
+        >
+          ↶
+        </button>
+        <button
+          type="button"
+          className="hub-sketch-round-btn"
+          disabled={!canEdit || !canRedo}
+          aria-label={t('hub_sketch_step_forward')}
+          title={t('hub_sketch_step_forward')}
+          onClick={redo}
+        >
+          ↷
+        </button>
+      </div>
+      <div className="hub-sketch-2d-control-group" role="group" aria-label={t('hub_sketch_zoom_controls')}>
+        <button
+          type="button"
+          className="hub-sketch-round-btn"
+          aria-label={t('hub_sketch_zoom_in')}
+          title={t('hub_sketch_zoom_in')}
+          onClick={() => zoomCanvasToCenter(1 / ZOOM_BUTTON_STEP)}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          className="hub-sketch-round-btn"
+          aria-label={t('hub_sketch_zoom_out')}
+          title={t('hub_sketch_zoom_out')}
+          onClick={() => zoomCanvasToCenter(ZOOM_BUTTON_STEP)}
+        >
+          −
+        </button>
+      </div>
+      <div className="hub-sketch-2d-tools" role="group" aria-label={t('hub_sketch_view_controls')}>
+        <button type="button" className="btn ghost small" onClick={fitCanvasToModel}>
+          {t('hub_sketch_camera_fit')}
+        </button>
+        <button type="button" className="btn ghost small" aria-pressed={canvasFullscreenActive} onClick={toggleCanvasFullscreen}>
+          {t(canvasFullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
+        </button>
+      </div>
+    </div>
+  )
+
   const renderSketchToolbar = (fullscreen = false) => (
     <div className={fullscreen ? 'hub-sketch-toolbar hub-sketch-toolbar-fullscreen' : 'card hub-sketch-toolbar'}>
       {fullscreen && (
@@ -2520,7 +2636,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         <button type="button" className="btn ghost small" disabled={!canClose} onClick={finishShape}>
           {t('hub_sketch_finish')}
         </button>
-        <button type="button" className="btn ghost small" disabled={history.length === 0} onClick={undo}>
+        <button type="button" className="btn ghost small" disabled={!canUndo} onClick={undo}>
           {t('hub_sketch_undo')}
         </button>
         <button type="button" className="btn ghost small" onClick={clearAll}>
@@ -2677,21 +2793,22 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               className={canvasFullscreenActive ? 'hub-sketch-svg-shell hub-sketch-svg-shell-fullscreen' : 'hub-sketch-svg-shell'}
             >
               {canEdit && canvasFullscreenActive && renderSketchToolbar(true)}
-              <svg
-                ref={svgRef}
-                className="hub-sketch-svg"
-                viewBox={`${canvasView.x} ${canvasView.y} ${canvasView.width} ${canvasView.height}`}
-                preserveAspectRatio="xMidYMid meet"
-                role="img"
-                aria-label={t('hub_tab_sketch')}
-                onClick={handleClick}
-                onPointerDown={handleCanvasPointerDown}
-                onPointerMove={handleCanvasPointerMove}
-                onPointerUp={handleCanvasPointerEnd}
-                onPointerCancel={handleCanvasPointerEnd}
-                onPointerLeave={handleCanvasPointerLeave}
-                onWheel={handleCanvasWheel}
-              >
+              <div className="hub-sketch-svg-stage">
+                <svg
+                  ref={svgRef}
+                  className="hub-sketch-svg"
+                  viewBox={`${canvasView.x} ${canvasView.y} ${canvasView.width} ${canvasView.height}`}
+                  preserveAspectRatio="xMidYMid meet"
+                  role="img"
+                  aria-label={t('hub_tab_sketch')}
+                  onClick={handleClick}
+                  onPointerDown={handleCanvasPointerDown}
+                  onPointerMove={handleCanvasPointerMove}
+                  onPointerUp={handleCanvasPointerEnd}
+                  onPointerCancel={handleCanvasPointerEnd}
+                  onPointerLeave={handleCanvasPointerLeave}
+                  onWheel={handleCanvasWheel}
+                >
           <defs>
             <marker id="hub-sketch-measure-arrow" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M 0 0 L 8 4 L 0 8 z" fill="#047857" />
@@ -3182,31 +3299,23 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               r={hoverRadius}
             />
           )}
-              </svg>
-              {segmentResizeConflict && segmentLengthEdit && (
-                <div className="hub-sketch-dimension-conflict" role="alertdialog" aria-live="polite">
-                  <span>{t('hub_sketch_dimension_conflict_prompt')}</span>
-                  <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applySegmentLengthEdit('end')}>
-                    {t('hub_sketch_dimension_move_start')}
-                  </button>
-                  <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applySegmentLengthEdit('start')}>
-                    {t('hub_sketch_dimension_move_end')}
-                  </button>
-                  <button type="button" className="btn ghost small" onMouseDown={(event) => event.preventDefault()} onClick={cancelSegmentLengthEdit}>
-                    {t('cancel')}
-                  </button>
-                </div>
-              )}
-              {!canvasFullscreenActive && (
-                <div className="hub-sketch-2d-tools" role="toolbar" aria-label={t('hub_sketch_2d_canvas_tools')}>
-                  <button type="button" className="btn ghost small" onClick={fitCanvasToModel}>
-                    {t('hub_sketch_camera_fit')}
-                  </button>
-                  <button type="button" className="btn ghost small" aria-pressed={canvasFullscreenActive} onClick={toggleCanvasFullscreen}>
-                    {t(canvasFullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
-                  </button>
-                </div>
-              )}
+                </svg>
+                {segmentResizeConflict && segmentLengthEdit && (
+                  <div className="hub-sketch-dimension-conflict" role="alertdialog" aria-live="polite">
+                    <span>{t('hub_sketch_dimension_conflict_prompt')}</span>
+                    <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applySegmentLengthEdit('end')}>
+                      {t('hub_sketch_dimension_move_start')}
+                    </button>
+                    <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applySegmentLengthEdit('start')}>
+                      {t('hub_sketch_dimension_move_end')}
+                    </button>
+                    <button type="button" className="btn ghost small" onMouseDown={(event) => event.preventDefault()} onClick={cancelSegmentLengthEdit}>
+                      {t('cancel')}
+                    </button>
+                  </div>
+                )}
+                {renderCanvasControls()}
+              </div>
             </div>
             <p className="muted hub-sketch-scale">{t('hub_sketch_scale_note')}</p>
           </>

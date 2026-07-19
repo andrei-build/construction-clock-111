@@ -3949,6 +3949,15 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   touch-action: none;
   user-select: none;
 }
+.hub-sketch-svg-stage {
+  position: relative;
+  min-height: 0;
+}
+.hub-sketch-svg-shell-fullscreen .hub-sketch-svg-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
 .hub-sketch-svg-shell-fullscreen .hub-sketch-svg {
   flex: 1 1 auto;
   min-height: 0;
@@ -4027,22 +4036,68 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding: 16px;
   background: rgba(247, 248, 251, .72);
 }
-.hub-sketch-2d-tools,
 .hub-sketch-3d-camera-tools {
   position: absolute;
   top: 10px;
   right: 10px;
   z-index: 3;
+  max-width: calc(100% - 20px);
+}
+.hub-sketch-2d-control-stack {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: calc(100% - 20px);
+  pointer-events: none;
+}
+.hub-sketch-2d-control-group,
+.hub-sketch-2d-tools,
+.hub-sketch-3d-camera-tools {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-  max-width: calc(100% - 20px);
   padding: 6px;
   border: 1px solid rgba(126,160,190,.28);
   border-radius: 8px;
   background: rgba(13, 21, 34, .78);
   backdrop-filter: blur(8px);
+}
+.hub-sketch-2d-control-group,
+.hub-sketch-2d-tools {
+  pointer-events: auto;
+}
+.hub-sketch-round-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid rgba(237,246,251,.24);
+  border-radius: 999px;
+  background: rgba(21,29,45,.94);
+  color: var(--text);
+  font: 800 17px/1 var(--font-numeric);
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(0,0,0,.22);
+  transition: background .12s, color .12s, border-color .12s, transform .06s, opacity .12s;
+}
+.hub-sketch-round-btn:hover:not(:disabled) {
+  border-color: rgba(200,169,59,.58);
+  background: rgba(29,41,64,.96);
+  color: var(--accent);
+}
+.hub-sketch-round-btn:active:not(:disabled) { transform: scale(.94); }
+.hub-sketch-round-btn:disabled {
+  opacity: .38;
+  cursor: default;
+  box-shadow: none;
 }
 .hub-sketch-2d-tools .btn,
 .hub-sketch-3d-camera-tools .btn {
@@ -4051,6 +4106,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-size: 12px;
   line-height: 1.1;
   white-space: nowrap;
+}
+.hub-sketch-2d-control-stack .hub-sketch-2d-tools .btn {
+  padding: 7px 9px;
+  font-size: 11.5px;
 }
 .hub-sketch-photo-render-btn {
   display: inline-flex;
