@@ -95,6 +95,36 @@ export function IconChat(props: IconProps) {
   )
 }
 
+export function IconInfo(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 10v6" />
+      <path d="M12 7h.01" />
+    </Icon>
+  )
+}
+
+export function IconStop(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />
+    </Icon>
+  )
+}
+
+export function IconText(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5 6h14" />
+      <path d="M8 6v12" />
+      <path d="M16 6v12" />
+      <path d="M6 18h4" />
+      <path d="M14 18h4" />
+    </Icon>
+  )
+}
+
 export function IconFolder(props: IconProps) {
   return (
     <Icon {...props}>

@@ -1,4 +1,4 @@
-import { supabase } from '../supabase'
+import { supabase, SUPABASE_KEY, SUPABASE_URL } from '../supabase'
 import { warnReadError } from './_shared'
 
 // AI-1-UI: «строка-командир» — фронт к развёрнутому бэкенду AI-ассистента владельца (edge
@@ -79,6 +79,18 @@ export interface AskAssistantResult {
   error?: string
 }
 
+export interface AiTtsRequest {
+  text: string
+  voice?: string
+  style?: string
+  signal?: AbortSignal
+}
+
+export interface AiTtsResult {
+  blob: Blob
+  mime: string
+}
+
 // Достаём текст ошибки из тела ответа edge (FunctionsHttpError несёт Response в error.context) —
 // тот же приём, что mail.ts/mailSendErrorText. undefined, если тела нет.
 async function functionErrorText(error: unknown): Promise<string | undefined> {
@@ -139,6 +151,50 @@ export async function askAssistant(message: string): Promise<AskAssistantResult>
   }
   const reply = (data as { reply?: unknown } | null)?.reply
   return { reply: typeof reply === 'string' ? reply : undefined }
+}
+
+function base64ToBlob(audioB64: string, mime: string): Blob {
+  const binary = atob(audioB64)
+  const chunkSize = 8192
+  const chunks: ArrayBuffer[] = []
+  for (let offset = 0; offset < binary.length; offset += chunkSize) {
+    const slice = binary.slice(offset, offset + chunkSize)
+    const chunk = new ArrayBuffer(slice.length)
+    const bytes = new Uint8Array(chunk)
+    for (let i = 0; i < slice.length; i++) bytes[i] = slice.charCodeAt(i)
+    chunks.push(chunk)
+  }
+  return new Blob(chunks, { type: mime })
+}
+
+export async function synthesizeAiSpeech({ text, voice, style, signal }: AiTtsRequest): Promise<AiTtsResult> {
+  const cleanText = text.trim()
+  if (!cleanText) throw new Error('empty_text')
+  const { data: { session } } = await supabase.auth.getSession()
+  const token = session?.access_token
+  if (!token) throw new Error('no_session')
+
+  const body: Record<string, string> = { text: cleanText }
+  if (voice?.trim()) body.voice = voice.trim()
+  if (style?.trim()) body.style = style.trim()
+
+  const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-tts`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      apikey: SUPABASE_KEY,
+    },
+    body: JSON.stringify(body),
+    signal,
+  })
+  const data = (await resp.json().catch(() => null)) as { audio_b64?: unknown; mime?: unknown; error?: unknown } | null
+  const errorText = typeof data?.error === 'string' && data.error.trim() ? data.error : undefined
+  if (!resp.ok || errorText) throw new Error(errorText ?? `tts_http_${resp.status}`)
+  const audioB64 = typeof data?.audio_b64 === 'string' ? data.audio_b64 : ''
+  const mime = typeof data?.mime === 'string' && data.mime.trim() ? data.mime : 'audio/wav'
+  if (!audioB64) throw new Error('tts_empty_audio')
+  return { blob: base64ToBlob(audioB64, mime), mime }
 }
 
 // UPDATE статуса предложения (executed/rejected) + resolved_by=auth.uid() + resolved_at=now() +
