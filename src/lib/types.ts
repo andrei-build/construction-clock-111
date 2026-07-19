@@ -174,6 +174,7 @@ export interface DeliveryItem {
   position: number
   title: string
   details: string | null
+  needed_by: string | null
   status: 'needed' | 'bought' | 'have' | 'delivered'
   claimed_by: string | null
   updated_by: string | null
@@ -725,6 +726,7 @@ export interface ProjectMaterial {
   sort_order: number
   status: MaterialSpecStatus
   task_id: string | null
+  needed_by: string | null
   created_by: string | null
   created_at: string
   updated_at: string

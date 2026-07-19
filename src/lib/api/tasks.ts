@@ -365,7 +365,7 @@ export async function getArchivedTasks(): Promise<ArchivedTask[]> {
 // удаление в UI гейтим на менеджера+/создателя (закон Андрея, RLS шире не мешает). org_id
 // NOT NULL без дефолта — шлём ЯВНО из задачи/профиля при insert. Эти функции экспортируются
 // через barrel `export * from './api/tasks'` в src/lib/api.ts — сам barrel НЕ трогаем.
-const DELIVERY_ITEM_SELECT = 'id, org_id, task_id, position, title, details, status, claimed_by, updated_by, created_by, created_at, updated_at'
+const DELIVERY_ITEM_SELECT = 'id, org_id, task_id, position, title, details, needed_by, status, claimed_by, updated_by, created_by, created_at, updated_at'
 
 // Позиции одной доставки (открытая накладная). Порядок: position, затем время создания.
 export async function getDeliveryItems(taskId: string): Promise<DeliveryItem[]> {
@@ -381,11 +381,11 @@ export async function getDeliveryItems(taskId: string): Promise<DeliveryItem[]> 
 export interface NewDeliveryItemInput {
   title: string
   details?: string | null
+  needed_by?: string | null
   position?: number
 }
 
-// Добавить позицию в накладную. org_id берём из задачи (fallback — профиль), created_by/updated_by=я.
-export async function addDeliveryItem(p: Profile, task: Task, input: NewDeliveryItemInput): Promise<DeliveryItem> {
+function cleanDeliveryItemRow(p: Profile, task: Task, input: NewDeliveryItemInput): Record<string, unknown> {
   const row: Record<string, unknown> = {
     org_id: task.org_id ?? p.org_id,
     task_id: task.id,
@@ -394,11 +394,32 @@ export async function addDeliveryItem(p: Profile, task: Task, input: NewDelivery
     updated_by: p.id,
   }
   const details = input.details?.trim()
+  const neededBy = input.needed_by?.trim()
   if (details) row.details = details
+  if (neededBy) row.needed_by = neededBy
   if (input.position !== undefined) row.position = input.position
-  const { data, error } = await supabase.from('delivery_items').insert(row).select(DELIVERY_ITEM_SELECT).single()
+  return row
+}
+
+// Добавить позиции в накладную. org_id берём из задачи (fallback — профиль), created_by/updated_by=я.
+export async function addDeliveryItems(p: Profile, task: Task, inputs: NewDeliveryItemInput[]): Promise<DeliveryItem[]> {
+  const rows = inputs
+    .filter((input) => input.title.trim())
+    .map((input) => cleanDeliveryItemRow(p, task, input))
+  if (rows.length === 0) return []
+  const { data, error } = await supabase.from('delivery_items')
+    .insert(rows)
+    .select(DELIVERY_ITEM_SELECT)
+    .order('position', { ascending: true })
   if (error) throw error
-  return data as DeliveryItem
+  return (data as DeliveryItem[]) ?? []
+}
+
+// Добавить позицию в накладную. Сохраняем старый контракт одиночного ввода.
+export async function addDeliveryItem(p: Profile, task: Task, input: NewDeliveryItemInput): Promise<DeliveryItem> {
+  const rows = await addDeliveryItems(p, task, [input])
+  if (!rows[0]) throw new Error('delivery_item_not_created')
+  return rows[0]
 }
 
 export type DeliveryItemStatus = DeliveryItem['status']
@@ -441,6 +462,25 @@ export async function setDeliveryItemStatus(p: Profile, item: DeliveryItem, stat
     const { data: fresh } = await supabase.from('delivery_items').select(DELIVERY_ITEM_SELECT).eq('id', item.id).maybeSingle()
     throw new DeliveryItemConflictError((fresh as DeliveryItem | null) ?? item)
   }
+  return data as DeliveryItem
+}
+
+// Поштучная дата «нужно к» на позиции доставки. Меняет только дату и служебные поля строки.
+export async function updateDeliveryItemNeededBy(
+  p: Profile,
+  item: Pick<DeliveryItem, 'id'>,
+  neededBy: string | null,
+): Promise<DeliveryItem> {
+  const { data, error } = await supabase.from('delivery_items')
+    .update({
+      needed_by: neededBy?.trim() || null,
+      updated_by: p.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', item.id)
+    .select(DELIVERY_ITEM_SELECT)
+    .single()
+  if (error) throw error
   return data as DeliveryItem
 }
 
