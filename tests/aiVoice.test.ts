@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isVoiceAffirm,
+  isVoiceCancel,
   isVoiceStopCommand,
   looksLikeTtsEcho,
   normalizeVoiceText,
@@ -28,6 +30,20 @@ describe('ai voice helpers', () => {
     expect(isVoiceStopCommand('please stop')).toBe(true)
     expect(isVoiceStopCommand('хватит, замолчи')).toBe(true)
     expect(isVoiceStopCommand('add a task tomorrow')).toBe(false)
+  })
+
+  it('recognizes English and Russian proposal confirmations', () => {
+    expect(isVoiceAffirm('yes, execute it')).toBe(true)
+    expect(isVoiceAffirm('да, выполни')).toBe(true)
+    expect(isVoiceAffirm('go ahead and send')).toBe(true)
+    expect(isVoiceAffirm('no, do not execute')).toBe(false)
+  })
+
+  it('recognizes English and Russian proposal cancellations', () => {
+    expect(isVoiceCancel('no, reject it')).toBe(true)
+    expect(isVoiceCancel('отмени предложение')).toBe(true)
+    expect(isVoiceCancel('не отправляй')).toBe(true)
+    expect(isVoiceCancel('yes, send it')).toBe(false)
   })
 
   it('normalizes punctuation and ё for command matching', () => {
