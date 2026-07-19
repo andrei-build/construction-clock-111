@@ -2170,7 +2170,7 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_reject_failed: { ru: 'Не удалось отклонить', en: 'Could not reject', es: 'No se pudo rechazar' },
   ai_unresolved: { ru: 'Не удалось однозначно распознать исполнителя или проект — создайте вручную.', en: 'Could not unambiguously resolve the assignee or project — create it manually.', es: 'No se pudo resolver sin ambigüedad el responsable o el proyecto — créelo manualmente.' },
   ai_unsupported: { ru: 'Это действие пока нельзя выполнить автоматически.', en: 'This action cannot be executed automatically yet.', es: 'Esta acción aún no se puede ejecutar automáticamente.' },
-  // AI-2-front: озвучка ответов (speechSynthesis) + голосовая активация «окей, Клок» (webkitSpeechRecognition).
+  // AI-2-front: озвучка ответов через edge ai-tts + голосовая активация «окей, Клок» (webkitSpeechRecognition).
   ai_speak_toggle: { ru: 'Озвучивать ответы', en: 'Speak responses', es: 'Leer respuestas en voz alta' },
   ai_wake_toggle: { ru: 'Голосовая активация', en: 'Voice activation', es: 'Activación por voz' },
   ai_wake_hint: { ru: 'Скажите «окей, Клок», чтобы открыть ассистента', en: 'Say “okay, Clock” to open the assistant', es: 'Diga «okay, Clock» para abrir el asistente' },
@@ -2178,6 +2178,8 @@ const dict: Record<string, Record<Lang, string>> = {
   // AI-VOICE-FIX-1: статусы разговорного цикла + подсказка при запрете микрофона.
   ai_status_listening: { ru: 'Слушаю…', en: 'Listening…', es: 'Escuchando…' },
   ai_status_speaking: { ru: 'Говорю…', en: 'Speaking…', es: 'Hablando…' },
+  ai_stop_all: { ru: 'Остановить ассистента', en: 'Stop assistant', es: 'Detener asistente' },
+  ai_tts_error: { ru: 'Озвучка временно недоступна', en: 'Voice playback is temporarily unavailable', es: 'La voz no está disponible temporalmente' },
   ai_mic_denied_title: { ru: 'Микрофон запрещён', en: 'Microphone blocked', es: 'Micrófono bloqueado' },
   ai_mic_denied_hint: { ru: 'Разрешите доступ к микрофону в настройках сайта (значок 🔒 в адресной строке), чтобы говорить с ассистентом.', en: 'Allow microphone access in your site settings (the 🔒 icon in the address bar) to talk to the assistant.', es: 'Permita el acceso al micrófono en la configuración del sitio (el icono 🔒 en la barra de direcciones) para hablar con el asistente.' },
   // AI-UX-1: орб-сущность (подпись покоя), свёрнутая история, роли в истории.
@@ -2191,6 +2193,7 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_drawer_title: { ru: 'Диалог с ассистентом', en: 'Assistant dialog', es: 'Diálogo con el asistente' },
   ai_proposal_badge: { ru: 'Предложение', en: 'Proposal', es: 'Propuesta' },
   // AI-UX-2 (п.5): контекст экрана, который «сущность видит».
+  ai_context_info: { ru: 'Контекст экрана', en: 'Screen context', es: 'Contexto de pantalla' },
   ai_ctx_seeing: { ru: 'Вижу экран', en: 'Seeing', es: 'Viendo' },
   ai_ctx_project: { ru: 'Карточка проекта', en: 'Project page', es: 'Ficha del proyecto' },
   ai_ctx_worker: { ru: 'Карточка сотрудника', en: 'Team member page', es: 'Ficha del empleado' },
