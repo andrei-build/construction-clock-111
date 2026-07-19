@@ -15,12 +15,17 @@ import {
 import {
   getAiMessages,
   getPendingProposals,
+  executeAiProposal,
   resolveProposal,
   synthesizeAiSpeech,
+  type AiExecuteCandidate,
+  type AiExecuteProposalErrorCode,
   type AiMessage,
   type AiProposal,
 } from '../lib/api/ai'
 import {
+  isVoiceAffirm,
+  isVoiceCancel,
   isVoiceStopCommand,
   looksLikeTtsEcho,
   normalizeVoiceText,
@@ -50,7 +55,16 @@ const TASK_TYPES = ['work', 'material', 'delivery'] as const
 const TASK_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const
 const MSG_PRIORITIES = ['urgent', 'info', 'good', 'task'] as const
 const EVENT_TYPES = ['meeting', 'inspection', 'measure', 'delivery', 'other'] as const
-const KNOWN_ACTIONS = new Set(['create_task', 'send_message', 'send_mail', 'create_event'])
+const LOCAL_ACTIONS = new Set(['create_task', 'send_message', 'send_mail', 'create_event'])
+const DISPATCH_ACTIONS = new Set(['assign_worker', 'unassign_worker', 'send_plan'])
+const KNOWN_ACTIONS = new Set([...LOCAL_ACTIONS, ...DISPATCH_ACTIONS])
+const OVERLAY_PROPOSAL_LIMIT = 4
+
+type ProposalIssue = {
+  error: AiExecuteProposalErrorCode | 'failed'
+  message?: string
+  candidates?: AiExecuteCandidate[]
+}
 
 function pickEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : fallback
@@ -89,6 +103,36 @@ function summarizePayload(payload: Record<string, unknown>): Array<[string, stri
   return Object.entries(payload)
     .filter(([, v]) => v !== null && v !== undefined && v !== '')
     .map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)] as [string, string])
+}
+
+function formatTemplate(template: string, values: Record<string, string>): string {
+  return Object.entries(values).reduce((acc, [key, value]) => acc.split(`{${key}}`).join(value), template)
+}
+
+function pStrArray(payload: Record<string, unknown>, ...keys: string[]): string[] {
+  for (const k of keys) {
+    const v = payload[k]
+    if (Array.isArray(v)) {
+      const arr = v
+        .map((x) => (typeof x === 'string' || typeof x === 'number' ? String(x).trim() : ''))
+        .filter(Boolean)
+      if (arr.length > 0) return arr
+    }
+    if (typeof v === 'string' && v.trim()) {
+      return v.split(',').map((x) => x.trim()).filter(Boolean)
+    }
+  }
+  return []
+}
+
+function candidateText(candidate: AiExecuteCandidate): string {
+  const name = pStr(candidate, 'name', 'title', 'worker_name', 'project_name')
+  const detail = pStr(candidate, 'role', 'type', 'address', 'email')
+  const id = pStr(candidate, 'id')
+  if (name && detail) return `${name} (${detail})`
+  if (name) return name
+  if (id) return id
+  return JSON.stringify(candidate)
 }
 
 // AI-UX-1: на всякий случай убираем markdown при показе (edge v8 уже отдаёт живой текст без разметки,
@@ -206,6 +250,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const [streaming, setStreaming] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
+  const [proposalIssues, setProposalIssues] = useState<Record<string, ProposalIssue>>({})
   const streamingRef = useRef(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -737,6 +782,194 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     [cancelActiveAssistant, enqueueTtsSegments, enqueueTtsText, sendViaPost],
   )
 
+  const announce = useCallback((text: string) => {
+    flashToast(text)
+    enqueueTtsText(text)
+  }, [enqueueTtsText, flashToast])
+
+  const dispatchSuccessText = useCallback((pr: AiProposal, result: Record<string, unknown>) => {
+    if (pr.action_type === 'assign_worker') return t('ai_dispatch_assigned_ok')
+    if (pr.action_type === 'unassign_worker') return t('ai_dispatch_unassigned_ok')
+    if (pr.action_type === 'send_plan') {
+      const failedCount = Number(result.failed_count ?? result.failed ?? 0)
+      const errors = Array.isArray(result.errors) ? result.errors : []
+      const partial = result.partial === true || failedCount > 0 || errors.length > 0
+      return partial ? t('ai_dispatch_plan_partial') : t('ai_dispatch_plan_sent_ok')
+    }
+    return t('ai_executed_ok')
+  }, [t])
+
+  const executeProposal = useCallback(async (pr: AiProposal): Promise<boolean> => {
+    if (busyId) return false
+    setBusyId(pr.id)
+    try {
+      if (DISPATCH_ACTIONS.has(pr.action_type)) {
+        const res = await executeAiProposal(pr.id)
+        if (!res.ok) {
+          setProposalIssues((prev) => ({
+            ...prev,
+            [pr.id]: { error: res.error, message: res.message, candidates: res.candidates },
+          }))
+          announce(res.error === 'ambiguous' ? t('ai_execute_ambiguous') : t('ai_execute_not_found'))
+          return true
+        }
+        setProposalIssues((prev) => {
+          const next = { ...prev }
+          delete next[pr.id]
+          return next
+        })
+        await reload()
+        announce(dispatchSuccessText(pr, { ...res.raw, ...res.result }))
+        return true
+      }
+
+      if (pr.action_type === 'create_task') {
+        const title = pStr(pr.payload, 'title', 'name')
+        if (!title) { announce(t('ai_execute_failed')); return true }
+        let assigned_to: string | null = null
+        const assigneeName = pStr(pr.payload, 'assignee_name', 'assigned_to_name', 'assignee')
+        if (assigneeName) {
+          const hit = resolveName(team, assigneeName)
+          if (hit === 'ambiguous' || hit === 'none') { announce(t('ai_unresolved')); return true }
+          assigned_to = hit.id
+        }
+        let project_id: string | null = null
+        const projectName = pStr(pr.payload, 'project_name', 'project')
+        if (projectName) {
+          const hit = resolveName(projects, projectName)
+          if (hit === 'ambiguous' || hit === 'none') { announce(t('ai_unresolved')); return true }
+          project_id = hit.id
+        }
+        const taskId = await createTask(profile, {
+          project_id,
+          title,
+          task_type: pickEnum(pr.payload.task_type, TASK_TYPES, 'work'),
+          priority: pickEnum(pr.payload.priority, TASK_PRIORITIES, 'medium'),
+          assigned_to,
+          due_date: pStr(pr.payload, 'due_date') ?? null,
+          description: pStr(pr.payload, 'description') ?? null,
+        })
+        await resolveProposal(pr.id, 'executed', { id: taskId })
+        announce(t('ai_executed_ok'))
+      } else if (pr.action_type === 'send_message') {
+        const body = pStr(pr.payload, 'body', 'message', 'text')
+        if (!body) { announce(t('ai_execute_failed')); return true }
+        const recipientName = pStr(pr.payload, 'recipient_name', 'to_name', 'recipient', 'to')
+        const hit = resolveName(team, recipientName)
+        if (hit === 'ambiguous' || hit === 'none') { announce(t('ai_unresolved')); return true }
+        await sendMessage(profile, hit.id, body, pickEnum(pr.payload.priority, MSG_PRIORITIES, 'info'))
+        await resolveProposal(pr.id, 'executed', {})
+        announce(t('ai_executed_ok'))
+      } else if (pr.action_type === 'send_mail') {
+        const account_key = pStr(pr.payload, 'account_key', 'account')
+        const to = pStr(pr.payload, 'to')
+        if (!account_key || !to) { announce(t('ai_execute_failed')); return true }
+        const res = await sendMail({
+          account_key,
+          to,
+          subject: pStr(pr.payload, 'subject') ?? '',
+          body: pStr(pr.payload, 'body', 'message', 'text') ?? '',
+          in_reply_to: pStr(pr.payload, 'in_reply_to') ?? null,
+        })
+        if (!res.ok) { announce(res.error ? `${t('ai_execute_failed')}: ${res.error}` : t('ai_execute_failed')); return true }
+        await resolveProposal(pr.id, 'executed', {})
+        announce(t('ai_executed_ok'))
+      } else if (pr.action_type === 'create_event') {
+        const title = pStr(pr.payload, 'title')
+        const starts_at = pStr(pr.payload, 'starts_at', 'start', 'starts')
+        if (!title || !starts_at) { announce(t('ai_execute_failed')); return true }
+        let project_id: string | null = null
+        const projectName = pStr(pr.payload, 'project_name', 'project')
+        if (projectName) {
+          const hit = resolveName(projects, projectName)
+          if (hit === 'ambiguous' || hit === 'none') { announce(t('ai_unresolved')); return true }
+          project_id = hit.id
+        }
+        let assigned_to: string | null = null
+        const assigneeName = pStr(pr.payload, 'assignee_name', 'assigned_to_name', 'assignee')
+        if (assigneeName) {
+          const hit = resolveName(team, assigneeName)
+          if (hit === 'ambiguous' || hit === 'none') { announce(t('ai_unresolved')); return true }
+          assigned_to = hit.id
+        }
+        await createCalendarEvent(profile, {
+          title,
+          event_type: pickEnum(pr.payload.event_type, EVENT_TYPES, 'other'),
+          starts_at,
+          ends_at: pStr(pr.payload, 'ends_at') ?? null,
+          permit_number: pStr(pr.payload, 'permit_number') ?? null,
+          inspection_status: pStr(pr.payload, 'inspection_status') ?? null,
+          project_id,
+          assigned_to,
+          notes: pStr(pr.payload, 'notes') ?? null,
+        })
+        await resolveProposal(pr.id, 'executed', {})
+        announce(t('ai_executed_ok'))
+      } else {
+        return false
+      }
+      setProposalIssues((prev) => {
+        const next = { ...prev }
+        delete next[pr.id]
+        return next
+      })
+      await reload()
+      return true
+    } catch (err) {
+      const message = err instanceof Error && err.message ? err.message : undefined
+      setProposalIssues((prev) => ({ ...prev, [pr.id]: { error: 'failed', message } }))
+      announce(message ? `${t('ai_execute_failed')}: ${message}` : t('ai_execute_failed'))
+      return true
+    } finally {
+      setBusyId(null)
+    }
+  }, [announce, busyId, dispatchSuccessText, profile, projects, reload, t, team])
+
+  const rejectProposal = useCallback(async (pr: AiProposal): Promise<boolean> => {
+    if (busyId) return false
+    setBusyId(pr.id)
+    try {
+      await resolveProposal(pr.id, 'rejected')
+      setProposals((prev) => prev.filter((x) => x.id !== pr.id))
+      setProposalIssues((prev) => {
+        const next = { ...prev }
+        delete next[pr.id]
+        return next
+      })
+      announce(t('ai_rejected_ok'))
+      return true
+    } catch (err) {
+      const message = err instanceof Error && err.message ? err.message : undefined
+      announce(message ? `${t('ai_reject_failed')}: ${message}` : t('ai_reject_failed'))
+      return true
+    } finally {
+      setBusyId(null)
+    }
+  }, [announce, busyId, t])
+
+  const handleVoiceProposalIntent = useCallback(async (text: string): Promise<boolean> => {
+    const pr = proposals[0]
+    if (!pr) return false
+    if (isVoiceCancel(text)) {
+      await rejectProposal(pr)
+      return true
+    }
+    if (isVoiceAffirm(text)) {
+      if (!KNOWN_ACTIONS.has(pr.action_type)) {
+        announce(t('ai_unsupported'))
+        return true
+      }
+      await executeProposal(pr)
+      return true
+    }
+    return false
+  }, [announce, executeProposal, proposals, rejectProposal, t])
+
+  const handleVoiceInput = useCallback(async (text: string) => {
+    if (await handleVoiceProposalIntent(text)) return
+    if (!thinkingRef.current) await sendQuestion(text)
+  }, [handleVoiceProposalIntent, sendQuestion])
+
   // Глобальные слушатели: Ctrl+K / Cmd+K и AI_OPEN_EVENT (кнопка «Спроси») открывают оверлей.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -948,6 +1181,17 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     const runTurn = async (q: string) => {
       if (!active) return
       setVoiceStatus('thinking')
+      if (await handleVoiceProposalIntent(q)) {
+        if (!active) return
+        const speechPending = ttsBusyRef.current || ttsQueueRunningRef.current || ttsQueueRef.current.length > 0
+        if (speakOnRef.current && speechPending) {
+          setVoiceStatus('speaking')
+          ttsOnIdleRef.current = () => { if (active) listen() }
+        } else {
+          listen()
+        }
+        return
+      }
       const res = await sendQuestion(q)
       if (!active) return
       if (res.kind === 'nokey') { setVoiceStatus('off'); return } // нет ключа — цикл не крутим впустую
@@ -973,7 +1217,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       stopRec()
       cancelTtsQueue()
     }
-  }, [wakeOn, open, lang, ensureMic, sendQuestion, cancelTtsQueue, startMeter, stopMeter])
+  }, [wakeOn, open, lang, ensureMic, sendQuestion, cancelTtsQueue, startMeter, stopMeter, handleVoiceProposalIntent])
 
   // Barge-in: пока TTS играет, слушаем короткие вмешательства. Команды stop/quiet глушат вывод,
   // финальная фраза, которая не похожа на эхо озвучки, становится следующим вопросом.
@@ -989,7 +1233,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       rec = null
     }
 
-    const handleTranscript = (text: string, final: boolean) => {
+    const handleTranscript = async (text: string, final: boolean) => {
       const heard = text.trim()
       if (!heard || !active) return
       if (isVoiceStopCommand(heard)) {
@@ -1000,6 +1244,13 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       }
       if (!final) return
       if (looksLikeTtsEcho(heard, ttsSpokenTextRef.current)) return
+      if (proposals.length > 0 && (isVoiceAffirm(heard) || isVoiceCancel(heard))) {
+        active = false
+        stopBarge()
+        cancelTtsQueue()
+        await handleVoiceProposalIntent(heard)
+        return
+      }
       const normalized = normalizeVoiceText(heard)
       const enoughSpeech = normalized.length >= 8 || normalized.split(' ').filter(Boolean).length >= 2
       if (!enoughSpeech) return
@@ -1027,7 +1278,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           if (res?.isFinal) finalText += transcript
           else interim += transcript
         }
-        handleTranscript(finalText || interim, Boolean(finalText))
+        void handleTranscript(finalText || interim, Boolean(finalText))
       }
       r.onerror = (ev) => {
         if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') {
@@ -1051,7 +1302,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       active = false
       stopBarge()
     }
-  }, [wakeOn, open, ttsBusy, lang, ensureMic, cancelActiveAssistant, sendQuestion])
+  }, [wakeOn, open, ttsBusy, lang, ensureMic, cancelActiveAssistant, sendQuestion, cancelTtsQueue, handleVoiceProposalIntent, proposals.length])
 
   // AI-VOICE-FIX-1: подчистка на unmount — освобождаем микрофон/метр и гасим озвучку (нет утечек).
   useEffect(() => () => {
@@ -1068,117 +1319,40 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     await sendQuestion(input)
   }
 
-  const executeProposal = async (pr: AiProposal) => {
-    if (busyId) return
-    setBusyId(pr.id)
-    try {
-      if (pr.action_type === 'create_task') {
-        const title = pStr(pr.payload, 'title', 'name')
-        if (!title) { flashToast(t('ai_execute_failed')); return }
-        let assigned_to: string | null = null
-        const assigneeName = pStr(pr.payload, 'assignee_name', 'assigned_to_name', 'assignee')
-        if (assigneeName) {
-          const hit = resolveName(team, assigneeName)
-          if (hit === 'ambiguous' || hit === 'none') { flashToast(t('ai_unresolved')); return }
-          assigned_to = hit.id
-        }
-        let project_id: string | null = null
-        const projectName = pStr(pr.payload, 'project_name', 'project')
-        if (projectName) {
-          const hit = resolveName(projects, projectName)
-          if (hit === 'ambiguous' || hit === 'none') { flashToast(t('ai_unresolved')); return }
-          project_id = hit.id
-        }
-        const taskId = await createTask(profile, {
-          project_id,
-          title,
-          task_type: pickEnum(pr.payload.task_type, TASK_TYPES, 'work'),
-          priority: pickEnum(pr.payload.priority, TASK_PRIORITIES, 'medium'),
-          assigned_to,
-          due_date: pStr(pr.payload, 'due_date') ?? null,
-          description: pStr(pr.payload, 'description') ?? null,
-        })
-        await resolveProposal(pr.id, 'executed', { id: taskId })
-        flashToast(t('ai_executed_ok'))
-      } else if (pr.action_type === 'send_message') {
-        const body = pStr(pr.payload, 'body', 'message', 'text')
-        if (!body) { flashToast(t('ai_execute_failed')); return }
-        const recipientName = pStr(pr.payload, 'recipient_name', 'to_name', 'recipient', 'to')
-        const hit = resolveName(team, recipientName)
-        if (hit === 'ambiguous' || hit === 'none') { flashToast(t('ai_unresolved')); return }
-        await sendMessage(profile, hit.id, body, pickEnum(pr.payload.priority, MSG_PRIORITIES, 'info'))
-        await resolveProposal(pr.id, 'executed', {})
-        flashToast(t('ai_executed_ok'))
-      } else if (pr.action_type === 'send_mail') {
-        const account_key = pStr(pr.payload, 'account_key', 'account')
-        const to = pStr(pr.payload, 'to')
-        if (!account_key || !to) { flashToast(t('ai_execute_failed')); return }
-        const res = await sendMail({
-          account_key,
-          to,
-          subject: pStr(pr.payload, 'subject') ?? '',
-          body: pStr(pr.payload, 'body', 'message', 'text') ?? '',
-          in_reply_to: pStr(pr.payload, 'in_reply_to') ?? null,
-        })
-        if (!res.ok) { flashToast(res.error ? `${t('ai_execute_failed')}: ${res.error}` : t('ai_execute_failed')); return }
-        await resolveProposal(pr.id, 'executed', {})
-        flashToast(t('ai_executed_ok'))
-      } else if (pr.action_type === 'create_event') {
-        const title = pStr(pr.payload, 'title')
-        const starts_at = pStr(pr.payload, 'starts_at', 'start', 'starts')
-        if (!title || !starts_at) { flashToast(t('ai_execute_failed')); return }
-        let project_id: string | null = null
-        const projectName = pStr(pr.payload, 'project_name', 'project')
-        if (projectName) {
-          const hit = resolveName(projects, projectName)
-          if (hit === 'ambiguous' || hit === 'none') { flashToast(t('ai_unresolved')); return }
-          project_id = hit.id
-        }
-        let assigned_to: string | null = null
-        const assigneeName = pStr(pr.payload, 'assignee_name', 'assigned_to_name', 'assignee')
-        if (assigneeName) {
-          const hit = resolveName(team, assigneeName)
-          if (hit === 'ambiguous' || hit === 'none') { flashToast(t('ai_unresolved')); return }
-          assigned_to = hit.id
-        }
-        await createCalendarEvent(profile, {
-          title,
-          event_type: pickEnum(pr.payload.event_type, EVENT_TYPES, 'other'),
-          starts_at,
-          ends_at: pStr(pr.payload, 'ends_at') ?? null,
-          permit_number: pStr(pr.payload, 'permit_number') ?? null,
-          inspection_status: pStr(pr.payload, 'inspection_status') ?? null,
-          project_id,
-          assigned_to,
-          notes: pStr(pr.payload, 'notes') ?? null,
-        })
-        await resolveProposal(pr.id, 'executed', {})
-        flashToast(t('ai_executed_ok'))
-      } else {
-        return
-      }
-      await reload()
-    } catch {
-      // Ошибка выполнения — статус НЕ трогаем (карточка остаётся pending, можно повторить).
-      flashToast(t('ai_execute_failed'))
-    } finally {
-      setBusyId(null)
+  const proposalSummary = (pr: AiProposal): string => {
+    if (pr.action_type === 'assign_worker') {
+      const worker = pStr(pr.payload, 'worker_name', 'worker', 'profile_name', 'person_name', 'assignee_name') ?? t('ai_dispatch_worker_unknown')
+      const project = pStr(pr.payload, 'project_name', 'project', 'site_name', 'site') ?? t('ai_dispatch_project_unknown')
+      const note = pStr(pr.payload, 'note', 'notes')
+      return formatTemplate(t('ai_dispatch_assign_summary'), {
+        worker,
+        project,
+        note: note ? `${t('ai_dispatch_note_prefix')} ${note}` : '',
+      })
     }
+    if (pr.action_type === 'unassign_worker') {
+      const worker = pStr(pr.payload, 'worker_name', 'worker', 'profile_name', 'person_name', 'assignee_name') ?? t('ai_dispatch_worker_unknown')
+      const project = pStr(pr.payload, 'project_name', 'project', 'site_name', 'site') ?? t('ai_dispatch_project_unknown')
+      return formatTemplate(t('ai_dispatch_unassign_summary'), { worker, project })
+    }
+    if (pr.action_type === 'send_plan') {
+      const projectsList = pStrArray(pr.payload, 'project_names', 'projects', 'project_name', 'project')
+      if (projectsList.length > 0) {
+        return formatTemplate(t('ai_dispatch_send_plan_projects'), { projects: projectsList.join(', ') })
+      }
+      return t('ai_dispatch_send_plan')
+    }
+    return pr.title
   }
 
-  const rejectProposal = async (pr: AiProposal) => {
-    if (busyId) return
-    setBusyId(pr.id)
-    try {
-      await resolveProposal(pr.id, 'rejected')
-      setProposals((prev) => prev.filter((x) => x.id !== pr.id))
-      flashToast(t('ai_rejected_ok'))
-    } catch {
-      flashToast(t('ai_reject_failed'))
-    } finally {
-      setBusyId(null)
-    }
+  const proposalIssueTitle = (issue: ProposalIssue): string => {
+    if (issue.error === 'ambiguous') return t('ai_execute_ambiguous')
+    if (issue.error === 'not_found') return t('ai_execute_not_found')
+    return t('ai_execute_failed')
   }
+
+  const visibleOverlayProposals = proposals.slice(0, OVERLAY_PROPOSAL_LIMIT)
+  const hiddenOverlayProposalCount = Math.max(0, proposals.length - visibleOverlayProposals.length)
 
   const wakeSupported = !!SpeechRecognitionImpl
 
@@ -1205,9 +1379,6 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           : orbState === 'speaking'
             ? t('ai_status_speaking')
             : t('ai_orb_idle')
-
-  // AI-UX-2: самое свежее pending-предложение — компактной карточкой в углу оверлея (полный список — в drawer).
-  const latestProposal = proposals[0]
 
   // Бейдж при закрытой панели (оставляем прежним — статус голоса без правки App/Nav).
   const voicePulsing = voiceStatus === 'wake' || voiceStatus === 'listening'
@@ -1321,33 +1492,62 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
             </div>
           )}
 
-          {/* PROPOSAL ПО ГОЛОСУ: последнее предложение компактной карточкой в углу (озвучено ответом). */}
-          {latestProposal && (
-            <div className="ai-overlay-proposal">
-              <div className="ai-overlay-proposal-head">
-                <span className="ai-overlay-proposal-badge">{t('ai_proposal_badge')}</span>
-                <span className="ai-overlay-proposal-title">{latestProposal.title}</span>
-              </div>
-              <div className="row ai-overlay-proposal-actions">
-                {KNOWN_ACTIONS.has(latestProposal.action_type) && (
-                  <button
-                    type="button"
-                    className="btn primary"
-                    disabled={busyId === latestProposal.id}
-                    onClick={() => void executeProposal(latestProposal)}
-                  >
-                    {t('ai_execute')}
-                  </button>
-                )}
+          {/* PROPOSALS ПО ГОЛОСУ: до 4 свежих pending-карточек; голосовое «да/нет» действует на первую. */}
+          {visibleOverlayProposals.length > 0 && (
+            <div className="ai-overlay-proposals">
+              {visibleOverlayProposals.map((pr) => {
+                const issue = proposalIssues[pr.id]
+                const candidates = issue?.candidates?.slice(0, 2) ?? []
+                return (
+                  <div key={pr.id} className="ai-overlay-proposal">
+                    <div className="ai-overlay-proposal-head">
+                      <span className="ai-overlay-proposal-badge">{t('ai_proposal_badge')}</span>
+                      <span className="ai-overlay-proposal-title">{proposalSummary(pr)}</span>
+                    </div>
+                    {issue && (
+                      <div className="ai-proposal-issue" role="alert">
+                        <p>{proposalIssueTitle(issue)}</p>
+                        {issue.message && <p className="muted small">{issue.message}</p>}
+                        {candidates.length > 0 && (
+                          <p className="muted small">
+                            {t('ai_execute_candidates')}: {candidates.map(candidateText).join(', ')}
+                          </p>
+                        )}
+                        <p className="muted small">{t('ai_execute_still_pending')}</p>
+                      </div>
+                    )}
+                    <div className="row ai-overlay-proposal-actions">
+                      {KNOWN_ACTIONS.has(pr.action_type) && (
+                        <button
+                          type="button"
+                          className="btn primary"
+                          disabled={busyId === pr.id}
+                          onClick={() => void executeProposal(pr)}
+                        >
+                          {t('ai_execute')}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        disabled={busyId === pr.id}
+                        onClick={() => void rejectProposal(pr)}
+                      >
+                        {t('ai_reject')}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+              {hiddenOverlayProposalCount > 0 && (
                 <button
                   type="button"
-                  className="btn ghost"
-                  disabled={busyId === latestProposal.id}
-                  onClick={() => void rejectProposal(latestProposal)}
+                  className="btn ghost ai-overlay-more"
+                  onClick={() => setDrawerOpen(true)}
                 >
-                  {t('ai_reject')}
+                  {t('ai_more_proposals').replace('{n}', String(hiddenOverlayProposalCount))}
                 </button>
-              </div>
+              )}
             </div>
           )}
 
@@ -1356,7 +1556,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
             <VoiceMic
               lang={lang}
               title={t('ai_voice_hint')}
-              onResult={(text) => { if (!thinking) void sendQuestion(text) }}
+              onResult={(text) => { if (!thinking) void handleVoiceInput(text) }}
             />
             <button
               type="button"
@@ -1444,10 +1644,12 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
                 {proposals.map((pr) => {
                   const known = KNOWN_ACTIONS.has(pr.action_type)
                   const rows = summarizePayload(pr.payload)
+                  const issue = proposalIssues[pr.id]
+                  const candidates = issue?.candidates?.slice(0, 6) ?? []
                   return (
                     <div key={pr.id} className="ai-proposal card">
                       <div className="ai-proposal-title">
-                        {t('ai_proposal_prefix')} {pr.title}
+                        {t('ai_proposal_prefix')} {proposalSummary(pr)}
                       </div>
                       {rows.length > 0 && (
                         <dl className="ai-proposal-payload">
@@ -1458,6 +1660,23 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
                             </div>
                           ))}
                         </dl>
+                      )}
+                      {issue && (
+                        <div className="ai-proposal-issue" role="alert">
+                          <p>{proposalIssueTitle(issue)}</p>
+                          {issue.message && <p className="muted small">{issue.message}</p>}
+                          {candidates.length > 0 && (
+                            <>
+                              <p className="muted small">{t('ai_execute_candidates')}:</p>
+                              <ul>
+                                {candidates.map((candidate, idx) => (
+                                  <li key={`${pr.id}-candidate-${idx}`}>{candidateText(candidate)}</li>
+                                ))}
+                              </ul>
+                            </>
+                          )}
+                          <p className="muted small">{t('ai_execute_still_pending')}</p>
+                        </div>
                       )}
                       {!known && <p className="muted small ai-unsupported">{t('ai_unsupported')}</p>}
                       <div className="row ai-proposal-actions">
@@ -1500,7 +1719,12 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
               <VoiceMic
                 lang={lang}
                 title={t('ai_voice_hint')}
-                onResult={(text) => setInput((v) => (v ? `${v} ${text}` : text))}
+                onResult={(text) => {
+                  void (async () => {
+                    if (await handleVoiceProposalIntent(text)) return
+                    setInput((v) => (v ? `${v} ${text}` : text))
+                  })()
+                }}
               />
               <button type="submit" className="btn primary ai-send-btn" disabled={thinking || !input.trim()}>
                 {thinking ? t('ai_thinking') : t('ai_send')}

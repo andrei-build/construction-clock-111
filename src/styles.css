@@ -5901,6 +5901,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-payload-row dd { flex: 1 1 auto; margin: 0; overflow-wrap: anywhere; }
 .ai-unsupported { margin: 0; }
 .ai-proposal-actions { gap: 8px; }
+.ai-proposal-issue {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 10px; border-radius: 8px;
+  border: 1px solid rgba(217, 138, 0, .4); background: rgba(217, 138, 0, .1);
+  font-size: 12px; line-height: 1.35;
+}
+.ai-proposal-issue p { margin: 0; }
+.ai-proposal-issue ul { margin: 0; padding-left: 18px; color: var(--text); }
 .ai-nokey {
   display: flex; flex-direction: column; gap: 2px; padding: 10px 12px;
   border: 1px solid var(--amber, #d98a00); border-radius: var(--radius);
@@ -6201,6 +6209,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-orb-sm .ai-orb-ring { width: 54px; height: 54px; }
 
 /* PROPOSAL по голосу: компактная карточка-предложение в углу оверлея (полный список — в drawer). */
+.ai-overlay-proposals {
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: min(44vh, 390px); overflow-y: auto; padding-right: 2px;
+}
 .ai-overlay-proposal {
   padding: 10px; display: flex; flex-direction: column; gap: 8px; text-align: left;
   border: 1px solid var(--line); border-radius: 8px; background: rgba(21,29,45,.72);
@@ -6213,6 +6225,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-overlay-proposal-title { font-size: 13px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 .ai-overlay-proposal-actions { gap: 8px; }
 .ai-overlay-proposal-actions .btn { flex: 1 1 auto; padding: 7px 10px; font-size: 13px; }
+.ai-overlay-proposal .ai-proposal-issue { padding: 7px 8px; font-size: 11.5px; }
+.ai-overlay-more { width: 100%; justify-content: center; padding: 7px 10px; font-size: 12px; }
 
 /* Компактные органы: push-to-talk микрофон + «Показать текст». */
 .ai-overlay-controls { display: flex; align-items: center; gap: 10px; }

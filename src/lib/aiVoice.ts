@@ -85,10 +85,85 @@ const STOP_COMMANDS = [
   'прекрати',
 ]
 
+const AFFIRM_COMMANDS = [
+  'yes',
+  'yep',
+  'yeah',
+  'correct',
+  'confirm',
+  'approve',
+  'execute',
+  'run',
+  'run it',
+  'do it',
+  'go ahead',
+  'send',
+  'send it',
+  'proceed',
+  'apply',
+  'ok',
+  'okay',
+  'да',
+  'ага',
+  'верно',
+  'правильно',
+  'подтверждаю',
+  'подтвердить',
+  'выполнить',
+  'выполни',
+  'запускай',
+  'сделай',
+  'отправь',
+  'разошли',
+  'можно',
+  'ок',
+  'окей',
+]
+
+const CANCEL_COMMANDS = [
+  'no',
+  'nope',
+  'cancel',
+  'reject',
+  'decline',
+  'do not',
+  'don t',
+  'dont',
+  'не надо',
+  'нет',
+  'отмена',
+  'отмени',
+  'отменить',
+  'отклонить',
+  'отклоняю',
+  'не выполняй',
+  'не отправляй',
+]
+
+function containsVoiceCommand(normalized: string, cmd: string): boolean {
+  return normalized === cmd ||
+    normalized.includes(` ${cmd} `) ||
+    normalized.startsWith(`${cmd} `) ||
+    normalized.endsWith(` ${cmd}`)
+}
+
 export function isVoiceStopCommand(text: string): boolean {
   const normalized = normalizeVoiceText(text)
   if (!normalized) return false
-  return STOP_COMMANDS.some((cmd) => normalized === cmd || normalized.includes(` ${cmd} `) || normalized.startsWith(`${cmd} `) || normalized.endsWith(` ${cmd}`))
+  return STOP_COMMANDS.some((cmd) => containsVoiceCommand(normalized, cmd))
+}
+
+export function isVoiceAffirm(text: string): boolean {
+  const normalized = normalizeVoiceText(text)
+  if (!normalized) return false
+  if (isVoiceCancel(text)) return false
+  return AFFIRM_COMMANDS.some((cmd) => containsVoiceCommand(normalized, cmd))
+}
+
+export function isVoiceCancel(text: string): boolean {
+  const normalized = normalizeVoiceText(text)
+  if (!normalized) return false
+  return CANCEL_COMMANDS.some((cmd) => containsVoiceCommand(normalized, cmd))
 }
 
 export function looksLikeTtsEcho(transcript: string, spokenText: string): boolean {

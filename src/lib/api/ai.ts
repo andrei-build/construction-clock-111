@@ -79,6 +79,28 @@ export interface AskAssistantResult {
   error?: string
 }
 
+export type AiExecuteProposalErrorCode = 'ambiguous' | 'not_found'
+
+export interface AiExecuteCandidate {
+  id?: string
+  name?: string | null
+  title?: string | null
+  type?: string | null
+  role?: string | null
+  address?: string | null
+  [key: string]: unknown
+}
+
+export type AiExecuteProposalResult =
+  | { ok: true; result: Record<string, unknown>; raw: Record<string, unknown> }
+  | {
+      ok: false
+      error: AiExecuteProposalErrorCode
+      candidates: AiExecuteCandidate[]
+      message?: string
+      raw?: Record<string, unknown>
+    }
+
 export interface AiTtsRequest {
   text: string
   voice?: string
@@ -151,6 +173,45 @@ export async function askAssistant(message: string): Promise<AskAssistantResult>
   }
   const reply = (data as { reply?: unknown } | null)?.reply
   return { reply: typeof reply === 'string' ? reply : undefined }
+}
+
+function normalizeExecuteCandidates(value: unknown): AiExecuteCandidate[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((x): x is AiExecuteCandidate => typeof x === 'object' && x !== null)
+    .map((x) => x)
+}
+
+export async function executeAiProposal(proposalId: string): Promise<AiExecuteProposalResult> {
+  const { data: { session } } = await supabase.auth.getSession()
+  const token = session?.access_token
+  if (!token) throw new Error('no_session')
+
+  const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-execute`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      apikey: SUPABASE_KEY,
+    },
+    body: JSON.stringify({ proposal_id: proposalId }),
+  })
+  const body = (await resp.json().catch(() => null)) as Record<string, unknown> | null
+  const error = typeof body?.error === 'string' && body.error.trim() ? body.error.trim() : undefined
+  if (!resp.ok || error) {
+    if (error === 'ambiguous' || error === 'not_found') {
+      const message = typeof body?.message === 'string' && body.message.trim() ? body.message.trim() : undefined
+      return {
+        ok: false,
+        error,
+        candidates: normalizeExecuteCandidates(body?.candidates),
+        message,
+        raw: body ?? undefined,
+      }
+    }
+    throw new Error(error ?? `ai_execute_http_${resp.status}`)
+  }
+  return { ok: true, result: (body?.result as Record<string, unknown> | undefined) ?? body ?? {}, raw: body ?? {} }
 }
 
 function base64ToBlob(audioB64: string, mime: string): Blob {
