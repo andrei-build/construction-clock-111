@@ -5,6 +5,7 @@ import {
   getCodeClearanceChecks,
 } from '../src/screens/project-hub/code-clearances'
 import type { SketchPlacedCatalogItem } from '../src/screens/project-hub/sketchCatalog'
+import { SKETCH_CATALOG_KIND_SHOWER_PAN } from '../src/screens/project-hub/sketchCatalog'
 
 const room = {
   cellFt: 1,
@@ -161,6 +162,26 @@ describe('project hub sketch code clearances', () => {
     expect(violations[0].type).toBe('shower-size')
     expect(violations[0].direction).toBe('width')
     expect(violations[0].actualIn).toBe(28)
+  })
+
+  it('flags a version-1 SHOWER_PAN kind even if its category is stored as other', () => {
+    const shower = floorItem({
+      id: 'shower-pan-1',
+      kind: SKETCH_CATALOG_KIND_SHOWER_PAN,
+      category: 'other',
+      xFt: 5,
+      zFt: 3,
+      widthIn: 30,
+      depthIn: 29,
+      heightIn: 4,
+    })
+
+    const violations = checkCodeClearances({ ...room, placedItems: [shower], openings: [] })
+
+    expect(violations).toHaveLength(1)
+    expect(violations[0].type).toBe('shower-size')
+    expect(violations[0].direction).toBe('depth')
+    expect(violations[0].actualIn).toBe(29)
   })
 
   it('flags a door swing arc that overlaps a placed item', () => {

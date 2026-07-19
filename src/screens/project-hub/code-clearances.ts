@@ -8,6 +8,7 @@ import {
   type Pt,
 } from './sketchFinishes'
 import {
+  isShowerPanPlacedCatalogItem,
   isToiletPlacedCatalogItem,
   type CatalogPlacementSurface,
   type SketchPlacedCatalogItem,
@@ -230,7 +231,7 @@ function openingEntity(opening: Opening, index: number): CodeClearanceEntity {
 function itemEntity(item: SketchPlacedCatalogItem): CodeClearanceEntity {
   if (isToiletPlacedCatalogItem(item)) return { kind: 'toilet', id: item.id, label: item.name }
   if (item.category === 'vanity') return { kind: 'vanity', id: item.id, label: item.name }
-  if (item.category === 'shower') return { kind: 'shower', id: item.id, label: item.name }
+  if (isShowerPanPlacedCatalogItem(item)) return { kind: 'shower', id: item.id, label: item.name }
   return { kind: 'item', id: item.id, label: item.name }
 }
 
@@ -669,7 +670,7 @@ export function getCodeClearanceChecks(model: CodeClearanceModel): CodeClearance
       checks.push(...vanitySideChecks(model, subject))
       return
     }
-    if (subject.item.category === 'shower') {
+    if (isShowerPanPlacedCatalogItem(subject.item)) {
       checks.push(...showerSizeChecks(subject))
     }
   })

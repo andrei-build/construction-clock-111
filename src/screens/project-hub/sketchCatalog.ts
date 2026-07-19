@@ -3,8 +3,9 @@ import type { Contour } from './sketchFinishes'
 import { formatInches } from './inches'
 
 export type CatalogPlacementSurface = 'floor' | 'wall' | 'ceiling'
-export type SketchPlacedCatalogKind = 'TOILET'
+export type SketchPlacedCatalogKind = 'TOILET' | 'SHOWER_PAN'
 export type SketchPlacedCabinetLayer = 'base' | 'wall'
+export type SketchShowerPanShape = 'rect' | 'neo-angle'
 
 export type SketchPlacedCatalogItem = {
   id: string
@@ -29,6 +30,7 @@ export type SketchPlacedCatalogItem = {
   hinge?: 'L' | 'R'
   filler?: boolean
   panel?: boolean
+  showerPanShape?: SketchShowerPanShape
   layoutWarning?: 'overflow' | 'small-filler'
   widthIn?: number
   depthIn?: number
@@ -88,7 +90,10 @@ export type CatalogSceneBounds = {
 const CATALOG_CATEGORIES: CatalogCategory[] = ['shower', 'vanity', 'cabinet', 'light', 'fan', 'other']
 const CATALOG_CATEGORY_SET = new Set<string>(CATALOG_CATEGORIES)
 export const SKETCH_CATALOG_KIND_TOILET: SketchPlacedCatalogKind = 'TOILET'
+export const SKETCH_CATALOG_KIND_SHOWER_PAN: SketchPlacedCatalogKind = 'SHOWER_PAN'
 export const BUILTIN_TOILET_CATALOG_ID = 'builtin-toilet'
+export const BUILTIN_SHOWER_PAN_RECT_CATALOG_ID = 'builtin-shower-pan-60x32'
+export const BUILTIN_SHOWER_PAN_NEO_CATALOG_ID = 'builtin-shower-pan-neo-36'
 export const BUILTIN_TOILET_CATALOG_ITEM: CatalogItem = {
   id: BUILTIN_TOILET_CATALOG_ID,
   org_id: '',
@@ -109,6 +114,48 @@ export const BUILTIN_TOILET_CATALOG_ITEM: CatalogItem = {
   created_at: '',
   updated_at: '',
 }
+export const BUILTIN_SHOWER_PAN_CATALOG_ITEMS: CatalogItem[] = [
+  {
+    id: BUILTIN_SHOWER_PAN_RECT_CATALOG_ID,
+    org_id: '',
+    category: 'shower',
+    name: 'Shower pan 60 x 32',
+    brand: null,
+    model: 'SHOWER_PAN_RECT',
+    width_in: 60,
+    depth_in: 32,
+    height_in: 4,
+    photo_path: null,
+    price: null,
+    url: null,
+    note: null,
+    is_active: true,
+    sort_order: -90,
+    created_by: null,
+    created_at: '',
+    updated_at: '',
+  },
+  {
+    id: BUILTIN_SHOWER_PAN_NEO_CATALOG_ID,
+    org_id: '',
+    category: 'shower',
+    name: 'Neo-angle shower pan 36 x 36',
+    brand: null,
+    model: 'SHOWER_PAN_NEO_ANGLE',
+    width_in: 36,
+    depth_in: 36,
+    height_in: 4,
+    photo_path: null,
+    price: null,
+    url: null,
+    note: null,
+    is_active: true,
+    sort_order: -89,
+    created_by: null,
+    created_at: '',
+    updated_at: '',
+  },
+]
 const IN_TO_FT = 1 / 12
 const FLOOR_WALL_SNAP_FT = 2.25
 const MAX_STORED_TEXT = 140
@@ -135,7 +182,9 @@ function cleanCategory(value: unknown): CatalogCategory | undefined {
 }
 
 function cleanPlacedKind(value: unknown): SketchPlacedCatalogKind | undefined {
-  return value === SKETCH_CATALOG_KIND_TOILET ? SKETCH_CATALOG_KIND_TOILET : undefined
+  if (value === SKETCH_CATALOG_KIND_TOILET) return SKETCH_CATALOG_KIND_TOILET
+  if (value === SKETCH_CATALOG_KIND_SHOWER_PAN) return SKETCH_CATALOG_KIND_SHOWER_PAN
+  return undefined
 }
 
 function cleanPlacedCabinetLayer(value: unknown): SketchPlacedCabinetLayer | undefined {
@@ -144,6 +193,10 @@ function cleanPlacedCabinetLayer(value: unknown): SketchPlacedCabinetLayer | und
 
 function cleanHinge(value: unknown): 'L' | 'R' | undefined {
   return value === 'L' || value === 'R' ? value : undefined
+}
+
+function cleanShowerPanShape(value: unknown): SketchShowerPanShape | undefined {
+  return value === 'neo-angle' || value === 'rect' ? value : undefined
 }
 
 function cleanLayoutWarning(value: unknown): 'overflow' | 'small-filler' | undefined {
@@ -168,14 +221,45 @@ export function isBuiltinToiletCatalogItem(item: Pick<CatalogItem, 'id' | 'model
   return item.id === BUILTIN_TOILET_CATALOG_ID || String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_TOILET
 }
 
+export function isBuiltinShowerPanCatalogItem(item: Pick<CatalogItem, 'id' | 'model'>): boolean {
+  const model = String(item.model ?? '').toUpperCase()
+  return item.id === BUILTIN_SHOWER_PAN_RECT_CATALOG_ID
+    || item.id === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID
+    || model.startsWith(SKETCH_CATALOG_KIND_SHOWER_PAN)
+}
+
 export function isToiletPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
   return item.kind === SKETCH_CATALOG_KIND_TOILET
     || item.catalogItemId === BUILTIN_TOILET_CATALOG_ID
     || String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_TOILET
 }
 
+export function isShowerPanPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId' | 'category'>): boolean {
+  const model = String(item.model ?? '').toUpperCase()
+  return item.kind === SKETCH_CATALOG_KIND_SHOWER_PAN
+    || item.catalogItemId === BUILTIN_SHOWER_PAN_RECT_CATALOG_ID
+    || item.catalogItemId === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID
+    || model.startsWith(SKETCH_CATALOG_KIND_SHOWER_PAN)
+    || item.category === 'shower'
+}
+
+export function showerPanShapeFromCatalogItem(item: Pick<CatalogItem, 'id' | 'model'>): SketchShowerPanShape {
+  const model = String(item.model ?? '').toUpperCase()
+  return item.id === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID || model.includes('NEO') ? 'neo-angle' : 'rect'
+}
+
+export function showerPanShapeFromPlacedItem(item: Pick<SketchPlacedCatalogItem, 'catalogItemId' | 'model' | 'showerPanShape'>): SketchShowerPanShape {
+  const clean = cleanShowerPanShape(item.showerPanShape)
+  if (clean) return clean
+  const model = String(item.model ?? '').toUpperCase()
+  return item.catalogItemId === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID || model.includes('NEO') ? 'neo-angle' : 'rect'
+}
+
 function isBuiltinSnapshotPlacedItem(item: Pick<SketchPlacedCatalogItem, 'catalogItemId'>): boolean {
-  return item.catalogItemId === BUILTIN_TOILET_CATALOG_ID || item.catalogItemId.startsWith('builtin-cabinet:')
+  return item.catalogItemId === BUILTIN_TOILET_CATALOG_ID
+    || item.catalogItemId === BUILTIN_SHOWER_PAN_RECT_CATALOG_ID
+    || item.catalogItemId === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID
+    || item.catalogItemId.startsWith('builtin-cabinet:')
 }
 
 export function catalogDimsFromItem(item: CatalogItem): CatalogDimsFt | null {
@@ -241,7 +325,10 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       if (t !== undefined) placed.t = Math.max(0, Math.min(1, t))
       const category = cleanCategory(item.category)
       if (category) placed.category = category
-      const kind = cleanPlacedKind(item.kind) ?? (String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_TOILET ? SKETCH_CATALOG_KIND_TOILET : undefined)
+      const modelUpper = String(item.model ?? '').toUpperCase()
+      const kind = cleanPlacedKind(item.kind)
+        ?? (modelUpper === SKETCH_CATALOG_KIND_TOILET ? SKETCH_CATALOG_KIND_TOILET : undefined)
+        ?? (modelUpper.startsWith(SKETCH_CATALOG_KIND_SHOWER_PAN) ? SKETCH_CATALOG_KIND_SHOWER_PAN : undefined)
       if (kind) placed.kind = kind
       const name = cleanString(item.name)
       const brand = cleanString(item.brand)
@@ -251,6 +338,7 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       const wallId = cleanString(item.wallId, 40)
       const layer = cleanPlacedCabinetLayer(item.layer)
       const hinge = cleanHinge(item.hinge)
+      const showerPanShape = cleanShowerPanShape(item.showerPanShape ?? item.shower_pan_shape)
       const layoutWarning = cleanLayoutWarning(item.layoutWarning)
       const photoPath = cleanString(item.photoPath, 600)
       if (name) placed.name = name
@@ -261,6 +349,7 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       if (wallId) placed.wallId = wallId
       if (layer) placed.layer = layer
       if (hinge) placed.hinge = hinge
+      if (showerPanShape) placed.showerPanShape = showerPanShape
       if (item.filler === true) placed.filler = true
       if (item.panel === true) placed.panel = true
       if (layoutWarning) placed.layoutWarning = layoutWarning

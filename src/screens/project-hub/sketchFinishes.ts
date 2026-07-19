@@ -54,6 +54,12 @@ export type SketchMeasurement = {
   b: SketchMeasurementPoint
 }
 
+export type SketchFinishCoverage = {
+  mode?: 'full' | 'partial'
+  bottomFt?: number
+  heightFt?: number
+}
+
 export type SketchTileFinish = {
   kind: 'tile'
   tileWIn?: number
@@ -63,14 +69,26 @@ export type SketchTileFinish = {
   tileColor?: string
   offsetXIn?: number
   offsetYIn?: number
+  coverage?: SketchFinishCoverage
 }
 
 export type SketchPaintFinish = {
   kind: 'paint'
   color?: string
+  coverage?: SketchFinishCoverage
 }
 
-export type SketchSurfaceFinish = SketchPaintFinish | SketchTileFinish
+export type SketchDrywallPatchFinish = {
+  kind: 'drywall-patch'
+  baseColor?: string
+  patchColor?: string
+  xFt?: number
+  yFt?: number
+  widthFt?: number
+  heightFt?: number
+}
+
+export type SketchSurfaceFinish = SketchPaintFinish | SketchTileFinish | SketchDrywallPatchFinish
 
 export type SketchFinishes = {
   walls?: SketchSurfaceFinish
@@ -120,6 +138,9 @@ export const DEFAULT_FLOOR_PAINT = '#b9bfc8'
 export const DEFAULT_TILE_COLOR = '#d8dde5'
 export const DEFAULT_GROUT_COLOR = '#56616f'
 export const DEFAULT_GROUT_IN = 0.125
+export const DEFAULT_DRYWALL_PATCH_COLOR = '#f8fafc'
+export const DEFAULT_DRYWALL_PATCH_WIDTH_FT = 4
+export const DEFAULT_DRYWALL_PATCH_HEIGHT_FT = 3
 
 export const TILE_SIZE_OPTIONS = [
   { key: '12x24', w: 12, h: 24, label: '12 x 24 in' },
@@ -153,6 +174,42 @@ export function cleanColor(value: unknown, fallback: string): string {
   return typeof value === 'string' && HEX_COLOR_RE.test(value) ? value : fallback
 }
 
+function sanitizeCoverage(value: unknown): SketchFinishCoverage | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Partial<SketchFinishCoverage>
+  const mode = raw.mode === 'partial' ? 'partial' : raw.mode === 'full' ? 'full' : undefined
+  if (!mode) return undefined
+  if (mode === 'full') return { mode: 'full' }
+  return {
+    mode: 'partial',
+    bottomFt: cleanOptionalNumber(raw.bottomFt, 0, 30) ?? 0,
+    heightFt: cleanOptionalNumber(raw.heightFt, 0.25, 30) ?? 4,
+  }
+}
+
+export function finishCoverageBoundsFt(surface: SketchSurfaceFinish, wallHeightFt: number): { bottomFt: number; topFt: number; full: boolean } {
+  const roomHeight = Number.isFinite(wallHeightFt) && wallHeightFt > 0 ? wallHeightFt : 8
+  const coverage = surface.kind === 'drywall-patch' ? undefined : surface.coverage
+  if (!coverage || coverage.mode !== 'partial') return { bottomFt: 0, topFt: roomHeight, full: true }
+  const bottom = Math.max(0, Math.min(roomHeight, coverage.bottomFt ?? 0))
+  const height = Math.max(0.25, Math.min(roomHeight - bottom, coverage.heightFt ?? roomHeight))
+  const top = Math.max(bottom, Math.min(roomHeight, bottom + height))
+  return { bottomFt: bottom, topFt: top, full: bottom <= 0.001 && top >= roomHeight - 0.001 }
+}
+
+export function normalizeDrywallPatchSurface(surface?: SketchSurfaceFinish): SketchDrywallPatchFinish {
+  const patch = surface?.kind === 'drywall-patch' ? surface : undefined
+  return {
+    kind: 'drywall-patch',
+    baseColor: cleanColor(patch?.baseColor, DEFAULT_WALL_PAINT),
+    patchColor: cleanColor(patch?.patchColor, DEFAULT_DRYWALL_PATCH_COLOR),
+    xFt: cleanOptionalNumber(patch?.xFt, 0, 200) ?? 0,
+    yFt: cleanOptionalNumber(patch?.yFt, 0, 30) ?? 2,
+    widthFt: cleanOptionalNumber(patch?.widthFt, 0.25, 200) ?? DEFAULT_DRYWALL_PATCH_WIDTH_FT,
+    heightFt: cleanOptionalNumber(patch?.heightFt, 0.25, 30) ?? DEFAULT_DRYWALL_PATCH_HEIGHT_FT,
+  }
+}
+
 function cleanId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
@@ -161,7 +218,7 @@ function cleanId(value: unknown): string | undefined {
 
 export function normalizeTileSurface(surface?: SketchSurfaceFinish): SketchTileFinish {
   const tile = surface?.kind === 'tile' ? surface : undefined
-  return {
+  const out: SketchTileFinish = {
     kind: 'tile',
     tileWIn: cleanNumber(tile?.tileWIn, 12, 1, 96),
     tileHIn: cleanNumber(tile?.tileHIn, 24, 1, 96),
@@ -171,11 +228,18 @@ export function normalizeTileSurface(surface?: SketchSurfaceFinish): SketchTileF
     offsetXIn: cleanNumber(tile?.offsetXIn, 0, -96, 96),
     offsetYIn: cleanNumber(tile?.offsetYIn, 0, -96, 96),
   }
+  const coverage = sanitizeCoverage(tile?.coverage)
+  if (coverage) out.coverage = coverage
+  return out
 }
 
 function normalizeSurface(surface: SketchSurfaceFinish | undefined, fallbackColor: string): SketchSurfaceFinish {
   if (surface?.kind === 'tile') return normalizeTileSurface(surface)
-  return { kind: 'paint', color: cleanColor(surface?.kind === 'paint' ? surface.color : undefined, fallbackColor) }
+  if (surface?.kind === 'drywall-patch') return normalizeDrywallPatchSurface(surface)
+  const paint: SketchPaintFinish = { kind: 'paint', color: cleanColor(surface?.kind === 'paint' ? surface.color : undefined, fallbackColor) }
+  const coverage = sanitizeCoverage(surface?.kind === 'paint' ? surface.coverage : undefined)
+  if (coverage) paint.coverage = coverage
+  return paint
 }
 
 export function normalizeFinishes(finishes?: SketchFinishes): Required<SketchFinishes> {
@@ -191,10 +255,14 @@ export function normalizeFinishes(finishes?: SketchFinishes): Required<SketchFin
 
 function sanitizeSurface(value: unknown): SketchSurfaceFinish | undefined {
   if (!value || typeof value !== 'object') return undefined
-  const raw = value as Partial<SketchTileFinish> & Partial<SketchPaintFinish> & { kind?: string; color?: unknown }
+  const raw = value as Partial<SketchTileFinish> & Partial<SketchPaintFinish> & Partial<SketchDrywallPatchFinish> & { kind?: string; color?: unknown }
   if (raw.kind === 'tile') return normalizeTileSurface({ ...raw, kind: 'tile' })
+  if (raw.kind === 'drywall-patch') return normalizeDrywallPatchSurface({ ...raw, kind: 'drywall-patch' })
   if (raw.kind === 'paint' || typeof raw.color === 'string') {
-    return { kind: 'paint', color: cleanColor(raw.color, DEFAULT_WALL_PAINT) }
+    const paint: SketchPaintFinish = { kind: 'paint', color: cleanColor(raw.color, DEFAULT_WALL_PAINT) }
+    const coverage = sanitizeCoverage(raw.coverage)
+    if (coverage) paint.coverage = coverage
+    return paint
   }
   return undefined
 }
