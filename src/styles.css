@@ -3851,6 +3851,234 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 
 /* Эскиз помещения (SKETCH-1) */
+.hub-sketch {
+  display: grid;
+  gap: 12px;
+}
+.hub-sketch-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+}
+.hub-sketch-topbar-fullscreen {
+  flex: 0 0 auto;
+  border-radius: 0;
+  border-width: 0 0 1px;
+  background: rgba(248, 250, 252, .97);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .12);
+  z-index: 8;
+}
+.hub-sketch-topbar-group {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.hub-sketch-topbar-center {
+  justify-content: center;
+}
+.hub-sketch-topbar-right {
+  justify-content: flex-end;
+}
+.hub-sketch-view-preset-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hub-sketch-workspace {
+  display: grid;
+  grid-template-columns: 64px minmax(240px, 300px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+.hub-sketch-workspace-no-context {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+.hub-sketch-workspace-has-properties {
+  grid-template-columns: 64px minmax(240px, 300px) minmax(0, 1fr) minmax(250px, 320px);
+}
+.hub-sketch-workspace-no-context.hub-sketch-workspace-has-properties {
+  grid-template-columns: 64px minmax(0, 1fr) minmax(250px, 320px);
+}
+.hub-sketch-main {
+  min-width: 0;
+  display: grid;
+}
+.hub-sketch-mode-rail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  align-self: start;
+}
+.hub-sketch-mode-btn {
+  position: relative;
+  width: 100%;
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  padding: 5px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s, transform .05s;
+}
+.hub-sketch-mode-btn:hover,
+.hub-sketch-mode-btn-active {
+  border-color: rgba(47, 122, 94, .35);
+  background: rgba(47, 122, 94, .1);
+  color: var(--text);
+}
+.hub-sketch-mode-btn:active {
+  transform: scale(.97);
+}
+.hub-sketch-mode-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+.hub-sketch-mode-label {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  z-index: 20;
+  min-width: max-content;
+  max-width: 180px;
+  padding: 5px 7px;
+  border: 1px solid rgba(15, 23, 42, .14);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, .92);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(-3px);
+  transition: opacity .12s, transform .12s;
+}
+.hub-sketch-mode-btn:hover .hub-sketch-mode-label,
+.hub-sketch-mode-btn:focus-visible .hub-sketch-mode-label {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+.hub-sketch-context-panel,
+.hub-sketch-properties-panel {
+  min-width: 0;
+  max-height: clamp(420px, 70vh, 820px);
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+}
+.hub-sketch-context-panel-fullscreen {
+  max-height: 30dvh;
+  border-radius: 0;
+  border-width: 0 0 1px;
+}
+.hub-sketch-context-head,
+.hub-sketch-properties-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hub-sketch-context-head h3,
+.hub-sketch-properties-head h3 {
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.2;
+}
+.hub-sketch-context-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 7px;
+  background: rgba(47, 122, 94, .12);
+  color: #20513e;
+  font-weight: 900;
+}
+.hub-sketch-context-section,
+.hub-sketch-properties-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.hub-sketch-context-stats {
+  display: grid;
+  gap: 7px;
+  padding-top: 4px;
+}
+.hub-sketch-context-stats div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hub-sketch-context-panel .hub-sketch-cabinet-tools {
+  grid-template-columns: 1fr;
+  width: 100%;
+}
+.hub-sketch-context-panel .hub-sketch-cabinet-code-input {
+  min-height: 72px;
+}
+.hub-sketch-context-panel .hub-sketch-cabinet-actions,
+.hub-sketch-context-panel .hub-sketch-save-actions,
+.hub-sketch-context-panel .hub-sketch-material-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hub-sketch-context-panel .hub-sketch-dims {
+  display: grid;
+  gap: 10px;
+}
+.hub-sketch-context-panel .hub-sketch-preset-row,
+.hub-sketch-context-panel .hub-sketch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.hub-sketch-properties-panel .hub-sketch-dim-field {
+  width: 100%;
+}
+.hub-sketch-properties-panel .hub-sketch-dim-field input {
+  width: 100%;
+}
+.hub-sketch-snap-compact {
+  width: auto;
+}
+.hub-sketch-fullscreen-context-row {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 64px minmax(240px, 320px);
+  gap: 8px;
+  max-height: 32dvh;
+  overflow: auto;
+  padding: 8px;
+  border-bottom: 1px solid rgba(126,160,190,.26);
+  background: rgba(248, 250, 252, .97);
+  z-index: 7;
+}
+.hub-sketch-mode-rail-fullscreen,
+.hub-sketch-context-panel-fullscreen {
+  max-height: 28dvh;
+}
 .hub-sketch-viewbar {
   display: flex;
   flex-wrap: wrap;
@@ -3936,7 +4164,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border-radius: 8px;
   background: rgba(15, 23, 42, .04);
 }
-.hub-sketch-canvas-card { padding: 10px; }
+.hub-sketch-canvas-card {
+  min-width: 0;
+  padding: 8px;
+}
 .hub-sketch-svg-shell {
   position: relative;
   overflow: hidden;
@@ -3953,7 +4184,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-svg {
   width: 100%;
-  height: clamp(340px, 58vh, 680px);
+  height: clamp(440px, 70vh, 840px);
   display: block;
   background: #ffffff;
   touch-action: none;
@@ -4019,7 +4250,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-3d-shell {
   position: relative;
   width: 100%;
-  height: clamp(320px, 58vh, 620px);
+  height: clamp(440px, 70vh, 840px);
   overflow: hidden;
   border-radius: 8px;
   background: #f7f8fb;
@@ -5314,18 +5545,32 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 /* SKETCH-3D-2: отделка, плиточная раскладка, свет и выключатели */
 .hub-sketch-3d-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(270px, 330px);
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
   gap: 12px;
   align-items: stretch;
 }
+.hub-sketch-3d-layout-no-panel {
+  grid-template-columns: minmax(0, 1fr);
+}
+.hub-sketch-3d-shell {
+  order: 2;
+}
+.hub-sketch-3d-layout-no-panel .hub-sketch-3d-shell {
+  order: 1;
+}
 .hub-sketch-3d-panel {
+  order: 1;
   min-width: 0;
-  max-height: clamp(320px, 58vh, 620px);
+  max-height: clamp(440px, 70vh, 840px);
   overflow: auto;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel2);
+}
+.hub-sketch-3d-panel-toggle {
+  width: fit-content;
+  color: var(--text);
 }
 .hub-sketch-3d-section {
   display: grid;
@@ -6573,8 +6818,85 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-weight: 850;
 }
 @media (max-width: 860px) {
-  .hub-sketch-3d-layout { grid-template-columns: 1fr; }
-  .hub-sketch-3d-panel { max-height: none; }
+  .hub-sketch-topbar {
+    align-items: stretch;
+  }
+  .hub-sketch-topbar-group {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .hub-sketch-workspace,
+  .hub-sketch-workspace-no-context,
+  .hub-sketch-workspace-has-properties,
+  .hub-sketch-workspace-no-context.hub-sketch-workspace-has-properties {
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 72px;
+  }
+  .hub-sketch-mode-rail {
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
+    order: 4;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 7px;
+    border-radius: 8px;
+    box-shadow: 0 -10px 28px rgba(15, 23, 42, .12);
+  }
+  .hub-sketch-mode-btn {
+    flex: 0 0 58px;
+    min-height: 52px;
+  }
+  .hub-sketch-mode-label {
+    position: static;
+    max-width: 54px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 10px;
+    opacity: 1;
+    transform: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hub-sketch-context-panel,
+  .hub-sketch-properties-panel {
+    order: 3;
+    max-height: 42vh;
+    border-radius: 8px 8px 0 0;
+  }
+  .hub-sketch-main {
+    order: 1;
+  }
+  .hub-sketch-svg,
+  .hub-sketch-3d-shell {
+    height: clamp(380px, 62vh, 720px);
+  }
+  .hub-sketch-3d-layout {
+    grid-template-columns: 1fr;
+  }
+  .hub-sketch-3d-shell {
+    order: 1;
+  }
+  .hub-sketch-3d-panel {
+    order: 2;
+    max-height: 42vh;
+  }
+  .hub-sketch-fullscreen-context-row {
+    grid-template-columns: 1fr;
+    max-height: 42dvh;
+  }
+  .hub-sketch-fullscreen-context-row .hub-sketch-mode-rail {
+    position: static;
+    order: 1;
+  }
+  .hub-sketch-fullscreen-context-row .hub-sketch-context-panel {
+    order: 2;
+  }
 }
 
 /* WF-1: досье работника → «Документы и согласия» (GPS-согласия, ТБ, личные файлы). Только чтение. */
