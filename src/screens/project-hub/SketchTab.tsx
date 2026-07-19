@@ -115,6 +115,24 @@ import {
   SKETCH_HISTORY_LIMIT,
   type SketchHistory,
 } from './sketchHistory'
+import {
+  BUILTIN_SKETCH_ROOM_TEMPLATES,
+  duplicateSketchSelection,
+  insertSketchTemplate,
+  mirrorSketchSelection,
+  repositionWallBoundTemplateItems,
+  sketchContourAreaSqft,
+  sketchContourPerimeterFt,
+  suggestedSketchTemplateOrigin,
+  templateFromSketchModel,
+  type SketchCopySelection,
+  type SketchRoomTemplate,
+} from './sketchTemplates'
+import {
+  snapPointWithSmartGuides,
+  smartGuideLabelKey,
+  type SketchSmartGuide,
+} from './sketchGuides'
 
 interface SketchTabProps {
   project: Project
@@ -145,6 +163,10 @@ const EDGE_AUTO_PAN_MAX_PX_PER_SEC = 620
 const OPENING_MAGNET_SCREEN_PX = 5
 const OPENING_MAGNET_MAX_FT = 1.5 / 12
 const OPENING_MAGNET_MIN_FT = EIGHTH_IN_FT
+const SMART_GUIDE_SCREEN_PX = 7
+const SMART_GUIDE_MAX_CELLS = 0.55
+const DUPLICATE_OFFSET_CELLS = 2
+const CUSTOM_TEMPLATE_LIMIT = 24
 
 type Pt = { x: number; y: number }
 type Contour = { points: Pt[]; closed: boolean }
@@ -179,6 +201,7 @@ type SketchMode = 'wall' | 'opening' | 'finish' | 'cabinet' | 'plumbing' | 'ligh
 type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill'
 type SegmentLengthEdit = { ref: SketchSegmentRef; value: string }
 type OpeningOffsetEdit = { index: number; side: OpeningOffsetSide; value: string }
+type DragNode = { c: number; p: number }
 
 const SNAP_OPTIONS: Array<{ mode: SnapMode; stepFt: number; labelKey: string }> = [
   { mode: '1ft', stepFt: 1, labelKey: 'hub_sketch_snap_1ft' },
@@ -297,6 +320,63 @@ function snapModeStep(mode: SnapMode): number {
 function importWallHeight(value: unknown): number | undefined {
   const n = Number(value)
   return Number.isFinite(n) && n > 0 ? snapFeetToPrecision(n) : undefined
+}
+
+function sanitizeRoomTemplate(value: unknown): SketchRoomTemplate | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  const model = raw.model
+  if (!model || typeof model !== 'object') return null
+  const rawModel = model as Record<string, unknown>
+  if (!Array.isArray(rawModel.contours)) return null
+  const contours = rawModel.contours
+    .map((contour): Contour | null => {
+      if (!contour || typeof contour !== 'object') return null
+      const rawContour = contour as Record<string, unknown>
+      if (!Array.isArray(rawContour.points)) return null
+      const points = rawContour.points
+        .map((point): Pt | null => {
+          if (!point || typeof point !== 'object') return null
+          const rawPoint = point as Record<string, unknown>
+          const x = Number(rawPoint.x)
+          const y = Number(rawPoint.y)
+          return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null
+        })
+        .filter((point): point is Pt => !!point)
+      return points.length >= 2 ? { points, closed: rawContour.closed === true } : null
+    })
+    .filter((contour): contour is Contour => !!contour)
+  if (contours.length === 0) return null
+  const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.slice(0, 120) : makeId('template')
+  const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 80) : undefined
+  const labelKey = typeof raw.labelKey === 'string' && raw.labelKey.trim() ? raw.labelKey.trim().slice(0, 120) : undefined
+  const cellFt = Number(rawModel.cellFt)
+  const height = importWallHeight(rawModel.height)
+  const placedItems = sanitizePlacedCatalogItems(rawModel.placedItems)
+  const template: SketchRoomTemplate = {
+    id,
+    name,
+    labelKey,
+    builtin: raw.builtin === true,
+    model: {
+      version: 1,
+      cellFt: Number.isFinite(cellFt) && cellFt > 0 ? cellFt : CELL_FT,
+      contours,
+      openings: sanitizeSketchOpenings(rawModel.openings),
+    },
+  }
+  if (height !== undefined) template.model.height = height
+  if (placedItems.length > 0) template.model.placedItems = placedItems
+  if (typeof raw.createdAt === 'string') template.createdAt = raw.createdAt
+  return template
+}
+
+function sanitizeRoomTemplates(value: unknown): SketchRoomTemplate[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map(sanitizeRoomTemplate)
+    .filter((template): template is SketchRoomTemplate => !!template)
+    .slice(0, CUSTOM_TEMPLATE_LIMIT)
 }
 
 type Tool = 'wall' | 'door' | 'window' | 'measure' | 'cabinet' | 'outlet' | 'switch'
@@ -1583,12 +1663,19 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [sketchMaterialsAdded, setSketchMaterialsAdded] = useState<number | null>(null)
   // NAV-FIX-2: общий выбор стены (2D-план ↔ 3D-вид). null = ничего не выбрано.
   const [selectedWallKey, setSelectedWallKey] = useState<string | null>(null)
+  const [selectedContourIndex, setSelectedContourIndex] = useState<number | null>(null)
   const [wallElevationFullscreen, setWallElevationFullscreen] = useState(false)
   // Перетаскивание проёма вдоль стены.
   const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [dragNode, setDragNode] = useState<DragNode | null>(null)
+  const [selectedNode, setSelectedNode] = useState<DragNode | null>(null)
+  const [dragPlacedId, setDragPlacedId] = useState<string | null>(null)
   const [selectedOpeningIndex, setSelectedOpeningIndex] = useState<number | null>(null)
   const [openingOffsetEdit, setOpeningOffsetEdit] = useState<OpeningOffsetEdit | null>(null)
   const [openingSnapGuide, setOpeningSnapGuide] = useState<OpeningPlacementMagnet | null>(null)
+  const [smartGuides, setSmartGuides] = useState<SketchSmartGuide[]>([])
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
+  const [customRoomTemplates, setCustomRoomTemplates] = useState<SketchRoomTemplate[]>([])
   const dragMovedRef = useRef(false)
   const [name, setName] = useState('room-1')
   const [busy, setBusy] = useState(false)
@@ -1617,6 +1704,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const canEditRef = useRef(canEdit)
   const measurementDraftRef = useRef(measurementDraft)
   const dragIdxRef = useRef(dragIdx)
+  const dragNodeRef = useRef<DragNode | null>(dragNode)
+  const dragPlacedIdRef = useRef<string | null>(dragPlacedId)
   const selectedOpeningIndexRef = useRef(selectedOpeningIndex)
   const [canvasSize, setCanvasSize] = useState<CanvasSize>({ width: VIEW_W, height: VIEW_H })
   const [canvasView, setCanvasView] = useState<CanvasView>({ x: 0, y: 0, width: VIEW_W, height: VIEW_H })
@@ -1695,6 +1784,25 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const seg = cabinetWallOptions[index]
     return { index, seg, key: selectedWallKey, lengthFt: dist(seg.a, seg.b) * modelCellFt(model) }
   }, [selectedWallKey, cabinetWallOptions, model])
+  const selectedContour = useMemo(() => {
+    if (selectedContourIndex === null) return null
+    const contour = model.contours[selectedContourIndex]
+    if (!contour || contour.points.length < 2) return null
+    return {
+      index: selectedContourIndex,
+      contour,
+      areaSqft: sketchContourAreaSqft(contour, modelCellFt(model)),
+      perimeterFt: sketchContourPerimeterFt(contour, modelCellFt(model)),
+    }
+  }, [selectedContourIndex, model])
+  const customTemplateStorageKey = useMemo(() => {
+    const ownerKey = profile?.org_id || `project-${project.id}`
+    return `construction-clock:sketch-room-templates:${ownerKey}`
+  }, [profile?.org_id, project.id])
+  const roomTemplates = useMemo(
+    () => [...BUILTIN_SKETCH_ROOM_TEMPLATES, ...customRoomTemplates],
+    [customRoomTemplates],
+  )
   const selectedWallSurface = useMemo<SketchSurfaceFinish | null>(() => {
     if (!selectedWallKey) return null
     const finishes = normalizeFinishes(model.finishes)
@@ -1754,6 +1862,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [dragIdx])
 
   useEffect(() => {
+    dragNodeRef.current = dragNode
+  }, [dragNode])
+
+  useEffect(() => {
+    dragPlacedIdRef.current = dragPlacedId
+  }, [dragPlacedId])
+
+  useEffect(() => {
     selectedOpeningIndexRef.current = selectedOpeningIndex
   }, [selectedOpeningIndex])
 
@@ -1766,8 +1882,27 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [model.openings, selectedOpeningIndex])
 
   useEffect(() => {
+    if (selectedContourIndex !== null && !model.contours[selectedContourIndex]) {
+      setSelectedContourIndex(null)
+    }
+    if (selectedNode && !model.contours[selectedNode.c]?.points[selectedNode.p]) {
+      setSelectedNode(null)
+    }
+  }, [model.contours, selectedContourIndex, selectedNode])
+
+  useEffect(() => {
     activeSnapFtRef.current = activeSnapFt
   }, [activeSnapFt])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = window.localStorage.getItem(customTemplateStorageKey)
+      setCustomRoomTemplates(raw ? sanitizeRoomTemplates(JSON.parse(raw)) : [])
+    } catch {
+      setCustomRoomTemplates([])
+    }
+  }, [customTemplateStorageKey])
 
   const clearModelChangeState = useCallback(() => {
     setSketchMaterials(null)
@@ -1778,6 +1913,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSegmentResizeConflict(null)
     setOpeningOffsetEdit(null)
     setOpeningSnapGuide(null)
+    setSmartGuides([])
   }, [])
 
   // Снимок в историю перед изменением; затем применяем мутатор.
@@ -1793,6 +1929,189 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setHistory((h) => recordSketchHistory(h, modelRef.current, SKETCH_HISTORY_LIMIT))
     clearModelChangeState()
   }, [clearModelChangeState])
+
+  const applyCopySelection = (selection: SketchCopySelection) => {
+    setSelectedMeasurementIndex(null)
+    setSelectedOpeningIndex(null)
+    setOpeningOffsetEdit(null)
+    setMeasurementDraft(null)
+    setDragNode(null)
+    setSelectedNode(null)
+    setDragPlacedId(null)
+    if (selection.kind === 'contour') {
+      setSelectedContourIndex(selection.c)
+      setSelectedWallKey(null)
+    } else {
+      setSelectedContourIndex(null)
+      setSelectedWallKey(sketchWallKey(selection.c, selection.s))
+    }
+  }
+
+  const activeCopySelection = (): SketchCopySelection | null => {
+    if (selectedContour) return { kind: 'contour', c: selectedContour.index }
+    if (selectedWall) return { kind: 'wall', c: selectedWall.seg.c, s: selectedWall.seg.s }
+    return null
+  }
+
+  const persistCustomRoomTemplates = (templates: SketchRoomTemplate[]) => {
+    const next = templates.slice(0, CUSTOM_TEMPLATE_LIMIT)
+    setCustomRoomTemplates(next)
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(customTemplateStorageKey, JSON.stringify(next))
+    } catch {
+      setError('hub_sketch_template_save_failed')
+    }
+  }
+
+  const templateDisplayName = (template: SketchRoomTemplate): string => {
+    if (template.labelKey) return t(template.labelKey)
+    return template.name?.trim() || t('hub_sketch_template_custom')
+  }
+
+  const templateStatsText = (template: SketchRoomTemplate): string => {
+    const contour = template.model.contours[0]
+    if (!contour) return ''
+    const cellFt = Number.isFinite(template.model.cellFt) && template.model.cellFt > 0 ? template.model.cellFt : CELL_FT
+    return `${sketchContourAreaSqft(contour, cellFt).toFixed(0)} ft² · ${fmtFt(sketchContourPerimeterFt(contour, cellFt))}`
+  }
+
+  const addRoomTemplate = (template: SketchRoomTemplate) => {
+    if (!canEdit) return
+    const origin = suggestedSketchTemplateOrigin(model, template.model)
+    const result = insertSketchTemplate(model, template, origin, makeId)
+    if (!result) return
+    canvasAutoFitRef.current = true
+    commit(normalizeSketchModelForStorage(result.model))
+    applyCopySelection(result.selection)
+    setTemplatePickerOpen(false)
+    setStatus('hub_sketch_template_inserted')
+  }
+
+  const duplicateSelectedSketch = () => {
+    const selection = activeCopySelection()
+    if (!canEdit || !selection) return
+    const result = duplicateSketchSelection(model, selection, { x: DUPLICATE_OFFSET_CELLS, y: DUPLICATE_OFFSET_CELLS }, makeId)
+    if (!result) return
+    canvasAutoFitRef.current = true
+    commit(normalizeSketchModelForStorage(result.model))
+    applyCopySelection(result.selection)
+    setStatus('hub_sketch_duplicated')
+  }
+
+  const mirrorSelectedSketch = () => {
+    const selection = activeCopySelection()
+    if (!canEdit || !selection) return
+    const contour = model.contours[selection.c]
+    if (!contour) return
+    const bounds = sketchBounds({ ...model, contours: [contour] })
+    const axisX = (bounds.minX + bounds.maxX) / 2
+    const result = mirrorSketchSelection(model, selection, axisX, { x: Math.max(DUPLICATE_OFFSET_CELLS, bounds.width + DUPLICATE_OFFSET_CELLS), y: 0 }, makeId)
+    if (!result) return
+    canvasAutoFitRef.current = true
+    commit(normalizeSketchModelForStorage(result.model))
+    applyCopySelection(result.selection)
+    setStatus('hub_sketch_mirrored')
+  }
+
+  const saveCurrentAsTemplate = () => {
+    if (!canEdit) return
+    const selection = selectedContour
+      ? { kind: 'contour' as const, c: selectedContour.index }
+      : selectedWall
+        ? { kind: 'contour' as const, c: selectedWall.seg.c }
+        : null
+    const hasClosedRoom = selection
+      ? model.contours[selection.c]?.closed
+      : model.contours.some((contour) => contour.closed && contour.points.length >= 3)
+    if (!hasClosedRoom) {
+      setError('hub_sketch_template_need_room')
+      return
+    }
+    const templateName = selection
+      ? `${name.trim() || t('hub_sketch_template_custom')} · ${t('hub_sketch_contour')} ${selection.c + 1}`
+      : name.trim() || t('hub_sketch_template_custom')
+    const template = templateFromSketchModel(makeId('template'), templateName, model, selection ?? undefined)
+    if (!template) {
+      setError('hub_sketch_template_need_room')
+      return
+    }
+    persistCustomRoomTemplates([template, ...customRoomTemplates.filter((item) => item.id !== template.id)])
+    setTemplatePickerOpen(true)
+    setStatus('hub_sketch_template_saved')
+  }
+
+  const addCornerToSelectedWall = () => {
+    if (!canEdit || !selectedWall) return
+    const contour = model.contours[selectedWall.seg.c]
+    if (!contour) return
+    const indexes = selectedWall.seg.s < contour.points.length - 1
+      ? { insertAt: selectedWall.seg.s + 1, a: contour.points[selectedWall.seg.s], b: contour.points[selectedWall.seg.s + 1] }
+      : contour.closed && selectedWall.seg.s === contour.points.length - 1
+        ? { insertAt: contour.points.length, a: contour.points[contour.points.length - 1], b: contour.points[0] }
+        : null
+    if (!indexes) return
+    const midpoint = { x: (indexes.a.x + indexes.b.x) / 2, y: (indexes.a.y + indexes.b.y) / 2 }
+    const nextPoints = [
+      ...contour.points.slice(0, indexes.insertAt),
+      midpoint,
+      ...contour.points.slice(indexes.insertAt),
+    ]
+    const nextContours = model.contours.map((item, index) => (index === selectedWall.seg.c ? { ...item, points: nextPoints } : item))
+    const shiftedOpenings = model.openings.map((opening) => (
+      opening.c === selectedWall.seg.c && opening.s >= indexes.insertAt
+        ? { ...opening, s: opening.s + 1 }
+        : opening
+    ))
+    const shiftedPlacedItems = (model.placedItems ?? []).map((item) => (
+      item.c === selectedWall.seg.c && Number.isInteger(item.s) && (item.s ?? 0) >= indexes.insertAt
+        ? { ...item, s: (item.s ?? 0) + 1, wallId: sketchWallKey(item.c ?? 0, (item.s ?? 0) + 1) }
+        : item
+    ))
+    const nextModel = normalizeSketchModelForStorage({
+      ...model,
+      contours: nextContours,
+      openings: shiftedOpenings,
+      ...(shiftedPlacedItems.length > 0 ? { placedItems: shiftedPlacedItems } : {}),
+    })
+    canvasAutoFitRef.current = false
+    commit(nextModel)
+    setSelectedWallKey(sketchWallKey(selectedWall.seg.c, selectedWall.seg.s))
+  }
+
+  const removeSelectedCorner = () => {
+    if (!canEdit || !selectedNode) return
+    const contour = model.contours[selectedNode.c]
+    if (!contour || contour.points.length <= (contour.closed ? 3 : 2)) return
+    const removedIndex = selectedNode.p
+    const nextPoints = contour.points.filter((_, index) => index !== removedIndex)
+    const nextContours = model.contours.map((item, index) => (index === selectedNode.c ? { ...item, points: nextPoints } : item))
+    const maxSegment = nextPoints.length - (contour.closed ? 1 : 2)
+    const nextOpenings = model.openings
+      .filter((opening) => !(opening.c === selectedNode.c && (opening.s === removedIndex || opening.s === removedIndex - 1)))
+      .map((opening) => (
+        opening.c === selectedNode.c && opening.s > removedIndex
+          ? { ...opening, s: Math.max(0, Math.min(maxSegment, opening.s - 1)) }
+          : opening
+      ))
+    const nextPlacedItems = (model.placedItems ?? [])
+      .filter((item) => !(item.c === selectedNode.c && (item.s === removedIndex || item.s === removedIndex - 1)))
+      .map((item) => (
+        item.c === selectedNode.c && Number.isInteger(item.s) && (item.s ?? 0) > removedIndex
+          ? { ...item, s: Math.max(0, Math.min(maxSegment, (item.s ?? 0) - 1)), wallId: sketchWallKey(item.c ?? 0, Math.max(0, Math.min(maxSegment, (item.s ?? 0) - 1))) }
+          : item
+      ))
+    canvasAutoFitRef.current = false
+    commit(normalizeSketchModelForStorage({
+      ...model,
+      contours: nextContours,
+      openings: nextOpenings,
+      ...(nextPlacedItems.length > 0 ? { placedItems: nextPlacedItems } : {}),
+    }))
+    setDragNode(null)
+    setSelectedNode(null)
+    setSelectedContourIndex(selectedNode.c)
+  }
 
   const beginSegmentLengthEdit = (dim: SegmentDimLine) => {
     if (!canEdit) return
@@ -2306,6 +2625,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     return view.width / Math.max(1, canvasSizeRef.current.width)
   }
 
+  const smartGuideThresholdCells = (view = canvasViewRef.current): number => {
+    return Math.min(SMART_GUIDE_MAX_CELLS, (SMART_GUIDE_SCREEN_PX * screenWorldPxForView(view)) / CELL_PX)
+  }
+
   const zoomCanvasAt = (clientX: number, clientY: number, factor: number, baseView = canvasView) => {
     const anchor = canvasPoint(clientX, clientY, baseView)
     const svg = svgRef.current
@@ -2405,10 +2728,57 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const applyPointerMoveAt = (clientX: number, clientY: number, view = canvasViewRef.current) => {
     if (!canEditRef.current) return
     const raw = pointerCellAt(clientX, clientY, view)
+    const currentDragNode = dragNodeRef.current
+    if (currentDragNode) {
+      if (!raw) {
+        setSmartGuides([])
+        return
+      }
+      dragMovedRef.current = true
+      setModel((m) => {
+        const contour = m.contours[currentDragNode.c]
+        if (!contour || !contour.points[currentDragNode.p]) {
+          setSmartGuides([])
+          return m
+        }
+        const fallback = snapForModel(m, raw, activeSnapFtRef.current)
+        const guided = snapPointWithSmartGuides(m, raw, {
+          fallbackPoint: fallback,
+          thresholdCells: smartGuideThresholdCells(view),
+          excludeContourIndex: currentDragNode.c,
+          excludePointIndex: currentDragNode.p,
+        })
+        setSmartGuides(guided.guides)
+        const nextContours = m.contours.map((item, contourIndex) => (
+          contourIndex === currentDragNode.c
+            ? {
+                ...item,
+                points: item.points.map((point, pointIndex) => (pointIndex === currentDragNode.p ? guided.point : point)),
+              }
+            : item
+        ))
+        const nextBaseModel: SketchModel = {
+          ...m,
+          contours: nextContours,
+        }
+        nextBaseModel.openings = m.openings.map((opening) => (
+          opening.c === currentDragNode.c ? { ...opening, t: clampOpeningT(nextBaseModel, opening, opening.t) } : opening
+        ))
+        const placedItems = repositionWallBoundTemplateItems(m.placedItems, m, nextBaseModel)
+        const nextModel = {
+          ...nextBaseModel,
+          ...(placedItems ? { placedItems } : {}),
+        }
+        modelRef.current = nextModel
+        return nextModel
+      })
+      return
+    }
     const currentDragIdx = dragIdxRef.current
     if (currentDragIdx !== null) {
       if (!raw) {
         setOpeningSnapGuide(null)
+        setSmartGuides([])
         return
       }
       dragMovedRef.current = true
@@ -2440,9 +2810,67 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       })
       return
     }
+    const currentDragPlacedId = dragPlacedIdRef.current
+    if (currentDragPlacedId !== null) {
+      if (!raw) {
+        setSmartGuides([])
+        return
+      }
+      dragMovedRef.current = true
+      setModel((m) => {
+        const placedItems = sanitizePlacedCatalogItems(m.placedItems)
+        const item = placedItems.find((placed) => placed.id === currentDragPlacedId)
+        if (!item) {
+          setSmartGuides([])
+          return m
+        }
+        const fallback = snapForModel(m, raw, activeSnapFtRef.current)
+        const guided = snapPointWithSmartGuides(m, raw, {
+          fallbackPoint: fallback,
+          thresholdCells: smartGuideThresholdCells(view),
+          excludeItemId: currentDragPlacedId,
+        })
+        setSmartGuides(guided.guides)
+        const cellFt = modelCellFt(m)
+        const near = nearestSegment(m, guided.point)
+        const keepWallBound = item.surface === 'wall' || Number.isInteger(item.c)
+        const nextItems = placedItems.map((placed) => {
+          if (placed.id !== currentDragPlacedId) return placed
+          if (keepWallBound && near && near.d <= SEG_HIT) {
+            const seg = eachSegment(m).find((candidate) => candidate.c === near.c && candidate.s === near.s)
+            if (seg) {
+              const tValue = Math.max(0, Math.min(1, near.t))
+              const xFt = (seg.a.x + (seg.b.x - seg.a.x) * tValue) * cellFt
+              const zFt = (seg.a.y + (seg.b.y - seg.a.y) * tValue) * cellFt
+              return {
+                ...placed,
+                xFt,
+                zFt,
+                c: near.c,
+                s: near.s,
+                t: tValue,
+                wallId: sketchWallKey(near.c, near.s),
+                rotationY: -Math.atan2(seg.b.y - seg.a.y, seg.b.x - seg.a.x),
+              }
+            }
+          }
+          const { c: _c, s: _s, t: _t, wallId: _wallId, ...freePlaced } = placed
+          return {
+            ...freePlaced,
+            xFt: guided.point.x * cellFt,
+            zFt: guided.point.y * cellFt,
+          }
+        })
+        const nextModel = { ...m, placedItems: nextItems }
+        modelRef.current = nextModel
+        return nextModel
+      })
+      return
+    }
     if (!raw) {
       setHover(null)
       setHoverSnapped(false)
+      setSmartGuides([])
       return
     }
     const currentModel = modelRef.current
@@ -2459,11 +2887,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setHover(raw)
       setHoverSnapped(false)
     }
+    setSmartGuides([])
   }
 
   function edgeAutoPanInteractionActive(): boolean {
     const currentTool = toolRef.current
     if (dragIdxRef.current !== null) return true
+    if (dragNodeRef.current !== null || dragPlacedIdRef.current !== null) return true
     if (currentTool === 'door' || currentTool === 'window') return true
     if (currentTool === 'measure') return !!measurementDraftRef.current
     if (currentTool !== 'wall') return false
@@ -2579,6 +3009,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         event.preventDefault()
         return
       }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedNode !== null) {
+        removeSelectedCorner()
+        event.preventDefault()
+        return
+      }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedOpeningIndex !== null) {
         removeSelectedOpening()
         event.preventDefault()
@@ -2586,7 +3021,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, viewMode, tool, selectedMeasurementIndex, selectedOpeningIndex, model])
+  }, [canEdit, viewMode, tool, selectedMeasurementIndex, selectedOpeningIndex, selectedNode, model])
 
   useEffect(() => {
     if (selectedMeasurementIndex !== null && !model.measurements?.[selectedMeasurementIndex]) {
@@ -2696,12 +3131,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
     if (canvasPointersRef.current.size === 0) stopEdgeAutoPan()
     endDragOpening()
+    endDragNode()
+    endDragPlaced()
   }
 
   const handleCanvasPointerLeave = () => {
     if (canvasPointersRef.current.size > 0) return
     stopEdgeAutoPan()
     endDragOpening()
+    endDragNode()
+    endDragPlaced()
     setHover(null)
     setHoverSnapped(false)
   }
@@ -2738,6 +3177,44 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   }
 
+  const startDragNode = (c: number, p: number) => (e: React.PointerEvent) => {
+    if (!canEdit) return
+    e.stopPropagation()
+    recordHistoryStep()
+    const node = { c, p }
+    dragMovedRef.current = true
+    dragNodeRef.current = node
+    setDragNode(node)
+    setSelectedNode(node)
+    setSelectedContourIndex(c)
+    setSelectedWallKey(null)
+    setSelectedOpeningIndex(null)
+    setSelectedMeasurementIndex(null)
+    setMeasurementDraft(null)
+    setActiveMode('wall')
+    edgeAutoPanPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
+    updateEdgeAutoPan(e.clientX, e.clientY)
+    ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
+  }
+
+  const startDragPlanItem = (item: SketchPlacedCatalogItem) => (e: React.PointerEvent) => {
+    if (!canEdit || tool === 'measure') return
+    e.stopPropagation()
+    recordHistoryStep()
+    dragMovedRef.current = true
+    dragPlacedIdRef.current = item.id
+    setDragPlacedId(item.id)
+    setSelectedContourIndex(null)
+    setSelectedWallKey(null)
+    setSelectedOpeningIndex(null)
+    setSelectedMeasurementIndex(null)
+    setMeasurementDraft(null)
+    setActiveMode(isCabinetPlacedItem(item) ? 'cabinet' : item.category === 'light' || item.category === 'fan' ? 'light' : 'plumbing')
+    edgeAutoPanPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
+    updateEdgeAutoPan(e.clientX, e.clientY)
+    ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
+  }
+
   // Отпускание проёма: сохраняем свободную позицию; storage-normalize отдельно округляет до 1/8".
   const endDragOpening = () => {
     if (dragIdxRef.current === null) return
@@ -2745,6 +3222,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     dragIdxRef.current = null
     setDragIdx(null)
     setOpeningSnapGuide(null)
+    setSketchMaterials(null)
+    setSketchMaterialsAdded(null)
+  }
+
+  const endDragNode = () => {
+    if (dragNodeRef.current === null) return
+    stopEdgeAutoPan()
+    dragNodeRef.current = null
+    setDragNode(null)
+    setSmartGuides([])
+    setSketchMaterials(null)
+    setSketchMaterialsAdded(null)
+  }
+
+  const endDragPlaced = () => {
+    if (dragPlacedIdRef.current === null) return
+    stopEdgeAutoPan()
+    dragPlacedIdRef.current = null
+    setDragPlacedId(null)
+    setSmartGuides([])
     setSketchMaterials(null)
     setSketchMaterialsAdded(null)
   }
@@ -2763,6 +3260,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
     // NAV-FIX-2: клик по пустому месту снимает выделение стены (клик по самой стене обрабатывает хит-таргет со stopPropagation).
     if (wallSelectEnabled && selectedWallKey !== null) setSelectedWallKey(null)
+    if (wallSelectEnabled && selectedContourIndex !== null) setSelectedContourIndex(null)
+    if (wallSelectEnabled && selectedNode !== null) setSelectedNode(null)
     const raw = pointerCell(e)
     if (!raw) return
 
@@ -2852,8 +3351,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setMeasurementDraft(null)
     setSelectedMeasurementIndex(null)
     dragIdxRef.current = null
+    dragNodeRef.current = null
+    dragPlacedIdRef.current = null
     setDragIdx(null)
+    setDragNode(null)
+    setDragPlacedId(null)
     setSelectedOpeningIndex(null)
+    setSelectedContourIndex(null)
+    setSelectedNode(null)
     setOpeningOffsetEdit(null)
     setOpeningSnapGuide(null)
     clearModelChangeState()
@@ -2868,8 +3373,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setMeasurementDraft(null)
     setSelectedMeasurementIndex(null)
     dragIdxRef.current = null
+    dragNodeRef.current = null
+    dragPlacedIdRef.current = null
     setDragIdx(null)
+    setDragNode(null)
+    setDragPlacedId(null)
     setSelectedOpeningIndex(null)
+    setSelectedContourIndex(null)
+    setSelectedNode(null)
     setOpeningOffsetEdit(null)
     setOpeningSnapGuide(null)
     clearModelChangeState()
@@ -2884,6 +3395,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedOpeningIndex(null)
     setOpeningOffsetEdit(null)
     setOpeningSnapGuide(null)
+    setDragNode(null)
+    setDragPlacedId(null)
+    setSelectedNode(null)
+    setSelectedContourIndex(null)
   }
 
   useEffect(() => {
@@ -2894,14 +3409,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       const key = event.key.toLowerCase()
       const isUndo = key === 'z' && !event.shiftKey
       const isRedo = key === 'y' || (key === 'z' && event.shiftKey)
-      if (!isUndo && !isRedo) return
+      const isDuplicate = key === 'd' && !event.shiftKey
+      if (!isUndo && !isRedo && !isDuplicate) return
       event.preventDefault()
       if (isUndo) undo()
-      else redo()
+      else if (isRedo) redo()
+      else duplicateSelectedSketch()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, undo, redo])
+  }, [canEdit, undo, redo, duplicateSelectedSketch])
 
   const updateWallHeight = (value: number) => {
     const nextHeight = Number.isFinite(value) && value > 0 ? value : DEFAULT_WALL_HEIGHT_FT
@@ -3169,6 +3686,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setMeasurementDraft(null)
       setSelectedMeasurementIndex(null)
       setSelectedOpeningIndex(null)
+      setSelectedContourIndex(null)
+      setSelectedNode(null)
       setOpeningOffsetEdit(null)
       setOpeningSnapGuide(null)
       commit(normalizeSketchModelForStorage(nextModel))
@@ -3556,6 +4075,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const renderSketchContextPanel = (fullscreen = false) => {
     const activeModeMeta = SKETCH_MODE_OPTIONS.find((option) => option.mode === activeMode) ?? SKETCH_MODE_OPTIONS[0]
+    const copySelection = activeCopySelection()
+    const canSaveRoomTemplate = model.contours.some((contour) => contour.closed && contour.points.length >= 3)
     return (
       <aside className={fullscreen ? 'hub-sketch-context-panel hub-sketch-context-panel-fullscreen' : 'hub-sketch-context-panel'} aria-label={t('hub_sketch_context_panel')}>
         <div className="hub-sketch-context-head">
@@ -3571,6 +4092,35 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             <button type="button" className="btn ghost small" onClick={clearAll}>
               {t('hub_sketch_clear')}
             </button>
+            <button type="button" className="btn ghost small" onClick={() => setTemplatePickerOpen((value) => !value)}>
+              {t('hub_sketch_template_new')}
+            </button>
+            {templatePickerOpen && (
+              <div className="hub-sketch-template-list" role="list" aria-label={t('hub_sketch_templates')}>
+                {roomTemplates.map((template) => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    className="hub-sketch-template-card"
+                    onClick={() => addRoomTemplate(template)}
+                  >
+                    <span>{templateDisplayName(template)}</span>
+                    <small>{templateStatsText(template)}</small>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="hub-sketch-actions">
+              <button type="button" className="btn ghost small" disabled={!copySelection} onClick={duplicateSelectedSketch}>
+                {t('hub_sketch_duplicate')}
+              </button>
+              <button type="button" className="btn ghost small" disabled={!copySelection} onClick={mirrorSelectedSketch}>
+                {t('hub_sketch_mirror')}
+              </button>
+              <button type="button" className="btn ghost small" disabled={!canSaveRoomTemplate} onClick={saveCurrentAsTemplate}>
+                {t('hub_sketch_template_save')}
+              </button>
+            </div>
             <div className="hub-sketch-context-stats" aria-label={t('hub_sketch_stats')}>
               <div>
                 <span className="muted">{t('hub_sketch_area')}</span>
@@ -4078,7 +4628,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const renderSketchPropertiesPanel = () => {
     const selectedMeasurement = selectedMeasurementIndex !== null ? model.measurements?.[selectedMeasurementIndex] ?? null : null
-    if (!selectedWall && !selectedOpening && !selectedMeasurement) return null
+    if (!selectedWall && !selectedContour && !selectedOpening && !selectedMeasurement) return null
     return (
       <aside className="hub-sketch-properties-panel" aria-label={t('hub_sketch_properties_panel')}>
         {selectedWall && (
@@ -4121,6 +4671,61 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 </button>
                 <button type="button" className="btn ghost small" onClick={openWallCabinets}>
                   {t('hub_sketch_wall_panel_cabinets')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={duplicateSelectedSketch}>
+                  {t('hub_sketch_duplicate')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={mirrorSelectedSketch}>
+                  {t('hub_sketch_mirror')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={addCornerToSelectedWall}>
+                  {t('hub_sketch_corner_add')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={saveCurrentAsTemplate}>
+                  {t('hub_sketch_template_save')}
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {selectedContour && (
+          <section className="hub-sketch-properties-section">
+            <div className="hub-sketch-properties-head">
+              <h3>{`${t('hub_sketch_room_panel_title')} ${selectedContour.index + 1}`}</h3>
+              <button
+                type="button"
+                className="btn ghost small"
+                aria-label={t('hub_sketch_room_panel_close')}
+                onClick={() => {
+                  setSelectedContourIndex(null)
+                  setSelectedNode(null)
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div className="hub-sketch-wall-panel-facts">
+              <span className="muted">{t('hub_sketch_area')}</span>
+              <span className="hub-sketch-stat-value">{selectedContour.areaSqft.toFixed(1)} ft²</span>
+              <span className="muted">{t('hub_sketch_perimeter')}</span>
+              <span className="hub-sketch-stat-value">{fmtFt(selectedContour.perimeterFt)}</span>
+              <span className="muted">{t('hub_sketch_contours')}</span>
+              <span className="hub-sketch-stat-value">{selectedContour.contour.points.length}</span>
+            </div>
+            {canEdit && (
+              <div className="hub-sketch-wall-panel-actions">
+                <button type="button" className="btn ghost small" onClick={duplicateSelectedSketch}>
+                  {t('hub_sketch_duplicate')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={mirrorSelectedSketch}>
+                  {t('hub_sketch_mirror')}
+                </button>
+                <button type="button" className="btn ghost small" disabled={!selectedNode} onClick={removeSelectedCorner}>
+                  {t('hub_sketch_corner_remove')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={saveCurrentAsTemplate}>
+                  {t('hub_sketch_template_save')}
                 </button>
               </div>
             )}
@@ -4179,7 +4784,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const use3DContextPanel = canEdit && viewMode === '3d' && MODES_WITH_3D_CONTEXT.has(activeMode)
-  const hasPropertiesPanel = Boolean(selectedWall || selectedOpening || (selectedMeasurementIndex !== null && model.measurements?.[selectedMeasurementIndex]))
+  const hasPropertiesPanel = Boolean(selectedWall || selectedContour || selectedOpening || (selectedMeasurementIndex !== null && model.measurements?.[selectedMeasurementIndex]))
   const workspaceClass = [
     'hub-sketch-workspace',
     use3DContextPanel ? 'hub-sketch-workspace-no-context' : '',
@@ -4252,8 +4857,21 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           {model.contours.map((c, ci) => {
             if (c.points.length === 0) return null
             const pts = c.points.map((p) => `${p.x * CELL_PX},${p.y * CELL_PX}`).join(' ')
+            const selected = selectedContourIndex === ci
             return c.closed && c.points.length >= 3 ? (
-              <polygon key={`c${ci}`} className="hub-sketch-wall" points={pts} />
+              <polygon
+                key={`c${ci}`}
+                className={selected ? 'hub-sketch-wall hub-sketch-room-selected' : 'hub-sketch-wall'}
+                points={pts}
+                onClick={wallSelectEnabled ? (event) => {
+                  event.stopPropagation()
+                  setSelectedContourIndex((current) => (current === ci ? null : ci))
+                  setSelectedWallKey(null)
+                  setSelectedNode(null)
+                  setSelectedMeasurementIndex(null)
+                  setSelectedOpeningIndex(null)
+                } : undefined}
+              />
             ) : (
               <polyline key={`c${ci}`} className="hub-sketch-wall" points={pts} fill="none" />
             )
@@ -4282,6 +4900,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     onClick={(event) => {
                       event.stopPropagation()
                       setSelectedWallKey((current) => (current === key ? null : key))
+                      setSelectedContourIndex(null)
+                      setSelectedNode(null)
                     }}
                   />
                 )}
@@ -4364,9 +4984,20 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
           {/* точки контуров (крупные хит-таргеты) */}
           {model.contours.map((c, ci) =>
-            c.points.map((p, pi) => (
-              <circle key={`n${ci}-${pi}`} className="hub-sketch-node" cx={p.x * CELL_PX} cy={p.y * CELL_PX} r={nodeRadius} />
-            )),
+            c.points.map((p, pi) => {
+              const selected = selectedNode?.c === ci && selectedNode.p === pi
+              const dragging = dragNode?.c === ci && dragNode.p === pi
+              return (
+                <circle
+                  key={`n${ci}-${pi}`}
+                  className={`hub-sketch-node${selected ? ' hub-sketch-node-selected' : ''}${dragging ? ' hub-sketch-node-dragging' : ''}`}
+                  cx={p.x * CELL_PX}
+                  cy={p.y * CELL_PX}
+                  r={nodeRadius}
+                  onPointerDown={canEdit ? startDragNode(ci, pi) : undefined}
+                />
+              )
+            }),
           )}
 
           {/* проёмы — отрезок вдоль стены заданной ширины, можно перетаскивать */}
@@ -4479,14 +5110,39 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             </g>
           )}
 
+          {smartGuides.length > 0 && (
+            <g className="hub-sketch-smart-guides">
+              {smartGuides.map((guide, index) => {
+                const value = guide.value * CELL_PX
+                const label = t(smartGuideLabelKey(guide.kind))
+                return guide.axis === 'x' ? (
+                  <g key={`sg-${guide.axis}-${guide.kind}-${index}`} className={`hub-sketch-smart-guide hub-sketch-smart-guide-${guide.kind}`}>
+                    <line x1={value} y1={canvasView.y} x2={value} y2={canvasView.y + canvasView.height} />
+                    <text x={value + 8 * screenWorldPx} y={canvasView.y + 18 * screenWorldPx}>
+                      {label}
+                    </text>
+                  </g>
+                ) : (
+                  <g key={`sg-${guide.axis}-${guide.kind}-${index}`} className={`hub-sketch-smart-guide hub-sketch-smart-guide-${guide.kind}`}>
+                    <line x1={canvasView.x} y1={value} x2={canvasView.x + canvasView.width} y2={value} />
+                    <text x={canvasView.x + 8 * screenWorldPx} y={value - 8 * screenWorldPx}>
+                      {label}
+                    </text>
+                  </g>
+                )
+              })}
+            </g>
+          )}
+
           {planItems.map((entry) => {
-            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.electrical ? ` hub-sketch-plan-electrical hub-sketch-plan-${entry.electrical}` : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}`
+            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.electrical ? ` hub-sketch-plan-electrical hub-sketch-plan-${entry.electrical}` : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}${dragPlacedId === entry.item.id ? ' hub-sketch-plan-item-dragging' : ''}`
             const labelFontSize = Math.max(5 * screenWorldPx, Math.min(11 * screenWorldPx, entry.width / Math.max(4, entry.cabinetCode.length * 0.6)))
             return (
               <g
                 key={`pi-${entry.item.id}`}
                 className={className}
                 transform={`translate(${entry.x} ${entry.y}) rotate(${entry.angle})`}
+                onPointerDown={canEdit ? startDragPlanItem(entry.item) : undefined}
               >
                 <title>{entry.item.name ?? (entry.electrical === 'outlet' ? t('hub_sketch_outlet') : entry.electrical === 'switch' ? t('hub_sketch_switch') : entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
                 {entry.electrical ? (

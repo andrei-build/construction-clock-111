@@ -4054,6 +4054,45 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   flex-wrap: wrap;
   gap: 7px;
 }
+.hub-sketch-template-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+.hub-sketch-template-card {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .48);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hub-sketch-template-card:hover,
+.hub-sketch-template-card:focus-visible {
+  border-color: rgba(47, 122, 94, .45);
+  background: rgba(47, 122, 94, .08);
+}
+.hub-sketch-template-card span,
+.hub-sketch-template-card small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hub-sketch-template-card span {
+  font-size: 13px;
+  font-weight: 850;
+}
+.hub-sketch-template-card small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
 .hub-sketch-properties-panel .hub-sketch-dim-field {
   width: 100%;
 }
@@ -4692,6 +4731,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-subgrid line,
 .hub-sketch-grid line,
 .hub-sketch-wall,
+.hub-sketch-room-selected,
 .hub-sketch-wall-selected,
 .hub-sketch-wall-conflict,
 .hub-sketch-wall-hit,
@@ -4701,6 +4741,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-opening-hit,
 .hub-sketch-opening-selection-halo,
 .hub-sketch-opening-snap-guide line,
+.hub-sketch-smart-guide line,
 .hub-sketch-measurement-line,
 .hub-sketch-measurement-hit,
 .hub-sketch-plan-item *,
@@ -4714,6 +4755,11 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-subgrid line { stroke: #edf1f5; stroke-width: 1; }
 .hub-sketch-grid line { stroke: #d7dee8; stroke-width: 1; }
 .hub-sketch-wall { stroke: #1f2933; stroke-width: 3; fill: rgba(31, 41, 51, .06); stroke-linejoin: round; stroke-linecap: round; }
+.hub-sketch-room-selected {
+  stroke: #2563eb;
+  stroke-width: 4;
+  fill: rgba(37, 99, 235, .08);
+}
 /* NAV-FIX-2: выбор стены на 2D-плане */
 .hub-sketch-wall-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; fill: none; cursor: pointer; }
 .hub-sketch-wall-selected { stroke: #2563eb; stroke-width: 5; stroke-linecap: round; fill: none; pointer-events: none; }
@@ -4777,7 +4823,18 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border-color: #2563eb;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, .16);
 }
-.hub-sketch-node { fill: #0f172a; stroke: #ffffff; stroke-width: 2; }
+.hub-sketch-node {
+  fill: #0f172a;
+  stroke: #ffffff;
+  stroke-width: 2;
+  cursor: grab;
+}
+.hub-sketch-node-selected,
+.hub-sketch-node-dragging {
+  fill: #f59e0b;
+  stroke: #ffffff;
+  stroke-width: 2.5;
+}
 .hub-sketch-door { fill: #b45309; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-window { fill: #2563eb; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-opening-selection-halo {
@@ -4807,6 +4864,27 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: rgba(255, 255, 255, .96);
   stroke-width: 3.5;
   paint-order: stroke;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+.hub-sketch-smart-guides {
+  pointer-events: none;
+}
+.hub-sketch-smart-guide line {
+  stroke: #f59e0b;
+  stroke-width: 1.7;
+  stroke-dasharray: 6 5;
+  stroke-linecap: round;
+}
+.hub-sketch-smart-guide-center line {
+  stroke-width: 2.2;
+}
+.hub-sketch-smart-guide text {
+  fill: #92400e;
+  stroke: rgba(255, 255, 255, .96);
+  stroke-width: 3.5;
+  paint-order: stroke;
+  font-size: 11px;
   font-weight: 850;
   letter-spacing: 0;
 }
@@ -5223,7 +5301,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-window { stroke: #2563eb; stroke-width: 6; stroke-linecap: butt; }
 .hub-sketch-opening-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
 .hub-sketch-plan-item {
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: grab;
+}
+.hub-sketch-plan-item-dragging {
+  cursor: grabbing;
+  filter: drop-shadow(0 4px 10px rgba(15, 23, 42, .2));
 }
 .hub-sketch-plan-item rect,
 .hub-sketch-plan-item ellipse,
