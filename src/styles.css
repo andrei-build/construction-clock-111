@@ -4116,6 +4116,172 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   align-items: center;
   gap: 6px;
 }
+.hub-sketch-photo-reference-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.hub-sketch-photo-reference-control {
+  position: relative;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: min(360px, 100%);
+}
+.hub-sketch-photo-reference-add {
+  width: auto;
+  white-space: nowrap;
+}
+.hub-sketch-photo-reference-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 188px;
+  height: 34px;
+  padding: 3px 4px;
+  border: 1px solid rgba(237,246,251,.28);
+  border-radius: 8px;
+  background: rgba(21,29,45,.9);
+  color: #ffffff;
+}
+.hub-sketch-photo-reference-selected img {
+  width: 38px;
+  height: 26px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border-radius: 5px;
+  background: #0b1220;
+}
+.hub-sketch-photo-reference-selected span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 800;
+}
+.hub-sketch-photo-reference-remove {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(237,246,251,.18);
+  border-radius: 999px;
+  background: rgba(8,13,22,.5);
+  color: #ffffff;
+  font: 900 17px/1 var(--font-numeric);
+  cursor: pointer;
+}
+.hub-sketch-photo-reference-remove:hover {
+  border-color: rgba(200,169,59,.5);
+  color: var(--accent);
+}
+.hub-sketch-photo-reference-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 12;
+  width: min(340px, calc(100vw - 28px));
+  max-height: min(420px, calc(100vh - 122px));
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(126,160,190,.34);
+  border-radius: 8px;
+  background: rgba(13, 21, 34, .96);
+  box-shadow: 0 14px 36px rgba(8,13,22,.32);
+  backdrop-filter: blur(10px);
+}
+.hub-sketch-photo-reference-source {
+  width: 100%;
+}
+.hub-sketch-photo-reference-project {
+  display: grid;
+  gap: 8px;
+}
+.hub-sketch-photo-reference-menu-title {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 850;
+}
+.hub-sketch-photo-reference-state {
+  padding: 7px 8px;
+  border: 1px solid rgba(126,160,190,.22);
+  border-radius: 8px;
+  background: rgba(255,255,255,.06);
+  font-size: 12px;
+  line-height: 1.25;
+}
+.hub-sketch-photo-reference-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.hub-sketch-photo-reference-file {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 5px;
+  border: 1px solid rgba(237,246,251,.18);
+  border-radius: 8px;
+  background: rgba(255,255,255,.07);
+  color: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+.hub-sketch-photo-reference-file:hover:not(:disabled),
+.hub-sketch-photo-reference-file.active {
+  border-color: rgba(200,169,59,.62);
+  background: rgba(200,169,59,.16);
+}
+.hub-sketch-photo-reference-file:disabled {
+  opacity: .46;
+  cursor: not-allowed;
+}
+.hub-sketch-photo-reference-file-thumb {
+  width: 48px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #0b1220;
+  color: rgba(255,255,255,.74);
+  font-weight: 900;
+}
+.hub-sketch-photo-reference-file-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.hub-sketch-photo-reference-file > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 800;
+}
+.hub-sketch-photo-reference-error {
+  flex: 1 1 100%;
+  max-width: 320px;
+  padding: 3px 6px;
+  border-radius: 7px;
+  background: rgba(127, 29, 29, .22);
+  font-size: 11px;
+  line-height: 1.2;
+}
 .hub-sketch-photo-render-overlay {
   position: absolute;
   inset: 0;
