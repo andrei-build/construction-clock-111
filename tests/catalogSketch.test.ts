@@ -9,7 +9,7 @@ import {
 } from '../src/screens/project-hub/sketchCatalog'
 import { normalizeFinishes } from '../src/screens/project-hub/sketchFinishes'
 import { estimateTileLayout } from '../src/screens/project-hub/tileLayout'
-import { buildPhotoRenderFacts } from '../src/screens/project-hub/Sketch3DView'
+import { buildPhotoRenderFacts, stripImageDataUrlPrefix } from '../src/screens/project-hub/Sketch3DView'
 
 function catalogItem(patch: Partial<CatalogItem>): CatalogItem {
   return {
@@ -35,6 +35,16 @@ function catalogItem(patch: Partial<CatalogItem>): CatalogItem {
     ...patch,
   }
 }
+
+describe('stripImageDataUrlPrefix', () => {
+  it('removes a data URL prefix from base64 image payloads', () => {
+    expect(stripImageDataUrlPrefix('data:image/jpeg;base64,abc123')).toBe('abc123')
+  })
+
+  it('leaves plain base64 unchanged', () => {
+    expect(stripImageDataUrlPrefix('abc123')).toBe('abc123')
+  })
+})
 
 const roomModel = {
   version: 1 as const,

@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent as ReactChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CATALOG_CATEGORIES, getCatalogItems, uploadProjectFileToR2 } from '../../lib/api'
+import { CATALOG_CATEGORIES, getCatalogItems, getProjectFileDownloadUrl, getProjectHubFiles, mediaUrl, uploadProjectFileToR2 } from '../../lib/api'
 import type { CatalogCategory, CatalogItem } from '../../lib/api'
 import { useI18n } from '../../lib/i18n'
 import { supabase, SUPABASE_KEY, SUPABASE_URL } from '../../lib/supabase'
-import type { Profile, Project } from '../../lib/types'
+import type { Profile, Project, ProjectHubFile } from '../../lib/types'
 import {
   DEFAULT_DOOR_HEIGHT_FT,
   DEFAULT_DOOR_WIDTH_FT,
@@ -116,6 +116,7 @@ const INSIDE_PITCH_LIMIT_RAD = 1.28
 const INSIDE_JOYSTICK_SPEED_FTPS = 4
 const SW_COLOR_LIMIT = 48
 const PHOTO_RENDER_MIME = 'image/png'
+const PHOTO_REFERENCE_MAX_BYTES = 8 * 1024 * 1024
 
 type SurfaceTarget = 'walls' | 'wall' | 'floor'
 type OpeningPlacementKind = Opening['kind']
@@ -148,6 +149,30 @@ type PhotoRenderFacts = {
   extra: Record<string, unknown>
 }
 type PhotoRenderErrorCode = 'no_key' | 'gemini_failed' | 'no_session' | 'snapshot_failed' | 'request_failed'
+type PhotoRenderReferenceState =
+  | {
+      source: 'device'
+      name: string
+      mime: string
+      previewUrl: string
+      imageB64: string
+      file: File
+    }
+  | {
+      source: 'project'
+      name: string
+      mime: string
+      previewUrl: string
+      projectFile: ProjectHubFile
+    }
+type PhotoRenderResolvedReference = {
+  source: PhotoRenderReferenceState['source']
+  name: string
+  mime: string
+  imageB64: string
+  file?: File
+  projectFile?: ProjectHubFile
+}
 type PhotoRenderModalState =
   | {
       kind: 'success'
@@ -155,6 +180,7 @@ type PhotoRenderModalState =
       mime: string
       sourceImageB64: string
       facts: PhotoRenderFacts
+      reference: PhotoRenderResolvedReference | null
       variant: number
       saved: boolean
       saveBusy: boolean
@@ -914,15 +940,61 @@ function renderPhotoFileName(baseName: string, variant: number): string {
   return `render-${baseName}-${Math.max(1, variant)}.png`
 }
 
+function renderSourcePhotoFileName(baseName: string, variant: number): string {
+  return `render-source-${baseName}-${Math.max(1, variant)}.png`
+}
+
+function imageExtension(name: string | undefined, mime: string | undefined): string {
+  const byName = (name ?? '').trim().toLowerCase().match(/\.([a-z0-9]{2,5})$/)?.[1]
+  if (byName && ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'heif'].includes(byName)) return byName
+  if (mime === 'image/jpeg') return 'jpg'
+  if (mime === 'image/png') return 'png'
+  if (mime === 'image/webp') return 'webp'
+  if (mime === 'image/gif') return 'gif'
+  return 'jpg'
+}
+
+function renderReferenceFileName(baseName: string, variant: number, originalName: string | undefined, mime: string | undefined): string {
+  const stem = (originalName ?? '').replace(/\.[^.]+$/, '')
+  const originalSlug = safeRenderSlug(stem, 'reference')
+  return `render-reference-${baseName}-${Math.max(1, variant)}-${originalSlug}.${imageExtension(originalName, mime)}`
+}
+
 // SKETCH-SNAP-1: имя PNG-снимка текущего ракурса 3D-вида (закон Андрея — «фото экрана одним кликом»).
 // Оригинал эскиза не трогаем: это отдельный файл проекта snapshot-<эскиз/проект>-<n>.png.
 function snapshotFileName(baseName: string, index: number): string {
   return `snapshot-${baseName}-${Math.max(1, index)}.png`
 }
 
+export function stripImageDataUrlPrefix(value: string): string {
+  const comma = value.indexOf(',')
+  return value.startsWith('data:') && comma >= 0 ? value.slice(comma + 1) : value
+}
+
 function photoImageSrc(imageB64: string, mime: string): string {
   if (imageB64.startsWith('data:')) return imageB64
   return `data:${mime || PHOTO_RENDER_MIME};base64,${imageB64}`
+}
+
+function imageFileLike(file: Pick<ProjectHubFile, 'mime' | 'name'>): boolean {
+  if (file.mime?.startsWith('image/')) return true
+  return /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(file.name)
+}
+
+function projectHubImageUrl(file: ProjectHubFile): Promise<string | null> {
+  return file.scope === 'project' ? getProjectFileDownloadUrl(file) : mediaUrl(file.storage_path)
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result)
+      else reject(new Error('empty image data'))
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('image read failed'))
+    reader.readAsDataURL(blob)
+  })
 }
 
 async function dataUrlToFile(dataUrl: string, name: string, mime: string): Promise<File> {
@@ -957,10 +1029,13 @@ async function readRenderErrorText(response: Response): Promise<string | undefin
   }
 }
 
-async function callRenderPhoto(imageB64: string, facts: PhotoRenderFacts): Promise<{ imageB64: string; mime: string }> {
+async function callRenderPhoto(imageB64: string, facts: PhotoRenderFacts, referenceB64?: string): Promise<{ imageB64: string; mime: string }> {
   const { data: { session } } = await supabase.auth.getSession()
   const token = session?.access_token
   if (!token) throw new PhotoRenderRequestError('no_session')
+
+  const payload: { image_b64: string; facts: PhotoRenderFacts; reference_b64?: string } = { image_b64: imageB64, facts }
+  if (referenceB64) payload.reference_b64 = referenceB64
 
   const response = await fetch(`${SUPABASE_URL}/functions/v1/render-photo`, {
     method: 'POST',
@@ -969,7 +1044,7 @@ async function callRenderPhoto(imageB64: string, facts: PhotoRenderFacts): Promi
       apikey: SUPABASE_KEY,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ image_b64: imageB64, facts }),
+    body: JSON.stringify(payload),
   })
 
   if (!response.ok) {
@@ -2215,7 +2290,15 @@ export default function Sketch3DView({
   const [joystickKnob, setJoystickKnob] = useState<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false })
   const [photoRenderBusy, setPhotoRenderBusy] = useState(false)
   const [photoModal, setPhotoModal] = useState<PhotoRenderModalState | null>(null)
+  const [photoReference, setPhotoReference] = useState<PhotoRenderReferenceState | null>(null)
+  const [photoReferencePickerOpen, setPhotoReferencePickerOpen] = useState(false)
+  const [photoReferenceFiles, setPhotoReferenceFiles] = useState<ProjectHubFile[]>([])
+  const [photoReferenceThumbs, setPhotoReferenceThumbs] = useState<Record<string, string>>({})
+  const [photoReferenceLoading, setPhotoReferenceLoading] = useState(false)
+  const [photoReferenceLoadError, setPhotoReferenceLoadError] = useState(false)
+  const [photoReferenceErrorKey, setPhotoReferenceErrorKey] = useState<string | null>(null)
   const [snapshotPanel, setSnapshotPanel] = useState<SnapshotPanelState | null>(null)
+  const photoReferenceInputRef = useRef<HTMLInputElement | null>(null)
   const snapshotBusyRef = useRef(false)
   const snapshotCountRef = useRef(0)
 
@@ -2262,6 +2345,7 @@ export default function Sketch3DView({
     () => safeRenderSlug(sketchName || project?.name, project?.id?.slice(0, 8) || 'sketch'),
     [project?.id, project?.name, sketchName],
   )
+  const selectedPhotoReferenceProjectId = photoReference?.source === 'project' ? photoReference.projectFile.id : null
   const wallSegments = useMemo(() => eachSegment(model), [model])
   const effectiveSelectedWallKey = selectedWallKey && wallSegments.some((seg) => sketchWallKey(seg.c, seg.s) === selectedWallKey)
     ? selectedWallKey
@@ -2407,6 +2491,48 @@ export default function Sketch3DView({
       setSelectedId(null)
     }
   }, [selectedMeasurementIndex, measurements])
+
+  useEffect(() => {
+    setPhotoReference(null)
+    setPhotoReferencePickerOpen(false)
+    setPhotoReferenceErrorKey(null)
+    if (!project?.id) {
+      setPhotoReferenceFiles([])
+      setPhotoReferenceThumbs({})
+      setPhotoReferenceLoading(false)
+      setPhotoReferenceLoadError(false)
+      return
+    }
+
+    let mounted = true
+    ;(async () => {
+      setPhotoReferenceLoading(true)
+      setPhotoReferenceLoadError(false)
+      try {
+        const rows = (await getProjectHubFiles(project.id)).filter(imageFileLike)
+        const entries = await Promise.all(rows.map(async (row) => {
+          try {
+            const url = await projectHubImageUrl(row)
+            return url ? ([row.id, url] as const) : null
+          } catch {
+            return null
+          }
+        }))
+        if (!mounted) return
+        setPhotoReferenceFiles(rows)
+        setPhotoReferenceThumbs(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => entry !== null)))
+      } catch {
+        if (!mounted) return
+        setPhotoReferenceFiles([])
+        setPhotoReferenceThumbs({})
+        setPhotoReferenceLoadError(true)
+      } finally {
+        if (mounted) setPhotoReferenceLoading(false)
+      }
+    })()
+
+    return () => { mounted = false }
+  }, [project?.id])
 
   const applyModel = (next: Sketch3DModelWithCatalog) => {
     if (!canEdit) return
@@ -4167,22 +4293,171 @@ export default function Sketch3DView({
     event.stopPropagation()
   }
 
-  const requestPhotoRender = async (sourceImageB64: string, facts: PhotoRenderFacts, variant: number) => {
+  const handlePhotoReferenceFileChange = async (event: ReactChangeEvent<HTMLInputElement>) => {
+    const picked = event.target.files?.[0]
+    event.target.value = ''
+    if (!picked) return
+    if (!picked.type.startsWith('image/')) {
+      setPhotoReferenceErrorKey('hub_sketch_photo_reference_not_image')
+      return
+    }
+    if (picked.size > PHOTO_REFERENCE_MAX_BYTES) {
+      setPhotoReferenceErrorKey('hub_sketch_photo_reference_too_large')
+      return
+    }
+
+    try {
+      const dataUrl = await blobToDataUrl(picked)
+      setPhotoReference({
+        source: 'device',
+        name: picked.name,
+        mime: picked.type || PHOTO_RENDER_MIME,
+        previewUrl: dataUrl,
+        imageB64: stripImageDataUrlPrefix(dataUrl),
+        file: picked,
+      })
+      setPhotoReferencePickerOpen(false)
+      setPhotoReferenceErrorKey(null)
+    } catch {
+      setPhotoReferenceErrorKey('hub_sketch_photo_reference_read_failed')
+    }
+  }
+
+  const selectProjectPhotoReference = async (file: ProjectHubFile) => {
+    if (file.size_bytes !== null && file.size_bytes > PHOTO_REFERENCE_MAX_BYTES) {
+      setPhotoReferenceErrorKey('hub_sketch_photo_reference_too_large')
+      return
+    }
+
+    try {
+      const previewUrl = photoReferenceThumbs[file.id] ?? await projectHubImageUrl(file)
+      if (!previewUrl) throw new Error('no preview')
+      setPhotoReference({
+        source: 'project',
+        name: file.name,
+        mime: file.mime || PHOTO_RENDER_MIME,
+        previewUrl,
+        projectFile: file,
+      })
+      setPhotoReferencePickerOpen(false)
+      setPhotoReferenceErrorKey(null)
+      if (!photoReferenceThumbs[file.id]) setPhotoReferenceThumbs((prev) => ({ ...prev, [file.id]: previewUrl }))
+    } catch {
+      setPhotoReferenceErrorKey('hub_sketch_photo_reference_read_failed')
+    }
+  }
+
+  const clearPhotoReference = () => {
+    setPhotoReference(null)
+    setPhotoReferenceErrorKey(null)
+  }
+
+  const resolvePhotoRenderReference = async (reference: PhotoRenderReferenceState | null): Promise<PhotoRenderResolvedReference | null> => {
+    if (!reference) return null
+    if (reference.source === 'device') {
+      return {
+        source: 'device',
+        name: reference.name,
+        mime: reference.mime,
+        imageB64: reference.imageB64,
+        file: reference.file,
+      }
+    }
+    if (reference.projectFile.size_bytes !== null && reference.projectFile.size_bytes > PHOTO_REFERENCE_MAX_BYTES) {
+      throw new Error('too-large')
+    }
+
+    const url = await projectHubImageUrl(reference.projectFile)
+    if (!url) throw new Error('read-failed')
+    const response = await fetch(url)
+    if (!response.ok) throw new Error('read-failed')
+    const blob = await response.blob()
+    if (blob.size > PHOTO_REFERENCE_MAX_BYTES) throw new Error('too-large')
+    const dataUrl = await blobToDataUrl(blob)
+    return {
+      source: 'project',
+      name: reference.name,
+      mime: blob.type || reference.mime || PHOTO_RENDER_MIME,
+      imageB64: stripImageDataUrlPrefix(dataUrl),
+      projectFile: reference.projectFile,
+    }
+  }
+
+  const savePhotoRenderSet = async (modalState: Extract<PhotoRenderModalState, { kind: 'success' }>) => {
+    if (!profile || !project) {
+      setPhotoModal((current) => (
+        current?.kind === 'success' && current.variant === modalState.variant && current.imageB64 === modalState.imageB64
+          ? { ...current, saveErrorKey: 'hub_sketch_photo_render_no_session', saveBusy: false }
+          : current
+      ))
+      return
+    }
+
+    const currentVariant = modalState.variant
+    const currentImage = modalState.imageB64
+    setPhotoModal((current) => (
+      current?.kind === 'success' && current.variant === currentVariant && current.imageB64 === currentImage
+        ? { ...current, saveBusy: true, saveErrorKey: undefined }
+        : current
+    ))
+
+    try {
+      const sourceFile = await dataUrlToFile(
+        photoImageSrc(modalState.sourceImageB64, PHOTO_RENDER_MIME),
+        renderSourcePhotoFileName(photoRenderBaseName, currentVariant),
+        PHOTO_RENDER_MIME,
+      )
+      await uploadProjectFileToR2(profile, project.id, sourceFile)
+
+      if (modalState.reference?.source === 'device' && modalState.reference.file) {
+        const referenceFile = new File(
+          [modalState.reference.file],
+          renderReferenceFileName(photoRenderBaseName, currentVariant, modalState.reference.name, modalState.reference.mime),
+          { type: modalState.reference.file.type || modalState.reference.mime || PHOTO_RENDER_MIME },
+        )
+        await uploadProjectFileToR2(profile, project.id, referenceFile)
+      }
+
+      const file = await dataUrlToFile(
+        photoImageSrc(currentImage, modalState.mime),
+        renderPhotoFileName(photoRenderBaseName, currentVariant),
+        modalState.mime,
+      )
+      await uploadProjectFileToR2(profile, project.id, file)
+
+      setPhotoModal((current) => (
+        current?.kind === 'success' && current.variant === currentVariant && current.imageB64 === currentImage
+          ? { ...current, saved: true, saveBusy: false, saveErrorKey: undefined }
+          : current
+      ))
+    } catch {
+      setPhotoModal((current) => (
+        current?.kind === 'success' && current.variant === currentVariant && current.imageB64 === currentImage
+          ? { ...current, saveBusy: false, saveErrorKey: 'hub_sketch_photo_render_save_failed' }
+          : current
+      ))
+    }
+  }
+
+  const requestPhotoRender = async (sourceImageB64: string, facts: PhotoRenderFacts, variant: number, reference: PhotoRenderResolvedReference | null) => {
     if (photoRenderBusyRef.current) return
     photoRenderBusyRef.current = true
     setPhotoRenderBusy(true)
     try {
-      const result = await callRenderPhoto(sourceImageB64, facts)
-      setPhotoModal({
+      const result = await callRenderPhoto(sourceImageB64, facts, reference?.imageB64)
+      const nextModal: Extract<PhotoRenderModalState, { kind: 'success' }> = {
         kind: 'success',
         imageB64: result.imageB64,
         mime: result.mime,
         sourceImageB64,
         facts,
+        reference,
         variant,
         saved: false,
-        saveBusy: false,
-      })
+        saveBusy: Boolean(profile && project),
+      }
+      setPhotoModal(nextModal)
+      if (profile && project) void savePhotoRenderSet(nextModal)
     } catch (error) {
       setPhotoModal({ kind: 'error', messageKey: photoRenderErrorKey(error) })
     } finally {
@@ -4199,39 +4474,28 @@ export default function Sketch3DView({
     }
     const facts = buildPhotoRenderFacts(model, heightFt, finishes, resolvedPlacedItems, cameraMode, sketchName, project?.name)
     setPhotoModal(null)
-    await requestPhotoRender(snapshot.dataUrl, facts, 1)
+    let reference: PhotoRenderResolvedReference | null = null
+    try {
+      reference = await resolvePhotoRenderReference(photoReference)
+    } catch (error) {
+      const key = error instanceof Error && error.message === 'too-large'
+        ? 'hub_sketch_photo_reference_too_large'
+        : 'hub_sketch_photo_reference_read_failed'
+      setPhotoReferenceErrorKey(key)
+      setPhotoModal({ kind: 'error', messageKey: key })
+      return
+    }
+    await requestPhotoRender(snapshot.dataUrl, facts, 1, reference)
   }
 
   const requestAnotherPhotoRender = async () => {
     if (!photoModal || photoModal.kind !== 'success') return
-    await requestPhotoRender(photoModal.sourceImageB64, photoModal.facts, photoModal.variant + 1)
+    await requestPhotoRender(photoModal.sourceImageB64, photoModal.facts, photoModal.variant + 1, photoModal.reference)
   }
 
   const savePhotoRender = async () => {
     if (!photoModal || photoModal.kind !== 'success') return
-    if (!profile || !project) {
-      setPhotoModal({ ...photoModal, saveErrorKey: 'hub_sketch_photo_render_no_session' })
-      return
-    }
-    const currentVariant = photoModal.variant
-    const currentImage = photoModal.imageB64
-    setPhotoModal({ ...photoModal, saveBusy: true, saveErrorKey: undefined })
-    try {
-      const fileName = renderPhotoFileName(photoRenderBaseName, currentVariant)
-      const file = await dataUrlToFile(photoImageSrc(currentImage, photoModal.mime), fileName, photoModal.mime)
-      await uploadProjectFileToR2(profile, project.id, file)
-      setPhotoModal((current) => (
-        current?.kind === 'success' && current.variant === currentVariant && current.imageB64 === currentImage
-          ? { ...current, saved: true, saveBusy: false, saveErrorKey: undefined }
-          : current
-      ))
-    } catch {
-      setPhotoModal((current) => (
-        current?.kind === 'success' && current.variant === currentVariant && current.imageB64 === currentImage
-          ? { ...current, saveBusy: false, saveErrorKey: 'hub_sketch_photo_render_save_failed' }
-          : current
-      ))
-    }
+    await savePhotoRenderSet(photoModal)
   }
 
   const downloadPhotoRender = () => {
@@ -4441,6 +4705,85 @@ export default function Sketch3DView({
             <span aria-hidden="true">📸</span>
             <span>{t('hub_sketch_snapshot')}</span>
           </button>
+          <input
+            ref={photoReferenceInputRef}
+            type="file"
+            accept="image/*"
+            className="hub-sketch-photo-reference-input"
+            onChange={handlePhotoReferenceFileChange}
+          />
+          <div className="hub-sketch-photo-reference-control">
+            <button
+              type="button"
+              className="btn ghost small hub-sketch-photo-reference-add"
+              disabled={photoRenderBusy}
+              aria-expanded={photoReferencePickerOpen}
+              onClick={() => setPhotoReferencePickerOpen((open) => !open)}
+              title={t('hub_sketch_photo_reference_hint')}
+            >
+              {t('hub_sketch_photo_reference_add')}
+            </button>
+            {photoReference && (
+              <div className="hub-sketch-photo-reference-selected" title={photoReference.name}>
+                <img src={photoReference.previewUrl} alt={t('hub_sketch_photo_reference_selected_alt')} />
+                <span>{photoReference.name}</span>
+                <button
+                  type="button"
+                  className="hub-sketch-photo-reference-remove"
+                  onClick={clearPhotoReference}
+                  aria-label={t('hub_sketch_photo_reference_remove')}
+                  title={t('hub_sketch_photo_reference_remove')}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            {photoReferencePickerOpen && (
+              <div className="hub-sketch-photo-reference-menu" role="dialog" aria-label={t('hub_sketch_photo_reference_picker_label')}>
+                <button
+                  type="button"
+                  className="btn small hub-sketch-photo-reference-source"
+                  onClick={() => photoReferenceInputRef.current?.click()}
+                >
+                  {t('hub_sketch_photo_reference_device')}
+                </button>
+                <div className="hub-sketch-photo-reference-project">
+                  <div className="hub-sketch-photo-reference-menu-title">{t('hub_sketch_photo_reference_project')}</div>
+                  {photoReferenceLoading && <div className="muted hub-sketch-photo-reference-state">{t('hub_sketch_photo_reference_loading')}</div>}
+                  {!photoReferenceLoading && photoReferenceLoadError && (
+                    <div className="error-msg hub-sketch-photo-reference-state">{t('hub_sketch_photo_reference_load_failed')}</div>
+                  )}
+                  {!photoReferenceLoading && !photoReferenceLoadError && photoReferenceFiles.length === 0 && (
+                    <div className="muted hub-sketch-photo-reference-state">{t('hub_sketch_photo_reference_empty')}</div>
+                  )}
+                  {!photoReferenceLoading && !photoReferenceLoadError && photoReferenceFiles.length > 0 && (
+                    <div className="hub-sketch-photo-reference-grid">
+                      {photoReferenceFiles.map((file) => {
+                        const tooLarge = file.size_bytes !== null && file.size_bytes > PHOTO_REFERENCE_MAX_BYTES
+                        const thumb = photoReferenceThumbs[file.id]
+                        return (
+                          <button
+                            key={file.id}
+                            type="button"
+                            className={selectedPhotoReferenceProjectId === file.id ? 'hub-sketch-photo-reference-file active' : 'hub-sketch-photo-reference-file'}
+                            disabled={tooLarge}
+                            title={tooLarge ? t('hub_sketch_photo_reference_too_large') : file.name}
+                            onClick={() => { void selectProjectPhotoReference(file) }}
+                          >
+                            <span className="hub-sketch-photo-reference-file-thumb">
+                              {thumb ? <img src={thumb} alt="" loading="lazy" /> : <span aria-hidden="true">+</span>}
+                            </span>
+                            <span>{file.name}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {photoReferenceErrorKey && <div className="hub-sketch-photo-reference-error error-msg" role="status">{t(photoReferenceErrorKey)}</div>}
+          </div>
           <button type="button" className="btn ghost small hub-sketch-photo-render-btn" disabled={state !== 'ready' || photoRenderBusy} onClick={startPhotoRender}>
             <span aria-hidden="true">📷</span>
             <span>{t('hub_sketch_photo_render')}</span>
@@ -4655,8 +4998,12 @@ export default function Sketch3DView({
                 {photoModal.saved && <p className="hub-sketch-ok">{t('hub_sketch_photo_render_saved')}</p>}
                 {photoModal.saveErrorKey && <p className="error-msg">{t(photoModal.saveErrorKey)}</p>}
                 <div className="hub-sketch-render-actions">
-                  <button type="button" className="btn" disabled={photoModal.saveBusy || photoRenderBusy || !profile || !project} onClick={savePhotoRender}>
-                    {t('hub_sketch_photo_render_save_files')}
+                  <button type="button" className="btn" disabled={photoModal.saved || photoModal.saveBusy || photoRenderBusy || !profile || !project} onClick={savePhotoRender}>
+                    {photoModal.saveBusy
+                      ? t('hub_sketch_snapshot_saving')
+                      : photoModal.saved
+                        ? t('hub_sketch_photo_render_saved')
+                        : t('hub_sketch_photo_render_save_files')}
                   </button>
                   <button type="button" className="btn ghost" disabled={photoRenderBusy} onClick={downloadPhotoRender}>
                     {t('download')}
