@@ -134,6 +134,26 @@ export type Sketch3DModel = {
   switches?: SketchSwitch[]
 }
 
+export type SketchGeometryPlacedItem = {
+  c?: number
+  s?: number
+  t?: number
+  xFt: number
+  zFt: number
+  rotationY: number
+}
+
+export type SketchSegmentRef = { c: number; s: number }
+export type SketchSegmentResizeAnchor = 'start' | 'end'
+export type SketchSegmentResizeConflictReason = 'invalid-segment' | 'invalid-length' | 'degenerate' | 'self-intersection'
+export type SketchSegmentResizeConflict = {
+  reason: SketchSegmentResizeConflictReason
+  segments: SketchSegmentRef[]
+}
+export type SketchSegmentResizeResult<T extends Sketch3DModel & { placedItems?: SketchGeometryPlacedItem[] }> =
+  | { ok: true; model: T; changedSegments: SketchSegmentRef[] }
+  | { ok: false; conflict: SketchSegmentResizeConflict }
+
 export const DEFAULT_WALL_PAINT = '#e7ebf0'
 export const DEFAULT_FLOOR_PAINT = '#b9bfc8'
 export const DEFAULT_TILE_COLOR = '#d8dde5'
@@ -157,6 +177,283 @@ const tilePatternCanvasCache = new Map<string, HTMLCanvasElement>()
 
 export function sketchWallKey(c: number, s: number): string {
   return `${c}:${s}`
+}
+
+const SKETCH_GEOMETRY_EPS = 0.000001
+const MIN_SKETCH_SEGMENT_LENGTH_FT = 1 / 192
+
+function sketchModelCellFt(model: Pick<Sketch3DModel, 'cellFt'>): number {
+  return Number.isFinite(model.cellFt) && model.cellFt > 0 ? model.cellFt : 1
+}
+
+function pointDistance(a: Pt, b: Pt): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+function segmentPointIndexes(contour: Contour, segmentIndex: number): { start: number; end: number } | null {
+  if (!Number.isInteger(segmentIndex) || segmentIndex < 0) return null
+  if (segmentIndex < contour.points.length - 1) return { start: segmentIndex, end: segmentIndex + 1 }
+  if (contour.closed && contour.points.length >= 3 && segmentIndex === contour.points.length - 1) return { start: segmentIndex, end: 0 }
+  return null
+}
+
+function contourSegmentRefs(contour: Contour, c: number): SketchSegmentRef[] {
+  const refs: SketchSegmentRef[] = []
+  for (let s = 0; s < contour.points.length - 1; s++) refs.push({ c, s })
+  if (contour.closed && contour.points.length >= 3) refs.push({ c, s: contour.points.length - 1 })
+  return refs
+}
+
+export function sketchContourPerimeterCells(contour: Contour): number {
+  let total = 0
+  for (let i = 1; i < contour.points.length; i++) total += pointDistance(contour.points[i - 1], contour.points[i])
+  if (contour.closed && contour.points.length >= 3) total += pointDistance(contour.points[contour.points.length - 1], contour.points[0])
+  return total
+}
+
+export function sketchContourAreaCells(contour: Contour): number {
+  if (!contour.closed || contour.points.length < 3) return 0
+  let sum = 0
+  contour.points.forEach((point, index) => {
+    const next = contour.points[(index + 1) % contour.points.length]
+    sum += point.x * next.y - next.x * point.y
+  })
+  return Math.abs(sum) / 2
+}
+
+export function sketchSegmentLengthFt(model: Pick<Sketch3DModel, 'cellFt' | 'contours'>, ref: SketchSegmentRef): number | null {
+  const contour = model.contours[ref.c]
+  const indexes = contour ? segmentPointIndexes(contour, ref.s) : null
+  if (!contour || !indexes) return null
+  return pointDistance(contour.points[indexes.start], contour.points[indexes.end]) * sketchModelCellFt(model)
+}
+
+function vectorBetween(a: Pt, b: Pt): Pt {
+  return { x: b.x - a.x, y: b.y - a.y }
+}
+
+function isRectangleContour(contour: Contour): boolean {
+  if (!contour.closed || contour.points.length !== 4) return false
+  const vectors = contour.points.map((point, index) => vectorBetween(point, contour.points[(index + 1) % contour.points.length]))
+  const lengths = vectors.map((vector) => Math.hypot(vector.x, vector.y))
+  if (lengths.some((length) => length <= SKETCH_GEOMETRY_EPS)) return false
+  for (let i = 0; i < vectors.length; i++) {
+    const next = (i + 1) % vectors.length
+    const dot = vectors[i].x * vectors[next].x + vectors[i].y * vectors[next].y
+    if (Math.abs(dot) / (lengths[i] * lengths[next]) > 0.0001) return false
+  }
+  const cross02 = vectors[0].x * vectors[2].y - vectors[0].y * vectors[2].x
+  const cross13 = vectors[1].x * vectors[3].y - vectors[1].y * vectors[3].x
+  return Math.abs(cross02) / (lengths[0] * lengths[2]) <= 0.0001 && Math.abs(cross13) / (lengths[1] * lengths[3]) <= 0.0001
+}
+
+function segmentsShareEndpoint(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
+  return a.start === b.start || a.start === b.end || a.end === b.start || a.end === b.end
+}
+
+function cross(a: Pt, b: Pt, c: Pt): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
+function pointOnSegment(a: Pt, b: Pt, p: Pt): boolean {
+  return Math.abs(cross(a, b, p)) <= SKETCH_GEOMETRY_EPS
+    && p.x >= Math.min(a.x, b.x) - SKETCH_GEOMETRY_EPS
+    && p.x <= Math.max(a.x, b.x) + SKETCH_GEOMETRY_EPS
+    && p.y >= Math.min(a.y, b.y) - SKETCH_GEOMETRY_EPS
+    && p.y <= Math.max(a.y, b.y) + SKETCH_GEOMETRY_EPS
+}
+
+function segmentsIntersect(a1: Pt, a2: Pt, b1: Pt, b2: Pt): boolean {
+  const d1 = cross(a1, a2, b1)
+  const d2 = cross(a1, a2, b2)
+  const d3 = cross(b1, b2, a1)
+  const d4 = cross(b1, b2, a2)
+  if (((d1 > SKETCH_GEOMETRY_EPS && d2 < -SKETCH_GEOMETRY_EPS) || (d1 < -SKETCH_GEOMETRY_EPS && d2 > SKETCH_GEOMETRY_EPS))
+    && ((d3 > SKETCH_GEOMETRY_EPS && d4 < -SKETCH_GEOMETRY_EPS) || (d3 < -SKETCH_GEOMETRY_EPS && d4 > SKETCH_GEOMETRY_EPS))) {
+    return true
+  }
+  return pointOnSegment(a1, a2, b1) || pointOnSegment(a1, a2, b2) || pointOnSegment(b1, b2, a1) || pointOnSegment(b1, b2, a2)
+}
+
+function validateContourGeometry(contour: Contour, c: number, minLengthCells: number): SketchSegmentResizeConflict | null {
+  const segments = contourSegmentRefs(contour, c)
+    .map((ref) => {
+      const indexes = segmentPointIndexes(contour, ref.s)
+      return indexes ? { ...ref, ...indexes, a: contour.points[indexes.start], b: contour.points[indexes.end] } : null
+    })
+    .filter((segment): segment is SketchSegmentRef & { start: number; end: number; a: Pt; b: Pt } => !!segment)
+
+  const degenerate = segments.filter((segment) => pointDistance(segment.a, segment.b) < minLengthCells)
+  if (degenerate.length > 0) {
+    return { reason: 'degenerate', segments: degenerate.map(({ c: contourIndex, s }) => ({ c: contourIndex, s })) }
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    for (let j = i + 1; j < segments.length; j++) {
+      if (segmentsShareEndpoint(segments[i], segments[j])) continue
+      if (segmentsIntersect(segments[i].a, segments[i].b, segments[j].a, segments[j].b)) {
+        return {
+          reason: 'self-intersection',
+          segments: [
+            { c: segments[i].c, s: segments[i].s },
+            { c: segments[j].c, s: segments[j].s },
+          ],
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+function normalizeRadians(value: number): number {
+  const full = Math.PI * 2
+  const n = Number.isFinite(value) ? value : 0
+  return ((n % full) + full) % full
+}
+
+function openingWidthForResize(opening: Opening): number {
+  return opening.w ?? (opening.kind === 'door' ? DEFAULT_DOOR_WIDTH_FT : DEFAULT_WINDOW_WIDTH_FT)
+}
+
+function clampOpeningResizeT(model: Sketch3DModel, opening: Opening): number {
+  const lengthFt = sketchSegmentLengthFt(model, { c: opening.c, s: opening.s })
+  if (!lengthFt || lengthFt <= 0.001) return Math.max(0, Math.min(1, opening.t))
+  const widthFt = Math.max(0.1, Math.min(openingWidthForResize(opening), lengthFt))
+  if (widthFt >= lengthFt - 0.001) return 0.5
+  const padT = (widthFt / 2) / lengthFt
+  return Math.max(padT, Math.min(1 - padT, Number.isFinite(opening.t) ? opening.t : 0.5))
+}
+
+function wallPoseForPlacedItem(model: Sketch3DModel, c: number, s: number) {
+  const contour = model.contours[c]
+  const indexes = contour ? segmentPointIndexes(contour, s) : null
+  if (!contour || !indexes) return null
+  const cellFt = sketchModelCellFt(model)
+  const a = contour.points[indexes.start]
+  const b = contour.points[indexes.end]
+  const ax = a.x * cellFt
+  const az = a.y * cellFt
+  const bx = b.x * cellFt
+  const bz = b.y * cellFt
+  const dx = bx - ax
+  const dz = bz - az
+  const length = Math.hypot(dx, dz)
+  if (length <= 0.001) return null
+  const ux = dx / length
+  const uz = dz / length
+  return { ax, az, dx, dz, ux, uz, nx: -uz, nz: ux, angle: Math.atan2(uz, ux), length }
+}
+
+function repositionWallBoundItems<T extends SketchGeometryPlacedItem>(items: T[] | undefined, before: Sketch3DModel, after: Sketch3DModel): T[] | undefined {
+  if (!items) return undefined
+  return items.map((item) => {
+    if (!Number.isInteger(item.c) || !Number.isInteger(item.s) || !Number.isFinite(item.t)) return item
+    const c = item.c ?? 0
+    const s = item.s ?? 0
+    const oldPose = wallPoseForPlacedItem(before, c, s)
+    const nextPose = wallPoseForPlacedItem(after, c, s)
+    if (!oldPose || !nextPose) return item
+    const t = Math.max(0, Math.min(1, item.t ?? 0.5))
+    const oldX = oldPose.ax + oldPose.dx * t
+    const oldZ = oldPose.az + oldPose.dz * t
+    const offset = (item.xFt - oldX) * oldPose.nx + (item.zFt - oldZ) * oldPose.nz
+    const nextX = nextPose.ax + nextPose.dx * t
+    const nextZ = nextPose.az + nextPose.dz * t
+    return {
+      ...item,
+      t,
+      xFt: nextX + nextPose.nx * offset,
+      zFt: nextZ + nextPose.nz * offset,
+      rotationY: normalizeRadians(item.rotationY + nextPose.angle - oldPose.angle),
+    }
+  })
+}
+
+export function resizeSketchSegmentToLength<T extends Sketch3DModel & { placedItems?: SketchGeometryPlacedItem[] }>(
+  model: T,
+  ref: SketchSegmentRef,
+  targetLengthFt: number,
+  options: { anchor?: SketchSegmentResizeAnchor; minLengthFt?: number } = {},
+): SketchSegmentResizeResult<T> {
+  const contour = model.contours[ref.c]
+  const indexes = contour ? segmentPointIndexes(contour, ref.s) : null
+  if (!contour || !indexes) return { ok: false, conflict: { reason: 'invalid-segment', segments: [ref] } }
+
+  const cellFt = sketchModelCellFt(model)
+  const minLengthFt = Math.max(MIN_SKETCH_SEGMENT_LENGTH_FT, options.minLengthFt ?? MIN_SKETCH_SEGMENT_LENGTH_FT)
+  if (!Number.isFinite(targetLengthFt) || targetLengthFt < minLengthFt) {
+    return { ok: false, conflict: { reason: 'invalid-length', segments: [ref] } }
+  }
+
+  const start = contour.points[indexes.start]
+  const end = contour.points[indexes.end]
+  const currentLengthCells = pointDistance(start, end)
+  if (currentLengthCells <= SKETCH_GEOMETRY_EPS) return { ok: false, conflict: { reason: 'degenerate', segments: [ref] } }
+
+  const targetLengthCells = targetLengthFt / cellFt
+  const deltaCells = targetLengthCells - currentLengthCells
+  if (Math.abs(deltaCells) <= SKETCH_GEOMETRY_EPS) return { ok: true, model, changedSegments: [ref] }
+
+  const ux = (end.x - start.x) / currentLengthCells
+  const uy = (end.y - start.y) / currentLengthCells
+  const anchor = options.anchor ?? 'start'
+  const moveIndexes = new Set<number>()
+  let dx = ux * deltaCells
+  let dy = uy * deltaCells
+
+  if (isRectangleContour(contour)) {
+    if (anchor === 'start') {
+      moveIndexes.add(indexes.end)
+      moveIndexes.add((indexes.end + 1) % contour.points.length)
+    } else {
+      moveIndexes.add(indexes.start)
+      moveIndexes.add((indexes.start - 1 + contour.points.length) % contour.points.length)
+      dx *= -1
+      dy *= -1
+    }
+  } else if (anchor === 'start') {
+    moveIndexes.add(indexes.end)
+  } else {
+    moveIndexes.add(indexes.start)
+    dx *= -1
+    dy *= -1
+  }
+
+  const nextPoints = contour.points.map((point, index) => (
+    moveIndexes.has(index) ? { x: point.x + dx, y: point.y + dy } : { ...point }
+  ))
+  const nextContour: Contour = { ...contour, points: nextPoints }
+  const conflict = validateContourGeometry(nextContour, ref.c, minLengthFt / cellFt)
+  if (conflict) {
+    const segments = new Map<string, SketchSegmentRef>()
+    ;[ref, ...conflict.segments].forEach((segment) => segments.set(sketchWallKey(segment.c, segment.s), segment))
+    return { ok: false, conflict: { reason: conflict.reason, segments: Array.from(segments.values()) } }
+  }
+
+  const nextContours = model.contours.map((item, index) => (index === ref.c ? nextContour : item))
+  const nextBaseModel: Sketch3DModel = {
+    ...model,
+    contours: nextContours,
+    openings: model.openings.map((opening) => {
+      if (opening.c !== ref.c) return opening
+      return { ...opening, t: clampOpeningResizeT({ ...model, contours: nextContours }, opening) }
+    }),
+  }
+  const nextPlacedItems = repositionWallBoundItems(model.placedItems, model, nextBaseModel)
+  const nextModel = {
+    ...nextBaseModel,
+    ...(nextPlacedItems ? { placedItems: nextPlacedItems } : {}),
+  } as T
+
+  const changedSegments = isRectangleContour(contour)
+    ? [
+        ref,
+        { c: ref.c, s: (ref.s + 2) % contour.points.length },
+      ]
+    : [ref]
+
+  return { ok: true, model: nextModel, changedSegments }
 }
 
 function cleanNumber(value: unknown, fallback: number, min: number, max: number): number {

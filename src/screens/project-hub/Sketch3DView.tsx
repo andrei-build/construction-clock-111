@@ -120,7 +120,8 @@ type Segment = { c: number; s: number; a: Pt; b: Pt }
 type CameraPreset = 'fit' | 'top' | 'angle' | 'inside'
 type InteractiveKind = 'light' | 'switch' | 'catalog' | 'opening' | 'measurement'
 type InchDraftField = 'tileWIn' | 'tileHIn' | 'groutIn' | 'offsetXIn' | 'offsetYIn'
-type FeetDraftField = 'coverageBottomFt' | 'coverageHeightFt' | 'patchXFt' | 'patchYFt' | 'patchWidthFt' | 'patchHeightFt'
+type FeetDraftField = 'roomHeightFt' | 'coverageBottomFt' | 'coverageHeightFt' | 'patchXFt' | 'patchYFt' | 'patchWidthFt' | 'patchHeightFt'
+type OpeningDefaultDraftField = 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill'
 type Sketch3DModelWithCatalog = Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }
 type SketchContour = Sketch3DModel['contours'][number]
 type InsidePoint = { x: number; z: number }
@@ -156,6 +157,14 @@ type PhotoRenderModalState =
     }
   | { kind: 'error'; messageKey: string }
 
+type Sketch3DOpeningDefaults = {
+  doorW: number
+  doorH: number
+  winW: number
+  winH: number
+  winSill: number
+}
+
 // SKETCH-SNAP-1: панель-тост «Снимок» — снимок ТЕКУЩЕГО ракурса камеры (canvas → PNG, без UI-оверлеев
 // и размерных стрелок; механизм снимка общий с «Фото-рендер» — photoSnapshotApiRef.capturePng()).
 // Снимок автосохраняется в файлы проекта и предлагает «Скачать» + «Поделиться» (системный share sheet —
@@ -179,18 +188,16 @@ interface Sketch3DViewProps {
   sketchName?: string
   canEdit?: boolean
   onModelChange?: (model: Sketch3DModelWithCatalog) => void
+  onHeightChange?: (heightFt: number) => void
   snapStepFt?: number
   codeCheckEnabled?: boolean
+  onCodeCheckChange?: (enabled: boolean) => void
   // NAV-FIX-2: общий с 2D выбор стены (клик по стене в 3D подсвечивает её и открывает панель «Стена N»).
   pickedWallKey?: string | null
   onPickWall?: (key: string | null) => void
-  openingDefaults?: {
-    doorW: number
-    doorH: number
-    winW: number
-    winH: number
-    winSill: number
-  }
+  openingDefaults?: Sketch3DOpeningDefaults
+  onOpeningDefaultsChange?: (patch: Partial<Sketch3DOpeningDefaults>) => void
+  snapControls?: Array<{ key: string; label: string; active: boolean; onSelect: () => void }>
   label: string
   loadingLabel: string
   errorLabel: string
@@ -2042,17 +2049,21 @@ export default function Sketch3DView({
   sketchName,
   canEdit = false,
   onModelChange,
+  onHeightChange,
   snapStepFt = EIGHTH_IN_FT,
   codeCheckEnabled = true,
+  onCodeCheckChange,
   pickedWallKey = null,
   onPickWall,
   openingDefaults,
+  onOpeningDefaultsChange,
+  snapControls,
   label,
   loadingLabel,
   errorLabel,
 }: Sketch3DViewProps) {
   const { t } = useI18n()
-  const shellRef = useRef<HTMLDivElement | null>(null)
+  const fullscreenRootRef = useRef<HTMLDivElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cameraApiRef = useRef<Record<CameraPreset, () => void> | null>(null)
   const insideMoveApiRef = useRef<InsideMoveApi | null>(null)
@@ -2088,6 +2099,7 @@ export default function Sketch3DView({
   const [paintSearch, setPaintSearch] = useState('')
   const [inchDrafts, setInchDrafts] = useState<Partial<Record<InchDraftField, string>>>({})
   const [feetDrafts, setFeetDrafts] = useState<Partial<Record<FeetDraftField, string>>>({})
+  const [openingDefaultDrafts, setOpeningDefaultDrafts] = useState<Partial<Record<OpeningDefaultDraftField, string>>>({})
   const [browserFullscreen, setBrowserFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
   const [joystickKnob, setJoystickKnob] = useState<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false })
@@ -2255,6 +2267,10 @@ export default function Sketch3DView({
   useEffect(() => {
     setFeetDrafts({})
   }, [surfaceTarget, activeSurface])
+
+  useEffect(() => {
+    setOpeningDefaultDrafts({})
+  }, [openingDefaults?.doorW, openingDefaults?.doorH, openingDefaults?.winW, openingDefaults?.winH, openingDefaults?.winSill])
 
   useEffect(() => {
     if (wallSegments.length === 0) {
@@ -2425,6 +2441,41 @@ export default function Sketch3DView({
     }
   }
 
+  const openingDefaultValue = (field: OpeningDefaultDraftField, fallback: number): string => {
+    return openingDefaultDrafts[field] ?? formatOpeningFeet(fallback)
+  }
+
+  const setOpeningDefaultDraft = (field: OpeningDefaultDraftField, value: string) => {
+    setOpeningDefaultDrafts((current) => ({ ...current, [field]: value }))
+  }
+
+  const clearOpeningDefaultDraft = (field: OpeningDefaultDraftField) => {
+    setOpeningDefaultDrafts((current) => {
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+  }
+
+  const commitOpeningDefaultDraft = (field: OpeningDefaultDraftField, fallback: number, min: number, max: number) => {
+    if (!onOpeningDefaultsChange) return
+    const raw = openingDefaultDrafts[field] ?? formatOpeningFeet(fallback)
+    clearOpeningDefaultDraft(field)
+    const parsed = parseFeetInches(raw)
+    if (!Number.isFinite(parsed)) return
+    onOpeningDefaultsChange({ [field]: Math.max(min, Math.min(max, snapOpeningFeetToPrecision(parsed / 12))) })
+  }
+
+  const handleOpeningDefaultKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>, field: OpeningDefaultDraftField, fallback: number, min: number, max: number) => {
+    if (event.key === 'Enter') {
+      commitOpeningDefaultDraft(field, fallback, min, max)
+      event.currentTarget.blur()
+    } else if (event.key === 'Escape') {
+      clearOpeningDefaultDraft(field)
+      event.currentTarget.blur()
+    }
+  }
+
   const addLightAt = (kind: SketchLightKind, xFt: number, zFt: number): SketchLight => ({
     id: makeId('light'),
     kind,
@@ -2569,7 +2620,7 @@ export default function Sketch3DView({
 
   useEffect(() => {
     const onFullscreenChange = () => {
-      const active = document.fullscreenElement === shellRef.current
+      const active = document.fullscreenElement === fullscreenRootRef.current
       setBrowserFullscreen(active)
       if (active) setFullscreenFallback(false)
       invalidate3DRef.current?.()
@@ -3890,11 +3941,11 @@ export default function Sketch3DView({
   ])
 
   const toggleFullscreen = async () => {
-    const shell = shellRef.current
-    if (!shell) return
+    const root = fullscreenRootRef.current
+    if (!root) return
     if (fullscreenActive) {
       setFullscreenFallback(false)
-      if (document.fullscreenElement === shell && document.exitFullscreen) {
+      if (document.fullscreenElement === root && document.exitFullscreen) {
         try {
           await document.exitFullscreen()
         } catch {
@@ -3906,9 +3957,9 @@ export default function Sketch3DView({
       invalidate3DRef.current?.()
       return
     }
-    if (shell.requestFullscreen) {
+    if (root.requestFullscreen) {
       try {
-        await shell.requestFullscreen()
+        await root.requestFullscreen()
         return
       } catch {
         setBrowserFullscreen(false)
@@ -3922,10 +3973,30 @@ export default function Sketch3DView({
   const tileSizePresetValue = TILE_SIZE_OPTIONS.some((option) => `${option.w}x${option.h}` === tileSizeValue) ? tileSizeValue : 'custom'
   const activeFinishCoverageMode = activeSurface.kind !== 'drywall-patch' && activeSurface.coverage?.mode === 'partial' ? 'partial' : 'full'
   const cameraButtonClass = (mode: CameraPreset) => (cameraMode === mode ? 'btn small' : 'btn ghost small')
+  const openingDefaultsForControls: Sketch3DOpeningDefaults = {
+    doorW: openingDefaults?.doorW ?? DEFAULT_DOOR_WIDTH_FT,
+    doorH: openingDefaults?.doorH ?? DEFAULT_DOOR_HEIGHT_FT,
+    winW: openingDefaults?.winW ?? DEFAULT_WINDOW_WIDTH_FT,
+    winH: openingDefaults?.winH ?? DEFAULT_WINDOW_HEIGHT_FT,
+    winSill: openingDefaults?.winSill ?? DEFAULT_WINDOW_SILL_FT,
+  }
   const setCameraPreset = (mode: CameraPreset) => {
     setCameraMode(mode)
     cameraApiRef.current?.[mode]()
   }
+  const renderOpeningDefaultControl = (field: OpeningDefaultDraftField, labelKey: string, valueFt: number, minFt: number, maxFt: number) => (
+    <label className="hub-sketch-3d-toolbar-field">
+      <span>{t(labelKey)}</span>
+      <input
+        type="text"
+        inputMode="text"
+        value={openingDefaultValue(field, valueFt)}
+        onChange={(event) => setOpeningDefaultDraft(field, event.target.value)}
+        onBlur={() => commitOpeningDefaultDraft(field, valueFt, minFt, maxFt)}
+        onKeyDown={(event) => handleOpeningDefaultKeyDown(event, field, valueFt, minFt, maxFt)}
+      />
+    </label>
+  )
   const updateJoystickFromPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
     const joystick = joystickRef.current
     if (!joystick) return
@@ -4128,8 +4199,8 @@ export default function Sketch3DView({
   const closeSnapshotPanel = () => setSnapshotPanel(null)
 
   return (
-    <div className="hub-sketch-3d-layout">
-      <div ref={shellRef} className={fullscreenActive ? 'hub-sketch-3d-shell hub-sketch-3d-shell-fullscreen' : 'hub-sketch-3d-shell'} role="img" aria-label={label}>
+    <div ref={fullscreenRootRef} className={fullscreenActive ? 'hub-sketch-3d-layout hub-sketch-3d-layout-fullscreen' : 'hub-sketch-3d-layout'}>
+      <div className={fullscreenActive ? 'hub-sketch-3d-shell hub-sketch-3d-shell-fullscreen' : 'hub-sketch-3d-shell'} role="img" aria-label={label}>
         <div ref={hostRef} className="hub-sketch-3d-canvas" />
         <label className="hub-sketch-3d-dim-toggle">
           <input
@@ -4179,6 +4250,59 @@ export default function Sketch3DView({
               <span aria-hidden="true">📏</span>
               <span>{t('hub_sketch_tool_measure')}</span>
             </button>
+          )}
+          {fullscreenActive && (
+            <div className="hub-sketch-3d-toolbar-group" role="group" aria-label={t('hub_sketch_3d_panel')}>
+              <label className="hub-sketch-3d-toolbar-toggle">
+                <input
+                  type="checkbox"
+                  checked={codeCheckEnabled}
+                  onChange={(event) => onCodeCheckChange?.(event.target.checked)}
+                  aria-label={t('hub_sketch_code_check')}
+                />
+                <span>{t('hub_sketch_code_check')}</span>
+              </label>
+              {onHeightChange && (
+                <label className="hub-sketch-3d-toolbar-field">
+                  <span>{t('hub_sketch_wall_height')}</span>
+                  <input
+                    type="text"
+                    inputMode="text"
+                    value={feetInputValue('roomHeightFt', heightFt)}
+                    onChange={(event) => setFeetDraft('roomHeightFt', event.target.value)}
+                    onBlur={() => commitFeetDraft('roomHeightFt', heightFt, 1, 30, onHeightChange)}
+                    onKeyDown={(event) => handleFeetKeyDown(event, 'roomHeightFt', heightFt, 1, 30, onHeightChange)}
+                  />
+                </label>
+              )}
+            </div>
+          )}
+          {fullscreenActive && snapControls && snapControls.length > 0 && (
+            <div className="hub-sketch-3d-toolbar-group" role="group" aria-label={t('hub_sketch_snap')}>
+              <span className="hub-sketch-3d-toolbar-label">{t('hub_sketch_snap')}</span>
+              {snapControls.map((control) => (
+                <button
+                  key={control.key}
+                  type="button"
+                  className={control.active ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={control.active}
+                  onClick={control.onSelect}
+                >
+                  {control.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {fullscreenActive && canEdit && onOpeningDefaultsChange && (
+            <div className="hub-sketch-3d-toolbar-group" role="group" aria-label={t('hub_sketch_3d_place_opening')}>
+              <span className="hub-sketch-3d-toolbar-label">{t('hub_sketch_tool_door')}</span>
+              {renderOpeningDefaultControl('doorW', 'hub_sketch_width', openingDefaultsForControls.doorW, 0.5, 20)}
+              {renderOpeningDefaultControl('doorH', 'hub_sketch_height', openingDefaultsForControls.doorH, 0.5, 20)}
+              <span className="hub-sketch-3d-toolbar-label">{t('hub_sketch_tool_window')}</span>
+              {renderOpeningDefaultControl('winW', 'hub_sketch_width', openingDefaultsForControls.winW, 0.5, 20)}
+              {renderOpeningDefaultControl('winH', 'hub_sketch_height', openingDefaultsForControls.winH, 0.5, 20)}
+              {renderOpeningDefaultControl('winSill', 'hub_sketch_sill', openingDefaultsForControls.winSill, 0, 20)}
+            </div>
           )}
           <button type="button" className="btn ghost small hub-sketch-photo-render-btn" disabled={state !== 'ready'} onClick={takeSnapshot} title={t('hub_sketch_snapshot_hint')}>
             <span aria-hidden="true">📸</span>
@@ -4461,6 +4585,7 @@ export default function Sketch3DView({
                   snapStepFt={snapStepFt}
                   codeCheckEnabled={codeCheckEnabled}
                   onMeasurementsChange={applyMeasurements}
+                  onModelChange={applyModel}
                 />
                 {selectedWallFinish && (
                   <button type="button" className="btn ghost small" onClick={clearSelectedWallFinish}>
