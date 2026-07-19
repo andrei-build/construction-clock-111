@@ -73,6 +73,15 @@ import {
   type CabinetLayoutResult,
 } from './cabinetCodes'
 import {
+  CABINET_CATALOG_CATEGORIES,
+  CABINET_CATALOG_ENTRIES,
+  CABINET_CATALOG_STANDARD_WIDTHS_IN,
+  CABINET_CATALOG_WALL_HEIGHTS_IN,
+  cabinetCatalogEntryCode,
+  type CabinetCatalogEntry,
+  type CabinetCatalogIcon,
+} from './cabinetCatalog'
+import {
   ELECTRICAL_MATERIAL_SECTION,
   SKETCH_MATERIAL_SECTIONS,
   TILE_MATERIAL_SECTION,
@@ -244,22 +253,22 @@ function importWallHeight(value: unknown): number | undefined {
 type Tool = 'wall' | 'door' | 'window' | 'measure' | 'cabinet' | 'outlet' | 'switch'
 type OpeningTool = Extract<Tool, 'door' | 'window'>
 type CabinetBuilderKind = 'base' | 'sink' | 'drawers' | 'wall' | 'vanity' | 'filler' | 'appliance'
-type CabinetAppliancePrefix = 'DW' | 'RANGE' | 'REF'
+type CabinetAppliancePrefix = 'DW' | 'RANGE' | 'REF' | 'HOOD'
 
-const CABINET_STANDARD_WIDTHS_IN = [12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48]
-const CABINET_WALL_HEIGHTS_IN = [12, 15, 18, 24, 30, 36, 42]
+const CABINET_STANDARD_WIDTHS_IN = CABINET_CATALOG_STANDARD_WIDTHS_IN
+const CABINET_WALL_HEIGHTS_IN = CABINET_CATALOG_WALL_HEIGHTS_IN
 const CABINET_BUILDER_KINDS: CabinetBuilderKind[] = ['base', 'sink', 'drawers', 'wall', 'vanity', 'filler', 'appliance']
-const CABINET_APPLIANCE_PREFIXES: CabinetAppliancePrefix[] = ['DW', 'RANGE', 'REF']
+const CABINET_APPLIANCE_PREFIXES: CabinetAppliancePrefix[] = ['DW', 'RANGE', 'REF', 'HOOD']
 const CABINET_HELP_ITEMS = [
   { code: 'B', labelKey: 'hub_sketch_cabinet_type_base_help' },
   { code: 'SB', labelKey: 'hub_sketch_cabinet_type_sink_short' },
-  { code: 'DB/2DB/3DB', labelKey: 'hub_sketch_cabinet_type_drawers_short' },
+  { code: '1DB/2DB/3DB', labelKey: 'hub_sketch_cabinet_type_drawers_short' },
   { code: 'W', labelKey: 'hub_sketch_cabinet_type_wall_help' },
   { code: 'U', labelKey: 'hub_sketch_cabinet_type_tall_short' },
   { code: 'V', labelKey: 'hub_sketch_cabinet_type_vanity_short' },
   { code: 'BF', labelKey: 'hub_sketch_cabinet_type_filler_short' },
   { code: 'BEP/REP', labelKey: 'hub_sketch_cabinet_type_panel_short' },
-  { code: 'DW24/RANGE30/REF36', labelKey: 'hub_sketch_cabinet_type_appliance_short' },
+  { code: 'DW24/RANGE30/REF36/HOOD30', labelKey: 'hub_sketch_cabinet_type_appliance_short' },
 ]
 const CABINET_BUILDER_LABEL_KEYS: Record<CabinetBuilderKind, string> = {
   base: 'hub_sketch_cabinet_builder_base',
@@ -274,6 +283,7 @@ const CABINET_APPLIANCE_LABEL_KEYS: Record<CabinetAppliancePrefix, string> = {
   DW: 'hub_sketch_cabinet_appliance_dw',
   RANGE: 'hub_sketch_cabinet_appliance_range',
   REF: 'hub_sketch_cabinet_appliance_ref',
+  HOOD: 'hub_sketch_cabinet_appliance_hood',
 }
 
 function appendCabinetCodeText(input: string, code: string): string {
@@ -302,14 +312,184 @@ function cabinetBuilderCode(kind: CabinetBuilderKind, widthIn: number, wallHeigh
 
 function cabinetTypeLabelKey(prefix: string): string {
   if (prefix === 'SB') return 'hub_sketch_cabinet_type_sink_short'
-  if (prefix === 'DB' || prefix === '2DB' || prefix === '3DB') return 'hub_sketch_cabinet_type_drawers_short'
+  if (prefix === 'DB' || prefix === '1DB' || prefix === '2DB' || prefix === '3DB') return 'hub_sketch_cabinet_type_drawers_short'
   if (prefix === 'W') return 'hub_sketch_cabinet_type_wall_short'
   if (prefix === 'U') return 'hub_sketch_cabinet_type_tall_short'
   if (prefix === 'V') return 'hub_sketch_cabinet_type_vanity_short'
   if (prefix === 'BF' || prefix === 'F') return 'hub_sketch_cabinet_type_filler_short'
   if (prefix === 'BEP' || prefix === 'REP') return 'hub_sketch_cabinet_type_panel_short'
-  if (prefix === 'DW' || prefix === 'RANGE' || prefix === 'REF') return 'hub_sketch_cabinet_type_appliance_short'
+  if (prefix === 'DW' || prefix === 'RANGE' || prefix === 'REF' || prefix === 'HOOD') return 'hub_sketch_cabinet_type_appliance_short'
   return 'hub_sketch_cabinet_type_base_short'
+}
+
+function CabinetGalleryIcon({ icon }: { icon: CabinetCatalogIcon }) {
+  const frame = (
+    <rect className="hub-sketch-cabinet-icon-face" x={22} y={10} width={52} height={48} rx={3} />
+  )
+  const toe = <line className="hub-sketch-cabinet-icon-line" x1={26} y1={53} x2={70} y2={53} />
+
+  return (
+    <svg className="hub-sketch-cabinet-icon" viewBox="0 0 96 72" aria-hidden="true" focusable="false">
+      {icon === 'base' && (
+        <>
+          {frame}
+          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={12} x2={48} y2={53} />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={44} cy={35} r={1.9} />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={52} cy={35} r={1.9} />
+          {toe}
+        </>
+      )}
+      {icon === 'sink' && (
+        <>
+          {frame}
+          <path className="hub-sketch-cabinet-icon-accent" d="M 32 22 Q 48 14 64 22 L 61 33 Q 48 39 35 33 Z" />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={48} cy={28} r={2.1} />
+          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={38} x2={48} y2={53} />
+          {toe}
+        </>
+      )}
+      {icon === 'drawer1' && (
+        <>
+          {frame}
+          <rect className="hub-sketch-cabinet-icon-panel" x={29} y={18} width={38} height={30} rx={2} />
+          <line className="hub-sketch-cabinet-icon-line" x1={38} y1={26} x2={58} y2={26} />
+          {toe}
+        </>
+      )}
+      {icon === 'drawer2' && (
+        <>
+          {frame}
+          <rect className="hub-sketch-cabinet-icon-panel" x={29} y={15} width={38} height={18} rx={2} />
+          <rect className="hub-sketch-cabinet-icon-panel" x={29} y={36} width={38} height={15} rx={2} />
+          <line className="hub-sketch-cabinet-icon-line" x1={38} y1={23} x2={58} y2={23} />
+          <line className="hub-sketch-cabinet-icon-line" x1={38} y1={43} x2={58} y2={43} />
+          {toe}
+        </>
+      )}
+      {icon === 'drawer3' && (
+        <>
+          {frame}
+          {[15, 29, 43].map((y) => (
+            <g key={y}>
+              <rect className="hub-sketch-cabinet-icon-panel" x={29} y={y} width={38} height={11} rx={1.8} />
+              <line className="hub-sketch-cabinet-icon-line" x1={39} y1={y + 5.5} x2={57} y2={y + 5.5} />
+            </g>
+          ))}
+          {toe}
+        </>
+      )}
+      {icon === 'lazySusan' && (
+        <>
+          <path className="hub-sketch-cabinet-icon-face" d="M 24 12 H 72 V 58 H 36 L 24 46 Z" />
+          <path className="hub-sketch-cabinet-icon-accent" d="M 37 23 A 17 17 0 0 1 61 47" />
+          <path className="hub-sketch-cabinet-icon-accent" d="M 61 23 A 17 17 0 0 1 37 47" />
+          <line className="hub-sketch-cabinet-icon-line" x1={36} y1={58} x2={70} y2={58} />
+        </>
+      )}
+      {icon === 'blindCorner' && (
+        <>
+          {frame}
+          <rect className="hub-sketch-cabinet-icon-panel" x={30} y={18} width={24} height={30} rx={2} />
+          <line className="hub-sketch-cabinet-icon-dash" x1={60} y1={15} x2={60} y2={51} />
+          <path className="hub-sketch-cabinet-icon-line" d="M 61 23 H 70 M 61 36 H 70 M 61 49 H 70" />
+          {toe}
+        </>
+      )}
+      {icon === 'wall' && (
+        <>
+          <rect className="hub-sketch-cabinet-icon-face" x={24} y={8} width={48} height={40} rx={3} />
+          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={10} x2={48} y2={48} />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={44} cy={30} r={1.7} />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={52} cy={30} r={1.7} />
+          <line className="hub-sketch-cabinet-icon-accent" x1={30} y1={58} x2={66} y2={58} />
+        </>
+      )}
+      {icon === 'tallPantry' && (
+        <>
+          <rect className="hub-sketch-cabinet-icon-face" x={30} y={6} width={36} height={58} rx={3} />
+          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={8} x2={48} y2={64} />
+          <line className="hub-sketch-cabinet-icon-line" x1={34} y1={36} x2={62} y2={36} />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={44} cy={28} r={1.8} />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={52} cy={44} r={1.8} />
+        </>
+      )}
+      {icon === 'ovenTower' && (
+        <>
+          <rect className="hub-sketch-cabinet-icon-face" x={30} y={6} width={36} height={58} rx={3} />
+          <rect className="hub-sketch-cabinet-icon-panel" x={36} y={25} width={24} height={20} rx={2} />
+          <line className="hub-sketch-cabinet-icon-line" x1={40} y1={30} x2={56} y2={30} />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={40} cy={38} r={1.5} />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={56} cy={38} r={1.5} />
+        </>
+      )}
+      {icon === 'vanity' && (
+        <>
+          {frame}
+          <path className="hub-sketch-cabinet-icon-accent" d="M 34 20 H 62 Q 60 33 48 33 Q 36 33 34 20 Z" />
+          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={36} x2={48} y2={53} />
+          <path className="hub-sketch-cabinet-icon-line" d="M 43 18 Q 48 13 53 18" />
+          {toe}
+        </>
+      )}
+      {icon === 'filler' && (
+        <>
+          <rect className="hub-sketch-cabinet-icon-face" x={40} y={10} width={16} height={48} rx={2} />
+          <path className="hub-sketch-cabinet-icon-line" d="M 44 16 L 52 24 M 44 28 L 52 36 M 44 40 L 52 48" />
+        </>
+      )}
+      {icon === 'baseEndPanel' && (
+        <>
+          <rect className="hub-sketch-cabinet-icon-face" x={36} y={12} width={24} height={46} rx={2} />
+          <path className="hub-sketch-cabinet-icon-line" d="M 42 18 V 52 M 48 18 V 52 M 54 18 V 52" />
+        </>
+      )}
+      {icon === 'refrigeratorEndPanel' && (
+        <>
+          <rect className="hub-sketch-cabinet-icon-face" x={36} y={6} width={24} height={58} rx={2} />
+          <path className="hub-sketch-cabinet-icon-line" d="M 42 12 V 58 M 48 12 V 58 M 54 12 V 58" />
+        </>
+      )}
+      {icon === 'dishwasher' && (
+        <>
+          <rect className="hub-sketch-cabinet-icon-appliance" x={26} y={12} width={44} height={46} rx={4} />
+          <line className="hub-sketch-cabinet-icon-line" x1={32} y1={22} x2={64} y2={22} />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={36} cy={17} r={1.6} />
+          <circle className="hub-sketch-cabinet-icon-dot" cx={42} cy={17} r={1.6} />
+        </>
+      )}
+      {icon === 'range' && (
+        <>
+          <rect className="hub-sketch-cabinet-icon-appliance" x={24} y={10} width={48} height={50} rx={4} />
+          <circle className="hub-sketch-cabinet-icon-line-fill" cx={39} cy={23} r={5} />
+          <circle className="hub-sketch-cabinet-icon-line-fill" cx={57} cy={23} r={5} />
+          <rect className="hub-sketch-cabinet-icon-panel" x={33} y={35} width={30} height={15} rx={2} />
+        </>
+      )}
+      {icon === 'refrigerator' && (
+        <>
+          <rect className="hub-sketch-cabinet-icon-appliance" x={28} y={6} width={40} height={58} rx={4} />
+          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={8} x2={48} y2={64} />
+          <line className="hub-sketch-cabinet-icon-line" x1={34} y1={32} x2={62} y2={32} />
+          <line className="hub-sketch-cabinet-icon-line" x1={43} y1={20} x2={43} y2={29} />
+          <line className="hub-sketch-cabinet-icon-line" x1={53} y1={36} x2={53} y2={50} />
+        </>
+      )}
+      {icon === 'hood' && (
+        <>
+          <path className="hub-sketch-cabinet-icon-appliance" d="M 35 14 H 61 L 69 39 H 27 Z" />
+          <rect className="hub-sketch-cabinet-icon-panel" x={31} y={39} width={34} height={9} rx={2} />
+          <path className="hub-sketch-cabinet-icon-accent" d="M 39 57 Q 43 51 39 47 M 49 58 Q 53 51 49 47 M 59 57 Q 63 51 59 47" />
+        </>
+      )}
+      {icon === 'wine' && (
+        <>
+          {frame}
+          <path className="hub-sketch-cabinet-icon-line" d="M 31 18 L 65 50 M 65 18 L 31 50 M 48 14 V 54 M 29 34 H 67" />
+          {toe}
+        </>
+      )}
+    </svg>
+  )
 }
 
 function dist(a: Pt, b: Pt): number {
@@ -1291,6 +1471,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [cabinetBuilderKind, setCabinetBuilderKind] = useState<CabinetBuilderKind>('base')
   const [cabinetBuilderWallHeight, setCabinetBuilderWallHeight] = useState(30)
   const [cabinetBuilderAppliance, setCabinetBuilderAppliance] = useState<CabinetAppliancePrefix>('DW')
+  const [cabinetGallerySearch, setCabinetGallerySearch] = useState('')
+  const [selectedCabinetGalleryEntryId, setSelectedCabinetGalleryEntryId] = useState<string | null>(null)
+  const [cabinetGalleryWallHeight, setCabinetGalleryWallHeight] = useState(30)
   const [selectedCabinetWallKey, setSelectedCabinetWallKey] = useState<string | null>(null)
   const [includePrimer, setIncludePrimer] = useState(true)
   const [includeTexture, setIncludeTexture] = useState(true)
@@ -1355,11 +1538,35 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     () => selectedCabinetWall ? layoutCabinetRunOnWall(model, selectedCabinetWall, cabinetCodes) : null,
     [model, selectedCabinetWall, cabinetCodes],
   )
+  const cabinetGalleryQuery = cabinetGallerySearch.trim().toLocaleLowerCase()
+  const cabinetGalleryEntries = useMemo(() => {
+    if (!cabinetGalleryQuery) return CABINET_CATALOG_ENTRIES
+    return CABINET_CATALOG_ENTRIES.filter((entry) => {
+      const category = CABINET_CATALOG_CATEGORIES.find((item) => item.id === entry.categoryId)
+      const haystack = [
+        entry.codePrefix,
+        t(entry.labelKey),
+        category ? t(category.labelKey) : '',
+      ].join(' ').toLocaleLowerCase()
+      return haystack.includes(cabinetGalleryQuery)
+    })
+  }, [cabinetGalleryQuery, t])
+  const cabinetGalleryGroups = useMemo(() => (
+    CABINET_CATALOG_CATEGORIES
+      .map((category) => ({
+        category,
+        entries: cabinetGalleryEntries.filter((entry) => entry.categoryId === category.id),
+      }))
+      .filter((group) => group.entries.length > 0)
+  ), [cabinetGalleryEntries])
   const appendCabinetCode = useCallback((code: string) => {
     setCabinetCodes((current) => appendCabinetCodeText(current, code))
     setStatus(null)
     setError(null)
   }, [])
+  const addCabinetGalleryCode = useCallback((entry: CabinetCatalogEntry, widthIn: number) => {
+    appendCabinetCode(cabinetCatalogEntryCode(entry, widthIn, cabinetGalleryWallHeight))
+  }, [appendCabinetCode, cabinetGalleryWallHeight])
   const addCabinetBuilderWidth = useCallback((widthIn: number) => {
     appendCabinetCode(cabinetBuilderCode(cabinetBuilderKind, widthIn, cabinetBuilderWallHeight, cabinetBuilderAppliance))
   }, [appendCabinetCode, cabinetBuilderAppliance, cabinetBuilderKind, cabinetBuilderWallHeight])
@@ -2897,6 +3104,90 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               </span>
             )}
           </div>
+          <details className="hub-sketch-cabinet-gallery">
+            <summary>
+              <span>{t('hub_sketch_cabinet_gallery_title')}</span>
+              <span className="hub-sketch-cabinet-gallery-count">{CABINET_CATALOG_ENTRIES.length}</span>
+            </summary>
+            <div className="hub-sketch-cabinet-gallery-body">
+              <label className="hub-sketch-field hub-sketch-cabinet-gallery-search">
+                <span className="muted">{t('hub_sketch_cabinet_gallery_search_label')}</span>
+                <input
+                  type="search"
+                  value={cabinetGallerySearch}
+                  onChange={(event) => setCabinetGallerySearch(event.target.value)}
+                  placeholder={t('hub_sketch_cabinet_gallery_search')}
+                />
+              </label>
+              {cabinetGalleryGroups.length === 0 ? (
+                <div className="hub-sketch-cabinet-gallery-empty">{t('hub_sketch_cabinet_gallery_empty')}</div>
+              ) : (
+                cabinetGalleryGroups.map((group) => (
+                  <section className="hub-sketch-cabinet-gallery-group" key={group.category.id}>
+                    <h4>{t(group.category.labelKey)}</h4>
+                    <div className="hub-sketch-cabinet-gallery-grid">
+                      {group.entries.map((entry) => {
+                        const selected = selectedCabinetGalleryEntryId === entry.id
+                        return (
+                          <div className={selected ? 'hub-sketch-cabinet-gallery-card hub-sketch-cabinet-gallery-card-active' : 'hub-sketch-cabinet-gallery-card'} key={entry.id}>
+                            <button
+                              type="button"
+                              className="hub-sketch-cabinet-gallery-pick"
+                              aria-expanded={selected}
+                              aria-pressed={selected}
+                              onClick={() => setSelectedCabinetGalleryEntryId((current) => current === entry.id ? null : entry.id)}
+                            >
+                              <CabinetGalleryIcon icon={entry.icon} />
+                              <span className="hub-sketch-cabinet-gallery-card-body">
+                                <span className="hub-sketch-cabinet-gallery-card-name">{t(entry.labelKey)}</span>
+                                <span className="hub-sketch-cabinet-gallery-card-code">{entry.codePrefix}</span>
+                              </span>
+                            </button>
+                            {selected && (
+                              <div className="hub-sketch-cabinet-gallery-sizes">
+                                {entry.sizeKind === 'wall' && (
+                                  <div className="hub-sketch-cabinet-gallery-size-row" role="group" aria-label={t('hub_sketch_cabinet_wall_height')}>
+                                    <span className="muted">{t('hub_sketch_cabinet_wall_height')}</span>
+                                    {(entry.wallHeightsIn ?? CABINET_WALL_HEIGHTS_IN).map((heightIn) => (
+                                      <button
+                                        key={heightIn}
+                                        type="button"
+                                        className={cabinetGalleryWallHeight === heightIn ? 'btn small' : 'btn ghost small'}
+                                        aria-pressed={cabinetGalleryWallHeight === heightIn}
+                                        onClick={() => setCabinetGalleryWallHeight(heightIn)}
+                                      >
+                                        {`${heightIn}"`}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="hub-sketch-cabinet-gallery-size-row" role="group" aria-label={t(entry.sizeKind === 'panelDepth' ? 'hub_sketch_cabinet_gallery_depth' : 'hub_sketch_width')}>
+                                  <span className="muted">{t(entry.sizeKind === 'panelDepth' ? 'hub_sketch_cabinet_gallery_depth' : 'hub_sketch_width')}</span>
+                                  {entry.widthsIn.map((widthIn) => {
+                                    const code = cabinetCatalogEntryCode(entry, widthIn, cabinetGalleryWallHeight)
+                                    return (
+                                      <button
+                                        key={`${entry.id}-${widthIn}`}
+                                        type="button"
+                                        className="btn ghost small hub-sketch-cabinet-gallery-code-chip"
+                                        onClick={() => addCabinetGalleryCode(entry, widthIn)}
+                                      >
+                                        {`+${code}`}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </section>
+                ))
+              )}
+            </div>
+          </details>
           {cabinetLayoutPreview && cabinetLayoutPreview.invalidCodes.length > 0 && (
             <div className="hub-sketch-cabinet-help">
               {cabinetLayoutPreview.invalidCodes.map((invalidCode, invalidIndex) => {

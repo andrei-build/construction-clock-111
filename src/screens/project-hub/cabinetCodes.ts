@@ -66,12 +66,14 @@ const DEFAULT_WALL_HEIGHT_IN = 30
 const DEFAULT_UTILITY_HEIGHT_IN = 90
 const DEFAULT_REFRIGERATOR_PANEL_HEIGHT_IN = 96
 const DEFAULT_PANEL_THICKNESS_IN = 0.75
+const DEFAULT_HOOD_HEIGHT_IN = 18
+const DEFAULT_HOOD_DEPTH_IN = 18
 export const CABINET_WALL_BOTTOM_IN = 54
 export const CABINET_COUNTERTOP_HEIGHT_IN = 36
 export const CABINET_TOE_KICK_IN = 4
 export const CABINET_MIN_FILLER_IN = 3
 
-const PREFIXES = ['RANGE', 'WINE', '3DB', '2DB', 'BEP', 'REP', 'BLS', 'BBC', 'REF', 'SB', 'DB', 'BF', 'DW', 'B', 'W', 'U', 'V', 'F'] as const
+const PREFIXES = ['RANGE', 'WINE', 'HOOD', '3DB', '2DB', '1DB', 'BEP', 'REP', 'BLS', 'BBC', 'REF', 'SB', 'DB', 'BF', 'DW', 'B', 'W', 'U', 'V', 'F'] as const
 const PREFIX_SET = new Set<string>(PREFIXES)
 const DEFAULT_REFRIGERATOR_HEIGHT_IN = 72
 const DEFAULT_REFRIGERATOR_DEPTH_IN = 30
@@ -263,14 +265,15 @@ function parseGenericCabinet(code: string, body: string, prefix: string, hinge?:
   const vanity = prefix === 'V'
   const filler = prefix === 'F' || prefix === 'BF'
   const refrigerator = prefix === 'REF'
+  const hood = prefix === 'HOOD'
   return {
     raw: code,
     code,
     prefix,
     widthIn,
-    heightIn: refrigerator ? DEFAULT_REFRIGERATOR_HEIGHT_IN : wall ? DEFAULT_WALL_HEIGHT_IN : DEFAULT_BASE_HEIGHT_IN,
-    depthIn: refrigerator ? DEFAULT_REFRIGERATOR_DEPTH_IN : wall ? DEFAULT_WALL_DEPTH_IN : vanity ? DEFAULT_VANITY_DEPTH_IN : DEFAULT_BASE_DEPTH_IN,
-    layer: wall ? 'wall' : 'base',
+    heightIn: refrigerator ? DEFAULT_REFRIGERATOR_HEIGHT_IN : hood ? DEFAULT_HOOD_HEIGHT_IN : wall ? DEFAULT_WALL_HEIGHT_IN : DEFAULT_BASE_HEIGHT_IN,
+    depthIn: refrigerator ? DEFAULT_REFRIGERATOR_DEPTH_IN : hood ? DEFAULT_HOOD_DEPTH_IN : wall ? DEFAULT_WALL_DEPTH_IN : vanity ? DEFAULT_VANITY_DEPTH_IN : DEFAULT_BASE_DEPTH_IN,
+    layer: wall || hood ? 'wall' : 'base',
     hinge,
     filler,
     panel: false,
@@ -301,6 +304,7 @@ function preferredSuggestionPrefixes(value: string): string[] {
   if (alpha.startsWith('V')) return ['V', 'B', 'SB', 'DB']
   if (alpha.startsWith('BF') || alpha.startsWith('F')) return ['BF', 'B', 'DB', 'W']
   if (alpha.startsWith('DW')) return ['DW', 'RANGE', 'REF', 'B']
+  if (alpha.startsWith('H')) return ['HOOD', 'W', 'RANGE', 'B']
   if (alpha.startsWith('REF')) return ['REF', 'RANGE', 'DW', 'B']
   if (alpha.startsWith('R')) return ['RANGE', 'REF', 'DW', 'B']
   return ['B', 'DB', 'W', 'SB']
