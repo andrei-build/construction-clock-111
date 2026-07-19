@@ -1,5 +1,5 @@
 import type { CatalogCategory, CatalogItem, CatalogItemSpecs } from '../../lib/api'
-import type { Contour, SketchTileFinish } from './sketchFinishes'
+import { normalizeTileSurface, type Contour, type SketchTileFinish } from './sketchFinishes'
 import { formatInches } from './inches'
 
 export type CatalogPlacementSurface = 'floor' | 'wall' | 'ceiling'
@@ -31,6 +31,7 @@ export type SketchPlacedCatalogItem = {
   filler?: boolean
   panel?: boolean
   showerPanShape?: SketchShowerPanShape
+  panFinish?: SketchTileFinish
   layoutWarning?: 'overflow' | 'small-filler'
   widthIn?: number
   depthIn?: number
@@ -168,6 +169,7 @@ export const BUILTIN_SHOWER_PAN_CATALOG_ITEMS: CatalogItem[] = [
 const IN_TO_FT = 1 / 12
 const FLOOR_WALL_SNAP_FT = 2.25
 const MAX_STORED_TEXT = 140
+export const DEFAULT_SHOWER_PAN_CURB_HEIGHT_IN = 6
 
 function cleanString(value: unknown, max = MAX_STORED_TEXT): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -348,6 +350,19 @@ function cleanShowerPanShape(value: unknown): SketchShowerPanShape | undefined {
   return value === 'neo-angle' || value === 'rect' ? value : undefined
 }
 
+function cleanPanFinish(value: unknown): SketchTileFinish | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  if (raw.kind !== 'tile' && !raw.catalogItemId && !raw.tileCatalogItemId) return undefined
+  return normalizeTileSurface({
+    ...raw,
+    kind: 'tile',
+    catalogItemId: raw.catalogItemId ?? raw.tileCatalogItemId,
+    catalogItemName: raw.catalogItemName ?? raw.tileCatalogItemName,
+    catalogPhotoPath: raw.catalogPhotoPath ?? raw.tileCatalogPhotoPath,
+  } as SketchTileFinish)
+}
+
 function cleanLayoutWarning(value: unknown): 'overflow' | 'small-filler' | undefined {
   return value === 'overflow' || value === 'small-filler' ? value : undefined
 }
@@ -418,6 +433,80 @@ export function showerPanShapeFromPlacedItem(item: Pick<SketchPlacedCatalogItem,
   if (clean) return clean
   const model = String(item.model ?? '').toUpperCase()
   return item.catalogItemId === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID || model.includes('NEO') ? 'neo-angle' : 'rect'
+}
+
+export function showerPanFootprintPoints(shape: SketchShowerPanShape, widthFt: number, depthFt: number): Array<{ x: number; z: number }> {
+  const width = Math.max(0, widthFt)
+  const depth = Math.max(0, depthFt)
+  if (shape !== 'neo-angle') {
+    return [
+      { x: -width / 2, z: -depth / 2 },
+      { x: width / 2, z: -depth / 2 },
+      { x: width / 2, z: depth / 2 },
+      { x: -width / 2, z: depth / 2 },
+    ]
+  }
+  const cut = Math.min(width, depth) * 0.38
+  return [
+    { x: -width / 2, z: -depth / 2 },
+    { x: width / 2, z: -depth / 2 },
+    { x: width / 2, z: depth / 2 - cut },
+    { x: width / 2 - cut, z: depth / 2 },
+    { x: -width / 2, z: depth / 2 },
+  ]
+}
+
+function polygonAreaSqft(points: Array<{ x: number; z: number }>): number {
+  if (points.length < 3) return 0
+  let sum = 0
+  points.forEach((point, index) => {
+    const next = points[(index + 1) % points.length]
+    sum += point.x * next.z - next.x * point.z
+  })
+  return Math.abs(sum) / 2
+}
+
+function polygonPerimeterFt(points: Array<{ x: number; z: number }>): number {
+  if (points.length < 2) return 0
+  return points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length]
+    return sum + Math.hypot(next.x - point.x, next.z - point.z)
+  }, 0)
+}
+
+function showerPanCurbHeightFt(item: Pick<SketchPlacedCatalogItem, 'heightIn'>): number {
+  const heightIn = cleanPositive(item.heightIn)
+  const curbIn = heightIn === undefined
+    ? DEFAULT_SHOWER_PAN_CURB_HEIGHT_IN
+    : Math.max(4, Math.min(DEFAULT_SHOWER_PAN_CURB_HEIGHT_IN, heightIn))
+  return curbIn * IN_TO_FT
+}
+
+export type ShowerPanTileSurfaceStats = {
+  floorAreaSqft: number
+  sideAreaSqft: number
+  areaSqft: number
+  perimeterLnft: number
+  curbHeightFt: number
+}
+
+export function showerPanTileSurfaceStats(item: Pick<SketchPlacedCatalogItem, 'catalogItemId' | 'model' | 'showerPanShape' | 'widthIn' | 'depthIn' | 'heightIn'>): ShowerPanTileSurfaceStats | null {
+  const widthIn = cleanPositive(item.widthIn)
+  const depthIn = cleanPositive(item.depthIn)
+  if (widthIn === undefined || depthIn === undefined) return null
+  const points = showerPanFootprintPoints(showerPanShapeFromPlacedItem(item), widthIn * IN_TO_FT, depthIn * IN_TO_FT)
+  const floorAreaSqft = polygonAreaSqft(points)
+  const perimeterLnft = polygonPerimeterFt(points)
+  if (floorAreaSqft <= 0.001 || perimeterLnft <= 0.001) return null
+  const curbHeightFt = showerPanCurbHeightFt(item)
+  const sideAreaSqft = perimeterLnft * curbHeightFt
+  return {
+    floorAreaSqft,
+    sideAreaSqft,
+    areaSqft: floorAreaSqft + sideAreaSqft,
+    perimeterLnft,
+    curbHeightFt,
+  }
 }
 
 function isBuiltinSnapshotPlacedItem(item: Pick<SketchPlacedCatalogItem, 'catalogItemId'>): boolean {
@@ -511,6 +600,7 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       const layoutWarning = cleanLayoutWarning(item.layoutWarning)
       const photoPath = cleanString(item.photoPath, 600)
       const specs = cleanSpecs(item.specs)
+      const panFinish = cleanPanFinish(item.panFinish ?? item.pan_finish)
       if (name) placed.name = name
       if (brand) placed.brand = brand
       if (model) placed.model = model
@@ -522,6 +612,7 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       if (showerPanShape) placed.showerPanShape = showerPanShape
       if (item.filler === true) placed.filler = true
       if (item.panel === true) placed.panel = true
+      if (panFinish) placed.panFinish = panFinish
       if (layoutWarning) placed.layoutWarning = layoutWarning
       if (photoPath) placed.photoPath = photoPath
       if (specs) placed.specs = specs
@@ -658,6 +749,50 @@ export function placedOnFloor(item: CatalogItem, id: string, point: CatalogWorld
     rotationY: normalizeAngle(rotationY),
     surface: 'floor',
   }
+}
+
+function defaultFloorPlacementPoint(model: { cellFt?: number; contours: Contour[] }, dims: CatalogDimsFt): CatalogWorldPoint {
+  const cellFt = modelCellFt(model)
+  const points = model.contours.flatMap((contour) => contour.points)
+  if (points.length === 0) return { x: 0, z: 0 }
+  const xs = points.map((point) => point.x * cellFt)
+  const zs = points.map((point) => point.y * cellFt)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minZ = Math.min(...zs)
+  const maxZ = Math.max(...zs)
+  const centerX = (minX + maxX) / 2
+  const centerZ = (minZ + maxZ) / 2
+  return {
+    x: Math.min(centerX, minX + dims.widthFt / 2),
+    z: Math.min(centerZ, minZ + dims.depthFt / 2),
+  }
+}
+
+export function withShowerPanPlacedCatalogMetadata(placed: SketchPlacedCatalogItem, item: Pick<CatalogItem, 'id' | 'model' | 'name'>, name?: string): SketchPlacedCatalogItem {
+  const shape = showerPanShapeFromCatalogItem(item)
+  return {
+    ...placed,
+    kind: SKETCH_CATALOG_KIND_SHOWER_PAN,
+    category: 'shower',
+    name: name ?? cleanString(item.name) ?? (shape === 'neo-angle' ? 'Neo-angle shower pan 36 x 36' : 'Shower pan 60 x 32'),
+    model: SKETCH_CATALOG_KIND_SHOWER_PAN,
+    showerPanShape: shape,
+  }
+}
+
+export function createShowerPanPlacedCatalogItem(
+  item: CatalogItem,
+  id: string,
+  model: { cellFt?: number; contours: Contour[] },
+  wallThicknessFt: number,
+  name?: string,
+): SketchPlacedCatalogItem | null {
+  if (!isBuiltinShowerPanCatalogItem(item)) return null
+  const dims = catalogDimsFromItem(item)
+  if (!dims) return null
+  const point = defaultFloorPlacementPoint(model, dims)
+  return withShowerPanPlacedCatalogMetadata(placedOnFloor(item, id, point, dims, model, wallThicknessFt), item, name)
 }
 
 export function placedOnCeiling(item: CatalogItem, id: string, point: CatalogWorldPoint, dims: CatalogDimsFt, roomHeightFt: number, rotationY = 0): SketchPlacedCatalogItem {
