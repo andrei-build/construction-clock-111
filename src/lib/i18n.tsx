@@ -1349,6 +1349,8 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_mirror: { ru: 'Отзеркалить', en: 'Mirror', es: 'Reflejar' },
   hub_sketch_duplicated: { ru: 'Дубликат создан', en: 'Duplicate created', es: 'Duplicado creado' },
   hub_sketch_mirrored: { ru: 'Зеркальная копия создана', en: 'Mirrored copy created', es: 'Copia reflejada creada' },
+  hub_sketch_room_add: { ru: 'Добавить комнату', en: 'Add room', es: 'Añadir habitación' },
+  hub_sketch_room_name: { ru: 'Название комнаты', en: 'Room name', es: 'Nombre del espacio' },
   hub_sketch_room_panel_title: { ru: 'Комната', en: 'Room', es: 'Espacio' },
   hub_sketch_room_panel_close: { ru: 'Снять выбор комнаты', en: 'Clear room selection', es: 'Quitar selección del espacio' },
   hub_sketch_corner_add: { ru: 'Добавить угол', en: 'Add corner', es: 'Agregar esquina' },
