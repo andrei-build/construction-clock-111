@@ -1418,6 +1418,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           >
             <span className="ai-orb-ring" />
             <span className="ai-orb-ring ai-orb-ring2" />
+            <span className="ai-orb-ring ai-orb-ring3" />
+            <span className="ai-orb-ring ai-orb-ring4" />
             <span className="ai-orb-core" />
           </span>
           {badgeView && <span className="ai-launcher-status">{badgeView.label}</span>}
@@ -1447,6 +1449,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
             >
               <span className="ai-orb-ring" />
               <span className="ai-orb-ring ai-orb-ring2" />
+              <span className="ai-orb-ring ai-orb-ring3" />
+              <span className="ai-orb-ring ai-orb-ring4" />
               <span className="ai-orb-core" />
             </div>
             <div className="ai-overlay-meta">

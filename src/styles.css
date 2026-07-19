@@ -8132,74 +8132,265 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 /* СУЩНОСТЬ: пульсирующий орб + подпись. */
 .ai-orb-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .ai-orb {
-  position: relative; width: 132px; height: 132px;
+  --orb-cyan: 61, 214, 255;
+  --orb-red: 255, 61, 88;
+  --orb-line: var(--orb-cyan);
+  --orb-hot: var(--orb-cyan);
+  --orb-halo: .46;
+  --orb-size: 132px;
+  --orb-core-size: 58px;
+  --orb-ring1-size: 126px;
+  --orb-ring2-size: 108px;
+  --orb-ring3-size: 88px;
+  --orb-ring4-size: 68px;
+  --orb-ring1-speed: 24s;
+  --orb-ring2-speed: 31s;
+  --orb-ring3-speed: 19s;
+  --orb-ring4-speed: 27s;
+  position: relative; width: var(--orb-size); height: var(--orb-size);
   display: grid; place-items: center; margin: 2px auto 0;
+  isolation: isolate; transform-origin: center;
+  transition: filter .24s ease;
+}
+.ai-orb::before {
+  content: ""; grid-area: 1 / 1; z-index: 0;
+  width: 100%; height: 100%; border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(var(--orb-hot), .18) 0 18%, rgba(var(--orb-line), .12) 38%, transparent 72%);
+  filter: blur(4px); opacity: var(--orb-halo); transform: scale(.96);
+  pointer-events: none;
+  transition: opacity .28s ease, background .28s ease, transform .28s ease;
 }
 .ai-orb-core {
-  grid-area: 1 / 1; width: 96px; height: 96px; border-radius: 50%;
-  background: radial-gradient(circle at 32% 28%, #f6dd84 0%, var(--amber, #c8a93b) 44%, #a5822b 72%, #5f4a17 100%);
-  box-shadow: 0 0 30px 4px rgba(200, 169, 59, .4), inset 0 0 24px rgba(255, 255, 255, .18);
+  grid-area: 1 / 1; z-index: 4;
+  position: relative; width: var(--orb-core-size); height: var(--orb-core-size); border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, .22);
+  background:
+    radial-gradient(circle at 34% 26%, rgba(255, 255, 255, .44) 0 7%, transparent 22%),
+    radial-gradient(circle at 50% 52%, #273241 0 34%, #111827 68%, #050914 100%);
+  box-shadow:
+    0 0 12px rgba(var(--orb-line), .14),
+    inset 0 0 18px rgba(255, 255, 255, .08),
+    inset 0 -10px 20px rgba(0, 0, 0, .42);
+  transition: background .28s ease, border-color .28s ease, box-shadow .28s ease, filter .28s ease, transform .08s ease-out;
   will-change: transform, filter, box-shadow;
 }
+.ai-orb-core::before,
+.ai-orb-core::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+}
+.ai-orb-core::before {
+  background:
+    radial-gradient(circle, rgba(var(--orb-line), .42) 0 18%, transparent 52%),
+    linear-gradient(120deg, transparent 0 42%, rgba(255, 255, 255, .18) 49%, transparent 58%);
+  mix-blend-mode: screen; opacity: .16;
+  transition: opacity .22s ease, background .28s ease;
+}
+.ai-orb-core::after {
+  inset: -24%;
+  background: radial-gradient(circle, rgba(var(--orb-hot), .42) 0 22%, transparent 68%);
+  opacity: 0; transform: scale(.86);
+  transition: opacity .16s ease, background .28s ease, transform .16s ease;
+}
 .ai-orb-ring {
-  grid-area: 1 / 1; width: 116px; height: 116px; border-radius: 50%;
-  border: 2px solid transparent; opacity: 0; pointer-events: none;
+  --orb-ring-thickness: 2px;
+  grid-area: 1 / 1; z-index: 2;
+  width: var(--orb-ring1-size); height: var(--orb-ring1-size); border-radius: 50%;
+  opacity: .62; pointer-events: none;
+  background:
+    conic-gradient(from 8deg,
+      rgba(var(--orb-line), .95) 0deg 8deg,
+      transparent 8deg 28deg,
+      rgba(var(--orb-line), .42) 28deg 34deg,
+      transparent 34deg 78deg,
+      rgba(var(--orb-hot), .78) 78deg 86deg,
+      transparent 86deg 132deg,
+      rgba(var(--orb-line), .92) 132deg 164deg,
+      transparent 164deg 210deg,
+      rgba(var(--orb-line), .58) 210deg 218deg,
+      transparent 218deg 286deg,
+      rgba(var(--orb-line), .9) 286deg 318deg,
+      transparent 318deg 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--orb-ring-thickness)), #000 0);
+  mask: radial-gradient(farthest-side, transparent calc(100% - var(--orb-ring-thickness)), #000 0);
+  filter: drop-shadow(0 0 6px rgba(var(--orb-line), .44));
+  animation: ai-orb-rotate-cw var(--orb-ring1-speed) linear infinite;
+  transition: opacity .24s ease, filter .24s ease, background .28s ease;
+  will-change: transform, opacity, filter;
+}
+.ai-orb-ring2 {
+  --orb-ring-thickness: 1.5px;
+  width: var(--orb-ring2-size); height: var(--orb-ring2-size);
+  opacity: .5;
+  background: repeating-conic-gradient(from 4deg, rgba(var(--orb-line), .7) 0deg 2deg, transparent 2deg 12deg);
+  animation-name: ai-orb-rotate-ccw;
+  animation-duration: var(--orb-ring2-speed);
+}
+.ai-orb-ring3 {
+  --orb-ring-thickness: 2px;
+  width: var(--orb-ring3-size); height: var(--orb-ring3-size);
+  opacity: .54;
+  background:
+    conic-gradient(from 116deg,
+      transparent 0deg 24deg,
+      rgba(var(--orb-line), .88) 24deg 60deg,
+      transparent 60deg 104deg,
+      rgba(var(--orb-line), .42) 104deg 112deg,
+      transparent 112deg 188deg,
+      rgba(var(--orb-hot), .66) 188deg 220deg,
+      transparent 220deg 302deg,
+      rgba(var(--orb-line), .78) 302deg 334deg,
+      transparent 334deg 360deg);
+  animation-duration: var(--orb-ring3-speed);
+}
+.ai-orb-ring4 {
+  --orb-ring-thickness: 1px;
+  width: var(--orb-ring4-size); height: var(--orb-ring4-size);
+  opacity: .46;
+  background: repeating-conic-gradient(from 9deg, rgba(var(--orb-hot), .64) 0deg 1.5deg, transparent 1.5deg 9deg);
+  animation-name: ai-orb-rotate-ccw;
+  animation-duration: var(--orb-ring4-speed);
 }
 
-/* Покой — медленный «дыхательный» пульс. */
-.ai-orb-idle .ai-orb-core { animation: ai-orb-breathe 3.6s ease-in-out infinite; }
+/* Idle: dim core, slow rotating HUD, slight breathing. */
+.ai-orb-idle {
+  --orb-halo: .34;
+  animation: ai-orb-idle-breathe 5.2s ease-in-out infinite;
+}
+.ai-orb-idle .ai-orb-core {
+  background:
+    radial-gradient(circle at 34% 26%, rgba(255, 255, 255, .34) 0 7%, transparent 22%),
+    radial-gradient(circle at 50% 54%, #303946 0 32%, #141b27 66%, #050914 100%);
+}
 
-/* Слушаю — орб пульсирует в ритм микрофона (var --mic 0..1) + переход в холодный цвет. */
+/* Listening: blue core follows microphone level. */
+.ai-orb-listening {
+  --orb-halo: .76;
+  --orb-ring1-speed: 14s;
+  --orb-ring2-speed: 21s;
+  --orb-ring3-speed: 16s;
+  --orb-ring4-speed: 12s;
+}
 .ai-orb-listening .ai-orb-core {
-  background: radial-gradient(circle at 32% 28%, #cdf5ff 0%, var(--cyan, #69e7ff) 46%, #2ea6c2 74%, #14607a 100%);
-  transform: scale(calc(1 + var(--mic, 0) * 0.30));
-  box-shadow: 0 0 calc(28px + var(--mic, 0) * 46px) 6px rgba(105, 231, 255, .5), inset 0 0 24px rgba(255, 255, 255, .22);
-  transition: transform .08s ease-out, box-shadow .08s ease-out;
+  border-color: rgba(var(--orb-line), .58);
+  background:
+    radial-gradient(circle at 32% 24%, #e9fbff 0 8%, transparent 22%),
+    radial-gradient(circle at 50% 52%, #7cecff 0 12%, #3dd6ff 34%, #087da0 72%, #052338 100%);
+  transform: scale(calc(1 + var(--mic, 0) * .24));
+  box-shadow:
+    0 0 calc(14px + var(--mic, 0) * 34px) 4px rgba(var(--orb-line), .5),
+    0 0 calc(4px + var(--mic, 0) * 18px) rgba(255, 255, 255, .2),
+    inset 0 0 18px rgba(255, 255, 255, .2),
+    inset 0 -10px 20px rgba(0, 48, 74, .46);
+}
+.ai-orb-listening .ai-orb-core::before { opacity: calc(.34 + var(--mic, 0) * .36); }
+.ai-orb-listening .ai-orb-core::after {
+  opacity: calc(.16 + var(--mic, 0) * .42);
+  transform: scale(calc(.88 + var(--mic, 0) * .24));
 }
 .ai-orb-listening .ai-orb-ring {
-  opacity: 1; border-color: rgba(105, 231, 255, .45);
-  animation: ai-orb-wave 1.8s ease-out infinite;
+  opacity: .82;
+  filter: drop-shadow(0 0 8px rgba(var(--orb-line), .62));
 }
 
-/* Думаю — переливание (hue) + дыхание + вращающееся кольцо. */
+/* Thinking: same cold palette, faster counter-rotating rings. */
+.ai-orb-thinking {
+  --orb-halo: .82;
+  --orb-ring1-speed: 5.6s;
+  --orb-ring2-speed: 7.4s;
+  --orb-ring3-speed: 4.8s;
+  --orb-ring4-speed: 6.2s;
+}
+.ai-orb-thinking::before { animation: ai-orb-halo-scan 2.2s ease-in-out infinite; }
 .ai-orb-thinking .ai-orb-core {
-  animation: ai-orb-hue 2s linear infinite, ai-orb-breathe 2.2s ease-in-out infinite;
+  border-color: rgba(var(--orb-line), .64);
+  background:
+    radial-gradient(circle at 32% 24%, #e9fbff 0 8%, transparent 22%),
+    radial-gradient(circle at 50% 52%, #8ff2ff 0 10%, #31c8f1 34%, #0b668c 72%, #061d31 100%);
+  box-shadow:
+    0 0 24px 5px rgba(var(--orb-line), .48),
+    0 0 42px rgba(var(--orb-line), .2),
+    inset 0 0 18px rgba(255, 255, 255, .18),
+    inset 0 -10px 20px rgba(0, 48, 74, .44);
+  animation: ai-orb-core-scan 1.7s ease-in-out infinite;
 }
 .ai-orb-thinking .ai-orb-ring {
-  opacity: 1; border-top-color: var(--cyan, #69e7ff); border-right-color: var(--amber, #c8a93b);
-  animation: ai-orb-spin 1s linear infinite;
+  opacity: .88;
+  filter: drop-shadow(0 0 8px rgba(var(--orb-line), .7));
 }
 
-/* Говорю — концентрические волны от орба + лёгкий transform от уровня TTS-аудио. */
+/* Speaking: cyan HUD stays cold, core goes red and follows TTS level. */
+.ai-orb-speaking {
+  --orb-hot: var(--orb-red);
+  --orb-halo: .9;
+  --orb-ring1-speed: 6.2s;
+  --orb-ring2-speed: 8s;
+  --orb-ring3-speed: 5.2s;
+  --orb-ring4-speed: 4.8s;
+}
 .ai-orb-speaking .ai-orb-core {
-  transform: scale(calc(1 + var(--tts, 0) * .18));
-  transition: transform .08s ease-out, box-shadow .08s ease-out;
+  border-color: rgba(var(--orb-red), .66);
+  background:
+    radial-gradient(circle at 32% 24%, #fff1f3 0 8%, transparent 23%),
+    radial-gradient(circle at 50% 52%, #ff8b9a 0 11%, #ff3d58 34%, #8f1022 72%, #2a0610 100%);
+  transform: scale(calc(1 + var(--tts, 0) * .22));
   box-shadow:
-    0 0 calc(28px + var(--tts, 0) * 42px) 6px rgba(200, 169, 59, .5),
-    inset 0 0 24px rgba(255, 255, 255, .2);
+    0 0 calc(18px + var(--tts, 0) * 40px) 5px rgba(var(--orb-red), .58),
+    0 0 calc(8px + var(--tts, 0) * 24px) rgba(var(--orb-line), .36),
+    inset 0 0 18px rgba(255, 255, 255, .2),
+    inset 0 -10px 22px rgba(58, 0, 14, .5);
 }
-.ai-orb-speaking .ai-orb-ring,
-.ai-orb-speaking .ai-orb-ring2 {
-  opacity: 1; border-color: rgba(200, 169, 59, .5);
-  animation: ai-orb-wave 1.5s ease-out infinite;
+.ai-orb-speaking .ai-orb-core::before {
+  opacity: .72;
+  background:
+    radial-gradient(circle, rgba(var(--orb-red), .6) 0 20%, transparent 54%),
+    linear-gradient(120deg, transparent 0 42%, rgba(255, 255, 255, .2) 49%, transparent 58%);
 }
-.ai-orb-speaking .ai-orb-ring2 { animation-delay: .75s; }
+.ai-orb-speaking .ai-orb-core::after {
+  background: radial-gradient(circle, rgba(var(--orb-red), .58) 0 20%, rgba(var(--orb-line), .18) 42%, transparent 70%);
+  opacity: calc(.4 + var(--tts, 0) * .4);
+  animation: ai-orb-core-speech .72s ease-in-out infinite;
+}
+.ai-orb-speaking .ai-orb-ring {
+  opacity: .9;
+  filter:
+    drop-shadow(0 0 8px rgba(var(--orb-line), .62))
+    drop-shadow(0 0 10px rgba(var(--orb-red), .28));
+}
 
 .ai-orb-denied .ai-orb-core {
-  background: radial-gradient(circle at 32% 28%, #f0b4ab 0%, var(--danger, #c0392b) 60%, #7a2119 100%);
-  box-shadow: 0 0 22px 2px rgba(192, 57, 43, .4), inset 0 0 22px rgba(255, 255, 255, .1);
-  animation: none;
+  border-color: rgba(255, 92, 109, .5);
+  background:
+    radial-gradient(circle at 32% 24%, #ffd9de 0 8%, transparent 23%),
+    radial-gradient(circle at 50% 52%, #ef6674 0 24%, #9f1d2f 66%, #2a0610 100%);
+  box-shadow:
+    0 0 18px 3px rgba(239, 102, 116, .42),
+    inset 0 0 18px rgba(255, 255, 255, .12);
+  animation: none; transform: none;
+}
+.ai-orb-denied .ai-orb-core::after {
+  opacity: .2; animation: none;
 }
 
-@keyframes ai-orb-breathe {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 28px 4px rgba(200, 169, 59, .36), inset 0 0 24px rgba(255, 255, 255, .16); }
-  50% { transform: scale(1.06); box-shadow: 0 0 46px 10px rgba(200, 169, 59, .52), inset 0 0 26px rgba(255, 255, 255, .24); }
+@keyframes ai-orb-idle-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.026); }
 }
-@keyframes ai-orb-spin { to { transform: rotate(360deg); } }
-@keyframes ai-orb-hue { to { filter: hue-rotate(360deg); } }
-@keyframes ai-orb-wave {
-  0% { transform: scale(.72); opacity: .6; }
-  100% { transform: scale(1.45); opacity: 0; }
+@keyframes ai-orb-rotate-cw { to { transform: rotate(360deg); } }
+@keyframes ai-orb-rotate-ccw { to { transform: rotate(-360deg); } }
+@keyframes ai-orb-halo-scan {
+  0%, 100% { opacity: var(--orb-halo); transform: scale(.96); }
+  50% { opacity: .98; transform: scale(1.03); }
+}
+@keyframes ai-orb-core-scan {
+  0%, 100% { filter: brightness(1) saturate(1.05); }
+  50% { filter: brightness(1.18) saturate(1.34); }
+}
+@keyframes ai-orb-core-speech {
+  0%, 100% { transform: scale(.84); opacity: .36; }
+  50% { transform: scale(1.18); opacity: .78; }
 }
 
 .ai-orb-title { margin: 4px 0 0; font-size: 17px; color: var(--text); text-transform: none; letter-spacing: 0; }
@@ -8249,8 +8440,25 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-send-btn { width: auto; flex: 0 0 auto; padding: 14px 22px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .ai-orb-core, .ai-orb-ring, .ai-caret { animation: none !important; }
-  .ai-orb-listening .ai-orb-core { transition: none; }
+  .ai-orb, .ai-orb::before, .ai-orb-core, .ai-orb-core::after, .ai-orb-ring, .ai-caret { animation: none !important; }
+  .ai-orb, .ai-orb::before, .ai-orb-core, .ai-orb-core::before, .ai-orb-core::after, .ai-orb-ring { transition: none !important; }
+  .ai-orb-listening .ai-orb-core, .ai-orb-speaking .ai-orb-core { transform: none; }
+  .ai-orb-listening .ai-orb-core {
+    box-shadow:
+      0 0 22px 4px rgba(var(--orb-line), .46),
+      inset 0 0 18px rgba(255, 255, 255, .18),
+      inset 0 -10px 20px rgba(0, 48, 74, .46);
+  }
+  .ai-orb-speaking .ai-orb-core {
+    box-shadow:
+      0 0 24px 4px rgba(var(--orb-red), .5),
+      0 0 12px rgba(var(--orb-line), .28),
+      inset 0 0 18px rgba(255, 255, 255, .18),
+      inset 0 -10px 22px rgba(58, 0, 14, .5);
+  }
+  .ai-orb-listening .ai-orb-core::before { opacity: .48; }
+  .ai-orb-listening .ai-orb-core::after { opacity: .24; transform: scale(.92); }
+  .ai-orb-speaking .ai-orb-core::after { opacity: .45; transform: scale(.95); }
 }
 
 /* Collapsed fixed orb: default assistant affordance, independent from sidebar/nav. */
@@ -8264,12 +8472,18 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   cursor: pointer; backdrop-filter: blur(12px);
   transition: transform .12s ease, border-color .12s ease, background .12s ease;
 }
-.ai-orb-launcher:hover { transform: translateY(-1px); border-color: rgba(200,169,59,.58); background: rgba(21,29,45,.96); }
+.ai-orb-launcher:hover { transform: translateY(-1px); border-color: rgba(61, 214, 255, .52); background: rgba(11, 24, 38, .96); }
 .ai-orb-launcher:active { transform: scale(.97); }
 .ai-orb-launcher .ai-orb { pointer-events: none; }
-.ai-orb.ai-orb-xs { width: 46px; height: 46px; margin: 0; flex: 0 0 auto; }
-.ai-orb-xs .ai-orb-core { width: 34px; height: 34px; }
-.ai-orb-xs .ai-orb-ring { width: 42px; height: 42px; }
+.ai-orb.ai-orb-xs {
+  --orb-size: 46px;
+  --orb-core-size: 20px;
+  --orb-ring1-size: 44px;
+  --orb-ring2-size: 38px;
+  --orb-ring3-size: 31px;
+  --orb-ring4-size: 24px;
+  margin: 0; flex: 0 0 auto;
+}
 .ai-launcher-status {
   max-width: min(220px, calc(100vw - 96px));
   padding-right: 6px;
@@ -8336,9 +8550,15 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-overlay-nokey { text-align: left; }
 
 /* Компактный орб — переиспользует состояния/анимации орба AI-UX-1, только меньше. */
-.ai-orb.ai-orb-sm { width: 60px; height: 60px; margin: 0; flex: 0 0 auto; }
-.ai-orb-sm .ai-orb-core { width: 44px; height: 44px; }
-.ai-orb-sm .ai-orb-ring { width: 54px; height: 54px; }
+.ai-orb.ai-orb-sm {
+  --orb-size: 72px;
+  --orb-core-size: 32px;
+  --orb-ring1-size: 70px;
+  --orb-ring2-size: 60px;
+  --orb-ring3-size: 49px;
+  --orb-ring4-size: 38px;
+  margin: 0; flex: 0 0 auto;
+}
 
 /* PROPOSAL по голосу: компактная карточка-предложение в углу оверлея (полный список — в drawer). */
 .ai-overlay-proposals {
