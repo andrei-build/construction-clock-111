@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { CatalogItem } from '../src/lib/api'
 import {
+  BUILTIN_SHOWER_PAN_CATALOG_ITEMS,
+  BUILTIN_SHOWER_PAN_NEO_CATALOG_ID,
+  BUILTIN_SHOWER_PAN_RECT_CATALOG_ID,
   catalogDimsFromItem,
   catalogTileFinishPatch,
+  createShowerPanPlacedCatalogItem,
+  isShowerPanPlacedCatalogItem,
   resolvePlacedCatalogItem,
+  sanitizePlacedCatalogItems,
+  showerPanShapeFromPlacedItem,
   snapshotCatalogItem,
   type SketchPlacedCatalogItem,
 } from '../src/screens/project-hub/sketchCatalog'
@@ -64,6 +71,59 @@ const roomModel = {
 }
 
 describe('catalog-driven sketch data', () => {
+  it('creates built-in shower pan placed items from catalog cards with real dimensions', () => {
+    const rect = BUILTIN_SHOWER_PAN_CATALOG_ITEMS.find((item) => item.id === BUILTIN_SHOWER_PAN_RECT_CATALOG_ID)
+    const neo = BUILTIN_SHOWER_PAN_CATALOG_ITEMS.find((item) => item.id === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID)
+    expect(rect).toBeDefined()
+    expect(neo).toBeDefined()
+
+    const placedRect = createShowerPanPlacedCatalogItem(rect!, 'placed-pan-rect', roomModel, 0.5)
+    const placedNeo = createShowerPanPlacedCatalogItem(neo!, 'placed-pan-neo', roomModel, 0.5)
+
+    expect(placedRect).toMatchObject({
+      id: 'placed-pan-rect',
+      catalogItemId: BUILTIN_SHOWER_PAN_RECT_CATALOG_ID,
+      kind: 'SHOWER_PAN',
+      category: 'shower',
+      showerPanShape: 'rect',
+      surface: 'floor',
+      widthIn: 60,
+      depthIn: 32,
+      heightIn: 4,
+      c: 0,
+      s: 0,
+    })
+    expect(placedRect?.xFt).toBeCloseTo(2.5)
+    expect(placedRect?.zFt).toBeCloseTo(32 / 24 + 0.25)
+    expect(placedNeo).toMatchObject({
+      catalogItemId: BUILTIN_SHOWER_PAN_NEO_CATALOG_ID,
+      kind: 'SHOWER_PAN',
+      showerPanShape: 'neo-angle',
+      widthIn: 36,
+      depthIn: 36,
+      heightIn: 4,
+    })
+  })
+
+  it('keeps old shower pan placed items without panFinish backward compatible', () => {
+    const [placed] = sanitizePlacedCatalogItems([{
+      id: 'old-pan',
+      catalogItemId: BUILTIN_SHOWER_PAN_RECT_CATALOG_ID,
+      xFt: 2,
+      yFt: 2 / 12,
+      zFt: 1,
+      rotationY: 0,
+      surface: 'floor',
+      widthIn: 60,
+      depthIn: 32,
+      heightIn: 4,
+    }])
+
+    expect(isShowerPanPlacedCatalogItem(placed)).toBe(true)
+    expect(showerPanShapeFromPlacedItem(placed)).toBe('rect')
+    expect(placed.panFinish).toBeUndefined()
+  })
+
   it('uses catalog tile width and height as tile layout inputs', () => {
     const tile = catalogItem({
       id: 'tile-3x12',

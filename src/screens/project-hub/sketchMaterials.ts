@@ -15,7 +15,9 @@ import {
 } from './sketchFinishes'
 import {
   isOutletPlacedCatalogItem,
+  isShowerPanPlacedCatalogItem,
   isSwitchPlacedCatalogItem,
+  showerPanTileSurfaceStats,
   type SketchPlacedCatalogItem,
 } from './sketchCatalog'
 import {
@@ -67,6 +69,7 @@ export type SketchTileArea = {
   jointIn: number
   tileThicknessIn: number
   pattern: TileCalcPattern
+  catalogItemId?: string
 }
 
 export type SketchMaterialFacts = {
@@ -286,6 +289,26 @@ function surfaceTileArea(
     jointIn: Math.max(0, finite(tile.groutIn) ?? 0.125),
     tileThicknessIn: DEFAULT_TILE_THICKNESS_IN,
     pattern: 'straight',
+    catalogItemId: tile.catalogItemId,
+  }
+}
+
+function showerPanTileArea(item: SketchPlacedCatalogItem, index: number): SketchTileArea | null {
+  if (!isShowerPanPlacedCatalogItem(item) || item.panFinish?.kind !== 'tile') return null
+  const stats = showerPanTileSurfaceStats(item)
+  if (!stats || stats.areaSqft <= AREA_EPS) return null
+  const tile = normalizeTileSurface(item.panFinish)
+  return {
+    key: `shower-pan:${item.id}`,
+    label: item.name?.trim() || `Shower pan ${index + 1}`,
+    areaSqft: stats.areaSqft,
+    perimeterLnft: stats.perimeterLnft,
+    tileWIn: positive(tile.tileWIn) ?? 12,
+    tileHIn: positive(tile.tileHIn) ?? 24,
+    jointIn: Math.max(0, finite(tile.groutIn) ?? 0.125),
+    tileThicknessIn: DEFAULT_TILE_THICKNESS_IN,
+    pattern: 'straight',
+    catalogItemId: tile.catalogItemId,
   }
 }
 
@@ -338,6 +361,11 @@ function collectTileAreas(model: SketchMaterialModel): SketchTileArea[] {
     : null
   if (ceilingTile) tileAreas.push(ceilingTile)
 
+  ;(model.placedItems ?? []).forEach((item, index) => {
+    const area = showerPanTileArea(item, index)
+    if (area) tileAreas.push(area)
+  })
+
   return tileAreas
 }
 
@@ -365,8 +393,11 @@ export function collectSketchMaterialFacts(model: SketchMaterialModel): SketchMa
   const openingArea = (model.openings ?? []).reduce((sum, opening) => sum + openingAreaSqft(model, opening), 0)
   const tileAreas = collectTileAreas(model)
   const tileAreaSqft = tileAreas.reduce((sum, area) => sum + area.areaSqft, 0)
+  const wallTileAreaSqft = tileAreas
+    .filter((area) => area.key.startsWith('wall:'))
+    .reduce((sum, area) => sum + area.areaSqft, 0)
   const patchAreaSqft = collectPatchMaterialArea(model)
-  const paintAreaSqft = Math.max(0, wallAreaSqft - tileAreaSqft - openingArea)
+  const paintAreaSqft = Math.max(0, wallAreaSqft - wallTileAreaSqft - openingArea)
   return {
     wallAreaSqft,
     openingAreaSqft: openingArea,
@@ -559,7 +590,7 @@ export async function calculateSketchMaterials(
       pattern: area.pattern,
       boxSqft: null,
       pricePerBox: null,
-      catalogItemId: null,
+      catalogItemId: area.catalogItemId ?? null,
       perimeterLnft: area.perimeterLnft,
       includeSubstrate: false,
       includeWaterproofing: false,

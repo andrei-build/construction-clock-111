@@ -10,8 +10,10 @@ import {
   collectSketchMaterialFacts,
 } from '../src/screens/project-hub/sketchMaterials'
 import {
+  BUILTIN_SHOWER_PAN_RECT_CATALOG_ID,
   BUILTIN_OUTLET_CATALOG_ID,
   BUILTIN_SWITCH_CATALOG_ID,
+  SKETCH_CATALOG_KIND_SHOWER_PAN,
   SKETCH_CATALOG_KIND_OUTLET,
   SKETCH_CATALOG_KIND_SWITCH,
   type SketchPlacedCatalogItem,
@@ -121,6 +123,49 @@ describe('sketch material area aggregation', () => {
 
     expect(facts.tileAreaSqft).toBe(30)
     expect(facts.paintAreaSqft).toBe(290)
+  })
+
+  it('adds tiled shower pan floor and curb area to sketch tile materials', () => {
+    const facts = collectSketchMaterialFacts({
+      ...rectangleModel,
+      placedItems: [{
+        id: 'pan-1',
+        catalogItemId: BUILTIN_SHOWER_PAN_RECT_CATALOG_ID,
+        kind: SKETCH_CATALOG_KIND_SHOWER_PAN,
+        category: 'shower',
+        name: 'Shower pan 60 x 32',
+        model: SKETCH_CATALOG_KIND_SHOWER_PAN,
+        xFt: 2.5,
+        yFt: 2 / 12,
+        zFt: 1.5,
+        rotationY: 0,
+        surface: 'floor',
+        showerPanShape: 'rect',
+        widthIn: 60,
+        depthIn: 32,
+        heightIn: 4,
+        panFinish: {
+          kind: 'tile',
+          tileWIn: 2,
+          tileHIn: 2,
+          groutIn: 0.125,
+          catalogItemId: 'tile-mosaic',
+          catalogItemName: 'Mosaic tile',
+        },
+      }] satisfies SketchPlacedCatalogItem[],
+    })
+
+    expect(facts.tileAreas).toHaveLength(1)
+    expect(facts.tileAreas[0]).toMatchObject({
+      key: 'shower-pan:pan-1',
+      label: 'Shower pan 60 x 32',
+      tileWIn: 2,
+      tileHIn: 2,
+      catalogItemId: 'tile-mosaic',
+    })
+    expect(facts.tileAreas[0].areaSqft).toBeCloseTo(18.444, 3)
+    expect(facts.tileAreaSqft).toBeCloseTo(18.444, 3)
+    expect(facts.paintAreaSqft).toBe(320)
   })
 
   it('sums drywall patch areas from wall finish overrides and clips them to the wall bounds', () => {

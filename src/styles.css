@@ -6484,6 +6484,84 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-3d-item-actions .btn {
   width: auto;
 }
+.hub-sketch-pan-finish-controls {
+  display: grid;
+  gap: 7px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(126,160,190,.28);
+}
+.hub-sketch-pan-finish-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 8px;
+  align-items: baseline;
+}
+.hub-sketch-pan-finish-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 850;
+}
+.hub-sketch-pan-tile-list {
+  display: grid;
+  gap: 6px;
+  max-height: 142px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.hub-sketch-pan-tile-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.hub-sketch-pan-tile-item:hover:not(:disabled),
+.hub-sketch-pan-tile-item-active {
+  border-color: rgba(37, 99, 235, .72);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .12);
+}
+.hub-sketch-pan-tile-item:disabled {
+  cursor: not-allowed;
+  opacity: .62;
+}
+.hub-sketch-pan-tile-thumb {
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--panel2);
+}
+.hub-sketch-pan-tile-thumb img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+.hub-sketch-pan-tile-body {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.hub-sketch-pan-tile-name,
+.hub-sketch-pan-tile-body .muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hub-sketch-pan-tile-name {
+  font-size: 12px;
+  font-weight: 850;
+}
 @media (max-width: 860px) {
   .hub-sketch-3d-layout { grid-template-columns: 1fr; }
   .hub-sketch-3d-panel { max-height: none; }

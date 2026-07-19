@@ -61,6 +61,7 @@ import {
   catalogItemResolvedDimensionsIn,
   catalogTileFinishPatch,
   catalogTileSizeFromItem,
+  createShowerPanPlacedCatalogItem,
   isBuiltinToiletCatalogItem,
   isBuiltinShowerPanCatalogItem,
   isElectricalPlacedCatalogItem,
@@ -79,14 +80,14 @@ import {
   resolvePlacedCatalogItem,
   rotatePlacedCatalogItem,
   sanitizePlacedCatalogItems,
+  showerPanFootprintPoints,
   showerPanShapeFromCatalogItem,
   showerPanShapeFromPlacedItem,
-  SKETCH_CATALOG_KIND_SHOWER_PAN,
   SKETCH_CATALOG_KIND_TOILET,
+  withShowerPanPlacedCatalogMetadata,
   type CatalogResolvedPlacedItem,
   type CatalogWallHit,
   type SketchPlacedCatalogItem,
-  type SketchShowerPanShape,
 } from './sketchCatalog'
 import {
   CABINET_COUNTERTOP_HEIGHT_IN,
@@ -1146,10 +1147,14 @@ export function buildPhotoRenderFacts(
       label: wall.label,
       tile: wall.finish,
     }))
+  const panTileSurfaces = resolvedItems
+    .map((resolved) => resolved.placed.panFinish)
+    .filter((surface): surface is SketchTileFinish => surface?.kind === 'tile')
   const tilePhotoUsed = [
     finishes.floor,
     finishes.walls,
     ...Object.values(finishes.wallFinishes),
+    ...panTileSurfaces,
   ].some((surface) => surface.kind === 'tile' && Boolean(normalizeTileSurface(surface).catalogPhotoPath))
 
   return {
@@ -1196,6 +1201,7 @@ export function buildPhotoRenderFacts(
         depth: inchesFact(resolved.depthIn),
         height: inchesFact(resolved.heightIn),
       },
+      pan_finish: resolved.placed.panFinish ? surfaceFinishFact(resolved.placed.panFinish, DEFAULT_FLOOR_PAINT, resolved.dims.heightFt) : null,
       position_ft: {
         x: roundFact(resolved.placed.xFt, 4),
         y: roundFact(resolved.placed.yFt, 4),
@@ -1460,6 +1466,14 @@ function createFloorMaterial(THREE: any, surface: SketchSurfaceFinish, textureLo
   }
   const texture = createTileTexture(THREE, surface, textureLoader, maxAnisotropy, onTextureReady)
   return new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.82, side: THREE.DoubleSide })
+}
+
+function createPanTileMaterial(THREE: any, surface: SketchTileFinish, widthFt: number, depthFt: number, textureLoader?: any, maxAnisotropy = 4, onTextureReady?: () => void) {
+  const texture = createTileTexture(THREE, surface, textureLoader, maxAnisotropy, onTextureReady)
+  const { x, y, tile } = tilePitch(surface)
+  texture.repeat.set(Math.max(1, (widthFt * 12) / x), Math.max(1, (depthFt * 12) / y))
+  texture.offset.set((tile.offsetXIn ?? 0) / x, (tile.offsetYIn ?? 0) / y)
+  return new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.76, metalness: 0.01 })
 }
 
 function applyFloorTileUv(geometry: any, surface: SketchSurfaceFinish) {
@@ -1771,29 +1785,19 @@ function addCabinetFixture(THREE: any, group: any, resolved: CatalogResolvedPlac
   }
 }
 
-function showerPanFootprint(shape: SketchShowerPanShape, width: number, depth: number) {
-  if (shape !== 'neo-angle') {
-    return [
-      { x: -width / 2, z: -depth / 2 },
-      { x: width / 2, z: -depth / 2 },
-      { x: width / 2, z: depth / 2 },
-      { x: -width / 2, z: depth / 2 },
-    ]
-  }
-  const cut = Math.min(width, depth) * 0.38
-  return [
-    { x: -width / 2, z: -depth / 2 },
-    { x: width / 2, z: -depth / 2 },
-    { x: width / 2, z: depth / 2 - cut },
-    { x: width / 2 - cut, z: depth / 2 },
-    { x: -width / 2, z: depth / 2 },
-  ]
-}
-
 function createFootprintPrism(THREE: any, points: Array<{ x: number; z: number }>, height: number, material: any) {
   const positions: number[] = []
   points.forEach((point) => positions.push(point.x, -height / 2, point.z))
   points.forEach((point) => positions.push(point.x, height / 2, point.z))
+  const minX = Math.min(...points.map((point) => point.x))
+  const maxX = Math.max(...points.map((point) => point.x))
+  const minZ = Math.min(...points.map((point) => point.z))
+  const maxZ = Math.max(...points.map((point) => point.z))
+  const width = Math.max(0.001, maxX - minX)
+  const depth = Math.max(0.001, maxZ - minZ)
+  const uvs: number[] = []
+  points.forEach((point) => uvs.push((point.x - minX) / width, (point.z - minZ) / depth))
+  points.forEach((point) => uvs.push((point.x - minX) / width, (point.z - minZ) / depth))
   const shapePoints = points.map((point) => new THREE.Vector2(point.x, point.z))
   const triangles = THREE.ShapeUtils.triangulateShape(shapePoints, [])
   const indices: number[] = []
@@ -1808,19 +1812,23 @@ function createFootprintPrism(THREE: any, points: Array<{ x: number; z: number }
   })
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
   return new THREE.Mesh(geometry, material)
 }
 
-function addShowerPan(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, material: any, edgeColor: number) {
+function addShowerPan(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, material: any, edgeColor: number, tileMaterial?: any) {
   const width = Math.max(0.04, resolved.dims.widthFt)
   const height = Math.max(0.08, resolved.dims.heightFt)
   const depth = Math.max(0.04, resolved.dims.depthFt)
   const shape = showerPanShapeFromPlacedItem(resolved.placed)
+  const finishMaterial = tileMaterial ?? null
+  const shellMaterial = finishMaterial ?? material
+  const basinMaterial = finishMaterial ?? new THREE.MeshStandardMaterial({ color: 0xf3f6f7, roughness: 0.38, metalness: 0.02 })
   if (shape === 'neo-angle') {
     const baseHeight = Math.max(0.05, height * 0.62)
-    const base = createFootprintPrism(THREE, showerPanFootprint(shape, width, depth), baseHeight, material)
+    const base = createFootprintPrism(THREE, showerPanFootprintPoints(shape, width, depth), baseHeight, shellMaterial)
     base.position.y = -height / 2 + baseHeight / 2
     addMeshWithEdges(THREE, group, base, edgeColor, 0.58)
 
@@ -1828,9 +1836,9 @@ function addShowerPan(THREE: any, group: any, resolved: CatalogResolvedPlacedIte
     const floorDepth = Math.max(0.08, depth * 0.78)
     const panFloor = createFootprintPrism(
       THREE,
-      showerPanFootprint(shape, floorWidth, floorDepth),
+      showerPanFootprintPoints(shape, floorWidth, floorDepth),
       0.028,
-      new THREE.MeshStandardMaterial({ color: 0xe9eef0, roughness: 0.42 }),
+      finishMaterial ?? new THREE.MeshStandardMaterial({ color: 0xe9eef0, roughness: 0.42 }),
     )
     panFloor.position.y = -height / 2 + baseHeight + 0.018
     addMeshWithEdges(THREE, group, panFloor, edgeColor, 0.32)
@@ -1839,11 +1847,10 @@ function addShowerPan(THREE: any, group: any, resolved: CatalogResolvedPlacedIte
   const rim = Math.max(0.08, Math.min(0.28, Math.min(width, depth) * 0.07))
   const baseHeight = Math.max(0.04, Math.min(height * 0.5, height - 0.035))
   const rimHeight = Math.max(0.04, height - baseHeight)
-  const base = new THREE.Mesh(new THREE.BoxGeometry(width, baseHeight, depth), material)
+  const base = new THREE.Mesh(new THREE.BoxGeometry(width, baseHeight, depth), shellMaterial)
   base.position.y = -height / 2 + baseHeight / 2
   addMeshWithEdges(THREE, group, base, edgeColor, 0.58)
 
-  const basinMaterial = new THREE.MeshStandardMaterial({ color: 0xf3f6f7, roughness: 0.38, metalness: 0.02 })
   const rimY = height / 2 - rimHeight / 2
   const back = new THREE.Mesh(new THREE.BoxGeometry(width, rimHeight, rim), basinMaterial)
   const front = new THREE.Mesh(new THREE.BoxGeometry(width, rimHeight, rim), basinMaterial)
@@ -1857,7 +1864,7 @@ function addShowerPan(THREE: any, group: any, resolved: CatalogResolvedPlacedIte
 
   const panFloor = new THREE.Mesh(
     new THREE.BoxGeometry(Math.max(0.02, width - rim * 2), 0.025, Math.max(0.02, depth - rim * 2)),
-    new THREE.MeshStandardMaterial({ color: 0xe9eef0, roughness: 0.42 }),
+    finishMaterial ?? new THREE.MeshStandardMaterial({ color: 0xe9eef0, roughness: 0.42 }),
   )
   panFloor.position.y = -height / 2 + baseHeight + 0.014
   addMeshWithEdges(THREE, group, panFloor, edgeColor, 0.32)
@@ -2428,6 +2435,8 @@ export default function Sketch3DView({
     ? codeClearanceViolations.filter((check) => check.subject.id === selectedPlaced.placed.id || check.target.id === selectedPlaced.placed.id)
     : []
   const selectedPlacedSpecs = selectedPlaced ? catalogSpecsEntries(selectedPlaced.specs) : []
+  const selectedShowerPan = selectedPlaced && isShowerPanPlacedCatalogItem(selectedPlaced.placed) ? selectedPlaced : null
+  const selectedShowerPanFinish = selectedShowerPan?.placed.panFinish ? normalizeTileSurface(selectedShowerPan.placed.panFinish) : null
 
   useEffect(() => {
     placementRef.current = placement
@@ -2605,6 +2614,23 @@ export default function Sketch3DView({
     if (!patch) return
     updateTile(patch)
     setTileSourceMode('catalog')
+  }
+
+  const updateSelectedShowerPanFinish = (finish?: SketchTileFinish) => {
+    if (!selectedShowerPan) return
+    applyPlacedItems(placedItems.map((item) => {
+      if (item.id !== selectedShowerPan.placed.id) return item
+      const next = { ...item }
+      if (finish) next.panFinish = normalizeTileSurface(finish)
+      else delete next.panFinish
+      return next
+    }))
+  }
+
+  const selectShowerPanCatalogTile = (item: CatalogItem) => {
+    const patch = catalogTileFinishPatch(item)
+    if (!patch) return
+    updateSelectedShowerPanFinish(normalizeTileSurface({ ...patch, kind: 'tile' }))
   }
 
   const selectManualTileSource = () => {
@@ -2814,6 +2840,23 @@ export default function Sketch3DView({
 
   const selectCatalogPlacement = (item: CatalogItem) => {
     if (!catalogItemHasExactDims(item)) return
+    if (isBuiltinShowerPanCatalogItem(item)) {
+      const nextPlaced = createShowerPanPlacedCatalogItem(
+        item,
+        makeId('placed'),
+        model,
+        WALL_THICKNESS_FT,
+        showerPanShapeFromCatalogItem(item) === 'neo-angle' ? t('hub_sketch_shower_pan_neo') : t('hub_sketch_shower_pan_rect'),
+      )
+      if (!nextPlaced) return
+      setMeasure3DActive(false)
+      measure3DDraftRef.current = null
+      setCatalogPlacementId(null)
+      setPlacement(null)
+      onModelChange?.({ ...model, placedItems: [...placedItems, nextPlaced] })
+      setSelectedId(nextPlaced.id)
+      return
+    }
     setMeasure3DActive(false)
     measure3DDraftRef.current = null
     setCatalogPlacementId((current) => (current === item.id ? null : item.id))
@@ -3560,7 +3603,10 @@ export default function Sketch3DView({
           } else if (isCabinetPlacedItem(placed)) {
             addCabinetFixture(THREE, group, resolved, visualWarn, edgeColor)
           } else if (resolved.category === 'shower' && placed.surface === 'floor') {
-            addShowerPan(THREE, group, resolved, material, edgeColor)
+            const panTileMaterial = placed.panFinish
+              ? createPanTileMaterial(THREE, normalizeTileSurface(placed.panFinish), resolved.dims.widthFt, resolved.dims.depthFt, textureLoader, maxAnisotropy, invalidate)
+              : null
+            addShowerPan(THREE, group, resolved, material, edgeColor, panTileMaterial)
           } else {
             addCatalogBox(THREE, group, resolved, material, edgeColor)
           }
@@ -3807,15 +3853,11 @@ export default function Sketch3DView({
             }
           }
           if (isBuiltinShowerPanCatalogItem(item)) {
-            const shape = showerPanShapeFromCatalogItem(item)
-            nextPlaced = {
-              ...nextPlaced,
-              kind: SKETCH_CATALOG_KIND_SHOWER_PAN,
-              category: 'shower',
-              name: shape === 'neo-angle' ? t('hub_sketch_shower_pan_neo') : t('hub_sketch_shower_pan_rect'),
-              model: SKETCH_CATALOG_KIND_SHOWER_PAN,
-              showerPanShape: shape,
-            }
+            nextPlaced = withShowerPanPlacedCatalogMetadata(
+              nextPlaced,
+              item,
+              showerPanShapeFromCatalogItem(item) === 'neo-angle' ? t('hub_sketch_shower_pan_neo') : t('hub_sketch_shower_pan_rect'),
+            )
           }
           onModelChange?.({ ...model, placedItems: [...placedItems, nextPlaced] })
           setSelectedId(nextPlaced.id)
@@ -4861,6 +4903,59 @@ export default function Sketch3DView({
               </div>
               {selectedPlacedCodeViolations[0] && (
                 <div className="error-msg hub-sketch-code-popover-msg">{formatCodeClearanceMessage(selectedPlacedCodeViolations[0], t)}</div>
+              )}
+              {selectedShowerPan && canEdit && (
+                <div className="hub-sketch-pan-finish-controls">
+                  <div className="hub-sketch-pan-finish-head">
+                    <span className="muted">{t('hub_sketch_shower_pan_finish')}</span>
+                    <span className="hub-sketch-pan-finish-name">
+                      {selectedShowerPanFinish?.catalogItemName ?? (selectedShowerPanFinish ? t('hub_sketch_3d_tile') : t('hub_sketch_shower_pan_finish_none'))}
+                    </span>
+                  </div>
+                  {selectedShowerPanFinish && (
+                    <button type="button" className="btn ghost small" onClick={() => updateSelectedShowerPanFinish(undefined)}>
+                      {t('hub_sketch_shower_pan_finish_clear')}
+                    </button>
+                  )}
+                  {catalogLoading && <p className="muted">{t('loading')}</p>}
+                  {catalogError && <p className="error-msg">{t('load_error')}</p>}
+                  {!catalogLoading && !catalogError && catalogTileItems.length === 0 && (
+                    <div className="hub-sketch-catalog-empty">
+                      <p className="muted">{t('hub_sketch_tile_catalog_empty')}</p>
+                      <button type="button" className="btn small" onClick={() => navigate('/catalog')}>
+                        {t('hub_sketch_tile_catalog_open')}
+                      </button>
+                    </div>
+                  )}
+                  {!catalogLoading && !catalogError && catalogTileItems.length > 0 && (
+                    <div className="hub-sketch-pan-tile-list" aria-label={t('hub_sketch_shower_pan_finish_catalog')}>
+                      {catalogTileItems.map((item) => {
+                        const tileDims = catalogTileDimsText(item)
+                        const selected = selectedShowerPanFinish?.catalogItemId === item.id
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className={selected ? 'hub-sketch-pan-tile-item hub-sketch-pan-tile-item-active' : 'hub-sketch-pan-tile-item'}
+                            disabled={!tileDims}
+                            aria-pressed={selected}
+                            onClick={() => selectShowerPanCatalogTile(item)}
+                          >
+                            <span className="hub-sketch-pan-tile-thumb">
+                              {item.photo_path
+                                ? <img src={item.photo_path} alt={catalogDisplayName(item, t)} loading="lazy" />
+                                : <span className="hub-sketch-tile-card-empty" aria-hidden="true">▦</span>}
+                            </span>
+                            <span className="hub-sketch-pan-tile-body">
+                              <span className="hub-sketch-pan-tile-name">{catalogDisplayName(item, t)}</span>
+                              <span className={tileDims ? 'muted' : 'error-msg'}>{tileDims ?? t('hub_sketch_tile_catalog_missing_size')}</span>
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
               {canEdit && (
                 <div className="hub-sketch-3d-item-actions">
