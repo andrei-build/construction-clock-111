@@ -3,16 +3,26 @@ import { useI18n } from '../../lib/i18n'
 import VoiceMic from '../../components/VoiceMic'
 import {
   bulkInsertProjectMaterials,
+  getCatalogItems,
   getProjectMaterialTasks,
   getProjectMaterials,
   requestProjectMaterial,
   softDeleteProjectMaterial,
   subscribeToTaskChanges,
   updateProjectMaterial,
+  type CatalogItem,
   type ProjectMaterialInput,
 } from '../../lib/api'
 import { isManagerWrite } from '../../lib/types'
 import type { MaterialSpecStatus, ProjectMaterial, Profile, Project, Task } from '../../lib/types'
+import { formatInches, parseInches } from './inches'
+import {
+  TILE_CALC_PATTERNS,
+  appendTileCalcMaterials,
+  calculateTileMaterials,
+  type TileCalcPattern,
+  type TileCalcResult,
+} from './tileCalc'
 
 interface MaterialsTabProps {
   project: Project
@@ -108,6 +118,297 @@ const STATUS_BADGE: Record<MaterialSpecStatus, string> = {
   requested: 'badge amber',
   picked_up: 'badge blue',
   delivered: 'badge green',
+}
+
+type AreaMode = 'area' | 'dims'
+
+const DEFAULT_TILE_W_IN = 12
+const DEFAULT_TILE_H_IN = 24
+const DEFAULT_JOINT_IN = 0.125
+const DEFAULT_THICKNESS_IN = 0.3125
+const MIN_JOINT_IN = 1 / 16
+const MAX_JOINT_IN = 1 / 4
+
+function parseDecimalInput(value: string): number | null {
+  const n = Number(value.trim().replace(',', '.'))
+  return value.trim() && Number.isFinite(n) ? n : null
+}
+
+function optionalPositive(value: string): number | null {
+  const n = parseDecimalInput(value)
+  return n != null && n > 0 ? n : null
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function parseInchOrFallback(value: string, fallback: number, min = 0): number {
+  const parsed = parseInches(value)
+  return Number.isFinite(parsed) && parsed > min ? parsed : fallback
+}
+
+function fmtQty(value: number | null): string {
+  if (value == null) return '—'
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, '')
+}
+
+function TileCalculator({
+  project,
+  profile,
+  onAdded,
+}: {
+  project: Project
+  profile: Profile | null
+  onAdded: (rows: ProjectMaterial[]) => void
+}) {
+  const { t, lang } = useI18n()
+  const [areaMode, setAreaMode] = useState<AreaMode>('area')
+  const [areaSqft, setAreaSqft] = useState('120')
+  const [lengthFt, setLengthFt] = useState('')
+  const [widthFt, setWidthFt] = useState('')
+  const [tileW, setTileW] = useState(formatInches(DEFAULT_TILE_W_IN))
+  const [tileH, setTileH] = useState(formatInches(DEFAULT_TILE_H_IN))
+  const [joint, setJoint] = useState(formatInches(DEFAULT_JOINT_IN))
+  const [thickness, setThickness] = useState(formatInches(DEFAULT_THICKNESS_IN))
+  const [pattern, setPattern] = useState<TileCalcPattern>('straight')
+  const [boxSqft, setBoxSqft] = useState('15.5')
+  const [pricePerBox, setPricePerBox] = useState('45')
+  const [catalogItemId, setCatalogItemId] = useState('')
+  const [perimeterLnft, setPerimeterLnft] = useState('')
+  const [includeSubstrate, setIncludeSubstrate] = useState(false)
+  const [includeWaterproofing, setIncludeWaterproofing] = useState(false)
+  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([])
+  const [result, setResult] = useState<TileCalcResult | null>(null)
+  const [calcBusy, setCalcBusy] = useState(false)
+  const [appendBusy, setAppendBusy] = useState(false)
+  const [calcError, setCalcError] = useState<string | null>(null)
+  const [appendNotice, setAppendNotice] = useState<number | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    getCatalogItems()
+      .then((rows) => {
+        if (mounted) setCatalogItems(rows.filter((item) => item.is_active))
+      })
+      .catch(() => { if (mounted) setCatalogItems([]) })
+    return () => { mounted = false }
+  }, [])
+
+  const computedArea = useMemo(() => {
+    if (areaMode === 'area') return optionalPositive(areaSqft)
+    const length = optionalPositive(lengthFt)
+    const width = optionalPositive(widthFt)
+    return length != null && width != null ? length * width : null
+  }, [areaMode, areaSqft, lengthFt, widthFt])
+
+  const priceFmt = useMemo(
+    () => new Intl.NumberFormat(lang === 'ru' ? 'ru-RU' : lang === 'es' ? 'es-ES' : 'en-US', {
+      style: 'currency', currency: 'USD', maximumFractionDigits: 2,
+    }),
+    [lang],
+  )
+
+  const normalizeInchField = (
+    value: string,
+    setter: (value: string) => void,
+    fallback: number,
+    min = 0,
+    max: number | null = null,
+  ) => {
+    const parsed = parseInchOrFallback(value, fallback, min)
+    setter(formatInches(max != null ? clamp(parsed, min, max) : parsed))
+  }
+
+  const runCalc = async () => {
+    if (calcBusy) return
+    const area = computedArea
+    if (area == null || area <= 0) { setCalcError('tile_calc_area_required'); return }
+    const tileWIn = parseInchOrFallback(tileW, DEFAULT_TILE_W_IN)
+    const tileHIn = parseInchOrFallback(tileH, DEFAULT_TILE_H_IN)
+    const jointIn = clamp(parseInchOrFallback(joint, DEFAULT_JOINT_IN, 0), MIN_JOINT_IN, MAX_JOINT_IN)
+    const tileThicknessIn = parseInchOrFallback(thickness, DEFAULT_THICKNESS_IN)
+    const box = optionalPositive(boxSqft)
+    const price = catalogItemId ? null : optionalPositive(pricePerBox)
+    const perimeter = optionalPositive(perimeterLnft)
+    setCalcBusy(true)
+    setCalcError(null)
+    setAppendNotice(null)
+    try {
+      const data = await calculateTileMaterials({
+        areaSqft: area,
+        tileWIn,
+        tileHIn,
+        jointIn,
+        tileThicknessIn,
+        pattern,
+        boxSqft: box,
+        pricePerBox: price,
+        catalogItemId: catalogItemId || null,
+        perimeterLnft: perimeter,
+        includeSubstrate,
+        includeWaterproofing,
+      })
+      setTileW(formatInches(tileWIn))
+      setTileH(formatInches(tileHIn))
+      setJoint(formatInches(jointIn))
+      setThickness(formatInches(tileThicknessIn))
+      setResult(data)
+    } catch {
+      setCalcError('tile_calc_failed')
+    } finally {
+      setCalcBusy(false)
+    }
+  }
+
+  const appendResult = async () => {
+    if (!profile || !result || appendBusy) return
+    setAppendBusy(true)
+    setCalcError(null)
+    setAppendNotice(null)
+    try {
+      const created = await appendTileCalcMaterials(profile, project.id, result.items)
+      onAdded(created)
+      setAppendNotice(created.length)
+    } catch {
+      setCalcError('tile_calc_append_failed')
+    } finally {
+      setAppendBusy(false)
+    }
+  }
+
+  const patternLabel = (value: TileCalcPattern) => t(`tile_calc_pattern_${value}`)
+
+  return (
+    <details className="card tile-calc-card">
+      <summary className="tile-calc-summary">
+        <span>
+          <strong>{t('tile_calc_title')}</strong>
+          <span className="muted">{t('tile_calc_subtitle')}</span>
+        </span>
+        {result && <span className={result.norms_source === 'org' ? 'badge green' : 'badge amber'}>{result.norms_source === 'org' ? t('tile_calc_norms_org') : t('tile_calc_norms_industry')}</span>}
+      </summary>
+
+      <div className="tile-calc-body">
+        <div className="tile-calc-mode" role="group" aria-label={t('tile_calc_area')}>
+          <button type="button" className={areaMode === 'area' ? 'active' : ''} onClick={() => setAreaMode('area')}>{t('tile_calc_area_sqft')}</button>
+          <button type="button" className={areaMode === 'dims' ? 'active' : ''} onClick={() => setAreaMode('dims')}>{t('tile_calc_area_dims')}</button>
+        </div>
+
+        <div className="tile-calc-grid">
+          {areaMode === 'area' ? (
+            <label>
+              <span>{t('tile_calc_area_sqft')}</span>
+              <input inputMode="decimal" value={areaSqft} onChange={(e) => setAreaSqft(e.target.value)} />
+            </label>
+          ) : (
+            <>
+              <label>
+                <span>{t('tile_calc_length_ft')}</span>
+                <input inputMode="decimal" value={lengthFt} onChange={(e) => setLengthFt(e.target.value)} />
+              </label>
+              <label>
+                <span>{t('tile_calc_width_ft')}</span>
+                <input inputMode="decimal" value={widthFt} onChange={(e) => setWidthFt(e.target.value)} />
+              </label>
+            </>
+          )}
+          <label>
+            <span>{t('tile_calc_tile_w')}</span>
+            <input value={tileW} onBlur={() => normalizeInchField(tileW, setTileW, DEFAULT_TILE_W_IN)} onChange={(e) => setTileW(e.target.value)} />
+          </label>
+          <label>
+            <span>{t('tile_calc_tile_h')}</span>
+            <input value={tileH} onBlur={() => normalizeInchField(tileH, setTileH, DEFAULT_TILE_H_IN)} onChange={(e) => setTileH(e.target.value)} />
+          </label>
+          <label>
+            <span>{t('tile_calc_joint')}</span>
+            <input value={joint} onBlur={() => normalizeInchField(joint, setJoint, DEFAULT_JOINT_IN, MIN_JOINT_IN, MAX_JOINT_IN)} onChange={(e) => setJoint(e.target.value)} />
+          </label>
+          <label>
+            <span>{t('tile_calc_thickness')}</span>
+            <input value={thickness} onBlur={() => normalizeInchField(thickness, setThickness, DEFAULT_THICKNESS_IN)} onChange={(e) => setThickness(e.target.value)} />
+          </label>
+          <label>
+            <span>{t('tile_calc_pattern')}</span>
+            <select value={pattern} onChange={(e) => setPattern(e.target.value as TileCalcPattern)}>
+              {TILE_CALC_PATTERNS.map((p) => <option key={p} value={p}>{patternLabel(p)}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>{t('tile_calc_box_sqft')}</span>
+            <input inputMode="decimal" value={boxSqft} onChange={(e) => setBoxSqft(e.target.value)} />
+          </label>
+          <label>
+            <span>{t('tile_calc_catalog_item')}</span>
+            <select value={catalogItemId} onChange={(e) => setCatalogItemId(e.target.value)}>
+              <option value="">{t('tile_calc_catalog_none')}</option>
+              {catalogItems.map((item) => (
+                <option key={item.id} value={item.id}>{[item.name, item.brand, item.model].filter(Boolean).join(' · ')}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>{t('tile_calc_price_box')}</span>
+            <input inputMode="decimal" value={pricePerBox} disabled={!!catalogItemId} onChange={(e) => setPricePerBox(e.target.value)} />
+          </label>
+          <label>
+            <span>{t('tile_calc_perimeter')}</span>
+            <input inputMode="decimal" value={perimeterLnft} onChange={(e) => setPerimeterLnft(e.target.value)} />
+          </label>
+        </div>
+
+        <div className="tile-calc-options">
+          <label>
+            <input type="checkbox" checked={includeSubstrate} onChange={(e) => setIncludeSubstrate(e.target.checked)} />
+            <span>{t('tile_calc_include_substrate')}</span>
+          </label>
+          <label>
+            <input type="checkbox" checked={includeWaterproofing} onChange={(e) => setIncludeWaterproofing(e.target.checked)} />
+            <span>{t('tile_calc_include_waterproofing')}</span>
+          </label>
+          {computedArea != null && <span className="badge blue">{t('tile_calc_area')}: {fmtQty(computedArea)} sqft</span>}
+        </div>
+
+        <div className="row tile-calc-actions">
+          <button className="btn small" type="button" disabled={calcBusy} onClick={runCalc}>{calcBusy ? t('loading') : t('tile_calc_run')}</button>
+          <button className="btn ghost small" type="button" disabled={!result || appendBusy} onClick={appendResult}>{appendBusy ? t('saving') : t('tile_calc_add_to_spec')}</button>
+        </div>
+
+        {calcError && <p className="error-msg">{t(calcError)}</p>}
+        {appendNotice != null && <p className="ok-msg">{t('tile_calc_added')}: {appendNotice}</p>}
+
+        {result && (
+          <div className="tile-calc-results">
+            <div className="tile-calc-result-head">
+              <span>{t('mat_col_name')}</span>
+              <span>{t('mat_col_qty')}</span>
+              <span>{t('mat_col_unit')}</span>
+              <span>{t('tile_calc_price')}</span>
+              <span>{t('total')}</span>
+            </div>
+            {result.items.map((item) => (
+              <div className="tile-calc-result-row" key={item.key}>
+                <span>
+                  <strong>{item.name}</strong>
+                  {item.detail && <small>{item.detail}</small>}
+                </span>
+                <span>{fmtQty(item.qty)}</span>
+                <span>{item.unit ?? '—'}</span>
+                <span>{item.price != null ? priceFmt.format(item.price) : '—'}</span>
+                <span>{item.total != null ? priceFmt.format(item.total) : '—'}</span>
+              </div>
+            ))}
+            <div className="tile-calc-total">
+              <span className={result.norms_source === 'org' ? 'badge green' : 'badge amber'}>{result.norms_source === 'org' ? t('tile_calc_norms_org') : t('tile_calc_norms_industry')}</span>
+              <strong>{t('tile_calc_known_total')}: {result.totals.known_total != null ? priceFmt.format(result.totals.known_total) : '—'}</strong>
+              {!result.totals.complete && <span className="muted">{t('tile_calc_total_incomplete')}</span>}
+            </div>
+          </div>
+        )}
+      </div>
+    </details>
+  )
 }
 
 export default function MaterialsTab({ project, profile }: MaterialsTabProps) {
@@ -368,6 +669,12 @@ export default function MaterialsTab({ project, profile }: MaterialsTabProps) {
     <section className="hub-tab-panel hub-materials">
       {canManage && (
         <>
+          <TileCalculator
+            project={project}
+            profile={profile}
+            onAdded={(created) => setMaterials((rows) => [...rows, ...created])}
+          />
+
           <div className="card material-form">
             <h3>{t('mat_new_heading')}</h3>
             {drafts.map((row, idx) => (

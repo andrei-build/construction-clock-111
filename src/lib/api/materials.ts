@@ -1,5 +1,5 @@
 import { supabase } from '../supabase'
-import { logEvent } from './_shared'
+import { logEvent, warnReadError } from './_shared'
 import { TASK_SELECT, createMaterialRequest } from './tasks'
 import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
 
@@ -18,6 +18,141 @@ export interface ProjectMaterialInput {
   supplier?: string | null
   url?: string | null
   note?: string | null
+}
+
+export type TileNormPattern = 'straight' | 'offset' | 'diagonal' | 'herringbone'
+
+export interface TileMaterialNormParams {
+  coverage_sqft_per_bag: number | null
+  bag_lb: number | null
+  waste_by_pattern: Partial<Record<TileNormPattern, number | null>>
+  lnft_per_tube: number | null
+  [key: string]: unknown
+}
+
+export interface TileMaterialNorm {
+  id?: string
+  org_id?: string | null
+  work_type: 'tile'
+  source: string
+  waste_pct: number | null
+  params: TileMaterialNormParams
+  updated_at?: string | null
+}
+
+export interface TileMaterialNormInput {
+  waste_pct: number | null
+  params: TileMaterialNormParams
+}
+
+export const TILE_NORM_DEFAULTS: TileMaterialNormInput = {
+  waste_pct: 10,
+  params: {
+    coverage_sqft_per_bag: 80,
+    bag_lb: 50,
+    waste_by_pattern: {
+      straight: 10,
+      offset: 10,
+      diagonal: 15,
+      herringbone: 15,
+    },
+    lnft_per_tube: 25,
+  },
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+function normalizeTileNormParams(value: unknown): TileMaterialNormParams {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  const wasteRaw = raw.waste_by_pattern && typeof raw.waste_by_pattern === 'object' && !Array.isArray(raw.waste_by_pattern)
+    ? raw.waste_by_pattern as Record<string, unknown>
+    : {}
+  return {
+    ...raw,
+    coverage_sqft_per_bag: finiteNumberOrNull(raw.coverage_sqft_per_bag),
+    bag_lb: finiteNumberOrNull(raw.bag_lb),
+    waste_by_pattern: {
+      straight: finiteNumberOrNull(wasteRaw.straight) ?? undefined,
+      offset: finiteNumberOrNull(wasteRaw.offset) ?? undefined,
+      diagonal: finiteNumberOrNull(wasteRaw.diagonal) ?? undefined,
+      herringbone: finiteNumberOrNull(wasteRaw.herringbone) ?? undefined,
+    },
+    lnft_per_tube: finiteNumberOrNull(raw.lnft_per_tube),
+  }
+}
+
+function normalizeTileMaterialNorm(row: Record<string, unknown>): TileMaterialNorm {
+  return {
+    id: typeof row.id === 'string' ? row.id : undefined,
+    org_id: typeof row.org_id === 'string' ? row.org_id : null,
+    work_type: 'tile',
+    source: typeof row.source === 'string' && row.source ? row.source : 'andrew',
+    waste_pct: finiteNumberOrNull(row.waste_pct),
+    params: normalizeTileNormParams(row.params),
+    updated_at: typeof row.updated_at === 'string' ? row.updated_at : null,
+  }
+}
+
+export async function getTileMaterialNorm(): Promise<TileMaterialNorm | null> {
+  const { data, error } = await supabase.from('material_norms')
+    .select('*')
+    .eq('work_type', 'tile')
+  if (error) {
+    warnReadError('getTileMaterialNorm', error)
+    return null
+  }
+  const rows = (data ?? []) as Record<string, unknown>[]
+  const row = rows.find((r) => r.source === 'andrew') ?? rows[0] ?? null
+  return row ? normalizeTileMaterialNorm(row) : null
+}
+
+export async function saveTileMaterialNorm(p: Profile, input: TileMaterialNormInput): Promise<TileMaterialNorm> {
+  const current = await getTileMaterialNorm()
+  const currentParams = current?.params ?? TILE_NORM_DEFAULTS.params
+  const payload = {
+    org_id: p.org_id,
+    work_type: 'tile',
+    source: 'andrew',
+    waste_pct: input.waste_pct,
+    params: {
+      ...currentParams,
+      ...input.params,
+      waste_by_pattern: {
+        ...(currentParams.waste_by_pattern ?? {}),
+        ...(input.params.waste_by_pattern ?? {}),
+      },
+    },
+  }
+
+  if (current) {
+    let query = supabase.from('material_norms')
+      .update(payload)
+      .eq('work_type', 'tile')
+    if (current.id) query = query.eq('id', current.id)
+    else {
+      query = query.eq('source', current.source || 'andrew')
+      if (current.org_id) query = query.eq('org_id', current.org_id)
+    }
+    const { data, error } = await query.select('*').single()
+    if (error) throw error
+    await logEvent(p, 'material_norm.tile_updated', 'org', p.org_id, { source: 'andrew' })
+    return normalizeTileMaterialNorm(data as Record<string, unknown>)
+  }
+
+  const { data, error } = await supabase.from('material_norms')
+    .insert(payload)
+    .select('*')
+    .single()
+  if (error) throw error
+  await logEvent(p, 'material_norm.tile_created', 'org', p.org_id, { source: 'andrew' })
+  return normalizeTileMaterialNorm(data as Record<string, unknown>)
 }
 
 function cleanMaterialRow(p: Profile, projectId: string, row: ProjectMaterialInput, sortOrder: number) {

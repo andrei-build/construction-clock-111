@@ -21,6 +21,7 @@ export interface CatalogItem {
   height_in: number | null
   photo_path: string | null
   price: number | null
+  price_updated_at?: string | null
   url: string | null
   note: string | null
   is_active: boolean
@@ -28,6 +29,22 @@ export interface CatalogItem {
   created_by: string | null
   created_at: string
   updated_at: string
+}
+
+export interface CatalogPriceHistoryRow {
+  id?: string
+  item_id?: string
+  catalog_item_id?: string
+  price?: number | string | null
+  source?: string | null
+  old_price?: number | string | null
+  previous_price?: number | string | null
+  new_price?: number | string | null
+  recorded_at?: string | null
+  created_at?: string | null
+  changed_at?: string | null
+  updated_at?: string | null
+  [key: string]: unknown
 }
 
 export interface CatalogItemInput {
@@ -47,7 +64,7 @@ export interface CatalogItemInput {
 }
 
 const CATALOG_SELECT =
-  'id, org_id, category, name, brand, model, width_in, depth_in, height_in, photo_path, price, url, note, is_active, sort_order, created_by, created_at, updated_at'
+  'id, org_id, category, name, brand, model, width_in, depth_in, height_in, photo_path, price, price_updated_at, url, note, is_active, sort_order, created_by, created_at, updated_at'
 
 // Читают все члены орг (кроме роли client) — RLS сам ограничивает выборку своей организацией.
 // Порядок: категория → sort_order → имя, чтобы сгруппировать по разделам в UI.
@@ -63,6 +80,32 @@ export async function getCatalogItems(): Promise<CatalogItem[]> {
     return []
   }
   return (data ?? []) as CatalogItem[]
+}
+
+export async function getCatalogPriceHistory(catalogItemId: string, limit = 5): Promise<CatalogPriceHistoryRow[]> {
+  const capped = Math.max(1, Math.min(20, Math.floor(limit)))
+  const ordered = await supabase
+    .from('catalog_price_history')
+    .select('*')
+    .eq('item_id', catalogItemId)
+    .order('recorded_at', { ascending: false })
+    .limit(capped)
+  if (!ordered.error) return (ordered.data ?? []) as CatalogPriceHistoryRow[]
+
+  const fallback = await supabase
+    .from('catalog_price_history')
+    .select('*')
+    .eq('item_id', catalogItemId)
+    .limit(capped)
+  if (fallback.error) {
+    warnReadError('getCatalogPriceHistory', fallback.error)
+    return []
+  }
+  return ((fallback.data ?? []) as CatalogPriceHistoryRow[]).sort((a, b) => {
+    const aTime = new Date(String(a.recorded_at ?? a.created_at ?? a.changed_at ?? a.updated_at ?? '')).getTime()
+    const bTime = new Date(String(b.recorded_at ?? b.created_at ?? b.changed_at ?? b.updated_at ?? '')).getTime()
+    return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0)
+  })
 }
 
 // org_id проставляется по членству текущего пользователя (как в остальных create-функциях).

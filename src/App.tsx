@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './lib/auth'
 import { checkAndApplyUpdateOnNavigate } from './lib/appUpdate'
-import { isManagerRole, hasFinanceAccess } from './lib/types'
+import { isManagerRole, isManagerWrite, hasFinanceAccess } from './lib/types'
 // PERF-1: критический путь работника/водителя грузится сразу (вход, навигация, полевые экраны).
 import Login from './screens/Login'
 import CheckIn from './screens/CheckIn'
@@ -69,8 +69,9 @@ export default function App() {
   const driver = profile.role === 'driver'
   const salesOnly = profile.role === 'sales'
   const salesAccess = manager || salesOnly
-  // SET-1: /settings regated to owner/admin only (plain managers/supervisors lose it).
+  // MAT-CALC-UI-1: /settings includes tile norms for owner/admin/manager; owner-only blocks stay guarded inside.
   const adminOrOwner = profile.role === 'owner' || profile.role === 'admin'
+  const settingsAccess = isManagerWrite(profile.role)
   // AI-1-UI: «строка-командир» — только владелец (RLS ai_messages/ai_proposals гейтятся
   // app.is_owner(); у admin история пуста, а update молча затрагивает 0 строк). Оверлей + Ctrl+K
   // монтируем ниже строго для owner; кнопка «Спроси» в Nav тоже owner-only.
@@ -133,12 +134,12 @@ export default function App() {
             <Route path="/daily" element={<DailyReports />} />
             {/* MAIL-1-UI: «Почта» — owner/admin (RLS дополнительно ограничивает чтение владельцем). */}
             <Route path="/mail" element={adminOrOwner ? <Mail /> : <Navigate to="/" />} />
-            <Route path="/settings" element={adminOrOwner ? <Settings /> : <Navigate to="/" />} />
+            <Route path="/settings" element={settingsAccess ? <Settings /> : <Navigate to="/" />} />
             {/* CATALOG-UI-1: «Каталог» — позиции для 3D-визуализации, manager+. */}
             <Route path="/catalog" element={manager ? <Catalog /> : <Navigate to="/" />} />
             {/* SET-2 (ЗАКОН-6): «Настройки владельца» merged into «Настройки». Old /owner-settings
-                bookmarks redirect to the owner block inside /settings. A plain manager landing on
-                /settings is redirected to '/' by the gate above — that's fine. */}
+                bookmarks redirect to the owner block inside /settings; non-owner managers only see
+                the manager-safe settings sections rendered by Settings itself. */}
             <Route path="/owner-settings" element={<Navigate to="/settings#owner" replace />} />
             <Route path="/time" element={<MyTime />} />
             <Route path="/payroll" element={financeAccess ? <Payroll /> : <Navigate to="/" />} />

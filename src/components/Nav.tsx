@@ -39,8 +39,9 @@ export default function Nav({ manager }: { manager: boolean }) {
   const driver = profile?.role === 'driver'
   const sales = profile?.role === 'sales'
   const isOwner = profile?.role === 'owner'
-  // SET-1: /settings — owner/admin; /owner-settings — owner only (то же гейтирование, что в «Ещё»).
+  // MAT-CALC-UI-1: /settings — owner/admin/manager (tile norms); owner-only sections self-guard.
   const isAdminOrOwner = isOwner || profile?.role === 'admin'
+  const canOpenSettings = isAdminOrOwner || profile?.role === 'manager'
   // MAIL-1-UI: бейдж непрочитанных писем на пункте «Почта» (owner/admin). Локальный поллинг +
   // слушаем MAIL_UNREAD_EVENT (Mail.tsx шлёт после отметки прочитанным / после sync) — так бейдж
   // реактивен без общего провайдера. RLS отдаёт письма только владельцу → у admin обычно 0.
@@ -148,7 +149,7 @@ export default function Nav({ manager }: { manager: boolean }) {
         { to: '/archive', Icon: IconFolder, label: t('archive') },
         // SET-2: «Согласия» (ЗАКОН-7) and «Настройки владельца» (ЗАКОН-6) removed —
         // consents live in the person dossier (/team/:id); owner settings merged into /settings.
-        { to: '/settings', Icon: IconSettings, label: t('settings'), show: isAdminOrOwner },
+        { to: '/settings', Icon: IconSettings, label: t('settings'), show: canOpenSettings },
       ],
     },
   ]
