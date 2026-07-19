@@ -5,6 +5,7 @@ import {
   layoutCabinetRunOnWall,
   parseCabinetCode,
   parseCabinetCodes,
+  suggestCabinetCodes,
 } from '../src/screens/project-hub/cabinetCodes'
 import { sanitizePlacedCatalogItems } from '../src/screens/project-hub/sketchCatalog'
 
@@ -53,6 +54,38 @@ describe('cabinet code parsing', () => {
 
     expect(parsed.cabinets.map((cabinet) => cabinet.code)).toEqual(['B30', 'W3030'])
     expect(parsed.invalidCodes).toEqual(['NOPE'])
+  })
+
+  it('normalizes lower-case cabinet codes', () => {
+    expect(parseCabinetCode('b30')).toMatchObject({ code: 'B30', prefix: 'B', widthIn: 30 })
+    expect(parseCabinetCode('w3030-l')).toMatchObject({ code: 'W3030-L', prefix: 'W', widthIn: 30, heightIn: 30, hinge: 'L' })
+  })
+
+  it('joins a prefix and width split by whitespace', () => {
+    const parsed = parseCabinetCodes('b 30 sb 36')
+
+    expect(parsed.cabinets.map((cabinet) => cabinet.code)).toEqual(['B30', 'SB36'])
+    expect(parsed.invalidCodes).toEqual([])
+  })
+
+  it('transliterates Cyrillic lookalikes before parsing', () => {
+    expect(parseCabinetCodes('вб 36').cabinets.map((cabinet) => cabinet.code)).toEqual(['SB36'])
+    expect(parseCabinetCode('ВЗО')).toMatchObject({ code: 'B30', prefix: 'B', widthIn: 30 })
+  })
+
+  it('uses commas and whitespace as cabinet run separators', () => {
+    const parsed = parseCabinetCodes('b30, sb36 W3030')
+
+    expect(parsed.cabinets.map((cabinet) => cabinet.code)).toEqual(['B30', 'SB36', 'W3030'])
+    expect(parsed.invalidCodes).toEqual([])
+  })
+
+  it('offers valid candidates for unrecognized cabinet codes', () => {
+    const suggestions = suggestCabinetCodes('x30')
+    const parsed = parseCabinetCodes('x30')
+
+    expect(suggestions).toEqual(expect.arrayContaining(['B30', 'DB30', 'W3030']))
+    expect(parsed.suggestions.X30).toEqual(expect.arrayContaining(['B30', 'DB30', 'W3030']))
   })
 })
 
