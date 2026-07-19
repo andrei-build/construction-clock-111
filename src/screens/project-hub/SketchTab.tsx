@@ -63,6 +63,14 @@ import {
 } from './sketchCatalog'
 import { formatFeetInches, formatInches, parseFeetInches, snapFeetToPrecision, snapOpeningFeetToPrecision } from './inches'
 import {
+  centerOpeningT,
+  openingEdgeOffsetsFt,
+  openingTForOffset,
+  softOpeningPlacement,
+  type OpeningOffsetSide,
+  type OpeningPlacementMagnet,
+} from './sketchOpeningPlacement'
+import {
   cabinetDisplayCode,
   cabinetScheduleCsv,
   isCabinetPlacedItem,
@@ -128,6 +136,9 @@ const DIM_TICK_SCREEN_PX = 8
 const EIGHTH_IN_FT = 1 / 96
 const EDGE_AUTO_PAN_SCREEN_PX = 40
 const EDGE_AUTO_PAN_MAX_PX_PER_SEC = 620
+const OPENING_MAGNET_SCREEN_PX = 5
+const OPENING_MAGNET_MAX_FT = 1.5 / 12
+const OPENING_MAGNET_MIN_FT = EIGHTH_IN_FT
 
 type Pt = { x: number; y: number }
 type Contour = { points: Pt[]; closed: boolean }
@@ -159,6 +170,7 @@ type CanvasView = { x: number; y: number; width: number; height: number }
 type SnapMode = '1ft' | '6in' | '1in' | '1_8in'
 type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill'
 type SegmentLengthEdit = { ref: SketchSegmentRef; value: string }
+type OpeningOffsetEdit = { index: number; side: OpeningOffsetSide; value: string }
 
 const SNAP_OPTIONS: Array<{ mode: SnapMode; stepFt: number; labelKey: string }> = [
   { mode: '1ft', stepFt: 1, labelKey: 'hub_sketch_snap_1ft' },
@@ -232,6 +244,22 @@ function clampOpeningT(model: SketchModel, opening: Opening, t: number): number 
   if (widthFt >= segLenFt - 0.001) return 0.5
   const padT = (widthFt / 2) / segLenFt
   return Math.max(padT, Math.min(1 - padT, t))
+}
+
+function openingSegmentLengthFt(model: SketchModel, opening: Opening): number {
+  const ends = openingEnds(model, opening)
+  return ends ? dist(ends.a, ends.b) * modelCellFt(model) : 0
+}
+
+function openingMagnetThresholdFt(model: SketchModel, screenWorldPx: number): number {
+  const thresholdFt = (OPENING_MAGNET_SCREEN_PX * Math.max(0.0001, screenWorldPx) * modelCellFt(model)) / CELL_PX
+  return Math.max(OPENING_MAGNET_MIN_FT, Math.min(OPENING_MAGNET_MAX_FT, thresholdFt))
+}
+
+function openingPlacementNeighbors(model: SketchModel, opening: Opening, openingIndex: number) {
+  return model.openings
+    .filter((other, index) => index !== openingIndex && other.c === opening.c && other.s === opening.s)
+    .map((other) => ({ t: other.t, widthFt: openingWidthFt(other) }))
 }
 
 function snapOpeningT(model: SketchModel, opening: Opening, t: number, stepFt: number): number {
@@ -793,6 +821,7 @@ type DimLine2D = {
 
 type OpeningDimLabel = DimLine2D & { kind: Opening['kind'] }
 type SegmentDimLine = DimLine2D & { kind: 'wall'; c: number; s: number; lengthFt: number }
+type OpeningClearanceDimLine = DimLine2D & { metric: OpeningOffsetSide | 'gap'; valueFt: number }
 type OpeningSpan2D = {
   g: { p: Pt; ux: number; uy: number; a: Pt; b: Pt }
   segLenCells: number
@@ -816,6 +845,17 @@ type MeasurementLine2D = {
 }
 type PlanCodeClearanceLine = MeasurementLine2D & { id: string; warning: boolean; check: CodeClearanceCheck }
 type PlanCodeClearanceArc = { id: string; d: string; warning: boolean }
+type OpeningSnapGuide2D = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  dotX: number
+  dotY: number
+  labelX: number
+  labelY: number
+  text: string
+}
 type PlanPlacedItem = {
   item: SketchPlacedCatalogItem
   x: number
@@ -983,23 +1023,23 @@ function openingClearanceDimLines(
   ignoreIndex: number | null,
   t: (k: string) => string,
   screenWorldPx: number,
-): DimLine2D[] {
+): OpeningClearanceDimLine[] {
   const span = openingSpan2D(model, opening)
   if (!span) return []
   const normal = outsideNormal(model, opening.c, span.g.a.x * CELL_PX, span.g.a.y * CELL_PX, span.g.b.x * CELL_PX, span.g.b.y * CELL_PX)
-  const lines: DimLine2D[] = []
-  const push = (fromCells: number, toCells: number, offsetScreenPx: number, text: string) => {
+  const lines: OpeningClearanceDimLine[] = []
+  const push = (fromCells: number, toCells: number, offsetScreenPx: number, text: string, metric: OpeningClearanceDimLine['metric'], valueFt: number) => {
     if (toCells - fromCells <= 0.02) return
     const ax = (span.g.a.x + span.g.ux * fromCells) * CELL_PX
     const ay = (span.g.a.y + span.g.uy * fromCells) * CELL_PX
     const bx = (span.g.a.x + span.g.ux * toCells) * CELL_PX
     const by = (span.g.a.y + span.g.uy * toCells) * CELL_PX
     const line = createDimLine(ax, ay, bx, by, normal.nx, normal.ny, offsetScreenPx * screenWorldPx, screenWorldPx, text, 'wall')
-    if (line) lines.push(line)
+    if (line) lines.push({ ...line, metric, valueFt })
   }
 
-  push(0, span.startCells, 42, `${t('hub_sketch_dim_left_short')} ${formatOpeningFt(span.startCells * span.cellFt)}`)
-  push(span.endCells, span.segLenCells, 42, `${t('hub_sketch_dim_right_short')} ${formatOpeningFt((span.segLenCells - span.endCells) * span.cellFt)}`)
+  push(0, span.startCells, 42, `${t('hub_sketch_dim_left_short')} ${formatOpeningFt(span.startCells * span.cellFt)}`, 'left', span.startCells * span.cellFt)
+  push(span.endCells, span.segLenCells, 42, `${t('hub_sketch_dim_right_short')} ${formatOpeningFt((span.segLenCells - span.endCells) * span.cellFt)}`, 'right', (span.segLenCells - span.endCells) * span.cellFt)
 
   let leftNeighborEndCells: number | null = null
   let rightNeighborStartCells: number | null = null
@@ -1018,14 +1058,52 @@ function openingClearanceDimLines(
 
   if (leftNeighborEndCells !== null) {
     const gap = Math.max(0, (span.startCells - leftNeighborEndCells) * span.cellFt)
-    push(leftNeighborEndCells, span.startCells, 62, `${t('hub_sketch_dim_gap_short')} ${formatOpeningFt(gap)}`)
+    push(leftNeighborEndCells, span.startCells, 62, `${t('hub_sketch_dim_gap_short')} ${formatOpeningFt(gap)}`, 'gap', gap)
   }
   if (rightNeighborStartCells !== null) {
     const gap = Math.max(0, (rightNeighborStartCells - span.endCells) * span.cellFt)
-    push(span.endCells, rightNeighborStartCells, 62, `${t('hub_sketch_dim_gap_short')} ${formatOpeningFt(gap)}`)
+    push(span.endCells, rightNeighborStartCells, 62, `${t('hub_sketch_dim_gap_short')} ${formatOpeningFt(gap)}`, 'gap', gap)
   }
 
   return lines
+}
+
+function openingMagnetLabelKey(kind: OpeningPlacementMagnet['kind']): string {
+  if (kind === 'center') return 'hub_sketch_opening_magnet_center'
+  if (kind === 'edge-start' || kind === 'edge-end') return 'hub_sketch_opening_magnet_edge'
+  if (kind === 'neighbor') return 'hub_sketch_opening_magnet_neighbor'
+  return 'hub_sketch_opening_magnet_precision'
+}
+
+function openingSnapGuide2D(
+  model: SketchModel,
+  opening: Opening,
+  magnet: OpeningPlacementMagnet,
+  t: (k: string) => string,
+  screenWorldPx: number,
+): OpeningSnapGuide2D | null {
+  const g = openingGeom(model, opening)
+  if (!g) return null
+  const segLenCells = dist(g.a, g.b)
+  const cellFt = modelCellFt(model)
+  if (segLenCells <= 0.01 || cellFt <= 0) return null
+  const guideCells = clampNumber(magnet.guideFt / cellFt, 0, segLenCells)
+  const x = (g.a.x + g.ux * guideCells) * CELL_PX
+  const y = (g.a.y + g.uy * guideCells) * CELL_PX
+  const normal = outsideNormal(model, opening.c, g.a.x * CELL_PX, g.a.y * CELL_PX, g.b.x * CELL_PX, g.b.y * CELL_PX)
+  const inner = 10 * screenWorldPx
+  const outer = 28 * screenWorldPx
+  return {
+    x1: x - normal.nx * inner,
+    y1: y - normal.ny * inner,
+    x2: x + normal.nx * outer,
+    y2: y + normal.ny * outer,
+    dotX: x,
+    dotY: y,
+    labelX: x + normal.nx * (outer + 14 * screenWorldPx),
+    labelY: y + normal.ny * (outer + 14 * screenWorldPx),
+    text: t(openingMagnetLabelKey(magnet.kind)),
+  }
 }
 
 function isPlanMeasurement(measurement: SketchMeasurement): boolean {
@@ -1485,6 +1563,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [selectedWallKey, setSelectedWallKey] = useState<string | null>(null)
   // Перетаскивание проёма вдоль стены.
   const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [selectedOpeningIndex, setSelectedOpeningIndex] = useState<number | null>(null)
+  const [openingOffsetEdit, setOpeningOffsetEdit] = useState<OpeningOffsetEdit | null>(null)
+  const [openingSnapGuide, setOpeningSnapGuide] = useState<OpeningPlacementMagnet | null>(null)
   const dragMovedRef = useRef(false)
   const [name, setName] = useState('room-1')
   const [busy, setBusy] = useState(false)
@@ -1513,6 +1594,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const canEditRef = useRef(canEdit)
   const measurementDraftRef = useRef(measurementDraft)
   const dragIdxRef = useRef(dragIdx)
+  const selectedOpeningIndexRef = useRef(selectedOpeningIndex)
   const [canvasSize, setCanvasSize] = useState<CanvasSize>({ width: VIEW_W, height: VIEW_H })
   const [canvasView, setCanvasView] = useState<CanvasView>({ x: 0, y: 0, width: VIEW_W, height: VIEW_H })
   const [canvasBrowserFullscreen, setCanvasBrowserFullscreen] = useState(false)
@@ -1642,6 +1724,18 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [dragIdx])
 
   useEffect(() => {
+    selectedOpeningIndexRef.current = selectedOpeningIndex
+  }, [selectedOpeningIndex])
+
+  useEffect(() => {
+    if (selectedOpeningIndex !== null && !model.openings[selectedOpeningIndex]) {
+      setSelectedOpeningIndex(null)
+      setOpeningOffsetEdit(null)
+      setOpeningSnapGuide(null)
+    }
+  }, [model.openings, selectedOpeningIndex])
+
+  useEffect(() => {
     activeSnapFtRef.current = activeSnapFt
   }, [activeSnapFt])
 
@@ -1652,6 +1746,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setError(null)
     setSegmentLengthEdit(null)
     setSegmentResizeConflict(null)
+    setOpeningOffsetEdit(null)
+    setOpeningSnapGuide(null)
   }, [])
 
   // Снимок в историю перед изменением; затем применяем мутатор.
@@ -1702,6 +1798,72 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
     canvasAutoFitRef.current = false
     commit(result.model)
+  }
+
+  const applyOpeningT = (index: number, nextT: number) => {
+    const current = modelRef.current
+    const opening = current.openings[index]
+    if (!opening) return
+    const clampedT = clampOpeningT(current, opening, nextT)
+    const nextModel = { ...current, openings: current.openings.map((op, i) => (i === index ? { ...op, t: clampedT } : op)) }
+    canvasAutoFitRef.current = false
+    selectedOpeningIndexRef.current = index
+    setSelectedOpeningIndex(index)
+    commit(nextModel)
+  }
+
+  const centerSelectedOpening = () => {
+    const index = selectedOpeningIndexRef.current
+    if (index === null) return
+    const current = modelRef.current
+    const opening = current.openings[index]
+    if (!opening) return
+    const segmentLengthFt = openingSegmentLengthFt(current, opening)
+    if (segmentLengthFt <= 0.001) return
+    applyOpeningT(index, centerOpeningT(segmentLengthFt, openingWidthFt(opening)))
+  }
+
+  const beginOpeningOffsetEdit = (index: number, side: OpeningOffsetSide, valueFt: number) => {
+    if (!canEdit) return
+    setSelectedOpeningIndex(index)
+    selectedOpeningIndexRef.current = index
+    setOpeningOffsetEdit({ index, side, value: formatOpeningFt(valueFt) })
+    setSegmentLengthEdit(null)
+    setSegmentResizeConflict(null)
+    setSelectedMeasurementIndex(null)
+    setMeasurementDraft(null)
+  }
+
+  const setOpeningOffsetEditValue = (value: string) => {
+    setOpeningOffsetEdit((current) => (current ? { ...current, value } : current))
+  }
+
+  const cancelOpeningOffsetEdit = () => {
+    setOpeningOffsetEdit(null)
+  }
+
+  const applyOpeningOffsetEdit = () => {
+    if (!openingOffsetEdit) return
+    const parsed = parseLengthFt(openingOffsetEdit.value)
+    if (!Number.isFinite(parsed)) {
+      setError('hub_sketch_dimension_invalid')
+      return
+    }
+    const current = modelRef.current
+    const opening = current.openings[openingOffsetEdit.index]
+    if (!opening) {
+      setOpeningOffsetEdit(null)
+      return
+    }
+    const segmentLengthFt = openingSegmentLengthFt(current, opening)
+    const widthFt = Math.min(openingWidthFt(opening), segmentLengthFt)
+    const maxOffsetFt = Math.max(0, segmentLengthFt - widthFt)
+    const offsetFt = Math.max(0, parsed)
+    if (offsetFt > maxOffsetFt + 0.0001) {
+      setError('hub_sketch_dimension_conflict')
+      return
+    }
+    applyOpeningT(openingOffsetEdit.index, openingTForOffset(segmentLengthFt, widthFt, openingOffsetEdit.side, offsetFt))
   }
 
   useEffect(() => {
@@ -1929,7 +2091,17 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       kind === 'door'
         ? { kind: 'door', c, s, t: rawT, w: Math.max(0.5, snapOpeningFeetToPrecision(doorW)), h: Math.max(0.5, snapOpeningFeetToPrecision(doorH)) }
         : { kind: 'window', c, s, t: rawT, w: Math.max(0.5, snapOpeningFeetToPrecision(winW)), h: Math.max(0.5, snapOpeningFeetToPrecision(winH)), sill: Math.max(0, snapOpeningFeetToPrecision(winSill)) }
-    return { ...draft, t: snapOpeningT(model, draft, rawT, activeSnapFt) }
+    const segmentLengthFt = openingSegmentLengthFt(model, draft)
+    if (segmentLengthFt <= 0.001) return { ...draft, t: clampOpeningT(model, draft, rawT) }
+    const placement = softOpeningPlacement({
+      rawT,
+      segmentLengthFt,
+      openingWidthFt: openingWidthFt(draft),
+      precisionStepFt: activeSnapFt,
+      magnetThresholdFt: openingMagnetThresholdFt(model, screenWorldPx),
+      neighbors: openingPlacementNeighbors(model, draft, -1),
+    })
+    return { ...draft, t: placement.t }
   }
 
   const electricalPlacedAt = (kind: 'outlet' | 'switch', c: number, s: number, rawT: number): SketchPlacedCatalogItem | null => {
@@ -1976,6 +2148,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const pointerCellAt = (clientX: number, clientY: number, view = canvasViewRef.current): Pt | null => {
     const point = canvasPoint(clientX, clientY, view)
     return point ? { x: point.x / CELL_PX, y: point.y / CELL_PX } : null
+  }
+
+  const screenWorldPxForView = (view = canvasViewRef.current): number => {
+    return view.width / Math.max(1, canvasSizeRef.current.width)
   }
 
   const zoomCanvasAt = (clientX: number, clientY: number, factor: number, baseView = canvasView) => {
@@ -2079,15 +2255,33 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const raw = pointerCellAt(clientX, clientY, view)
     const currentDragIdx = dragIdxRef.current
     if (currentDragIdx !== null) {
-      if (!raw) return
+      if (!raw) {
+        setOpeningSnapGuide(null)
+        return
+      }
       dragMovedRef.current = true
       setModel((m) => {
         const o = m.openings[currentDragIdx]
-        if (!o) return m
+        if (!o) {
+          setOpeningSnapGuide(null)
+          return m
+        }
         const ends = openingEnds(m, o)
-        if (!ends) return m
+        if (!ends) {
+          setOpeningSnapGuide(null)
+          return m
+        }
         const rawT = projectT(raw, ends.a, ends.b)
-        const nextT = snapOpeningT(m, o, rawT, activeSnapFtRef.current)
+        const placement = softOpeningPlacement({
+          rawT,
+          segmentLengthFt: dist(ends.a, ends.b) * modelCellFt(m),
+          openingWidthFt: openingWidthFt(o),
+          precisionStepFt: activeSnapFtRef.current,
+          magnetThresholdFt: openingMagnetThresholdFt(m, screenWorldPxForView(view)),
+          neighbors: openingPlacementNeighbors(m, o, currentDragIdx),
+        })
+        setOpeningSnapGuide(placement.magnet)
+        const nextT = placement.t
         const nextModel = { ...m, openings: m.openings.map((op, i) => (i === currentDragIdx ? { ...op, t: nextT } : op)) }
         modelRef.current = nextModel
         return nextModel
@@ -2374,28 +2568,25 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     // любое взаимодействие с проёмом подавляет следующий click (иначе поставили бы новую точку/проём)
     dragMovedRef.current = true
     dragIdxRef.current = i
+    selectedOpeningIndexRef.current = i
     setDragIdx(i)
+    setSelectedOpeningIndex(i)
+    setSelectedWallKey(null)
+    setSelectedMeasurementIndex(null)
+    setMeasurementDraft(null)
+    setOpeningOffsetEdit(null)
     edgeAutoPanPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
     updateEdgeAutoPan(e.clientX, e.clientY)
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   }
 
-  // Отпускание проёма: фиксируем положение на текущем шаге точности.
+  // Отпускание проёма: сохраняем свободную позицию; storage-normalize отдельно округляет до 1/8".
   const endDragOpening = () => {
-    if (dragIdx === null) return
+    if (dragIdxRef.current === null) return
     stopEdgeAutoPan()
-    setModel((m) => {
-      const o = m.openings[dragIdx]
-      if (!o) return m
-      const ends = openingEnds(m, o)
-      if (!ends) return m
-      const t = snapOpeningT(m, o, o.t, activeSnapFt)
-      const nextModel = { ...m, openings: m.openings.map((op, i) => (i === dragIdx ? { ...op, t } : op)) }
-      modelRef.current = nextModel
-      return nextModel
-    })
     dragIdxRef.current = null
     setDragIdx(null)
+    setOpeningSnapGuide(null)
     setSketchMaterials(null)
     setSketchMaterialsAdded(null)
   }
@@ -2479,7 +2670,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       return
     }
     const opening = openingDraftAt(tool, near.c, near.s, near.t)
+    const nextIndex = model.openings.length
     commit({ ...model, openings: [...model.openings, opening] })
+    selectedOpeningIndexRef.current = nextIndex
+    setSelectedOpeningIndex(nextIndex)
   }
 
   const finishShape = () => {
@@ -2499,6 +2693,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedMeasurementIndex(null)
     dragIdxRef.current = null
     setDragIdx(null)
+    setSelectedOpeningIndex(null)
+    setOpeningOffsetEdit(null)
+    setOpeningSnapGuide(null)
     clearModelChangeState()
   }, [history, clearModelChangeState])
 
@@ -2512,6 +2709,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedMeasurementIndex(null)
     dragIdxRef.current = null
     setDragIdx(null)
+    setSelectedOpeningIndex(null)
+    setOpeningOffsetEdit(null)
+    setOpeningSnapGuide(null)
     clearModelChangeState()
   }, [history, clearModelChangeState])
 
@@ -2521,6 +2721,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     commit(EMPTY_MODEL)
     setMeasurementDraft(null)
     setSelectedMeasurementIndex(null)
+    setSelectedOpeningIndex(null)
+    setOpeningOffsetEdit(null)
+    setOpeningSnapGuide(null)
   }
 
   useEffect(() => {
@@ -2718,6 +2921,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       canvasAutoFitRef.current = true
       setMeasurementDraft(null)
       setSelectedMeasurementIndex(null)
+      setSelectedOpeningIndex(null)
+      setOpeningOffsetEdit(null)
+      setOpeningSnapGuide(null)
       commit(normalizeSketchModelForStorage(nextModel))
       setName(file.name.replace(/^sketch-/, '').replace(/\.json$/, ''))
       setLoadOpen(false)
@@ -2734,6 +2940,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   // NAV-FIX-2: выбор стены на 2D активен, когда клики не заняты установкой проёмов/замеров и не идёт рисование контура.
   const activeContourOpen = !!activeContour && !activeContour.closed && activeContour.points.length > 0
   const wallSelectEnabled = canEdit && tool !== 'door' && tool !== 'window' && tool !== 'measure' && tool !== 'outlet' && tool !== 'switch' && !activeContourOpen
+  const selectedOpening = selectedOpeningIndex !== null ? model.openings[selectedOpeningIndex] ?? null : null
+  const canCenterOpening = canEdit && !!selectedOpening && !!openingEnds(model, selectedOpening)
   const heightFt = wallHeightFt(model)
   const pxPerFt = (canvasSize.width * CELL_PX) / Math.max(1, canvasView.width)
   const gridLines = useMemo(() => canvasGridLines(canvasView, activeSnapFt, pxPerFt), [canvasView, activeSnapFt, pxPerFt])
@@ -2795,6 +3003,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const dragOpeningClearanceLines = dragIdx !== null && model.openings[dragIdx]
     ? openingClearanceDimLines(model, model.openings[dragIdx], dragIdx, t, screenWorldPx)
     : []
+  const selectedOpeningClearanceLines = selectedOpening && selectedOpeningIndex !== null && dragIdx !== selectedOpeningIndex && tool !== 'measure'
+    ? openingClearanceDimLines(model, selectedOpening, selectedOpeningIndex, t, screenWorldPx)
+    : []
+  const activeOpeningSnapGuide = dragIdx !== null && openingSnapGuide && model.openings[dragIdx]
+    ? openingSnapGuide2D(model, model.openings[dragIdx], openingSnapGuide, t, screenWorldPx)
+    : null
 
   const renderDimLine2D = (dim: DimLine2D, key: string, className: string, fontScale = 10.5) => (
     <g key={key} className={className}>
@@ -2816,6 +3030,90 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       </text>
     </g>
   )
+
+  const renderOpeningClearanceDimLine2D = (
+    dim: OpeningClearanceDimLine,
+    key: string,
+    className: string,
+    openingIndex: number | null,
+    editable: boolean,
+    fontScale = 10.5,
+  ) => {
+    const canEditOffset = editable && openingIndex !== null && (dim.metric === 'left' || dim.metric === 'right')
+    const editing = canEditOffset &&
+      openingOffsetEdit?.index === openingIndex &&
+      openingOffsetEdit.side === dim.metric
+    const editValue = editing ? openingOffsetEdit.value : ''
+    const inputW = Math.max(86, Math.min(142, editValue.length ? editValue.length * 8 + 36 : 104)) * screenWorldPx
+    const inputH = 30 * screenWorldPx
+    const groupClass = `${className}${canEditOffset ? ' hub-sketch-opening-clearance-dim-editable' : ''}`
+    return (
+      <g key={key} className={groupClass}>
+        <line className="hub-sketch-dim-extension" x1={dim.ext1x1} y1={dim.ext1y1} x2={dim.ext1x2} y2={dim.ext1y2} />
+        <line className="hub-sketch-dim-extension" x1={dim.ext2x1} y1={dim.ext2y1} x2={dim.ext2x2} y2={dim.ext2y2} />
+        <line className="hub-sketch-dim-main" x1={dim.x1} y1={dim.y1} x2={dim.x2} y2={dim.y2} />
+        <line className="hub-sketch-dim-tick" x1={dim.tick1x1} y1={dim.tick1y1} x2={dim.tick1x2} y2={dim.tick1y2} />
+        <line className="hub-sketch-dim-tick" x1={dim.tick2x1} y1={dim.tick2y1} x2={dim.tick2x2} y2={dim.tick2y2} />
+        {editing ? (
+          <foreignObject
+            x={dim.labelX - inputW / 2}
+            y={dim.labelY - inputH / 2}
+            width={inputW}
+            height={inputH}
+            transform={`rotate(${dim.angle} ${dim.labelX} ${dim.labelY})`}
+          >
+            <input
+              className="hub-sketch-dim-edit-input"
+              value={editValue}
+              inputMode="text"
+              autoFocus
+              aria-label={t('hub_sketch_opening_offset_edit_label')}
+              onChange={(event) => setOpeningOffsetEditValue(event.target.value)}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onBlur={applyOpeningOffsetEdit}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  applyOpeningOffsetEdit()
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  cancelOpeningOffsetEdit()
+                }
+              }}
+            />
+          </foreignObject>
+        ) : (
+          <text
+            className={canEditOffset ? 'hub-sketch-dim-label hub-sketch-dim-label-editable' : 'hub-sketch-dim-label'}
+            x={dim.labelX}
+            y={dim.labelY}
+            textAnchor="middle"
+            dominantBaseline="central"
+            style={{ fontSize: fontScale * screenWorldPx }}
+            transform={`rotate(${dim.angle} ${dim.labelX} ${dim.labelY})`}
+            role={canEditOffset ? 'button' : undefined}
+            tabIndex={canEditOffset ? 0 : undefined}
+            aria-label={canEditOffset ? t('hub_sketch_opening_offset_edit_label') : undefined}
+            onPointerDown={canEditOffset ? (event) => event.stopPropagation() : undefined}
+            onClick={canEditOffset ? (event) => {
+              event.stopPropagation()
+              if (openingIndex === null) return
+              beginOpeningOffsetEdit(openingIndex, dim.metric as OpeningOffsetSide, dim.valueFt)
+            } : undefined}
+            onKeyDown={canEditOffset ? (event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              if (openingIndex === null) return
+              beginOpeningOffsetEdit(openingIndex, dim.metric as OpeningOffsetSide, dim.valueFt)
+            } : undefined}
+          >
+            {dim.text}
+          </text>
+        )}
+      </g>
+    )
+  }
 
   const sketchMaterialSectionLabel = (section: SketchMaterialRow['section']): string => {
     if (section === TILE_MATERIAL_SECTION) return t('hub_sketch_material_section_tile')
@@ -2933,6 +3231,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       <div className="hub-sketch-actions">
         <button type="button" className="btn ghost small" disabled={!canClose} onClick={finishShape}>
           {t('hub_sketch_finish')}
+        </button>
+        <button type="button" className="btn ghost small" disabled={!canCenterOpening} onClick={centerSelectedOpening}>
+          {t('hub_sketch_opening_center')}
         </button>
         <button type="button" className="btn ghost small" disabled={!canUndo} onClick={undo}>
           {t('hub_sketch_undo')}
@@ -3432,13 +3733,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             const x2 = (g.p.x + hx) * CELL_PX
             const y2 = (g.p.y + hy) * CELL_PX
             const cls = o.kind === 'door' ? 'hub-sketch-door' : 'hub-sketch-window'
+            const selected = selectedOpeningIndex === i || dragIdx === i
             const dimLabel = openingDimLabel(model, o, i, t, screenWorldPx)
             return (
               <g
                 key={`o${i}`}
-                className={canEdit && tool !== 'measure' ? 'hub-sketch-opening' : undefined}
+                className={`${canEdit && tool !== 'measure' ? 'hub-sketch-opening' : ''}${selected ? ' hub-sketch-opening-selected' : ''}`}
                 onPointerDown={canEdit && tool !== 'measure' ? startDragOpening(i) : undefined}
               >
+                {selected && <line className="hub-sketch-opening-selection-halo" x1={x1} y1={y1} x2={x2} y2={y2} />}
                 <line className={cls} x1={x1} y1={y1} x2={x2} y2={y2} />
                 {/* невидимый широкий хит-таргет для захвата пальцем */}
                 <line className="hub-sketch-opening-hit" x1={x1} y1={y1} x2={x2} y2={y2} />
@@ -3496,11 +3799,37 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             'hub-sketch-opening-clearance-dim hub-sketch-opening-clearance-dim-active',
           ))}
 
-          {dragOpeningClearanceLines.map((dim, index) => renderDimLine2D(
+          {selectedOpeningClearanceLines.map((dim, index) => renderOpeningClearanceDimLine2D(
+            dim,
+            `opening-selected-clearance-${index}`,
+            'hub-sketch-opening-clearance-dim hub-sketch-opening-clearance-dim-active',
+            selectedOpeningIndex,
+            canEdit,
+          ))}
+
+          {dragOpeningClearanceLines.map((dim, index) => renderOpeningClearanceDimLine2D(
             dim,
             `opening-drag-clearance-${index}`,
             'hub-sketch-opening-clearance-dim hub-sketch-opening-clearance-dim-active',
+            dragIdx,
+            false,
           ))}
+
+          {activeOpeningSnapGuide && (
+            <g className="hub-sketch-opening-snap-guide">
+              <line x1={activeOpeningSnapGuide.x1} y1={activeOpeningSnapGuide.y1} x2={activeOpeningSnapGuide.x2} y2={activeOpeningSnapGuide.y2} />
+              <circle cx={activeOpeningSnapGuide.dotX} cy={activeOpeningSnapGuide.dotY} r={Math.max(2.5, 3.5 * screenWorldPx)} />
+              <text
+                x={activeOpeningSnapGuide.labelX}
+                y={activeOpeningSnapGuide.labelY}
+                textAnchor="middle"
+                dominantBaseline="central"
+                style={{ fontSize: 11 * screenWorldPx }}
+              >
+                {activeOpeningSnapGuide.text}
+              </text>
+            </g>
+          )}
 
           {planItems.map((entry) => {
             const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.electrical ? ` hub-sketch-plan-electrical hub-sketch-plan-${entry.electrical}` : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}`
@@ -3743,16 +4072,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               if (!g) return null
               const segLen = dist(g.a, g.b)
               const cellFt = modelCellFt(model)
-              const wCells = Math.min(openingWidthFt(o) / cellFt, segLen)
-              const left = Math.max(0, (o.t * segLen - wCells / 2) * cellFt)
-              const right = Math.max(0, ((1 - o.t) * segLen - wCells / 2) * cellFt)
+              const offsets = openingEdgeOffsetsFt(segLen * cellFt, openingWidthFt(o), o.t)
               const px = g.p.x * CELL_PX
               const py = g.p.y * CELL_PX
               const sizeTxt = `${t('hub_sketch_dim_size_short')} ${formatOpeningFt(openingWidthFt(o))}×${formatOpeningFt(openingHeightFt(o))}`
               const floorTxt = o.kind === 'window' ? ` · ${t('hub_sketch_dim_floor_short')} ${formatOpeningFt(openingFloorFt(o))}` : ''
               return (
                 <text className="hub-sketch-drag-dim" x={px} y={py - 12} textAnchor="middle">
-                  {`${sizeTxt} · ${t('hub_sketch_dim_left_short')} ${formatOpeningFt(left)} · ${t('hub_sketch_dim_right_short')} ${formatOpeningFt(right)}${floorTxt}`}
+                  {`${sizeTxt} · ${t('hub_sketch_dim_left_short')} ${formatOpeningFt(offsets.left)} · ${t('hub_sketch_dim_right_short')} ${formatOpeningFt(offsets.right)}${floorTxt}`}
                 </text>
               )
             })()}
