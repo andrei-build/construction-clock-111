@@ -13,13 +13,16 @@ import {
   finishCoverageBoundsFt,
   normalizeDrywallPatchSurface,
   normalizeTileSurface,
+  resizeSketchSegmentToLength,
   type Opening,
   type Pt,
   type Sketch3DModel,
   type SketchMeasurement,
+  type SketchSegmentResizeAnchor,
+  type SketchSegmentResizeConflict,
   type SketchSurfaceFinish,
 } from './sketchFinishes'
-import { formatFeetInches } from './inches'
+import { formatFeetInches, parseFeetInches, snapFeetToPrecision } from './inches'
 import {
   codeClearanceItemIds,
   formatCodeClearanceMessage,
@@ -60,6 +63,7 @@ interface WallElevationProps {
   snapStepFt?: number
   codeCheckEnabled?: boolean
   onMeasurementsChange?: (measurements: SketchMeasurement[]) => void
+  onModelChange?: (model: Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }) => void
 }
 
 type ElevationPoint = { x: number; y: number }
@@ -297,7 +301,7 @@ function elevationOpeningDims(
   return dims
 }
 
-export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, snapStepFt = 1 / 96, codeCheckEnabled = true, onMeasurementsChange }: WallElevationProps) {
+export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, snapStepFt = 1 / 96, codeCheckEnabled = true, onMeasurementsChange, onModelChange }: WallElevationProps) {
   const { t } = useI18n()
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [measureTool, setMeasureTool] = useState(false)
@@ -305,9 +309,12 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const [draft, setDraft] = useState<ElevationPoint | null>(null)
   const [hover, setHover] = useState<ElevationPoint | null>(null)
   const [selectedMeasurementIndex, setSelectedMeasurementIndex] = useState<number | null>(null)
+  const [wallLengthDraft, setWallLengthDraft] = useState<string | null>(null)
+  const [wallLengthConflict, setWallLengthConflict] = useState<SketchSegmentResizeConflict | null>(null)
   const cellFt = modelCellFt(model)
   const lengthFt = Math.max(0.01, dist(wall.a, wall.b) * cellFt)
   const height = Math.max(1, heightFt)
+  const wallLengthText = formatLength(lengthFt)
   const openings = useMemo(
     () => model.openings.filter((opening) => opening.c === wall.c && opening.s === wall.s),
     [model.openings, wall.c, wall.s],
@@ -361,6 +368,11 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     [wallMeasurements, height],
   )
   const previewLine = draft && hover ? elevationMeasurementLine({ scope: 'wall', wallKey: currentWallKey, a: draft, b: hover }, height) : null
+  const wallLengthConflictActive = wallLengthConflict?.segments.some((segment) => segment.c === wall.c && segment.s === wall.s) ?? false
+  const wallDimY = height + Math.min(0.32, pad * 0.55)
+  const wallDimLabelY = Math.min(height + pad - 0.12, wallDimY + 0.18)
+  const wallDimInputW = Math.min(Math.max(1.55, lengthFt * 0.24), Math.max(1.2, lengthFt))
+  const wallDimInputH = 0.42
 
   const svgPoint = (clientX: number, clientY: number): ElevationPoint | null => {
     const svg = svgRef.current
@@ -380,6 +392,36 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     onMeasurementsChange?.(nextMeasurements)
   }
 
+  const beginWallLengthEdit = () => {
+    if (!canEdit || !onModelChange) return
+    setWallLengthDraft(wallLengthText)
+    setWallLengthConflict(null)
+    setSelectedMeasurementIndex(null)
+    setDraft(null)
+  }
+
+  const cancelWallLengthEdit = () => {
+    setWallLengthDraft(null)
+    setWallLengthConflict(null)
+  }
+
+  const applyWallLengthDraft = (anchor: SketchSegmentResizeAnchor = 'start') => {
+    if (wallLengthDraft === null || !onModelChange) return
+    const parsed = parseFeetInches(wallLengthDraft)
+    if (!Number.isFinite(parsed)) {
+      setWallLengthConflict({ reason: 'invalid-length', segments: [{ c: wall.c, s: wall.s }] })
+      return
+    }
+    const result = resizeSketchSegmentToLength(model, { c: wall.c, s: wall.s }, snapFeetToPrecision(parsed / 12), { anchor })
+    if (!result.ok) {
+      setWallLengthConflict(result.conflict)
+      return
+    }
+    onModelChange(result.model)
+    setWallLengthDraft(null)
+    setWallLengthConflict(null)
+  }
+
   const removeMeasurement = (index: number) => {
     const measurements = model.measurements ?? []
     if (!measurements[index]) return
@@ -392,6 +434,8 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     setDraft(null)
     setHover(null)
     setSelectedMeasurementIndex(null)
+    setWallLengthDraft(null)
+    setWallLengthConflict(null)
   }, [currentWallKey])
 
   useEffect(() => {
@@ -459,7 +503,14 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   return (
     <div className="hub-sketch-elevation">
         <div className="hub-sketch-elevation-meta">
-        <span>{`${t('hub_sketch_dim_length_short')}: ${formatLength(lengthFt)}`}</span>
+        <button
+          type="button"
+          className={wallLengthConflictActive ? 'hub-sketch-elevation-meta-button hub-sketch-elevation-meta-button-conflict' : 'hub-sketch-elevation-meta-button'}
+          disabled={!canEdit || !onModelChange}
+          onClick={beginWallLengthEdit}
+        >
+          {`${t('hub_sketch_dim_length_short')}: ${wallLengthText}`}
+        </button>
         <span>{`${t('hub_sketch_dim_height_short')}: ${formatLength(height)}`}</span>
         <span>{`${t('hub_sketch_3d_openings')}: ${openings.length}`}</span>
         {!finishCoverage.full && <span>{`${t('hub_sketch_finish_coverage')}: ${formatLength(finishCoverage.topFt - finishCoverage.bottomFt)}`}</span>}
@@ -489,6 +540,20 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           <span>{t('hub_sketch_measurements')}</span>
         </label>
       </div>
+      {wallLengthConflict && wallLengthDraft !== null && (
+        <div className="hub-sketch-elevation-conflict" role="alertdialog" aria-live="polite">
+          <span>{t('hub_sketch_dimension_conflict_prompt')}</span>
+          <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applyWallLengthDraft('end')}>
+            {t('hub_sketch_dimension_move_start')}
+          </button>
+          <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applyWallLengthDraft('start')}>
+            {t('hub_sketch_dimension_move_end')}
+          </button>
+          <button type="button" className="btn ghost small" onMouseDown={(event) => event.preventDefault()} onClick={cancelWallLengthEdit}>
+            {t('cancel')}
+          </button>
+        </div>
+      )}
       {codeCheckEnabled && wallCodeViolations.length > 0 && (
         <div className="hub-sketch-elevation-code-list" role="status" aria-live="polite">
           {wallCodeViolations.slice(0, 3).map((check) => (
@@ -559,7 +624,57 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </g>
           ))}
         </g>
-        <rect className="hub-sketch-elevation-outline" x={0} y={0} width={lengthFt} height={height} />
+        <rect className={wallLengthConflictActive ? 'hub-sketch-elevation-outline hub-sketch-elevation-outline-conflict' : 'hub-sketch-elevation-outline'} x={0} y={0} width={lengthFt} height={height} />
+        <g className={wallLengthConflictActive ? 'hub-sketch-elevation-wall-dim hub-sketch-elevation-wall-dim-conflict' : 'hub-sketch-elevation-wall-dim'}>
+          <line x1={0} y1={wallDimY} x2={lengthFt} y2={wallDimY} />
+          <line x1={0} y1={wallDimY - 0.1} x2={0} y2={wallDimY + 0.1} />
+          <line x1={lengthFt} y1={wallDimY - 0.1} x2={lengthFt} y2={wallDimY + 0.1} />
+          {wallLengthDraft !== null ? (
+            <foreignObject x={Math.max(0, lengthFt / 2 - wallDimInputW / 2)} y={wallDimLabelY - wallDimInputH / 2} width={wallDimInputW} height={wallDimInputH}>
+              <input
+                className="hub-sketch-elevation-dim-input"
+                value={wallLengthDraft}
+                inputMode="text"
+                autoFocus
+                aria-label={t('hub_sketch_dimension_edit_label')}
+                onChange={(event) => setWallLengthDraft(event.target.value)}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+                onBlur={() => applyWallLengthDraft()}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    applyWallLengthDraft()
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    cancelWallLengthEdit()
+                  }
+                }}
+              />
+            </foreignObject>
+          ) : (
+            <text
+              x={lengthFt / 2}
+              y={wallDimLabelY}
+              textAnchor="middle"
+              role={canEdit && onModelChange ? 'button' : undefined}
+              tabIndex={canEdit && onModelChange ? 0 : undefined}
+              aria-label={canEdit && onModelChange ? t('hub_sketch_dimension_edit_label') : undefined}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                beginWallLengthEdit()
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                beginWallLengthEdit()
+              }}
+            >
+              {wallLengthText}
+            </text>
+          )}
+        </g>
         {openings.map((opening, index) => {
           const box = elevationOpeningBox(opening, lengthFt, height)
           const label = opening.kind === 'door'

@@ -32,6 +32,7 @@ import {
   DEFAULT_WALL_PAINT,
   cleanColor,
   normalizeFinishes,
+  resizeSketchSegmentToLength,
   sanitizeSketchFinishes,
   sanitizeSketchLights,
   sanitizeSketchMeasurements,
@@ -41,6 +42,9 @@ import {
   type SketchFinishes,
   type SketchLight,
   type SketchMeasurement,
+  type SketchSegmentRef,
+  type SketchSegmentResizeAnchor,
+  type SketchSegmentResizeConflict,
   type SketchSwitch,
 } from './sketchFinishes'
 import {
@@ -134,6 +138,7 @@ type CanvasSize = { width: number; height: number }
 type CanvasView = { x: number; y: number; width: number; height: number }
 type SnapMode = '1ft' | '6in' | '1in' | '1_8in'
 type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill'
+type SegmentLengthEdit = { ref: SketchSegmentRef; value: string }
 
 const SNAP_OPTIONS: Array<{ mode: SnapMode; stepFt: number; labelKey: string }> = [
   { mode: '1ft', stepFt: 1, labelKey: 'hub_sketch_snap_1ft' },
@@ -521,7 +526,7 @@ type DimLine2D = {
 }
 
 type OpeningDimLabel = DimLine2D & { kind: Opening['kind'] }
-type SegmentDimLine = DimLine2D & { kind: 'wall' }
+type SegmentDimLine = DimLine2D & { kind: 'wall'; c: number; s: number; lengthFt: number }
 type OpeningSpan2D = {
   g: { p: Pt; ux: number; uy: number; a: Pt; b: Pt }
   segLenCells: number
@@ -657,7 +662,9 @@ function segmentDimLine(model: SketchModel, seg: { c: number; s: number; a: Pt; 
   const by = seg.b.y * CELL_PX
   const { nx, ny } = outsideNormal(model, seg.c, ax, ay, bx, by)
   const offset = DIM_OFFSET_SCREEN_PX * screenWorldPx
-  return createDimLine(ax, ay, bx, by, nx, ny, offset, screenWorldPx, fmtFt(dist(seg.a, seg.b) * modelCellFt(model)), 'wall') as SegmentDimLine | null
+  const lengthFt = dist(seg.a, seg.b) * modelCellFt(model)
+  const line = createDimLine(ax, ay, bx, by, nx, ny, offset, screenWorldPx, fmtFt(lengthFt), 'wall')
+  return line ? { ...line, kind: 'wall', c: seg.c, s: seg.s, lengthFt } : null
 }
 
 function openingDimLabel(model: SketchModel, opening: Opening, index: number, t: (k: string) => string, screenWorldPx: number): OpeningDimLabel | null {
@@ -1185,6 +1192,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [selectedMeasurementIndex, setSelectedMeasurementIndex] = useState<number | null>(null)
   const [hover, setHover] = useState<Pt | null>(null)
   const [hoverSnapped, setHoverSnapped] = useState(false)
+  const [segmentLengthEdit, setSegmentLengthEdit] = useState<SegmentLengthEdit | null>(null)
+  const [segmentResizeConflict, setSegmentResizeConflict] = useState<SketchSegmentResizeConflict | null>(null)
   // Габариты проёмов (в футах), задаются перед вставкой.
   const [doorW, setDoorW] = useState(OPENING_DEFAULTS_FT.doorW)
   const [doorH, setDoorH] = useState(OPENING_DEFAULTS_FT.doorH)
@@ -1280,6 +1289,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
   }, [selectedWallKey, model.finishes])
 
+  const segmentResizeConflictKeys = useMemo(
+    () => new Set((segmentResizeConflict?.segments ?? []).map((segment) => sketchWallKey(segment.c, segment.s))),
+    [segmentResizeConflict],
+  )
+
   useEffect(() => {
     modelRef.current = model
   }, [model])
@@ -1324,7 +1338,52 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSketchMaterialsAdded(null)
     setStatus(null)
     setError(null)
+    setSegmentLengthEdit(null)
+    setSegmentResizeConflict(null)
   }
+
+  const beginSegmentLengthEdit = (dim: SegmentDimLine) => {
+    if (!canEdit) return
+    setSegmentLengthEdit({ ref: { c: dim.c, s: dim.s }, value: formatLengthFt(dim.lengthFt) })
+    setSegmentResizeConflict(null)
+    setSelectedMeasurementIndex(null)
+    setMeasurementDraft(null)
+  }
+
+  const setSegmentLengthEditValue = (value: string) => {
+    setSegmentLengthEdit((current) => (current ? { ...current, value } : current))
+  }
+
+  const cancelSegmentLengthEdit = () => {
+    setSegmentLengthEdit(null)
+    setSegmentResizeConflict(null)
+  }
+
+  const applySegmentLengthEdit = (anchor: SketchSegmentResizeAnchor = 'start') => {
+    if (!segmentLengthEdit) return
+    const parsed = parseLengthFt(segmentLengthEdit.value)
+    if (!Number.isFinite(parsed)) {
+      setSegmentResizeConflict({ reason: 'invalid-length', segments: [segmentLengthEdit.ref] })
+      setError('hub_sketch_dimension_invalid')
+      return
+    }
+    const nextLengthFt = snapFeetToPrecision(parsed)
+    const result = resizeSketchSegmentToLength(model, segmentLengthEdit.ref, nextLengthFt, { anchor })
+    if (!result.ok) {
+      setSegmentResizeConflict(result.conflict)
+      setError('hub_sketch_dimension_conflict')
+      return
+    }
+    canvasAutoFitRef.current = false
+    commit(result.model)
+  }
+
+  useEffect(() => {
+    if (!segmentLengthEdit) return
+    if (!eachSegment(model).some((seg) => seg.c === segmentLengthEdit.ref.c && seg.s === segmentLengthEdit.ref.s)) {
+      cancelSegmentLengthEdit()
+    }
+  }, [model, segmentLengthEdit])
 
   useEffect(() => {
     if (!effectiveCabinetWallKey) {
@@ -2415,6 +2474,167 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const sketchMaterialRowsBySection = (section: SketchMaterialRow['section']) =>
     sketchMaterials?.rows.filter((row) => row.section === section) ?? []
 
+  const renderSketchToolbar = (fullscreen = false) => (
+    <div className={fullscreen ? 'hub-sketch-toolbar hub-sketch-toolbar-fullscreen' : 'card hub-sketch-toolbar'}>
+      {fullscreen && (
+        <div className="hub-sketch-fullscreen-meta-tools">
+          <label className="hub-sketch-layer-toggle hub-sketch-code-toggle">
+            <input
+              type="checkbox"
+              checked={codeCheckEnabled}
+              onChange={(event) => setCodeCheckEnabled(event.target.checked)}
+            />
+            <span>{t('hub_sketch_code_check')}</span>
+          </label>
+          {lengthInput('wallHeight', 'hub_sketch_wall_height', heightFt, 1, 30, updateWallHeight, 'hub-sketch-height-field')}
+        </div>
+      )}
+      <div className="hub-sketch-tools">
+        {(['wall', 'door', 'window', 'measure', 'cabinet', 'outlet', 'switch'] as Tool[]).map((tl) => (
+          <button
+            key={tl}
+            type="button"
+            className={tool === tl ? 'btn small' : 'btn ghost small'}
+            aria-pressed={tool === tl}
+            onClick={() => {
+              setSelectedMeasurementIndex(null)
+              if (tl === 'measure') {
+                setTool((current) => (current === 'measure' ? 'wall' : 'measure'))
+                setMeasurementDraft(null)
+                setShowMeasurements(true)
+                return
+              }
+              setTool(tl)
+              setMeasurementDraft(null)
+            }}
+          >
+            {tl === 'measure' && <span aria-hidden="true">📏</span>}
+            {tl === 'cabinet' && <span aria-hidden="true">▣</span>}
+            {tl === 'outlet' && <span aria-hidden="true">⊙</span>}
+            {tl === 'switch' && <span aria-hidden="true">⏽</span>}
+            <span>{t(`hub_sketch_tool_${tl}`)}</span>
+          </button>
+        ))}
+      </div>
+      <div className="hub-sketch-actions">
+        <button type="button" className="btn ghost small" disabled={!canClose} onClick={finishShape}>
+          {t('hub_sketch_finish')}
+        </button>
+        <button type="button" className="btn ghost small" disabled={history.length === 0} onClick={undo}>
+          {t('hub_sketch_undo')}
+        </button>
+        <button type="button" className="btn ghost small" onClick={clearAll}>
+          {t('hub_sketch_clear')}
+        </button>
+        {fullscreen && (
+          <>
+            <button type="button" className="btn ghost small" onClick={fitCanvasToModel}>
+              {t('hub_sketch_camera_fit')}
+            </button>
+            <button type="button" className="btn ghost small" aria-pressed={canvasFullscreenActive} onClick={toggleCanvasFullscreen}>
+              {t(canvasFullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
+            </button>
+          </>
+        )}
+      </div>
+      <div className="hub-sketch-snap" role="group" aria-label={t('hub_sketch_snap')}>
+        <span className="muted">{t('hub_sketch_snap')}</span>
+        {SNAP_OPTIONS.map((option) => (
+          <button
+            key={option.mode}
+            type="button"
+            className={snapMode === option.mode ? 'btn small' : 'btn ghost small'}
+            aria-pressed={snapMode === option.mode}
+            onClick={() => setSnapMode(option.mode)}
+          >
+            {t(option.labelKey)}
+          </button>
+        ))}
+      </div>
+      <label className="hub-sketch-layer-toggle">
+        <input
+          type="checkbox"
+          checked={showMeasurements}
+          onChange={(e) => {
+            setShowMeasurements(e.target.checked)
+            if (!e.target.checked) setSelectedMeasurementIndex(null)
+          }}
+        />
+        <span>{t('hub_sketch_measurements')}</span>
+      </label>
+      {tool === 'door' && (
+        <div className="hub-sketch-dims">
+          {lengthInput('doorW', 'hub_sketch_width', doorW, 0.5, 20, setDoorW)}
+          {lengthInput('doorH', 'hub_sketch_height', doorH, 0.5, 20, setDoorH)}
+          <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_width')}>
+            {DOOR_WIDTH_PRESETS_FT.map((value) => presetButton(value, setDoorW))}
+          </div>
+          <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_bifold')}>
+            {BIFOLD_DOOR_WIDTH_PRESETS_FT.map((value) => bifoldPresetButton(value))}
+          </div>
+        </div>
+      )}
+      {tool === 'window' && (
+        <div className="hub-sketch-dims">
+          {lengthInput('winW', 'hub_sketch_width', winW, 0.5, 20, setWinW)}
+          {lengthInput('winH', 'hub_sketch_height', winH, 0.5, 20, setWinH)}
+          {lengthInput('winSill', 'hub_sketch_sill', winSill, 0, 20, setWinSill)}
+          <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_width')}>
+            {WINDOW_WIDTH_PRESETS_FT.map((value) => presetButton(value, setWinW))}
+          </div>
+        </div>
+      )}
+      {tool === 'cabinet' && (
+        <div className="hub-sketch-cabinet-tools">
+          <label className="hub-sketch-field hub-sketch-cabinet-wall-select">
+            <span className="muted">{t('hub_sketch_cabinet_wall')}</span>
+            <select
+              value={effectiveCabinetWallKey ?? ''}
+              onChange={(event) => setSelectedCabinetWallKey(event.target.value || null)}
+              disabled={cabinetWallOptions.length === 0}
+            >
+              {cabinetWallOptions.length === 0 && <option value="">{t('hub_sketch_no_segment')}</option>}
+              {cabinetWallOptions.map((seg, index) => {
+                const key = sketchWallKey(seg.c, seg.s)
+                return (
+                  <option key={key} value={key}>
+                    {`${t('hub_sketch_3d_wall')} ${index + 1} · ${fmtFt(dist(seg.a, seg.b) * modelCellFt(model))}`}
+                  </option>
+                )
+              })}
+            </select>
+          </label>
+          <textarea
+            className="hub-sketch-cabinet-code-input"
+            value={cabinetCodes}
+            onChange={(event) => setCabinetCodes(event.target.value)}
+            rows={fullscreen ? 2 : 3}
+            spellCheck={false}
+            placeholder="B30 2DB27 W3030 BEP24-3/4 BF3"
+          />
+          <div className="hub-sketch-cabinet-actions">
+            <button type="button" className="btn small" disabled={!selectedCabinetWall || !cabinetCodes.trim()} onClick={applyCabinetLayout}>
+              {t('hub_sketch_cabinet_apply')}
+            </button>
+            {cabinetLayoutPreview && (
+              <span className={cabinetLayoutPreview.overflow || cabinetLayoutPreview.smallFiller || cabinetLayoutPreview.invalidCodes.length > 0 ? 'hub-sketch-cabinet-summary hub-sketch-cabinet-summary-warn' : 'hub-sketch-cabinet-summary'}>
+                {`${cabinetLayoutPreview.parsed.length} · ${t('hub_sketch_dim_length_short')} ${formatInches(cabinetLayoutPreview.wallLengthIn)}`}
+                {cabinetLayoutPreview.summaries.map((summary) => ` · ${t(summary.layer === 'base' ? 'hub_sketch_cabinet_base' : 'hub_sketch_cabinet_wall_layer')} ${formatInches(summary.totalWidthIn)}${summary.fillerWidthIn > 0 ? ` + ${formatInches(summary.fillerWidthIn)}` : ''}`).join('')}
+              </span>
+            )}
+          </div>
+          {cabinetLayoutPreview && cabinetLayoutPreview.invalidCodes.length > 0 && (
+            <div className="error-msg hub-sketch-cabinet-warning">
+              {`${t('hub_sketch_cabinet_invalid')}: ${cabinetLayoutPreview.invalidCodes.join(', ')}`}
+            </div>
+          )}
+          {cabinetLayoutPreview?.overflow && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_overflow')}</div>}
+          {cabinetLayoutPreview?.smallFiller && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_small_filler')}</div>}
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <section className="hub-tab-panel hub-sketch">
       <div className="card hub-sketch-viewbar">
@@ -2447,143 +2667,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         {lengthInput('wallHeight', 'hub_sketch_wall_height', heightFt, 1, 30, updateWallHeight, 'hub-sketch-height-field')}
       </div>
 
-      {canEdit && viewMode === '2d' && (
-        <div className="card hub-sketch-toolbar">
-          <div className="hub-sketch-tools">
-            {(['wall', 'door', 'window', 'measure', 'cabinet', 'outlet', 'switch'] as Tool[]).map((tl) => (
-              <button
-                key={tl}
-                type="button"
-                className={tool === tl ? 'btn small' : 'btn ghost small'}
-                aria-pressed={tool === tl}
-                onClick={() => {
-                  setSelectedMeasurementIndex(null)
-                  if (tl === 'measure') {
-                    setTool((current) => (current === 'measure' ? 'wall' : 'measure'))
-                    setMeasurementDraft(null)
-                    setShowMeasurements(true)
-                    return
-                  }
-                  setTool(tl)
-                  setMeasurementDraft(null)
-                }}
-              >
-                {tl === 'measure' && <span aria-hidden="true">📏</span>}
-                {tl === 'cabinet' && <span aria-hidden="true">▣</span>}
-                {tl === 'outlet' && <span aria-hidden="true">⊙</span>}
-                {tl === 'switch' && <span aria-hidden="true">⏽</span>}
-                <span>{t(`hub_sketch_tool_${tl}`)}</span>
-              </button>
-            ))}
-          </div>
-          <div className="hub-sketch-actions">
-            <button type="button" className="btn ghost small" disabled={!canClose} onClick={finishShape}>
-              {t('hub_sketch_finish')}
-            </button>
-            <button type="button" className="btn ghost small" disabled={history.length === 0} onClick={undo}>
-              {t('hub_sketch_undo')}
-            </button>
-            <button type="button" className="btn ghost small" onClick={clearAll}>
-              {t('hub_sketch_clear')}
-            </button>
-          </div>
-          <div className="hub-sketch-snap" role="group" aria-label={t('hub_sketch_snap')}>
-            <span className="muted">{t('hub_sketch_snap')}</span>
-            {SNAP_OPTIONS.map((option) => (
-              <button
-                key={option.mode}
-                type="button"
-                className={snapMode === option.mode ? 'btn small' : 'btn ghost small'}
-                aria-pressed={snapMode === option.mode}
-                onClick={() => setSnapMode(option.mode)}
-              >
-                {t(option.labelKey)}
-              </button>
-            ))}
-          </div>
-          <label className="hub-sketch-layer-toggle">
-            <input
-              type="checkbox"
-              checked={showMeasurements}
-              onChange={(e) => {
-                setShowMeasurements(e.target.checked)
-                if (!e.target.checked) setSelectedMeasurementIndex(null)
-              }}
-            />
-            <span>{t('hub_sketch_measurements')}</span>
-          </label>
-          {tool === 'door' && (
-            <div className="hub-sketch-dims">
-              {lengthInput('doorW', 'hub_sketch_width', doorW, 0.5, 20, setDoorW)}
-              {lengthInput('doorH', 'hub_sketch_height', doorH, 0.5, 20, setDoorH)}
-              <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_width')}>
-                {DOOR_WIDTH_PRESETS_FT.map((value) => presetButton(value, setDoorW))}
-              </div>
-              <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_bifold')}>
-                {BIFOLD_DOOR_WIDTH_PRESETS_FT.map((value) => bifoldPresetButton(value))}
-              </div>
-            </div>
-          )}
-          {tool === 'window' && (
-            <div className="hub-sketch-dims">
-              {lengthInput('winW', 'hub_sketch_width', winW, 0.5, 20, setWinW)}
-              {lengthInput('winH', 'hub_sketch_height', winH, 0.5, 20, setWinH)}
-              {lengthInput('winSill', 'hub_sketch_sill', winSill, 0, 20, setWinSill)}
-              <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_width')}>
-                {WINDOW_WIDTH_PRESETS_FT.map((value) => presetButton(value, setWinW))}
-              </div>
-            </div>
-          )}
-          {tool === 'cabinet' && (
-            <div className="hub-sketch-cabinet-tools">
-              <label className="hub-sketch-field hub-sketch-cabinet-wall-select">
-                <span className="muted">{t('hub_sketch_cabinet_wall')}</span>
-                <select
-                  value={effectiveCabinetWallKey ?? ''}
-                  onChange={(event) => setSelectedCabinetWallKey(event.target.value || null)}
-                  disabled={cabinetWallOptions.length === 0}
-                >
-                  {cabinetWallOptions.length === 0 && <option value="">{t('hub_sketch_no_segment')}</option>}
-                  {cabinetWallOptions.map((seg, index) => {
-                    const key = sketchWallKey(seg.c, seg.s)
-                    return (
-                      <option key={key} value={key}>
-                        {`${t('hub_sketch_3d_wall')} ${index + 1} · ${fmtFt(dist(seg.a, seg.b) * modelCellFt(model))}`}
-                      </option>
-                    )
-                  })}
-                </select>
-              </label>
-              <textarea
-                className="hub-sketch-cabinet-code-input"
-                value={cabinetCodes}
-                onChange={(event) => setCabinetCodes(event.target.value)}
-                rows={3}
-                spellCheck={false}
-                placeholder="B30 2DB27 W3030 BEP24-3/4 BF3"
-              />
-              <div className="hub-sketch-cabinet-actions">
-                <button type="button" className="btn small" disabled={!selectedCabinetWall || !cabinetCodes.trim()} onClick={applyCabinetLayout}>
-                  {t('hub_sketch_cabinet_apply')}
-                </button>
-                {cabinetLayoutPreview && (
-                  <span className={cabinetLayoutPreview.overflow || cabinetLayoutPreview.smallFiller || cabinetLayoutPreview.invalidCodes.length > 0 ? 'hub-sketch-cabinet-summary hub-sketch-cabinet-summary-warn' : 'hub-sketch-cabinet-summary'}>
-                    {`${cabinetLayoutPreview.parsed.length} · ${t('hub_sketch_dim_length_short')} ${formatInches(cabinetLayoutPreview.wallLengthIn)}`}
-                    {cabinetLayoutPreview.summaries.map((summary) => ` · ${t(summary.layer === 'base' ? 'hub_sketch_cabinet_base' : 'hub_sketch_cabinet_wall_layer')} ${formatInches(summary.totalWidthIn)}${summary.fillerWidthIn > 0 ? ` + ${formatInches(summary.fillerWidthIn)}` : ''}`).join('')}
-                  </span>
-                )}
-              </div>
-              {cabinetLayoutPreview && cabinetLayoutPreview.invalidCodes.length > 0 && (
-                <div className="error-msg hub-sketch-cabinet-warning">
-                  {`${t('hub_sketch_cabinet_invalid')}: ${cabinetLayoutPreview.invalidCodes.join(', ')}`}
-                </div>
-              )}
-              {cabinetLayoutPreview?.overflow && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_overflow')}</div>}
-              {cabinetLayoutPreview?.smallFiller && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_small_filler')}</div>}
-            </div>
-          )}
-        </div>
-      )}
+      {canEdit && viewMode === '2d' && !canvasFullscreenActive && renderSketchToolbar()}
 
       <div className="card hub-sketch-canvas-card">
         {viewMode === '2d' ? (
@@ -2592,6 +2676,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               ref={svgShellRef}
               className={canvasFullscreenActive ? 'hub-sketch-svg-shell hub-sketch-svg-shell-fullscreen' : 'hub-sketch-svg-shell'}
             >
+              {canEdit && canvasFullscreenActive && renderSketchToolbar(true)}
               <svg
                 ref={svgRef}
                 className="hub-sketch-svg"
@@ -2649,9 +2734,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             const x2 = seg.b.x * CELL_PX
             const y2 = seg.b.y * CELL_PX
             const selected = selectedWallKey === key
+            const conflict = segmentResizeConflictKeys.has(key)
             return (
               <g key={`ws-${key}`}>
                 {selected && <line className="hub-sketch-wall-selected" x1={x1} y1={y1} x2={x2} y2={y2} />}
+                {conflict && <line className="hub-sketch-wall-conflict" x1={x1} y1={y1} x2={x2} y2={y2} />}
                 {wallSelectEnabled && (
                   <line
                     className="hub-sketch-wall-hit"
@@ -2671,24 +2758,73 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
           {/* размерные линии стен */}
           {wallDimLines.map((dim, i) => {
+            const key = sketchWallKey(dim.c, dim.s)
+            const editing = segmentLengthEdit?.ref.c === dim.c && segmentLengthEdit.ref.s === dim.s
+            const conflict = segmentResizeConflictKeys.has(key)
+            const inputW = Math.max(92, Math.min(150, segmentLengthEdit?.value.length ? segmentLengthEdit.value.length * 8 + 34 : 110)) * screenWorldPx
+            const inputH = 32 * screenWorldPx
             return (
-              <g key={`l${i}`} className="hub-sketch-dim-line">
+              <g key={`l${i}`} className={`hub-sketch-dim-line hub-sketch-dim-line-editable${conflict ? ' hub-sketch-dim-line-conflict' : ''}`}>
                 <line className="hub-sketch-dim-extension" x1={dim.ext1x1} y1={dim.ext1y1} x2={dim.ext1x2} y2={dim.ext1y2} />
                 <line className="hub-sketch-dim-extension" x1={dim.ext2x1} y1={dim.ext2y1} x2={dim.ext2x2} y2={dim.ext2y2} />
                 <line className="hub-sketch-dim-main" x1={dim.x1} y1={dim.y1} x2={dim.x2} y2={dim.y2} />
                 <line className="hub-sketch-dim-tick" x1={dim.tick1x1} y1={dim.tick1y1} x2={dim.tick1x2} y2={dim.tick1y2} />
                 <line className="hub-sketch-dim-tick" x1={dim.tick2x1} y1={dim.tick2y1} x2={dim.tick2x2} y2={dim.tick2y2} />
-                <text
-                  className="hub-sketch-dim-label"
-                  x={dim.labelX}
-                  y={dim.labelY}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  style={{ fontSize: dimFontSize }}
-                  transform={`rotate(${dim.angle} ${dim.labelX} ${dim.labelY})`}
-                >
-                  {dim.text}
-                </text>
+                {editing ? (
+                  <foreignObject
+                    x={dim.labelX - inputW / 2}
+                    y={dim.labelY - inputH / 2}
+                    width={inputW}
+                    height={inputH}
+                    transform={`rotate(${dim.angle} ${dim.labelX} ${dim.labelY})`}
+                  >
+                    <input
+                      className="hub-sketch-dim-edit-input"
+                      value={segmentLengthEdit.value}
+                      inputMode="text"
+                      autoFocus
+                      aria-label={t('hub_sketch_dimension_edit_label')}
+                      onChange={(event) => setSegmentLengthEditValue(event.target.value)}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => event.stopPropagation()}
+                      onBlur={() => applySegmentLengthEdit()}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          applySegmentLengthEdit()
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault()
+                          cancelSegmentLengthEdit()
+                        }
+                      }}
+                    />
+                  </foreignObject>
+                ) : (
+                  <text
+                    className="hub-sketch-dim-label hub-sketch-dim-label-editable"
+                    x={dim.labelX}
+                    y={dim.labelY}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    style={{ fontSize: dimFontSize }}
+                    transform={`rotate(${dim.angle} ${dim.labelX} ${dim.labelY})`}
+                    role={canEdit ? 'button' : undefined}
+                    tabIndex={canEdit ? 0 : undefined}
+                    aria-label={canEdit ? t('hub_sketch_dimension_edit_label') : undefined}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      beginSegmentLengthEdit(dim)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      beginSegmentLengthEdit(dim)
+                    }}
+                  >
+                    {dim.text}
+                  </text>
+                )}
               </g>
             )
           })}
@@ -3047,14 +3183,30 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             />
           )}
               </svg>
-              <div className="hub-sketch-2d-tools" role="toolbar" aria-label={t('hub_sketch_2d_canvas_tools')}>
-                <button type="button" className="btn ghost small" onClick={fitCanvasToModel}>
-                  {t('hub_sketch_camera_fit')}
-                </button>
-                <button type="button" className="btn ghost small" aria-pressed={canvasFullscreenActive} onClick={toggleCanvasFullscreen}>
-                  {t(canvasFullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
-                </button>
-              </div>
+              {segmentResizeConflict && segmentLengthEdit && (
+                <div className="hub-sketch-dimension-conflict" role="alertdialog" aria-live="polite">
+                  <span>{t('hub_sketch_dimension_conflict_prompt')}</span>
+                  <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applySegmentLengthEdit('end')}>
+                    {t('hub_sketch_dimension_move_start')}
+                  </button>
+                  <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applySegmentLengthEdit('start')}>
+                    {t('hub_sketch_dimension_move_end')}
+                  </button>
+                  <button type="button" className="btn ghost small" onMouseDown={(event) => event.preventDefault()} onClick={cancelSegmentLengthEdit}>
+                    {t('cancel')}
+                  </button>
+                </div>
+              )}
+              {!canvasFullscreenActive && (
+                <div className="hub-sketch-2d-tools" role="toolbar" aria-label={t('hub_sketch_2d_canvas_tools')}>
+                  <button type="button" className="btn ghost small" onClick={fitCanvasToModel}>
+                    {t('hub_sketch_camera_fit')}
+                  </button>
+                  <button type="button" className="btn ghost small" aria-pressed={canvasFullscreenActive} onClick={toggleCanvasFullscreen}>
+                    {t(canvasFullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
+                  </button>
+                </div>
+              )}
             </div>
             <p className="muted hub-sketch-scale">{t('hub_sketch_scale_note')}</p>
           </>
@@ -3067,9 +3219,24 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             sketchName={name}
             canEdit={canEdit}
             onModelChange={updateModelFrom3D}
+            onHeightChange={updateWallHeight}
             snapStepFt={activeSnapFt}
             openingDefaults={openingDefaults}
+            onOpeningDefaultsChange={(patch) => {
+              if (patch.doorW !== undefined) setDoorW(patch.doorW)
+              if (patch.doorH !== undefined) setDoorH(patch.doorH)
+              if (patch.winW !== undefined) setWinW(patch.winW)
+              if (patch.winH !== undefined) setWinH(patch.winH)
+              if (patch.winSill !== undefined) setWinSill(patch.winSill)
+            }}
+            snapControls={SNAP_OPTIONS.map((option) => ({
+              key: option.mode,
+              label: t(option.labelKey),
+              active: snapMode === option.mode,
+              onSelect: () => setSnapMode(option.mode),
+            }))}
             codeCheckEnabled={codeCheckEnabled}
+            onCodeCheckChange={setCodeCheckEnabled}
             pickedWallKey={selectedWallKey}
             onPickWall={setSelectedWallKey}
             label={t('hub_sketch_3d_label')}

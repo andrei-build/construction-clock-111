@@ -3937,6 +3937,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   position: fixed;
   inset: 0;
   z-index: 1000;
+  display: flex;
+  flex-direction: column;
   border-radius: 0;
 }
 .hub-sketch-svg {
@@ -3948,7 +3950,52 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   user-select: none;
 }
 .hub-sketch-svg-shell-fullscreen .hub-sketch-svg {
-  height: 100dvh;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+.hub-sketch-toolbar-fullscreen {
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px 8px;
+  max-height: 34dvh;
+  overflow: auto;
+  padding: 7px 8px;
+  border: 0;
+  border-bottom: 1px solid rgba(126,160,190,.34);
+  border-radius: 0;
+  background: rgba(248, 250, 252, .96);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .1);
+  z-index: 6;
+}
+.hub-sketch-fullscreen-meta-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.hub-sketch-toolbar-fullscreen .hub-sketch-snap,
+.hub-sketch-toolbar-fullscreen .hub-sketch-dims {
+  width: auto;
+}
+.hub-sketch-toolbar-fullscreen .hub-sketch-dim-field input,
+.hub-sketch-toolbar-fullscreen .hub-sketch-height-field input {
+  width: 112px;
+  padding: 7px 9px;
+}
+.hub-sketch-toolbar-fullscreen .hub-sketch-cabinet-tools {
+  flex: 1 1 420px;
+  width: auto;
+  grid-template-columns: minmax(150px, 220px) minmax(240px, 1fr);
+  align-items: center;
+}
+.hub-sketch-toolbar-fullscreen .hub-sketch-cabinet-code-input {
+  min-height: 42px;
+  height: 42px;
+}
+.hub-sketch-toolbar-fullscreen .hub-sketch-cabinet-actions {
+  grid-column: auto;
 }
 .hub-sketch-3d-shell {
   position: relative;
@@ -4180,6 +4227,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-grid line,
 .hub-sketch-wall,
 .hub-sketch-wall-selected,
+.hub-sketch-wall-conflict,
 .hub-sketch-wall-hit,
 .hub-sketch-door,
 .hub-sketch-window,
@@ -4201,10 +4249,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 /* NAV-FIX-2: выбор стены на 2D-плане */
 .hub-sketch-wall-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; fill: none; cursor: pointer; }
 .hub-sketch-wall-selected { stroke: #2563eb; stroke-width: 5; stroke-linecap: round; fill: none; pointer-events: none; }
+.hub-sketch-wall-conflict { stroke: #dc2626; stroke-width: 6; stroke-linecap: round; fill: none; pointer-events: none; }
 .hub-sketch-dim { fill: #334155; font-size: 12px; font-weight: 700; pointer-events: none; }
 .hub-sketch-dim-line,
 .hub-sketch-opening-dim {
   pointer-events: none;
+}
+.hub-sketch-dim-line-editable {
+  pointer-events: auto;
 }
 .hub-sketch-dim-main,
 .hub-sketch-dim-extension,
@@ -4224,6 +4276,38 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   paint-order: stroke;
   font-weight: 850;
   letter-spacing: 0;
+}
+.hub-sketch-dim-label-editable {
+  cursor: text;
+  pointer-events: auto;
+}
+.hub-sketch-dim-line-conflict .hub-sketch-dim-main,
+.hub-sketch-dim-line-conflict .hub-sketch-dim-extension,
+.hub-sketch-dim-line-conflict .hub-sketch-dim-tick {
+  stroke: #dc2626;
+  stroke-width: 2;
+}
+.hub-sketch-dim-line-conflict .hub-sketch-dim-label {
+  fill: #b91c1c;
+}
+.hub-sketch-dim-edit-input {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 2px 5px;
+  border: 1px solid rgba(37, 99, 235, .58);
+  border-radius: 5px;
+  background: rgba(255,255,255,.96);
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 850;
+  text-align: center;
+  outline: none;
+}
+.hub-sketch-dim-edit-input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .16);
 }
 .hub-sketch-node { fill: #0f172a; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-door { fill: #b45309; stroke: #ffffff; stroke-width: 2; }
@@ -4599,6 +4683,32 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: none;
   font-weight: 900;
 }
+.hub-sketch-dimension-conflict,
+.hub-sketch-elevation-conflict {
+  z-index: 7;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(220, 38, 38, .28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .96);
+  color: #991b1b;
+  box-shadow: 0 12px 30px rgba(127, 29, 29, .14);
+  font-size: 12px;
+  font-weight: 850;
+}
+.hub-sketch-dimension-conflict {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  max-width: min(520px, calc(100% - 20px));
+}
+.hub-sketch-dimension-conflict .btn,
+.hub-sketch-elevation-conflict .btn {
+  width: auto;
+}
 .hub-sketch-3d-dim-toggle {
   position: absolute;
   top: 10px;
@@ -4646,6 +4756,34 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-3d-toolbar-toggle input:disabled {
   cursor: not-allowed;
 }
+.hub-sketch-3d-toolbar-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-left: 1px solid rgba(255,255,255,.2);
+}
+.hub-sketch-3d-toolbar-label {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 850;
+}
+.hub-sketch-3d-toolbar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+}
+.hub-sketch-3d-toolbar-field input {
+  width: 82px;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 7px;
+  font-size: 12px;
+}
 /* SKETCH-3D-2: отделка, плиточная раскладка, свет и выключатели */
 .hub-sketch-3d-layout {
   display: grid;
@@ -4674,6 +4812,79 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin: 0;
   font-size: 14px;
   line-height: 1.2;
+}
+.hub-sketch-3d-layout-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  align-items: stretch;
+  background: #f7f8fb;
+}
+.hub-sketch-3d-layout-fullscreen .hub-sketch-3d-shell,
+.hub-sketch-3d-layout-fullscreen .hub-sketch-3d-shell-fullscreen {
+  order: 2;
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  border-radius: 0;
+}
+.hub-sketch-3d-layout-fullscreen .hub-sketch-3d-panel {
+  order: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  max-height: 34dvh;
+  overflow: auto;
+  padding: 7px 8px;
+  border: 0;
+  border-bottom: 1px solid rgba(126,160,190,.34);
+  border-radius: 0;
+  background: rgba(248, 250, 252, .96);
+}
+.hub-sketch-3d-layout-fullscreen .hub-sketch-3d-section {
+  flex: 0 1 auto;
+  min-width: 220px;
+  max-width: min(520px, 100%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px 0 0;
+  border-right: 1px solid rgba(126,160,190,.26);
+  border-bottom: 0;
+}
+.hub-sketch-3d-layout-fullscreen .hub-sketch-3d-section h3 {
+  flex: 0 0 100%;
+  font-size: 12px;
+}
+.hub-sketch-3d-layout-fullscreen .hub-sketch-wall-tools,
+.hub-sketch-3d-layout-fullscreen .hub-sketch-tile-controls,
+.hub-sketch-3d-layout-fullscreen .hub-sketch-finish-coverage,
+.hub-sketch-3d-layout-fullscreen .hub-sketch-drywall-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.hub-sketch-3d-layout-fullscreen .hub-sketch-field {
+  width: min(260px, 100%);
+  grid-template-columns: minmax(82px, .7fr) minmax(0, 1fr);
+}
+.hub-sketch-3d-layout-fullscreen .hub-sketch-elevation {
+  flex: 1 1 360px;
+  grid-template-columns: minmax(280px, 420px);
+}
+.hub-sketch-3d-layout-fullscreen .hub-sketch-elevation-svg {
+  max-width: 420px;
+  min-height: 96px;
+  aspect-ratio: 16 / 6;
 }
 .hub-sketch-render-backdrop {
   position: fixed;
@@ -4940,10 +5151,40 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-elevation-meta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px 12px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 750;
+}
+.hub-sketch-elevation-meta-button {
+  width: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: text;
+}
+.hub-sketch-elevation-meta-button:disabled {
+  cursor: default;
+}
+.hub-sketch-elevation-meta-button-conflict {
+  color: #b91c1c;
+  font-weight: 900;
+}
+.hub-sketch-elevation-length-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+.hub-sketch-elevation-length-edit input {
+  width: 112px;
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 12px;
 }
 .hub-sketch-elevation-tools {
   display: flex;
@@ -5019,6 +5260,47 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   fill: none;
   stroke: #334155;
   stroke-width: .045;
+}
+.hub-sketch-elevation-outline-conflict {
+  stroke: #dc2626;
+  stroke-width: .075;
+}
+.hub-sketch-elevation-wall-dim line {
+  stroke: #334155;
+  stroke-width: .026;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-wall-dim text {
+  cursor: text;
+  pointer-events: auto;
+}
+.hub-sketch-elevation-wall-dim-conflict line,
+.hub-sketch-elevation-wall-dim-conflict text {
+  stroke: rgba(255,255,255,.94);
+  fill: #b91c1c;
+}
+.hub-sketch-elevation-wall-dim-conflict line {
+  stroke: #dc2626;
+  stroke-width: .045;
+}
+.hub-sketch-elevation-dim-input {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 1px 4px;
+  border: 1px solid rgba(37, 99, 235, .58);
+  border-radius: 4px;
+  background: rgba(255,255,255,.97);
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 850;
+  text-align: center;
+  outline: none;
+}
+.hub-sketch-elevation-dim-input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .16);
 }
 .hub-sketch-elevation-door {
   fill: rgba(180, 83, 9, .75);
