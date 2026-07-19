@@ -9,10 +9,11 @@ import {
   updateCatalogItem,
   setCatalogItemActive,
   deleteCatalogItem,
+  getCatalogPriceHistory,
   uploadCatalogPhoto,
   CATALOG_CATEGORIES,
 } from '../lib/api'
-import type { CatalogItem, CatalogCategory, CatalogItemInput } from '../lib/api'
+import type { CatalogItem, CatalogCategory, CatalogItemInput, CatalogPriceHistoryRow } from '../lib/api'
 
 const CATEGORY_LABEL_KEY: Record<CatalogCategory, string> = {
   shower: 'catalog_cat_shower',
@@ -80,6 +81,45 @@ const dims = (item: CatalogItem): string | null => {
   return parts.map((p) => (p == null ? '—' : p)).join('×')
 }
 
+const MS_PER_DAY = 86_400_000
+
+function daysSince(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const time = new Date(iso).getTime()
+  if (!Number.isFinite(time)) return null
+  return Math.max(0, Math.floor((Date.now() - time) / MS_PER_DAY))
+}
+
+function historyDate(row: CatalogPriceHistoryRow): string | null {
+  return row.recorded_at ?? row.created_at ?? row.changed_at ?? row.updated_at ?? null
+}
+
+function parseValidDate(value: string | null): Date | null {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date : null
+}
+
+function historyPrice(row: CatalogPriceHistoryRow): number | null {
+  const value = row.new_price ?? row.price
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+function historyPreviousPrice(row: CatalogPriceHistoryRow): number | null {
+  const value = row.old_price ?? row.previous_price
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
 export default function Catalog() {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
@@ -90,6 +130,9 @@ export default function Catalog() {
   const [error, setError] = useState(false)
   const [search, setSearch] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [historyOpenId, setHistoryOpenId] = useState<string | null>(null)
+  const [historyLoadingId, setHistoryLoadingId] = useState<string | null>(null)
+  const [priceHistory, setPriceHistory] = useState<Record<string, CatalogPriceHistoryRow[]>>({})
 
   // null — модалка закрыта; иначе id редактируемой позиции или 'new'.
   const [editing, setEditing] = useState<string | null>(null)
@@ -121,6 +164,11 @@ export default function Catalog() {
     () => new Intl.NumberFormat(lang === 'ru' ? 'ru-RU' : lang === 'es' ? 'es-ES' : 'en-US', {
       style: 'currency', currency: 'USD', maximumFractionDigits: 2,
     }),
+    [lang],
+  )
+
+  const dateFmt = useMemo(
+    () => new Intl.DateTimeFormat(lang === 'ru' ? 'ru-RU' : lang === 'es' ? 'es-ES' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     [lang],
   )
 
@@ -236,6 +284,29 @@ export default function Catalog() {
     }
   }
 
+  async function togglePriceHistory(item: CatalogItem) {
+    const nextOpen = historyOpenId === item.id ? null : item.id
+    setHistoryOpenId(nextOpen)
+    if (!nextOpen || priceHistory[item.id]) return
+    setHistoryLoadingId(item.id)
+    try {
+      const rows = await getCatalogPriceHistory(item.id, 5)
+      setPriceHistory((prev) => ({ ...prev, [item.id]: rows }))
+    } catch {
+      setPriceHistory((prev) => ({ ...prev, [item.id]: [] }))
+    } finally {
+      setHistoryLoadingId(null)
+    }
+  }
+
+  const priceAgeLabel = (item: CatalogItem): string | null => {
+    const days = daysSince(item.price_updated_at)
+    if (days == null) return null
+    if (days === 0) return t('catalog_price_updated_today')
+    if (days === 1) return t('catalog_price_updated_yesterday')
+    return `${t('catalog_price_updated_prefix')} ${days} ${t('catalog_price_updated_suffix')}`
+  }
+
   return (
     <div className="screen">
       {lb.node}
@@ -269,6 +340,9 @@ export default function Catalog() {
           <div className="catalog-grid">
             {group.rows.map((item) => {
               const d = dims(item)
+              const ageLabel = priceAgeLabel(item)
+              const itemHistory = priceHistory[item.id] ?? []
+              const historyOpen = historyOpenId === item.id
               return (
                 <div key={item.id} className={`card catalog-card ${item.is_active ? '' : 'muted'}`}>
                   <div className="catalog-thumb">
@@ -301,6 +375,7 @@ export default function Catalog() {
                     {d && <div className="muted" style={{ fontSize: 12 }}>{t('catalog_dims')}: {d}</div>}
                     <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                       {item.price != null && <span className="item-title">{priceFmt.format(item.price)}</span>}
+                      {ageLabel && <span className="badge blue">{ageLabel}</span>}
                       {!item.is_active && <span className="badge red">{t('catalog_inactive')}</span>}
                       {item.url && (
                         <a href={item.url} target="_blank" rel="noreferrer" className="muted" style={{ fontSize: 12 }}>
@@ -309,6 +384,27 @@ export default function Catalog() {
                       )}
                     </div>
                     {item.note && <div className="muted" style={{ fontSize: 12 }}>{item.note}</div>}
+                    <button type="button" className="btn small ghost catalog-history-toggle" onClick={() => togglePriceHistory(item)}>
+                      {historyOpen ? t('catalog_price_history_hide') : t('catalog_price_history_show')}
+                    </button>
+                    {historyOpen && (
+                      <div className="catalog-price-history">
+                        {historyLoadingId === item.id && <div className="muted">{t('loading')}</div>}
+                        {historyLoadingId !== item.id && itemHistory.length === 0 && <div className="muted">{t('catalog_price_history_empty')}</div>}
+                        {historyLoadingId !== item.id && itemHistory.map((row, idx) => {
+                          const date = parseValidDate(historyDate(row))
+                          const price = historyPrice(row)
+                          const prev = historyPreviousPrice(row)
+                          return (
+                            <div className="catalog-price-history-row" key={row.id ?? `${item.id}-${idx}`}>
+                              <span>{date ? dateFmt.format(date) : t('date')}</span>
+                              <strong>{price != null ? priceFmt.format(price) : '—'}</strong>
+                              {prev != null && <span className="muted">{t('catalog_price_prev')}: {priceFmt.format(prev)}</span>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                   <div className="catalog-actions">
                     <button type="button" className="btn small" disabled={busyId === item.id} onClick={() => handleToggle(item)}>

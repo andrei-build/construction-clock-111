@@ -91,8 +91,9 @@ export default function More() {
   const manager = profile ? isManagerRole(profile.role) : false
   const salesAccess = profile ? manager || profile.role === 'sales' : false
   const isOwner = profile?.role === 'owner'
-  // SET-1: /settings regated to owner/admin only (plain managers no longer see it).
+  // MAT-CALC-UI-1: /settings includes tile norms for owner/admin/manager; owner-only sections self-guard.
   const isAdminOrOwner = isOwner || profile?.role === 'admin'
+  const canOpenSettings = isAdminOrOwner || profile?.role === 'manager'
   // ACC-4 (c): пароль выдаёт владелец. Форму смены пароля показываем ТОЛЬКО владельцу ИЛИ сотруднику,
   // которому владелец выдал право can_change_password (грузится в auth.fetchProfile как capabilities[]).
   const canChangeOwnPassword = isOwner || (profile?.capabilities?.includes('can_change_password') ?? false)
@@ -150,7 +151,7 @@ export default function More() {
           <h2>{t('more_group_admin')}</h2>
           <div className="more-group">
             {/* SET-2 (ЗАКОН-6): «Настройки владельца» merged into «Настройки» (/settings#owner). */}
-            {isAdminOrOwner && <MoreLink to="/settings" Icon={IconSettings} label={t('settings')} />}
+            {canOpenSettings && <MoreLink to="/settings" Icon={IconSettings} label={t('settings')} />}
             <MoreLink to="/archive" Icon={IconFolder} label={t('archive')} />
             {/* SET-2 (ЗАКОН-7): «Согласия» removed — now inside the person dossier (/team/:id). */}
           </div>

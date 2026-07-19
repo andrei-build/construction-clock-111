@@ -1,8 +1,20 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getAppSettings, saveAppSettings, getTeam, reportGpsExport, purgeGpsFeeds, type AppSettingsInput } from '../lib/api'
+import {
+  TILE_NORM_DEFAULTS,
+  getAppSettings,
+  getTeam,
+  getTileMaterialNorm,
+  purgeGpsFeeds,
+  reportGpsExport,
+  saveAppSettings,
+  saveTileMaterialNorm,
+  type AppSettingsInput,
+  type TileMaterialNorm,
+} from '../lib/api'
 import type { AppSettings, Profile } from '../lib/types'
+import { isManagerWrite } from '../lib/types'
 import { GPS_RADIUS_MIN, GPS_RADIUS_MAX, GPS_RADIUS_STEP, clampGpsRadius } from '../lib/geofence'
 import { DEFAULT_PAID_GAP_ALERT_HOURS } from '../lib/time'
 // SET-2: «Настройки владельца» merged into «Настройки» — owner-only sections rendered inline below.
@@ -66,6 +78,7 @@ export default function Settings() {
   const [digestHour, setDigestHour] = useState(String(DEFAULT_DIGEST_HOUR))
 
   const canEdit = profile?.role === 'owner'
+  const canEditTileNorms = profile ? isManagerWrite(profile.role) : false
 
   useEffect(() => {
     let mounted = true
@@ -294,6 +307,8 @@ export default function Settings() {
 
       {!loading && !loadError && canEdit && <GpsDataSection />}
 
+      {!loading && !loadError && canEditTileNorms && <TileMaterialNormsSection profile={profile} />}
+
       {/* SET-2: owner-only «Настройки владельца» sections (ЗАКОН-6). canEdit === role 'owner',
           so this is the isOwner gate; the sub-component also guards internally. /owner-settings
           redirects here to #owner. Non-owner admins keep the read-only view below and never see this. */}
@@ -313,6 +328,168 @@ export default function Settings() {
         </>
       )}
     </div>
+  )
+}
+
+type TileNormDraft = {
+  wastePct: string
+  coverageSqftPerBag: string
+  bagLb: string
+  wasteStraight: string
+  wasteOffset: string
+  wasteDiagonal: string
+  wasteHerringbone: string
+  lnftPerTube: string
+}
+
+function numberText(value: number | null | undefined): string {
+  return value == null ? '' : String(value)
+}
+
+function normDraftFrom(row: TileMaterialNorm | null): TileNormDraft {
+  const params = row?.params ?? TILE_NORM_DEFAULTS.params
+  const wasteByPattern = params.waste_by_pattern ?? {}
+  return {
+    wastePct: numberText(row?.waste_pct ?? TILE_NORM_DEFAULTS.waste_pct),
+    coverageSqftPerBag: numberText(params.coverage_sqft_per_bag ?? TILE_NORM_DEFAULTS.params.coverage_sqft_per_bag),
+    bagLb: numberText(params.bag_lb ?? TILE_NORM_DEFAULTS.params.bag_lb),
+    wasteStraight: numberText(wasteByPattern.straight ?? TILE_NORM_DEFAULTS.params.waste_by_pattern.straight),
+    wasteOffset: numberText(wasteByPattern.offset ?? TILE_NORM_DEFAULTS.params.waste_by_pattern.offset),
+    wasteDiagonal: numberText(wasteByPattern.diagonal ?? TILE_NORM_DEFAULTS.params.waste_by_pattern.diagonal),
+    wasteHerringbone: numberText(wasteByPattern.herringbone ?? TILE_NORM_DEFAULTS.params.waste_by_pattern.herringbone),
+    lnftPerTube: numberText(params.lnft_per_tube ?? TILE_NORM_DEFAULTS.params.lnft_per_tube),
+  }
+}
+
+function readDraftNumber(value: string, allowNull = false): number | null {
+  if (allowNull && !value.trim()) return null
+  const n = Number(value.trim().replace(',', '.'))
+  return Number.isFinite(n) ? n : Number.NaN
+}
+
+function TileMaterialNormsSection({ profile }: { profile: Profile | null }) {
+  const { t } = useI18n()
+  const [norm, setNorm] = useState<TileMaterialNorm | null>(null)
+  const [draft, setDraft] = useState<TileNormDraft>(() => normDraftFrom(null))
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    setLoading(true)
+    setMsg(null)
+    getTileMaterialNorm()
+      .then((row) => {
+        if (!mounted) return
+        setNorm(row)
+        setDraft(normDraftFrom(row))
+      })
+      .catch(() => {
+        if (mounted) setMsg('tile_norms_load_failed')
+      })
+      .finally(() => { if (mounted) setLoading(false) })
+    return () => { mounted = false }
+  }, [profile?.id])
+
+  const patchDraft = (patch: Partial<TileNormDraft>) => setDraft((d) => ({ ...d, ...patch }))
+
+  async function handleSave() {
+    if (!profile || saving) return
+    const wastePct = readDraftNumber(draft.wastePct)
+    const coverage = readDraftNumber(draft.coverageSqftPerBag, true)
+    const bagLb = readDraftNumber(draft.bagLb, true)
+    const straight = readDraftNumber(draft.wasteStraight, true)
+    const offset = readDraftNumber(draft.wasteOffset, true)
+    const diagonal = readDraftNumber(draft.wasteDiagonal, true)
+    const herringbone = readDraftNumber(draft.wasteHerringbone, true)
+    const lnft = readDraftNumber(draft.lnftPerTube, true)
+    const all = [wastePct, coverage, bagLb, straight, offset, diagonal, herringbone, lnft]
+    const invalid = all.some((n) => Number.isNaN(n))
+      || all.some((n) => n != null && n < 0)
+      || [coverage, bagLb, lnft].some((n) => n != null && n <= 0)
+    if (invalid) { setMsg('tile_norms_invalid'); return }
+    setSaving(true)
+    setMsg(null)
+    try {
+      const saved = await saveTileMaterialNorm(profile, {
+        waste_pct: wastePct,
+        params: {
+          coverage_sqft_per_bag: coverage,
+          bag_lb: bagLb,
+          waste_by_pattern: { straight, offset, diagonal, herringbone },
+          lnft_per_tube: lnft,
+        },
+      })
+      setNorm(saved)
+      setDraft(normDraftFrom(saved))
+      setMsg('tile_norms_saved')
+    } catch {
+      setMsg('tile_norms_save_failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const msgClass = msg === 'tile_norms_saved' ? 'ok-msg' : 'error-msg'
+
+  return (
+    <>
+      <h2 style={{ marginTop: 24 }}>{t('tile_norms_title')}</h2>
+      <section className="card tile-norm-card">
+        <p className="muted" style={{ marginTop: 0 }}>{t('tile_norms_hint')}</p>
+        {loading && <div className="muted">{t('loading')}</div>}
+        {!loading && (
+          <>
+            <div className="tile-norm-meta">
+              <span className="badge blue">{t('tile_norms_source')}: {norm?.source ?? 'andrew'}</span>
+              {!norm && <span className="badge amber">{t('tile_norms_defaults')}</span>}
+            </div>
+            <div className="tile-norm-grid">
+              <label>
+                <span>{t('tile_norms_waste_pct')}</span>
+                <input inputMode="decimal" value={draft.wastePct} disabled={saving} onChange={(e) => patchDraft({ wastePct: e.target.value })} />
+              </label>
+              <label>
+                <span>{t('tile_norms_coverage')}</span>
+                <input inputMode="decimal" value={draft.coverageSqftPerBag} disabled={saving} onChange={(e) => patchDraft({ coverageSqftPerBag: e.target.value })} />
+              </label>
+              <label>
+                <span>{t('tile_norms_bag_lb')}</span>
+                <input inputMode="decimal" value={draft.bagLb} disabled={saving} onChange={(e) => patchDraft({ bagLb: e.target.value })} />
+              </label>
+              <label>
+                <span>{t('tile_norms_lnft_tube')}</span>
+                <input inputMode="decimal" value={draft.lnftPerTube} disabled={saving} onChange={(e) => patchDraft({ lnftPerTube: e.target.value })} />
+              </label>
+            </div>
+            <h3 className="tile-norm-subhead">{t('tile_norms_pattern_waste')}</h3>
+            <div className="tile-norm-grid pattern">
+              <label>
+                <span>{t('tile_calc_pattern_straight')}</span>
+                <input inputMode="decimal" value={draft.wasteStraight} disabled={saving} onChange={(e) => patchDraft({ wasteStraight: e.target.value })} />
+              </label>
+              <label>
+                <span>{t('tile_calc_pattern_offset')}</span>
+                <input inputMode="decimal" value={draft.wasteOffset} disabled={saving} onChange={(e) => patchDraft({ wasteOffset: e.target.value })} />
+              </label>
+              <label>
+                <span>{t('tile_calc_pattern_diagonal')}</span>
+                <input inputMode="decimal" value={draft.wasteDiagonal} disabled={saving} onChange={(e) => patchDraft({ wasteDiagonal: e.target.value })} />
+              </label>
+              <label>
+                <span>{t('tile_calc_pattern_herringbone')}</span>
+                <input inputMode="decimal" value={draft.wasteHerringbone} disabled={saving} onChange={(e) => patchDraft({ wasteHerringbone: e.target.value })} />
+              </label>
+            </div>
+            <button className="btn" type="button" disabled={saving} onClick={handleSave}>
+              {saving ? t('settings_saving') : t('tile_norms_save')}
+            </button>
+          </>
+        )}
+        {msg && <p className={msgClass}>{t(msg)}</p>}
+      </section>
+    </>
   )
 }
 
