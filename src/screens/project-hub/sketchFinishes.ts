@@ -12,6 +12,34 @@ export type Opening = {
   sill?: number
 }
 
+export const DEFAULT_DOOR_WIDTH_IN = 32
+export const DEFAULT_DOOR_HEIGHT_IN = 80
+export const DEFAULT_WINDOW_WIDTH_IN = 36
+export const DEFAULT_WINDOW_HEIGHT_IN = 48
+export const DEFAULT_WINDOW_SILL_IN = 36
+
+export const DEFAULT_DOOR_WIDTH_FT = DEFAULT_DOOR_WIDTH_IN / 12
+export const DEFAULT_DOOR_HEIGHT_FT = DEFAULT_DOOR_HEIGHT_IN / 12
+export const DEFAULT_WINDOW_WIDTH_FT = DEFAULT_WINDOW_WIDTH_IN / 12
+export const DEFAULT_WINDOW_HEIGHT_FT = DEFAULT_WINDOW_HEIGHT_IN / 12
+export const DEFAULT_WINDOW_SILL_FT = DEFAULT_WINDOW_SILL_IN / 12
+
+export const DOOR_WIDTH_PRESETS_IN = [24, 28, 30, 32, 36]
+export const BIFOLD_DOOR_WIDTH_PRESETS_IN = [48, 60, 72]
+export const WINDOW_WIDTH_PRESETS_IN = [24, 36, 48, 60, 72]
+
+export const DOOR_WIDTH_PRESETS_FT = DOOR_WIDTH_PRESETS_IN.map((value) => value / 12)
+export const BIFOLD_DOOR_WIDTH_PRESETS_FT = BIFOLD_DOOR_WIDTH_PRESETS_IN.map((value) => value / 12)
+export const WINDOW_WIDTH_PRESETS_FT = WINDOW_WIDTH_PRESETS_IN.map((value) => value / 12)
+
+export const OPENING_DEFAULTS_FT = {
+  doorW: DEFAULT_DOOR_WIDTH_FT,
+  doorH: DEFAULT_DOOR_HEIGHT_FT,
+  winW: DEFAULT_WINDOW_WIDTH_FT,
+  winH: DEFAULT_WINDOW_HEIGHT_FT,
+  winSill: DEFAULT_WINDOW_SILL_FT,
+}
+
 export type SketchMeasurementPoint = {
   x: number
   y: number

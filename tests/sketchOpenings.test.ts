@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { sanitizeSketchMeasurements, sanitizeSketchOpenings } from '../src/screens/project-hub/sketchFinishes'
+import {
+  BIFOLD_DOOR_WIDTH_PRESETS_IN,
+  DEFAULT_DOOR_HEIGHT_IN,
+  DEFAULT_DOOR_WIDTH_IN,
+  DEFAULT_WINDOW_HEIGHT_IN,
+  DEFAULT_WINDOW_SILL_IN,
+  DEFAULT_WINDOW_WIDTH_IN,
+  DOOR_WIDTH_PRESETS_IN,
+  OPENING_DEFAULTS_FT,
+  WINDOW_WIDTH_PRESETS_IN,
+  sanitizeSketchMeasurements,
+  sanitizeSketchOpenings,
+} from '../src/screens/project-hub/sketchFinishes'
 
 describe('project hub sketch opening sanitation', () => {
   it('keeps version-1 opening data compatible while clamping unsafe fields', () => {
@@ -19,6 +31,24 @@ describe('project hub sketch opening sanitation', () => {
   it('returns no openings for non-array JSON', () => {
     expect(sanitizeSketchOpenings(null)).toEqual([])
     expect(sanitizeSketchOpenings({ openings: [] })).toEqual([])
+  })
+
+  it('shares opening defaults and preset widths across sketch views', () => {
+    expect(DEFAULT_DOOR_WIDTH_IN).toBe(32)
+    expect(DEFAULT_DOOR_HEIGHT_IN).toBe(80)
+    expect(DEFAULT_WINDOW_WIDTH_IN).toBe(36)
+    expect(DEFAULT_WINDOW_HEIGHT_IN).toBe(48)
+    expect(DEFAULT_WINDOW_SILL_IN).toBe(36)
+    expect(OPENING_DEFAULTS_FT).toEqual({
+      doorW: 32 / 12,
+      doorH: 80 / 12,
+      winW: 36 / 12,
+      winH: 48 / 12,
+      winSill: 36 / 12,
+    })
+    expect(DOOR_WIDTH_PRESETS_IN).toEqual([24, 28, 30, 32, 36])
+    expect(BIFOLD_DOOR_WIDTH_PRESETS_IN).toEqual([48, 60, 72])
+    expect(WINDOW_WIDTH_PRESETS_IN).toEqual([24, 36, 48, 60, 72])
   })
 })
 

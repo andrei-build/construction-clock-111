@@ -5,11 +5,16 @@ import { useI18n } from '../../lib/i18n'
 import { supabase, SUPABASE_KEY, SUPABASE_URL } from '../../lib/supabase'
 import type { Profile, Project } from '../../lib/types'
 import {
+  DEFAULT_DOOR_HEIGHT_FT,
+  DEFAULT_DOOR_WIDTH_FT,
   DEFAULT_FLOOR_PAINT,
   DEFAULT_GROUT_COLOR,
   DEFAULT_GROUT_IN,
   DEFAULT_TILE_COLOR,
   DEFAULT_WALL_PAINT,
+  DEFAULT_WINDOW_HEIGHT_FT,
+  DEFAULT_WINDOW_SILL_FT,
+  DEFAULT_WINDOW_WIDTH_FT,
   TILE_SIZE_OPTIONS,
   WALL_PAINT_SWATCHES,
   calculateTileCuts,
@@ -73,11 +78,6 @@ import { SHERWIN_WILLIAMS_COLORS } from './sw-colors'
 const CELL_FT = 1
 const DEFAULT_WALL_HEIGHT_FT = 8
 const WALL_THICKNESS_FT = 0.5
-const DOOR_W_FT = 3
-const DOOR_H_FT = 80 / 12
-const WIN_W_FT = 3
-const WIN_H_FT = 4
-const WIN_SILL_FT = 3
 const EIGHTH_IN_FT = 1 / 96
 const DEFAULT_SWITCH_HEIGHT_FT = 4
 const DEFAULT_SCONCE_HEIGHT_FT = 5.6
@@ -179,7 +179,7 @@ function dist(a: Pt, b: Pt): number {
 }
 
 function openingWidthFt(o: Sketch3DModel['openings'][number]): number {
-  return o.w ?? (o.kind === 'door' ? DOOR_W_FT : WIN_W_FT)
+  return o.w ?? (o.kind === 'door' ? DEFAULT_DOOR_WIDTH_FT : DEFAULT_WINDOW_WIDTH_FT)
 }
 
 function modelCellFt(model: Sketch3DModel): number {
@@ -750,14 +750,14 @@ function contourAreaFt(contour: SketchContour, cellFt: number): number {
 }
 
 function openingHeightFt(o: Sketch3DModel['openings'][number], roomHeightFt: number): number {
-  const raw = o.kind === 'door' ? (o.h ?? DOOR_H_FT) : (o.h ?? WIN_H_FT)
+  const raw = o.kind === 'door' ? (o.h ?? DEFAULT_DOOR_HEIGHT_FT) : (o.h ?? DEFAULT_WINDOW_HEIGHT_FT)
   return Math.max(0.2, Math.min(raw, Math.max(0.2, roomHeightFt)))
 }
 
 function openingSillFt(o: Sketch3DModel['openings'][number], roomHeightFt: number): number {
   if (o.kind === 'door') return 0
   const height = openingHeightFt(o, roomHeightFt)
-  return Math.max(0, Math.min(o.sill ?? WIN_SILL_FT, Math.max(0, roomHeightFt - height)))
+  return Math.max(0, Math.min(o.sill ?? DEFAULT_WINDOW_SILL_FT, Math.max(0, roomHeightFt - height)))
 }
 
 type OpeningMetrics = {
@@ -2140,11 +2140,11 @@ export default function Sketch3DView({
 
   const openingAtWall = (kind: OpeningPlacementKind, c: number, s: number, rawT: number): Opening => {
     const defaults = {
-      doorW: openingDefaults?.doorW ?? DOOR_W_FT,
-      doorH: openingDefaults?.doorH ?? DOOR_H_FT,
-      winW: openingDefaults?.winW ?? WIN_W_FT,
-      winH: openingDefaults?.winH ?? WIN_H_FT,
-      winSill: openingDefaults?.winSill ?? WIN_SILL_FT,
+      doorW: openingDefaults?.doorW ?? DEFAULT_DOOR_WIDTH_FT,
+      doorH: openingDefaults?.doorH ?? DEFAULT_DOOR_HEIGHT_FT,
+      winW: openingDefaults?.winW ?? DEFAULT_WINDOW_WIDTH_FT,
+      winH: openingDefaults?.winH ?? DEFAULT_WINDOW_HEIGHT_FT,
+      winSill: openingDefaults?.winSill ?? DEFAULT_WINDOW_SILL_FT,
     }
     const draft: Opening =
       kind === 'door'
