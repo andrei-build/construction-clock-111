@@ -1,4 +1,12 @@
-import type { Opening, Pt } from './sketchFinishes'
+import {
+  DEFAULT_DOOR_HEIGHT_FT,
+  DEFAULT_DOOR_WIDTH_FT,
+  DEFAULT_WINDOW_HEIGHT_FT,
+  DEFAULT_WINDOW_SILL_FT,
+  DEFAULT_WINDOW_WIDTH_FT,
+  type Opening,
+  type Pt,
+} from './sketchFinishes'
 import {
   isToiletPlacedCatalogItem,
   type CatalogPlacementSurface,
@@ -7,11 +15,6 @@ import {
 import { formatInches } from './inches'
 
 const CELL_FT = 1
-const DOOR_W_FT = 3
-const DOOR_H_FT = 80 / 12
-const WIN_W_FT = 3
-const WIN_H_FT = 4
-const WIN_SILL_FT = 3
 const IN_PER_FT = 12
 const EPS = 0.000001
 
@@ -138,15 +141,15 @@ function modelCellFt(model: CodeClearanceModel): number {
 }
 
 function openingWidthFt(opening: Opening): number {
-  return opening.w ?? (opening.kind === 'door' ? DOOR_W_FT : WIN_W_FT)
+  return opening.w ?? (opening.kind === 'door' ? DEFAULT_DOOR_WIDTH_FT : DEFAULT_WINDOW_WIDTH_FT)
 }
 
 function openingHeightFt(opening: Opening): number {
-  return opening.kind === 'door' ? (opening.h ?? DOOR_H_FT) : (opening.h ?? WIN_H_FT)
+  return opening.kind === 'door' ? (opening.h ?? DEFAULT_DOOR_HEIGHT_FT) : (opening.h ?? DEFAULT_WINDOW_HEIGHT_FT)
 }
 
 function openingFloorFt(opening: Opening): number {
-  return opening.kind === 'door' ? 0 : (opening.sill ?? WIN_SILL_FT)
+  return opening.kind === 'door' ? 0 : (opening.sill ?? DEFAULT_WINDOW_SILL_FT)
 }
 
 function toIn(valueFt: number): number {

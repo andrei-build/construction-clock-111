@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useI18n } from '../../lib/i18n'
 import {
+  DEFAULT_DOOR_HEIGHT_FT,
+  DEFAULT_DOOR_WIDTH_FT,
+  DEFAULT_WINDOW_HEIGHT_FT,
+  DEFAULT_WINDOW_SILL_FT,
+  DEFAULT_WINDOW_WIDTH_FT,
   DEFAULT_GROUT_COLOR,
   DEFAULT_TILE_COLOR,
   DEFAULT_WALL_PAINT,
@@ -29,11 +34,6 @@ import {
 } from './cabinetCodes'
 
 const CELL_FT = 1
-const DOOR_W_FT = 3
-const DOOR_H_FT = 80 / 12
-const WIN_W_FT = 3
-const WIN_H_FT = 4
-const WIN_SILL_FT = 3
 
 type WallElevationWall = {
   c: number
@@ -64,6 +64,20 @@ type ElevationMeasurementLine = {
   angle: number
   text: string
 }
+type ElevationOpeningBox = {
+  x: number
+  y: number
+  width: number
+  openingHeight: number
+  floor: number
+}
+type ElevationOpeningDim = {
+  x1: number
+  x2: number
+  y: number
+  text: string
+  gap: boolean
+}
 type ElevationPlacedItem = {
   item: SketchPlacedCatalogItem
   x: number
@@ -87,15 +101,15 @@ function dist(a: Pt, b: Pt): number {
 }
 
 function openingWidthFt(opening: Opening): number {
-  return opening.w ?? (opening.kind === 'door' ? DOOR_W_FT : WIN_W_FT)
+  return opening.w ?? (opening.kind === 'door' ? DEFAULT_DOOR_WIDTH_FT : DEFAULT_WINDOW_WIDTH_FT)
 }
 
 function openingHeightFt(opening: Opening): number {
-  return opening.kind === 'door' ? (opening.h ?? DOOR_H_FT) : (opening.h ?? WIN_H_FT)
+  return opening.kind === 'door' ? (opening.h ?? DEFAULT_DOOR_HEIGHT_FT) : (opening.h ?? DEFAULT_WINDOW_HEIGHT_FT)
 }
 
 function openingFloorFt(opening: Opening): number {
-  return opening.kind === 'door' ? 0 : (opening.sill ?? WIN_SILL_FT)
+  return opening.kind === 'door' ? 0 : (opening.sill ?? DEFAULT_WINDOW_SILL_FT)
 }
 
 function formatLength(valueFt: number): string {
@@ -217,6 +231,57 @@ function elevationMeasurementLine(measurement: SketchMeasurement, height: number
     angle: readableSvgAngle(dx, dy),
     text: formatLength(len),
   }
+}
+
+function elevationOpeningBox(opening: Opening, lengthFt: number, height: number): ElevationOpeningBox {
+  const width = Math.min(openingWidthFt(opening), lengthFt)
+  const openingHeight = Math.min(openingHeightFt(opening), height)
+  const floor = Math.min(openingFloorFt(opening), Math.max(0, height - openingHeight))
+  const x = Math.max(0, Math.min(lengthFt - width, opening.t * lengthFt - width / 2))
+  const y = height - floor - openingHeight
+  return { x, y, width, openingHeight, floor }
+}
+
+function elevationOpeningDims(
+  openings: Opening[],
+  opening: Opening,
+  index: number,
+  lengthFt: number,
+  height: number,
+  t: (key: string) => string,
+): ElevationOpeningDim[] {
+  const box = elevationOpeningBox(opening, lengthFt, height)
+  const above = box.y > 0.55
+  const baseY = above
+    ? box.y - 0.28 - (index % 2) * 0.18
+    : Math.min(height + 0.34 + (index % 2) * 0.18, height + 0.82)
+  const gapY = above ? baseY - 0.22 : baseY + 0.22
+  const dims: ElevationOpeningDim[] = []
+  const push = (x1: number, x2: number, y: number, text: string, gap: boolean) => {
+    if (x2 - x1 <= 0.05) return
+    dims.push({ x1, x2, y, text, gap })
+  }
+
+  push(0, box.x, baseY, `${t('hub_sketch_dim_left_short')} ${formatLength(box.x)}`, false)
+  push(box.x + box.width, lengthFt, baseY, `${t('hub_sketch_dim_right_short')} ${formatLength(lengthFt - box.x - box.width)}`, false)
+
+  const boxes = openings.map((item, itemIndex) => ({ index: itemIndex, box: elevationOpeningBox(item, lengthFt, height) }))
+  const left = boxes
+    .filter((item) => item.index !== index && item.box.x + item.box.width <= box.x + 0.001)
+    .sort((a, b) => (b.box.x + b.box.width) - (a.box.x + a.box.width))[0]
+  const right = boxes
+    .filter((item) => item.index !== index && item.box.x >= box.x + box.width - 0.001)
+    .sort((a, b) => a.box.x - b.box.x)[0]
+  if (left) {
+    const from = left.box.x + left.box.width
+    push(from, box.x, gapY, `${t('hub_sketch_dim_gap_short')} ${formatLength(box.x - from)}`, true)
+  }
+  if (right) {
+    const to = right.box.x
+    push(box.x + box.width, to, gapY, `${t('hub_sketch_dim_gap_short')} ${formatLength(to - box.x - box.width)}`, true)
+  }
+
+  return dims
 }
 
 export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, snapStepFt = 1 / 96, codeCheckEnabled = true, onMeasurementsChange }: WallElevationProps) {
@@ -460,28 +525,42 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
         </g>
         <rect className="hub-sketch-elevation-outline" x={0} y={0} width={lengthFt} height={height} />
         {openings.map((opening, index) => {
-          const width = Math.min(openingWidthFt(opening), lengthFt)
-          const openingHeight = Math.min(openingHeightFt(opening), height)
-          const floor = Math.min(openingFloorFt(opening), Math.max(0, height - openingHeight))
-          const x = Math.max(0, Math.min(lengthFt - width, opening.t * lengthFt - width / 2))
-          const y = height - floor - openingHeight
+          const box = elevationOpeningBox(opening, lengthFt, height)
           const label = opening.kind === 'door'
-            ? `${formatLength(width)} x ${formatLength(openingHeight)}`
-            : `${formatLength(width)} x ${formatLength(openingHeight)} / ${formatLength(floor)}`
+            ? `${formatLength(box.width)} x ${formatLength(box.openingHeight)}`
+            : `${formatLength(box.width)} x ${formatLength(box.openingHeight)} / ${formatLength(box.floor)}`
+          const dims = elevationOpeningDims(openings, opening, index, lengthFt, height, t)
           return (
             <g key={`${opening.kind}-${index}`}>
               <rect
                 className={opening.kind === 'door' ? 'hub-sketch-elevation-door' : 'hub-sketch-elevation-window'}
-                x={x}
-                y={y}
-                width={width}
-                height={openingHeight}
+                x={box.x}
+                y={box.y}
+                width={box.width}
+                height={box.openingHeight}
               >
                 <title>{label}</title>
               </rect>
-              <text x={x + width / 2} y={Math.max(0.28, y - 0.14)} textAnchor="middle">
+              <text x={box.x + box.width / 2} y={Math.max(0.28, box.y - 0.14)} textAnchor="middle">
                 {label}
               </text>
+              {dims.map((dim, dimIndex) => {
+                const tick = 0.09
+                const labelY = dim.y - 0.07
+                return (
+                  <g
+                    key={`od-${dimIndex}`}
+                    className={dim.gap ? 'hub-sketch-elevation-opening-dim hub-sketch-elevation-opening-dim-gap' : 'hub-sketch-elevation-opening-dim'}
+                  >
+                    <line x1={dim.x1} y1={dim.y} x2={dim.x2} y2={dim.y} />
+                    <line x1={dim.x1} y1={dim.y - tick} x2={dim.x1} y2={dim.y + tick} />
+                    <line x1={dim.x2} y1={dim.y - tick} x2={dim.x2} y2={dim.y + tick} />
+                    <text x={(dim.x1 + dim.x2) / 2} y={labelY} textAnchor="middle">
+                      {dim.text}
+                    </text>
+                  </g>
+                )
+              })}
             </g>
           )
         })}

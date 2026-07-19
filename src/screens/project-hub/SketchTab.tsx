@@ -19,6 +19,15 @@ import {
   type CodeClearanceCheck,
 } from './code-clearances'
 import {
+  BIFOLD_DOOR_WIDTH_PRESETS_FT,
+  DEFAULT_DOOR_HEIGHT_FT,
+  DEFAULT_DOOR_WIDTH_FT,
+  DEFAULT_WINDOW_HEIGHT_FT,
+  DEFAULT_WINDOW_SILL_FT,
+  DEFAULT_WINDOW_WIDTH_FT,
+  DOOR_WIDTH_PRESETS_FT,
+  WINDOW_WIDTH_PRESETS_FT,
+  OPENING_DEFAULTS_FT,
   sanitizeSketchFinishes,
   sanitizeSketchLights,
   sanitizeSketchMeasurements,
@@ -64,15 +73,8 @@ const DIM_OFFSET_SCREEN_PX = 24
 const DIM_LABEL_SCREEN_PX = 12
 const DIM_TICK_SCREEN_PX = 8
 const EIGHTH_IN_FT = 1 / 96
-
-// Дефолтные габариты проёмов в футах (законы Андрея 17.07).
-const DOOR_W_FT = 3
-const DOOR_H_FT = 80 / 12
-const WIN_W_FT = 3
-const WIN_H_FT = 4
-const WIN_SILL_FT = 3
-const DOOR_WIDTH_PRESETS_FT = [24, 28, 30, 32, 36].map((value) => value / 12)
-const WINDOW_WIDTH_PRESETS_FT = [24, 36, 48].map((value) => value / 12)
+const EDGE_AUTO_PAN_SCREEN_PX = 40
+const EDGE_AUTO_PAN_MAX_PX_PER_SEC = 620
 
 type Pt = { x: number; y: number }
 type Contour = { points: Pt[]; closed: boolean }
@@ -113,15 +115,15 @@ const SNAP_OPTIONS: Array<{ mode: SnapMode; stepFt: number; labelKey: string }> 
 
 // Ширина проёма в футах с учётом дефолта по типу.
 function openingWidthFt(o: Opening): number {
-  return o.w ?? (o.kind === 'door' ? DOOR_W_FT : WIN_W_FT)
+  return o.w ?? (o.kind === 'door' ? DEFAULT_DOOR_WIDTH_FT : DEFAULT_WINDOW_WIDTH_FT)
 }
 
 function openingHeightFt(o: Opening): number {
-  return o.kind === 'door' ? (o.h ?? DOOR_H_FT) : (o.h ?? WIN_H_FT)
+  return o.kind === 'door' ? (o.h ?? DEFAULT_DOOR_HEIGHT_FT) : (o.h ?? DEFAULT_WINDOW_HEIGHT_FT)
 }
 
 function openingFloorFt(o: Opening): number {
-  return o.kind === 'door' ? 0 : (o.sill ?? WIN_SILL_FT)
+  return o.kind === 'door' ? 0 : (o.sill ?? DEFAULT_WINDOW_SILL_FT)
 }
 
 function modelCellFt(model: SketchModel): number {
@@ -188,6 +190,7 @@ function importWallHeight(value: unknown): number | undefined {
 }
 
 type Tool = 'wall' | 'door' | 'window' | 'measure' | 'cabinet'
+type OpeningTool = Extract<Tool, 'door' | 'window'>
 
 function dist(a: Pt, b: Pt): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
@@ -489,6 +492,16 @@ type DimLine2D = {
 
 type OpeningDimLabel = DimLine2D & { kind: Opening['kind'] }
 type SegmentDimLine = DimLine2D & { kind: 'wall' }
+type OpeningSpan2D = {
+  g: { p: Pt; ux: number; uy: number; a: Pt; b: Pt }
+  segLenCells: number
+  widthCells: number
+  startCells: number
+  endCells: number
+  leftEdge: Pt
+  rightEdge: Pt
+  cellFt: number
+}
 type PlanMeasurementEntry = { measurement: SketchMeasurement; index: number }
 type MeasurementLine2D = {
   x1: number
@@ -634,6 +647,79 @@ function openingDimLabel(model: SketchModel, opening: Opening, index: number, t:
     ? `${t('hub_sketch_dim_size_short')} ${formatOpeningFt(widthFt)}×${formatOpeningFt(openingHeightFt(opening))}`
     : `${t('hub_sketch_dim_size_short')} ${formatOpeningFt(widthFt)}×${formatOpeningFt(openingHeightFt(opening))} · ${t('hub_sketch_dim_floor_short')} ${formatOpeningFt(openingFloorFt(opening))}`
   return createDimLine(ax, ay, bx, by, normal.nx, normal.ny, offset, screenWorldPx, text, opening.kind) as OpeningDimLabel | null
+}
+
+function openingSpan2D(model: SketchModel, opening: Opening): OpeningSpan2D | null {
+  const g = openingGeom(model, opening)
+  if (!g) return null
+  const segLenCells = dist(g.a, g.b)
+  if (segLenCells <= 0.01) return null
+  const cellFt = modelCellFt(model)
+  const widthCells = Math.min(openingWidthFt(opening) / cellFt, segLenCells)
+  const startCells = Math.max(0, Math.min(segLenCells - widthCells, opening.t * segLenCells - widthCells / 2))
+  const endCells = startCells + widthCells
+  const pointAt = (cells: number): Pt => ({ x: g.a.x + g.ux * cells, y: g.a.y + g.uy * cells })
+  return {
+    g,
+    segLenCells,
+    widthCells,
+    startCells,
+    endCells,
+    leftEdge: pointAt(startCells),
+    rightEdge: pointAt(endCells),
+    cellFt,
+  }
+}
+
+function openingClearanceDimLines(
+  model: SketchModel,
+  opening: Opening,
+  ignoreIndex: number | null,
+  t: (k: string) => string,
+  screenWorldPx: number,
+): DimLine2D[] {
+  const span = openingSpan2D(model, opening)
+  if (!span) return []
+  const normal = outsideNormal(model, opening.c, span.g.a.x * CELL_PX, span.g.a.y * CELL_PX, span.g.b.x * CELL_PX, span.g.b.y * CELL_PX)
+  const lines: DimLine2D[] = []
+  const push = (fromCells: number, toCells: number, offsetScreenPx: number, text: string) => {
+    if (toCells - fromCells <= 0.02) return
+    const ax = (span.g.a.x + span.g.ux * fromCells) * CELL_PX
+    const ay = (span.g.a.y + span.g.uy * fromCells) * CELL_PX
+    const bx = (span.g.a.x + span.g.ux * toCells) * CELL_PX
+    const by = (span.g.a.y + span.g.uy * toCells) * CELL_PX
+    const line = createDimLine(ax, ay, bx, by, normal.nx, normal.ny, offsetScreenPx * screenWorldPx, screenWorldPx, text, 'wall')
+    if (line) lines.push(line)
+  }
+
+  push(0, span.startCells, 42, `${t('hub_sketch_dim_left_short')} ${formatOpeningFt(span.startCells * span.cellFt)}`)
+  push(span.endCells, span.segLenCells, 42, `${t('hub_sketch_dim_right_short')} ${formatOpeningFt((span.segLenCells - span.endCells) * span.cellFt)}`)
+
+  let leftNeighborEndCells: number | null = null
+  let rightNeighborStartCells: number | null = null
+  model.openings.forEach((other, index) => {
+    if (ignoreIndex !== null && index === ignoreIndex) return
+    if (other.c !== opening.c || other.s !== opening.s) return
+    const otherSpan = openingSpan2D(model, other)
+    if (!otherSpan) return
+    if (otherSpan.endCells <= span.startCells + 0.001 && (leftNeighborEndCells === null || otherSpan.endCells > leftNeighborEndCells)) {
+      leftNeighborEndCells = otherSpan.endCells
+    }
+    if (otherSpan.startCells >= span.endCells - 0.001 && (rightNeighborStartCells === null || otherSpan.startCells < rightNeighborStartCells)) {
+      rightNeighborStartCells = otherSpan.startCells
+    }
+  })
+
+  if (leftNeighborEndCells !== null) {
+    const gap = Math.max(0, (span.startCells - leftNeighborEndCells) * span.cellFt)
+    push(leftNeighborEndCells, span.startCells, 62, `${t('hub_sketch_dim_gap_short')} ${formatOpeningFt(gap)}`)
+  }
+  if (rightNeighborStartCells !== null) {
+    const gap = Math.max(0, (rightNeighborStartCells - span.endCells) * span.cellFt)
+    push(span.endCells, rightNeighborStartCells, 62, `${t('hub_sketch_dim_gap_short')} ${formatOpeningFt(gap)}`)
+  }
+
+  return lines
 }
 
 function isPlanMeasurement(measurement: SketchMeasurement): boolean {
@@ -967,11 +1053,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [hover, setHover] = useState<Pt | null>(null)
   const [hoverSnapped, setHoverSnapped] = useState(false)
   // Габариты проёмов (в футах), задаются перед вставкой.
-  const [doorW, setDoorW] = useState(DOOR_W_FT)
-  const [doorH, setDoorH] = useState(DOOR_H_FT)
-  const [winW, setWinW] = useState(WIN_W_FT)
-  const [winH, setWinH] = useState(WIN_H_FT)
-  const [winSill, setWinSill] = useState(WIN_SILL_FT)
+  const [doorW, setDoorW] = useState(OPENING_DEFAULTS_FT.doorW)
+  const [doorH, setDoorH] = useState(OPENING_DEFAULTS_FT.doorH)
+  const [winW, setWinW] = useState(OPENING_DEFAULTS_FT.winW)
+  const [winH, setWinH] = useState(OPENING_DEFAULTS_FT.winH)
+  const [winSill, setWinSill] = useState(OPENING_DEFAULTS_FT.winSill)
   const [feetDrafts, setFeetDrafts] = useState<Partial<Record<FeetDraftField, string>>>({})
   const [cabinetCodes, setCabinetCodes] = useState('B30 2DB27 W3030')
   const [selectedCabinetWallKey, setSelectedCabinetWallKey] = useState<string | null>(null)
@@ -987,14 +1073,28 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [loadOpen, setLoadOpen] = useState(false)
   const [loadBusy, setLoadBusy] = useState(false)
 
+  const svgShellRef = useRef<HTMLDivElement | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
   const canvasAutoFitRef = useRef(true)
   const canvasSuppressClickRef = useRef(false)
   const canvasPointersRef = useRef<Map<number, { clientX: number; clientY: number }>>(new Map())
   const canvasPanRef = useRef<{ startX: number; startY: number; view: CanvasView; moved: boolean } | null>(null)
   const canvasPinchRef = useRef<{ startDistance: number; startMid: { x: number; y: number }; view: CanvasView } | null>(null)
+  const edgeAutoPanPointerRef = useRef<{ clientX: number; clientY: number } | null>(null)
+  const edgeAutoPanFrameRef = useRef<number | null>(null)
+  const edgeAutoPanLastTimeRef = useRef(0)
+  const modelRef = useRef(model)
+  const canvasSizeRef = useRef<CanvasSize>({ width: VIEW_W, height: VIEW_H })
+  const canvasViewRef = useRef<CanvasView>({ x: 0, y: 0, width: VIEW_W, height: VIEW_H })
+  const toolRef = useRef(tool)
+  const viewModeRef = useRef(viewMode)
+  const canEditRef = useRef(canEdit)
+  const measurementDraftRef = useRef(measurementDraft)
+  const dragIdxRef = useRef(dragIdx)
   const [canvasSize, setCanvasSize] = useState<CanvasSize>({ width: VIEW_W, height: VIEW_H })
   const [canvasView, setCanvasView] = useState<CanvasView>({ x: 0, y: 0, width: VIEW_W, height: VIEW_H })
+  const [canvasBrowserFullscreen, setCanvasBrowserFullscreen] = useState(false)
+  const [canvasFullscreenFallback, setCanvasFullscreenFallback] = useState(false)
 
   const stats = useMemo(() => {
     const perContour = model.contours.map((c) => ({
@@ -1007,6 +1107,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     return { perContour, totalArea, totalPerimeter }
   }, [model])
   const activeSnapFt = snapModeStep(snapMode)
+  const activeSnapFtRef = useRef(activeSnapFt)
+  const canvasFullscreenActive = canvasBrowserFullscreen || canvasFullscreenFallback
   const openingDefaults = useMemo(() => ({ doorW, doorH, winW, winH, winSill }), [doorW, doorH, winW, winH, winSill])
   const cabinetWallOptions = useMemo(() => eachSegment(model), [model])
   const effectiveCabinetWallKey = selectedCabinetWallKey && cabinetWallOptions.some((seg) => sketchWallKey(seg.c, seg.s) === selectedCabinetWallKey)
@@ -1021,6 +1123,42 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     () => selectedCabinetWall ? layoutCabinetRunOnWall(model, selectedCabinetWall, cabinetCodes) : null,
     [model, selectedCabinetWall, cabinetCodes],
   )
+
+  useEffect(() => {
+    modelRef.current = model
+  }, [model])
+
+  useEffect(() => {
+    canvasSizeRef.current = canvasSize
+  }, [canvasSize])
+
+  useEffect(() => {
+    canvasViewRef.current = canvasView
+  }, [canvasView])
+
+  useEffect(() => {
+    toolRef.current = tool
+  }, [tool])
+
+  useEffect(() => {
+    viewModeRef.current = viewMode
+  }, [viewMode])
+
+  useEffect(() => {
+    canEditRef.current = canEdit
+  }, [canEdit])
+
+  useEffect(() => {
+    measurementDraftRef.current = measurementDraft
+  }, [measurementDraft])
+
+  useEffect(() => {
+    dragIdxRef.current = dragIdx
+  }, [dragIdx])
+
+  useEffect(() => {
+    activeSnapFtRef.current = activeSnapFt
+  }, [activeSnapFt])
 
   // Снимок в историю перед изменением; затем применяем мутатор.
   const commit = (next: SketchModel) => {
@@ -1053,24 +1191,77 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [viewMode])
 
   useEffect(() => {
+    const onFullscreenChange = () => {
+      const active = document.fullscreenElement === svgShellRef.current
+      setCanvasBrowserFullscreen(active)
+      if (active) setCanvasFullscreenFallback(false)
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
+
+  useEffect(() => {
+    if (!canvasFullscreenFallback) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setCanvasFullscreenFallback(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [canvasFullscreenFallback])
+
+  useEffect(() => {
     if (viewMode !== '2d') return
     setCanvasView((current) => {
       const normalized = normalizeCanvasView(canvasSize, current)
       if (canvasAutoFitRef.current) {
         canvasAutoFitRef.current = false
-        return fitCanvasView(model, canvasSize)
+        const fitted = fitCanvasView(model, canvasSize)
+        canvasViewRef.current = fitted
+        return fitted
       }
+      canvasViewRef.current = normalized
       return normalized
     })
   }, [model, canvasSize, viewMode])
 
   const fitCanvasToModel = useCallback(() => {
     canvasAutoFitRef.current = false
-    setCanvasView(fitCanvasView(model, canvasSize))
+    const nextView = fitCanvasView(model, canvasSize)
+    canvasViewRef.current = nextView
+    setCanvasView(nextView)
   }, [model, canvasSize])
 
+  const toggleCanvasFullscreen = async () => {
+    const shell = svgShellRef.current
+    if (!shell) return
+    if (canvasFullscreenActive) {
+      setCanvasFullscreenFallback(false)
+      if (document.fullscreenElement === shell && document.exitFullscreen) {
+        try {
+          await document.exitFullscreen()
+        } catch {
+          setCanvasBrowserFullscreen(false)
+        }
+      } else {
+        setCanvasBrowserFullscreen(false)
+      }
+      return
+    }
+    if (shell.requestFullscreen) {
+      try {
+        await shell.requestFullscreen()
+        return
+      } catch {
+        setCanvasBrowserFullscreen(false)
+      }
+    }
+    setCanvasFullscreenFallback(true)
+  }
+
   const feetInputValue = (field: FeetDraftField, fallbackFt: number): string => {
-    return feetDrafts[field] ?? formatLengthFt(fallbackFt)
+    return feetDrafts[field] ?? (field === 'wallHeight' ? formatLengthFt(fallbackFt) : formatOpeningFt(fallbackFt))
   }
 
   const setFeetDraft = (field: FeetDraftField, value: string) => {
@@ -1134,13 +1325,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     </label>
   )
 
-  const presetButton = (valueFt: number, apply: (valueFt: number) => void) => (
+  const presetButton = (valueFt: number, apply: (valueFt: number) => void, label = formatOpeningFt(valueFt)) => (
     <button key={valueFt} type="button" className="btn ghost small" onClick={() => apply(snapOpeningFeetToPrecision(valueFt))}>
-      {formatInches(valueFt * 12)}
+      {label}
     </button>
   )
 
-  const canvasPoint = (clientX: number, clientY: number, view = canvasView): { x: number; y: number } | null => {
+  const bifoldPresetButton = (valueFt: number) => {
+    const leafWidthIn = (valueFt * 12) / 2
+    return presetButton(valueFt, setDoorW, `${t('hub_sketch_bifold')} 2x${formatInches(leafWidthIn)}`)
+  }
+
+  const openingDraftAt = (kind: OpeningTool, c: number, s: number, rawT: number): Opening => {
+    const draft: Opening =
+      kind === 'door'
+        ? { kind: 'door', c, s, t: rawT, w: Math.max(0.5, snapOpeningFeetToPrecision(doorW)), h: Math.max(0.5, snapOpeningFeetToPrecision(doorH)) }
+        : { kind: 'window', c, s, t: rawT, w: Math.max(0.5, snapOpeningFeetToPrecision(winW)), h: Math.max(0.5, snapOpeningFeetToPrecision(winH)), sill: Math.max(0, snapOpeningFeetToPrecision(winSill)) }
+    return { ...draft, t: snapOpeningT(model, draft, rawT, activeSnapFt) }
+  }
+
+  const canvasPoint = (clientX: number, clientY: number, view = canvasViewRef.current): { x: number; y: number } | null => {
     const svg = svgRef.current
     if (!svg) return null
     const rect = svg.getBoundingClientRect()
@@ -1149,6 +1353,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       x: view.x + ((clientX - rect.left) / rect.width) * view.width,
       y: view.y + ((clientY - rect.top) / rect.height) * view.height,
     }
+  }
+
+  const pointerCellAt = (clientX: number, clientY: number, view = canvasViewRef.current): Pt | null => {
+    const point = canvasPoint(clientX, clientY, view)
+    return point ? { x: point.x / CELL_PX, y: point.y / CELL_PX } : null
   }
 
   const zoomCanvasAt = (clientX: number, clientY: number, factor: number, baseView = canvasView) => {
@@ -1170,25 +1379,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   // Координаты указателя → клетки сетки (без округления).
   const pointerCell = (e: React.PointerEvent | React.MouseEvent): Pt | null => {
-    const point = canvasPoint(e.clientX, e.clientY)
-    return point ? { x: point.x / CELL_PX, y: point.y / CELL_PX } : null
+    return pointerCellAt(e.clientX, e.clientY)
   }
 
-  const snap = (p: Pt): Pt => ({
-    x: snapLengthFt(p.x * modelCellFt(model), activeSnapFt) / modelCellFt(model),
-    y: snapLengthFt(p.y * modelCellFt(model), activeSnapFt) / modelCellFt(model),
+  const snapForModel = (baseModel: SketchModel, p: Pt, stepFt: number): Pt => ({
+    x: snapLengthFt(p.x * modelCellFt(baseModel), stepFt) / modelCellFt(baseModel),
+    y: snapLengthFt(p.y * modelCellFt(baseModel), stepFt) / modelCellFt(baseModel),
   })
+
+  const snap = (p: Pt): Pt => snapForModel(model, p, activeSnapFt)
 
   // Прилипание новой точки к вершинам/стенам ДРУГИХ контуров (общая стена не дублируется).
   // Возвращает координату существующей геометрии, если она в радиусе ROOM_SNAP, иначе null.
-  const snapToExisting = (p: Pt): Pt | null => {
-    const activeIdx = model.contours.length - 1
-    const active = model.contours[activeIdx]
+  const snapToExistingForModel = (baseModel: SketchModel, p: Pt): Pt | null => {
+    const activeIdx = baseModel.contours.length - 1
+    const active = baseModel.contours[activeIdx]
     const drawingNew = !!active && !active.closed
     let best: Pt | null = null
     let bestD = ROOM_SNAP
     // сначала вершины
-    model.contours.forEach((c, ci) => {
+    baseModel.contours.forEach((c, ci) => {
       if (drawingNew && ci === activeIdx) return
       c.points.forEach((v) => {
         const d = dist(p, v)
@@ -1201,7 +1411,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     if (best) return best
     // затем проекция на существующие стены
     let bestSegD = ROOM_SNAP
-    eachSegment(model).forEach((seg) => {
+    eachSegment(baseModel).forEach((seg) => {
       if (drawingNew && seg.c === activeIdx) return
       const t = projectT(p, seg.a, seg.b)
       const proj = { x: seg.a.x + (seg.b.x - seg.a.x) * t, y: seg.a.y + (seg.b.y - seg.a.y) * t }
@@ -1214,16 +1424,153 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     return best
   }
 
+  const snapToExisting = (p: Pt): Pt | null => snapToExistingForModel(model, p)
+
   // Точка для установки угла стены: прилипание к чужой геометрии имеет приоритет над сеткой.
-  const wallPoint = (raw: Pt): { p: Pt; snapped: boolean } => {
-    const s = snapToExisting(raw)
-    return s ? { p: s, snapped: true } : { p: snap(raw), snapped: false }
+  const wallPointForModel = (baseModel: SketchModel, raw: Pt, stepFt: number): { p: Pt; snapped: boolean } => {
+    const s = snapToExistingForModel(baseModel, raw)
+    return s ? { p: s, snapped: true } : { p: snapForModel(baseModel, raw, stepFt), snapped: false }
   }
 
-  const measurementPoint = (raw: Pt): { p: Pt; snapped: boolean } => {
-    const s = snapToExisting(raw)
-    return s ? { p: s, snapped: true } : { p: snap(raw), snapped: false }
+  const wallPoint = (raw: Pt): { p: Pt; snapped: boolean } => wallPointForModel(model, raw, activeSnapFt)
+
+  const measurementPointForModel = (baseModel: SketchModel, raw: Pt, stepFt: number): { p: Pt; snapped: boolean } => {
+    const s = snapToExistingForModel(baseModel, raw)
+    return s ? { p: s, snapped: true } : { p: snapForModel(baseModel, raw, stepFt), snapped: false }
   }
+
+  const measurementPoint = (raw: Pt): { p: Pt; snapped: boolean } => measurementPointForModel(model, raw, activeSnapFt)
+
+  const applyPointerMoveAt = (clientX: number, clientY: number, view = canvasViewRef.current) => {
+    if (!canEditRef.current) return
+    const raw = pointerCellAt(clientX, clientY, view)
+    const currentDragIdx = dragIdxRef.current
+    if (currentDragIdx !== null) {
+      if (!raw) return
+      dragMovedRef.current = true
+      setModel((m) => {
+        const o = m.openings[currentDragIdx]
+        if (!o) return m
+        const ends = openingEnds(m, o)
+        if (!ends) return m
+        const rawT = projectT(raw, ends.a, ends.b)
+        const nextT = snapOpeningT(m, o, rawT, activeSnapFtRef.current)
+        const nextModel = { ...m, openings: m.openings.map((op, i) => (i === currentDragIdx ? { ...op, t: nextT } : op)) }
+        modelRef.current = nextModel
+        return nextModel
+      })
+      return
+    }
+    if (!raw) {
+      setHover(null)
+      setHoverSnapped(false)
+      return
+    }
+    const currentModel = modelRef.current
+    const currentTool = toolRef.current
+    if (currentTool === 'wall') {
+      const wp = wallPointForModel(currentModel, raw, activeSnapFtRef.current)
+      setHover(wp.p)
+      setHoverSnapped(wp.snapped)
+    } else if (currentTool === 'measure') {
+      const mp = measurementPointForModel(currentModel, raw, activeSnapFtRef.current)
+      setHover(mp.p)
+      setHoverSnapped(mp.snapped)
+    } else {
+      setHover(raw)
+      setHoverSnapped(false)
+    }
+  }
+
+  function edgeAutoPanInteractionActive(): boolean {
+    const currentTool = toolRef.current
+    if (dragIdxRef.current !== null) return true
+    if (currentTool === 'door' || currentTool === 'window') return true
+    if (currentTool === 'measure') return !!measurementDraftRef.current
+    if (currentTool !== 'wall') return false
+    const currentModel = modelRef.current
+    const active = currentModel.contours[currentModel.contours.length - 1]
+    return !!active && !active.closed && active.points.length > 0
+  }
+
+  function edgeAutoPanAllowed(): boolean {
+    if (!canEditRef.current || viewModeRef.current !== '2d') return false
+    if (!edgeAutoPanInteractionActive()) return false
+    if (dragIdxRef.current === null && canvasPointersRef.current.size > 0) return false
+    if (canvasPinchRef.current) return false
+    return true
+  }
+
+  function edgeAutoPanVelocity(): { vx: number; vy: number } | null {
+    const pointer = edgeAutoPanPointerRef.current
+    const svg = svgRef.current
+    if (!pointer || !svg) return null
+    const rect = svg.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return null
+    const pad = EDGE_AUTO_PAN_SCREEN_PX
+    const left = pointer.clientX - rect.left
+    const right = rect.right - pointer.clientX
+    const top = pointer.clientY - rect.top
+    const bottom = rect.bottom - pointer.clientY
+    const strength = (distance: number) => Math.max(0, Math.min(1, (pad - distance) / pad))
+    const sx = left < pad ? -strength(left) : right < pad ? strength(right) : 0
+    const sy = top < pad ? -strength(top) : bottom < pad ? strength(bottom) : 0
+    if (Math.abs(sx) < 0.001 && Math.abs(sy) < 0.001) return null
+    return { vx: sx * EDGE_AUTO_PAN_MAX_PX_PER_SEC, vy: sy * EDGE_AUTO_PAN_MAX_PX_PER_SEC }
+  }
+
+  function stopEdgeAutoPan() {
+    edgeAutoPanPointerRef.current = null
+    edgeAutoPanLastTimeRef.current = 0
+    if (edgeAutoPanFrameRef.current !== null) {
+      window.cancelAnimationFrame(edgeAutoPanFrameRef.current)
+      edgeAutoPanFrameRef.current = null
+    }
+  }
+
+  function runEdgeAutoPan(time: number) {
+    edgeAutoPanFrameRef.current = null
+    if (!edgeAutoPanAllowed()) {
+      edgeAutoPanLastTimeRef.current = 0
+      return
+    }
+    const velocity = edgeAutoPanVelocity()
+    const pointer = edgeAutoPanPointerRef.current
+    if (!velocity || !pointer) {
+      edgeAutoPanLastTimeRef.current = 0
+      return
+    }
+    const dt = edgeAutoPanLastTimeRef.current
+      ? Math.min(0.05, Math.max(0, (time - edgeAutoPanLastTimeRef.current) / 1000))
+      : 1 / 60
+    edgeAutoPanLastTimeRef.current = time
+    const size = canvasSizeRef.current
+    const current = canvasViewRef.current
+    const nextView = normalizeCanvasView(size, {
+      ...current,
+      x: current.x + velocity.vx * dt * (current.width / Math.max(1, size.width)),
+      y: current.y + velocity.vy * dt * (current.height / Math.max(1, size.height)),
+    })
+    canvasAutoFitRef.current = false
+    canvasViewRef.current = nextView
+    setCanvasView(nextView)
+    applyPointerMoveAt(pointer.clientX, pointer.clientY, nextView)
+    edgeAutoPanFrameRef.current = window.requestAnimationFrame(runEdgeAutoPan)
+  }
+
+  function updateEdgeAutoPan(clientX: number, clientY: number) {
+    edgeAutoPanPointerRef.current = { clientX, clientY }
+    if (!edgeAutoPanAllowed() || !edgeAutoPanVelocity()) {
+      if (edgeAutoPanFrameRef.current !== null) stopEdgeAutoPan()
+      return
+    }
+    if (edgeAutoPanFrameRef.current === null) {
+      edgeAutoPanLastTimeRef.current = 0
+      edgeAutoPanFrameRef.current = window.requestAnimationFrame(runEdgeAutoPan)
+    }
+  }
+
+  useEffect(() => () => stopEdgeAutoPan(), [])
 
   const removeMeasurement = (index: number) => {
     const measurements = model.measurements ?? []
@@ -1266,42 +1613,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const handleMove = (e: React.PointerEvent) => {
     if (!canEdit) return
-    const raw = pointerCell(e)
-    if (dragIdx !== null) {
-      if (!raw) return
-      dragMovedRef.current = true
-      setModel((m) => {
-        const o = m.openings[dragIdx]
-        if (!o) return m
-        const ends = openingEnds(m, o)
-        if (!ends) return m
-        const rawT = projectT(raw, ends.a, ends.b)
-        const t = snapOpeningT(m, o, rawT, activeSnapFt)
-        return { ...m, openings: m.openings.map((op, i) => (i === dragIdx ? { ...op, t } : op)) }
-      })
-      return
-    }
-    if (!raw) {
-      setHover(null)
-      setHoverSnapped(false)
-      return
-    }
-    if (tool === 'wall') {
-      const wp = wallPoint(raw)
-      setHover(wp.p)
-      setHoverSnapped(wp.snapped)
-    } else if (tool === 'measure') {
-      const mp = measurementPoint(raw)
-      setHover(mp.p)
-      setHoverSnapped(mp.snapped)
-    } else {
-      setHover(raw)
-      setHoverSnapped(false)
-    }
+    applyPointerMoveAt(e.clientX, e.clientY)
+    updateEdgeAutoPan(e.clientX, e.clientY)
   }
 
   const handleCanvasPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (e.button !== 0) return
+    stopEdgeAutoPan()
     canvasPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY })
     e.currentTarget.setPointerCapture?.(e.pointerId)
     if (canvasPointersRef.current.size === 1) {
@@ -1341,13 +1659,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         const nextHeight = canvasPinchRef.current.view.height * factor
         const ratioX = (currentMid.x - rect.left) / Math.max(1, rect.width)
         const ratioY = (currentMid.y - rect.top) / Math.max(1, rect.height)
-        canvasAutoFitRef.current = false
-        setCanvasView(normalizeCanvasView(canvasSize, {
+        const nextView = normalizeCanvasView(canvasSize, {
           x: anchor.x - ratioX * nextWidth,
           y: anchor.y - ratioY * nextHeight,
           width: nextWidth,
           height: nextHeight,
-        }))
+        })
+        canvasAutoFitRef.current = false
+        canvasViewRef.current = nextView
+        setCanvasView(nextView)
         setHover(null)
         setHoverSnapped(false)
       }
@@ -1364,11 +1684,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         canvasAutoFitRef.current = false
         canvasSuppressClickRef.current = true
         canvasPanRef.current = { ...pan, moved: true }
-        setCanvasView(normalizeCanvasView(canvasSize, {
+        const nextView = normalizeCanvasView(canvasSize, {
           ...pan.view,
           x: pan.view.x - dx * (pan.view.width / Math.max(1, canvasSize.width)),
           y: pan.view.y - dy * (pan.view.height / Math.max(1, canvasSize.height)),
-        }))
+        })
+        canvasViewRef.current = nextView
+        setCanvasView(nextView)
         setHover(null)
         setHoverSnapped(false)
         e.preventDefault()
@@ -1389,11 +1711,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     } else {
       canvasPanRef.current = null
     }
+    if (canvasPointersRef.current.size === 0) stopEdgeAutoPan()
     endDragOpening()
   }
 
   const handleCanvasPointerLeave = () => {
     if (canvasPointersRef.current.size > 0) return
+    stopEdgeAutoPan()
     endDragOpening()
     setHover(null)
     setHoverSnapped(false)
@@ -1403,7 +1727,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     e.preventDefault()
     const factor = Math.exp(Math.max(-0.7, Math.min(0.7, e.deltaY * 0.001)))
     canvasAutoFitRef.current = false
-    setCanvasView((view) => zoomCanvasAt(e.clientX, e.clientY, factor, view))
+    setCanvasView((view) => {
+      const nextView = zoomCanvasAt(e.clientX, e.clientY, factor, view)
+      canvasViewRef.current = nextView
+      return nextView
+    })
   }
 
   // Начало перетаскивания существующего проёма.
@@ -1415,21 +1743,28 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setError(null)
     // любое взаимодействие с проёмом подавляет следующий click (иначе поставили бы новую точку/проём)
     dragMovedRef.current = true
+    dragIdxRef.current = i
     setDragIdx(i)
+    edgeAutoPanPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
+    updateEdgeAutoPan(e.clientX, e.clientY)
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   }
 
   // Отпускание проёма: фиксируем положение на текущем шаге точности.
   const endDragOpening = () => {
     if (dragIdx === null) return
+    stopEdgeAutoPan()
     setModel((m) => {
       const o = m.openings[dragIdx]
       if (!o) return m
       const ends = openingEnds(m, o)
       if (!ends) return m
       const t = snapOpeningT(m, o, o.t, activeSnapFt)
-      return { ...m, openings: m.openings.map((op, i) => (i === dragIdx ? { ...op, t } : op)) }
+      const nextModel = { ...m, openings: m.openings.map((op, i) => (i === dragIdx ? { ...op, t } : op)) }
+      modelRef.current = nextModel
+      return nextModel
     })
+    dragIdxRef.current = null
     setDragIdx(null)
   }
 
@@ -1494,15 +1829,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setError('hub_sketch_no_segment')
       return
     }
-    const draftOpening: Opening =
-      tool === 'door'
-        ? { kind: 'door', c: near.c, s: near.s, t: near.t, w: Math.max(0.5, snapOpeningFeetToPrecision(doorW)), h: Math.max(0.5, snapOpeningFeetToPrecision(doorH)) }
-        : { kind: 'window', c: near.c, s: near.s, t: near.t, w: Math.max(0.5, snapOpeningFeetToPrecision(winW)), h: Math.max(0.5, snapOpeningFeetToPrecision(winH)), sill: Math.max(0, snapOpeningFeetToPrecision(winSill)) }
-    const t = snapOpeningT(model, draftOpening, near.t, activeSnapFt)
-    const opening: Opening =
-      tool === 'door'
-        ? { ...draftOpening, t }
-        : { kind: 'window', c: near.c, s: near.s, t, w: Math.max(0.5, snapOpeningFeetToPrecision(winW)), h: Math.max(0.5, snapOpeningFeetToPrecision(winH)), sill: Math.max(0, snapOpeningFeetToPrecision(winSill)) }
+    const opening = openingDraftAt(tool, near.c, near.s, near.t)
     commit({ ...model, openings: [...model.openings, opening] })
   }
 
@@ -1730,6 +2057,39 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const measurePreview = measurementDraft && hover
     ? planMeasurementLine(model, { a: measurementDraft, b: hover, scope: 'plan' }, screenWorldPx)
     : null
+  const openingPreview = canEdit && viewMode === '2d' && hover && (tool === 'door' || tool === 'window')
+    ? (() => {
+        const near = nearestSegment(model, hover)
+        if (!near || near.d > SEG_HIT) return null
+        return openingDraftAt(tool, near.c, near.s, near.t)
+      })()
+    : null
+  const openingPreviewDimLabel = openingPreview ? openingDimLabel(model, openingPreview, model.openings.length, t, screenWorldPx) : null
+  const openingPreviewClearanceLines = openingPreview ? openingClearanceDimLines(model, openingPreview, null, t, screenWorldPx) : []
+  const dragOpeningClearanceLines = dragIdx !== null && model.openings[dragIdx]
+    ? openingClearanceDimLines(model, model.openings[dragIdx], dragIdx, t, screenWorldPx)
+    : []
+
+  const renderDimLine2D = (dim: DimLine2D, key: string, className: string, fontScale = 10.5) => (
+    <g key={key} className={className}>
+      <line className="hub-sketch-dim-extension" x1={dim.ext1x1} y1={dim.ext1y1} x2={dim.ext1x2} y2={dim.ext1y2} />
+      <line className="hub-sketch-dim-extension" x1={dim.ext2x1} y1={dim.ext2y1} x2={dim.ext2x2} y2={dim.ext2y2} />
+      <line className="hub-sketch-dim-main" x1={dim.x1} y1={dim.y1} x2={dim.x2} y2={dim.y2} />
+      <line className="hub-sketch-dim-tick" x1={dim.tick1x1} y1={dim.tick1y1} x2={dim.tick1x2} y2={dim.tick1y2} />
+      <line className="hub-sketch-dim-tick" x1={dim.tick2x1} y1={dim.tick2y1} x2={dim.tick2x2} y2={dim.tick2y2} />
+      <text
+        className="hub-sketch-dim-label"
+        x={dim.labelX}
+        y={dim.labelY}
+        textAnchor="middle"
+        dominantBaseline="central"
+        style={{ fontSize: fontScale * screenWorldPx }}
+        transform={`rotate(${dim.angle} ${dim.labelX} ${dim.labelY})`}
+      >
+        {dim.text}
+      </text>
+    </g>
+  )
 
   return (
     <section className="hub-tab-panel hub-sketch">
@@ -1833,6 +2193,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_width')}>
                 {DOOR_WIDTH_PRESETS_FT.map((value) => presetButton(value, setDoorW))}
               </div>
+              <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_bifold')}>
+                {BIFOLD_DOOR_WIDTH_PRESETS_FT.map((value) => bifoldPresetButton(value))}
+              </div>
             </div>
           )}
           {tool === 'window' && (
@@ -1899,7 +2262,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       <div className="card hub-sketch-canvas-card">
         {viewMode === '2d' ? (
           <>
-            <div className="hub-sketch-svg-shell">
+            <div
+              ref={svgShellRef}
+              className={canvasFullscreenActive ? 'hub-sketch-svg-shell hub-sketch-svg-shell-fullscreen' : 'hub-sketch-svg-shell'}
+            >
               <svg
                 ref={svgRef}
                 className="hub-sketch-svg"
@@ -2025,6 +2391,42 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               </g>
             )
           })}
+
+          {openingPreview &&
+            (() => {
+              const span = openingSpan2D(model, openingPreview)
+              if (!span) return null
+              const cls = openingPreview.kind === 'door' ? 'hub-sketch-door' : 'hub-sketch-window'
+              return (
+                <g className="hub-sketch-opening-preview">
+                  <line
+                    className={cls}
+                    x1={span.leftEdge.x * CELL_PX}
+                    y1={span.leftEdge.y * CELL_PX}
+                    x2={span.rightEdge.x * CELL_PX}
+                    y2={span.rightEdge.y * CELL_PX}
+                  />
+                </g>
+              )
+            })()}
+
+          {openingPreviewDimLabel && renderDimLine2D(
+            openingPreviewDimLabel,
+            'opening-preview-size',
+            `hub-sketch-opening-dim hub-sketch-opening-dim-${openingPreviewDimLabel.kind} hub-sketch-opening-dim-active`,
+          )}
+
+          {openingPreviewClearanceLines.map((dim, index) => renderDimLine2D(
+            dim,
+            `opening-preview-clearance-${index}`,
+            'hub-sketch-opening-clearance-dim hub-sketch-opening-clearance-dim-active',
+          ))}
+
+          {dragOpeningClearanceLines.map((dim, index) => renderDimLine2D(
+            dim,
+            `opening-drag-clearance-${index}`,
+            'hub-sketch-opening-clearance-dim hub-sketch-opening-clearance-dim-active',
+          ))}
 
           {planItems.map((entry) => {
             const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}`
@@ -2250,10 +2652,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               const right = Math.max(0, ((1 - o.t) * segLen - wCells / 2) * cellFt)
               const px = g.p.x * CELL_PX
               const py = g.p.y * CELL_PX
-              const floorTxt = ` · ${t('hub_sketch_dim_floor_short')} ${formatOpeningFt(openingFloorFt(o))}`
+              const sizeTxt = `${t('hub_sketch_dim_size_short')} ${formatOpeningFt(openingWidthFt(o))}×${formatOpeningFt(openingHeightFt(o))}`
+              const floorTxt = o.kind === 'window' ? ` · ${t('hub_sketch_dim_floor_short')} ${formatOpeningFt(openingFloorFt(o))}` : ''
               return (
                 <text className="hub-sketch-drag-dim" x={px} y={py - 12} textAnchor="middle">
-                  {`◄ ${formatOpeningFt(left)}  ·  ${formatOpeningFt(right)} ►${floorTxt}`}
+                  {`${sizeTxt} · ${t('hub_sketch_dim_left_short')} ${formatOpeningFt(left)} · ${t('hub_sketch_dim_right_short')} ${formatOpeningFt(right)}${floorTxt}`}
                 </text>
               )
             })()}
@@ -2271,6 +2674,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               <div className="hub-sketch-2d-tools" role="toolbar" aria-label={t('hub_sketch_2d_canvas_tools')}>
                 <button type="button" className="btn ghost small" onClick={fitCanvasToModel}>
                   {t('hub_sketch_camera_fit')}
+                </button>
+                <button type="button" className="btn ghost small" aria-pressed={canvasFullscreenActive} onClick={toggleCanvasFullscreen}>
+                  {t(canvasFullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
                 </button>
               </div>
             </div>

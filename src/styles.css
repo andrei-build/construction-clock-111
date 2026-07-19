@@ -3933,6 +3933,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border-radius: 8px;
   background: #ffffff;
 }
+.hub-sketch-svg-shell-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  border-radius: 0;
+}
 .hub-sketch-svg {
   width: 100%;
   height: clamp(340px, 58vh, 680px);
@@ -3940,6 +3946,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: #ffffff;
   touch-action: none;
   user-select: none;
+}
+.hub-sketch-svg-shell-fullscreen .hub-sketch-svg {
+  height: 100dvh;
 }
 .hub-sketch-3d-shell {
   position: relative;
@@ -4415,6 +4424,34 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-opening-dim-window .hub-sketch-dim-tick { stroke: #1d4ed8; }
 .hub-sketch-opening-dim-door .hub-sketch-dim-label { fill: #7c2d12; }
 .hub-sketch-opening-dim-window .hub-sketch-dim-label { fill: #1d4ed8; }
+.hub-sketch-opening-preview {
+  opacity: .62;
+  pointer-events: none;
+}
+.hub-sketch-opening-preview .hub-sketch-door,
+.hub-sketch-opening-preview .hub-sketch-window {
+  stroke-dasharray: 5 4;
+}
+.hub-sketch-opening-clearance-dim {
+  pointer-events: none;
+}
+.hub-sketch-opening-clearance-dim .hub-sketch-dim-main,
+.hub-sketch-opening-clearance-dim .hub-sketch-dim-extension,
+.hub-sketch-opening-clearance-dim .hub-sketch-dim-tick {
+  stroke: #0f766e;
+  stroke-width: 1.1;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-opening-clearance-dim .hub-sketch-dim-label {
+  fill: #0f766e;
+  font-weight: 900;
+}
+.hub-sketch-opening-dim-active .hub-sketch-dim-main,
+.hub-sketch-opening-dim-active .hub-sketch-dim-extension,
+.hub-sketch-opening-dim-active .hub-sketch-dim-tick {
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
 #hub-sketch-measure-arrow path {
   fill: #047857;
 }
@@ -4835,6 +4872,22 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   fill: rgba(37, 99, 235, .42);
   stroke: #1d4ed8;
   stroke-width: .04;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-opening-dim line {
+  stroke: #0f766e;
+  stroke-width: .022;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-opening-dim text {
+  fill: #0f766e;
+  stroke: rgba(255,255,255,.94);
+  stroke-width: .08;
+  paint-order: stroke;
+  font-size: .22px;
+  font-weight: 900;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-opening-dim-gap line {
+  stroke-dasharray: .08 .06;
 }
 .hub-sketch-elevation-item rect,
 .hub-sketch-elevation-item path,
