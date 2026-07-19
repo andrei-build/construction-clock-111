@@ -1,7 +1,7 @@
 import { snapOpeningFeetToPrecision } from './inches'
 
 export type Pt = { x: number; y: number }
-export type Contour = { points: Pt[]; closed: boolean }
+export type Contour = { points: Pt[]; closed: boolean; label?: string }
 export type Opening = {
   kind: 'door' | 'window'
   c: number

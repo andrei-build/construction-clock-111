@@ -4763,6 +4763,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-opening-hit,
 .hub-sketch-opening-selection-halo,
 .hub-sketch-opening-snap-guide line,
+.hub-sketch-room-snap-edge,
 .hub-sketch-smart-guide line,
 .hub-sketch-measurement-line,
 .hub-sketch-measurement-hit,
@@ -4786,6 +4787,37 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: #2563eb;
   stroke-width: 4;
   fill: rgba(37, 99, 235, .08);
+}
+.hub-sketch-room-labels,
+.hub-sketch-room-snap-guide {
+  pointer-events: none;
+}
+.hub-sketch-room-label {
+  fill: #0f172a;
+  stroke: rgba(255, 255, 255, .96);
+  stroke-width: 3.5;
+  paint-order: stroke;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+.hub-sketch-room-label-selected {
+  fill: #1d4ed8;
+}
+.hub-sketch-room-snap-edge {
+  stroke: #16a34a;
+  stroke-width: 6;
+  stroke-linecap: round;
+  fill: none;
+  opacity: .66;
+}
+.hub-sketch-room-snap-node,
+.hub-sketch-room-snap-dot {
+  fill: rgba(22, 163, 74, .3);
+  stroke: #16a34a;
+  stroke-width: 2.4;
+}
+.hub-sketch-room-snap-node {
+  fill: rgba(22, 163, 74, .42);
 }
 /* NAV-FIX-2: выбор стены на 2D-плане */
 .hub-sketch-wall-hit { stroke: transparent; stroke-width: 22; stroke-linecap: round; fill: none; cursor: pointer; }

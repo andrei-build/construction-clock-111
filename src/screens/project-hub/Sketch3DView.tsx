@@ -271,6 +271,13 @@ function eachSegment(model: Sketch3DModel): Segment[] {
   return out
 }
 
+function segmentSharedKey(seg: Segment): string {
+  const pointKey = (point: Pt) => `${Math.round(point.x * 10000)}:${Math.round(point.y * 10000)}`
+  const a = pointKey(seg.a)
+  const b = pointKey(seg.b)
+  return a < b ? `${a}|${b}` : `${b}|${a}`
+}
+
 function modelBounds(model: Sketch3DModel): { minX: number; maxX: number; minZ: number; maxZ: number; width: number; depth: number } {
   const cellFt = modelCellFt(model)
   const points = model.contours.flatMap((c) => c.points)
@@ -347,6 +354,11 @@ function contourCenterWorld(contour: SketchContour, cellFt: number): { x: number
   }
   const sum = contour.points.reduce((acc, point) => ({ x: acc.x + point.x, z: acc.z + point.y }), { x: 0, z: 0 })
   return { x: (sum.x / Math.max(1, contour.points.length)) * cellFt, z: (sum.z / Math.max(1, contour.points.length)) * cellFt }
+}
+
+function roomDisplayName(contour: SketchContour | undefined, index: number, roomWord: string): string {
+  const label = contour?.label?.trim()
+  return label || `${roomWord} ${index + 1}`
 }
 
 function roomCenterWorld(model: Sketch3DModel, bounds: { minX: number; maxX: number; minZ: number; maxZ: number; width: number; depth: number }): { x: number; z: number } {
@@ -2386,6 +2398,27 @@ export default function Sketch3DView({
   const selectedWall = effectiveSelectedWallKey
     ? wallSegments.find((seg) => sketchWallKey(seg.c, seg.s) === effectiveSelectedWallKey) ?? null
     : null
+  const wallSegmentGroups = useMemo(() => {
+    const cellFt = modelCellFt(model)
+    const groups: Array<{ c: number; label: string; options: Array<{ key: string; label: string }> }> = []
+    wallSegments.forEach((seg, index) => {
+      let group = groups.find((item) => item.c === seg.c)
+      if (!group) {
+        group = {
+          c: seg.c,
+          label: roomDisplayName(model.contours[seg.c], seg.c, t('hub_sketch_room_panel_title')),
+          options: [],
+        }
+        groups.push(group)
+      }
+      const key = sketchWallKey(seg.c, seg.s)
+      group.options.push({
+        key,
+        label: `${t('hub_sketch_3d_wall')} ${index + 1} · ${formatFeet(dist(seg.a, seg.b) * cellFt)}`,
+      })
+    })
+    return groups
+  }, [model, t, wallSegments])
   const selectedWallFinish = effectiveSelectedWallKey ? finishes.wallFinishes[effectiveSelectedWallKey] : undefined
   const activeSurface = surfaceTarget === 'floor'
     ? finishes.floor
@@ -3362,6 +3395,7 @@ export default function Sketch3DView({
           ceilingGroup.add(ceiling)
         })
 
+        const sharedWallOccurrences = new Map<string, number>()
         eachSegment(model).forEach((seg) => {
           const a = { x: seg.a.x * cellFt, z: seg.a.y * cellFt }
           const b = { x: seg.b.x * cellFt, z: seg.b.y * cellFt }
@@ -3369,9 +3403,13 @@ export default function Sketch3DView({
           const dz = b.z - a.z
           const len = Math.hypot(dx, dz)
           if (len <= 0.01) return
+          const occurrenceKey = segmentSharedKey(seg)
+          const occurrence = sharedWallOccurrences.get(occurrenceKey) ?? 0
+          sharedWallOccurrences.set(occurrenceKey, occurrence + 1)
+          const wallOffsetFt = occurrence === 0 ? 0 : 0.012 * Math.ceil(occurrence / 2) * (occurrence % 2 === 1 ? 1 : -1)
           const wallFinish = finishes.wallFinishes[sketchWallKey(seg.c, seg.s)] ?? wallSurface
           const wall = new THREE.Mesh(new THREE.BoxGeometry(len, height, WALL_THICKNESS_FT), createWallMaterial(THREE, wallFinish, len, height, finishes.wallPaint, textureLoader, maxAnisotropy, invalidate))
-          wall.position.set((a.x + b.x) / 2, height / 2, (a.z + b.z) / 2)
+          wall.position.set((a.x + b.x) / 2 + (-dz / len) * wallOffsetFt, height / 2, (a.z + b.z) / 2 + (dx / len) * wallOffsetFt)
           wall.rotation.y = -Math.atan2(dz, dx)
           wall.castShadow = false
           wall.receiveShadow = false
@@ -5227,14 +5265,15 @@ export default function Sketch3DView({
                 <label className="hub-sketch-field">
                   <span className="muted">{t('hub_sketch_3d_wall')}</span>
                   <select value={effectiveSelectedWallKey} onChange={(event) => setSelectedWallKey(event.target.value)}>
-                    {wallSegments.map((seg, index) => {
-                      const key = sketchWallKey(seg.c, seg.s)
-                      return (
-                        <option key={key} value={key}>
-                          {`${t('hub_sketch_3d_wall')} ${index + 1} · ${formatFeet(dist(seg.a, seg.b) * modelCellFt(model))}`}
-                        </option>
-                      )
-                    })}
+                    {wallSegmentGroups.map((group) => (
+                      <optgroup key={`wall-group-${group.c}`} label={group.label}>
+                        {group.options.map((option) => (
+                          <option key={option.key} value={option.key}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
                   </select>
                 </label>
                 <WallElevation

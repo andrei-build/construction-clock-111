@@ -1,5 +1,6 @@
 export type SketchGuidePoint = { x: number; y: number }
 export type SketchGuideContour = { points: SketchGuidePoint[]; closed: boolean }
+export type SketchGuideSegment = { c: number; s: number; a: SketchGuidePoint; b: SketchGuidePoint }
 export type SketchGuidePlacedItem = {
   id: string
   xFt: number
@@ -22,6 +23,14 @@ export type SketchSmartGuideResult = {
   guides: SketchSmartGuide[]
   snapped: boolean
 }
+export type SketchExistingSnapTarget =
+  | { kind: 'point'; c: number; p: number; point: SketchGuidePoint }
+  | { kind: 'segment'; c: number; s: number; a: SketchGuidePoint; b: SketchGuidePoint; t: number; point: SketchGuidePoint }
+export type SketchExistingSnapResult = {
+  point: SketchGuidePoint
+  target: SketchExistingSnapTarget
+  distance: number
+}
 
 type SmartGuideCandidate = {
   kind: SketchSmartGuideKind
@@ -37,6 +46,31 @@ function segmentEnd(contour: SketchGuideContour, index: number): SketchGuidePoin
   if (index < contour.points.length - 1) return contour.points[index + 1]
   if (contour.closed && contour.points.length >= 3 && index === contour.points.length - 1) return contour.points[0]
   return null
+}
+
+function pointDistance(a: SketchGuidePoint, b: SketchGuidePoint): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+function projectSegmentT(p: SketchGuidePoint, a: SketchGuidePoint, b: SketchGuidePoint): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy
+  if (len2 <= 0.000001) return 0
+  return Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
+}
+
+function eachGuideSegment(model: Pick<SketchGuideModel, 'contours'>): SketchGuideSegment[] {
+  const out: SketchGuideSegment[] = []
+  model.contours.forEach((contour, c) => {
+    for (let s = 0; s < contour.points.length - 1; s += 1) {
+      out.push({ c, s, a: contour.points[s], b: contour.points[s + 1] })
+    }
+    if (contour.closed && contour.points.length >= 3) {
+      out.push({ c, s: contour.points.length - 1, a: contour.points[contour.points.length - 1], b: contour.points[0] })
+    }
+  })
+  return out
 }
 
 function pushUnique(candidates: SmartGuideCandidate[], candidate: SmartGuideCandidate) {
@@ -117,6 +151,70 @@ export function smartGuideLabelKey(kind: SketchSmartGuideKind): string {
   if (kind === 'edge') return 'hub_sketch_guide_edge'
   if (kind === 'axis') return 'hub_sketch_guide_axis'
   return 'hub_sketch_guide_equal'
+}
+
+export function snapToExistingGeometry(
+  model: Pick<SketchGuideModel, 'contours'>,
+  rawPoint: SketchGuidePoint,
+  options: {
+    radiusCells: number
+    excludeContourIndex?: number
+    excludeOpenLastContour?: boolean
+  },
+): SketchExistingSnapResult | null {
+  const radius = Number.isFinite(options.radiusCells) && options.radiusCells > 0 ? options.radiusCells : 0
+  if (radius <= 0) return null
+  const activeIdx = model.contours.length - 1
+  const active = model.contours[activeIdx]
+  const excludeContourIndex = options.excludeContourIndex
+    ?? (options.excludeOpenLastContour !== false && active && !active.closed ? activeIdx : undefined)
+
+  let bestPoint: SketchExistingSnapResult | null = null
+  let bestPointDistance = radius
+  model.contours.forEach((contour, c) => {
+    if (c === excludeContourIndex) return
+    contour.points.forEach((point, p) => {
+      const distance = pointDistance(rawPoint, point)
+      if (distance <= bestPointDistance) {
+        bestPointDistance = distance
+        bestPoint = {
+          point: { x: point.x, y: point.y },
+          target: { kind: 'point', c, p, point: { x: point.x, y: point.y } },
+          distance,
+        }
+      }
+    })
+  })
+  if (bestPoint) return bestPoint
+
+  let bestSegment: SketchExistingSnapResult | null = null
+  let bestSegmentDistance = radius
+  eachGuideSegment(model).forEach((seg) => {
+    if (seg.c === excludeContourIndex) return
+    const t = projectSegmentT(rawPoint, seg.a, seg.b)
+    const point = {
+      x: seg.a.x + (seg.b.x - seg.a.x) * t,
+      y: seg.a.y + (seg.b.y - seg.a.y) * t,
+    }
+    const distance = pointDistance(rawPoint, point)
+    if (distance <= bestSegmentDistance) {
+      bestSegmentDistance = distance
+      bestSegment = {
+        point,
+        target: {
+          kind: 'segment',
+          c: seg.c,
+          s: seg.s,
+          a: { x: seg.a.x, y: seg.a.y },
+          b: { x: seg.b.x, y: seg.b.y },
+          t,
+          point,
+        },
+        distance,
+      }
+    }
+  })
+  return bestSegment
 }
 
 export function snapPointWithSmartGuides(
