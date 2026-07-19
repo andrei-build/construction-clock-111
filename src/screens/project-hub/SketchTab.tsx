@@ -44,7 +44,13 @@ import {
   type SketchSwitch,
 } from './sketchFinishes'
 import {
+  BUILTIN_OUTLET_CATALOG_ID,
+  BUILTIN_SWITCH_CATALOG_ID,
+  SKETCH_CATALOG_KIND_OUTLET,
+  SKETCH_CATALOG_KIND_SWITCH,
+  isOutletPlacedCatalogItem,
   isShowerPanPlacedCatalogItem,
+  isSwitchPlacedCatalogItem,
   isToiletPlacedCatalogItem,
   sanitizePlacedCatalogItems,
   showerPanShapeFromPlacedItem,
@@ -59,6 +65,18 @@ import {
   layoutCabinetRunOnWall,
   type CabinetLayoutResult,
 } from './cabinetCodes'
+import {
+  ELECTRICAL_MATERIAL_SECTION,
+  SKETCH_MATERIAL_SECTIONS,
+  TILE_MATERIAL_SECTION,
+  WALL_MATERIAL_SECTION,
+  CABINET_MATERIAL_SECTION,
+  appendSketchMaterialRows,
+  buildSketchContourStats,
+  calculateSketchMaterials,
+  type SketchMaterialRow,
+  type SketchMaterialsResult,
+} from './sketchMaterials'
 
 interface SketchTabProps {
   project: Project
@@ -200,7 +218,7 @@ function importWallHeight(value: unknown): number | undefined {
   return Number.isFinite(n) && n > 0 ? snapFeetToPrecision(n) : undefined
 }
 
-type Tool = 'wall' | 'door' | 'window' | 'measure' | 'cabinet'
+type Tool = 'wall' | 'door' | 'window' | 'measure' | 'cabinet' | 'outlet' | 'switch'
 type OpeningTool = Extract<Tool, 'door' | 'window'>
 
 function dist(a: Pt, b: Pt): number {
@@ -464,6 +482,7 @@ function normalizeSketchModelForStorage(model: SketchModel): SketchModel {
 }
 
 function fmtFt(valueFt: number): string {
+  if (!Number.isFinite(valueFt) || Math.abs(valueFt) < 1 / 192) return '0 in'
   return formatLengthFt(valueFt)
 }
 
@@ -541,6 +560,7 @@ type PlanPlacedItem = {
   cabinetCode: string
   filler: boolean
   layer?: 'base' | 'wall'
+  electrical?: 'outlet' | 'switch'
 }
 
 function contourCenter(contour: Contour): Pt {
@@ -809,11 +829,60 @@ function planCodeClearanceArc(model: SketchModel, check: CodeClearanceCheck): Pl
   return { id: check.id, d: `M ${sx} ${sy} A ${radius} ${radius} 0 0 ${sweep} ${ex} ${ey}`, warning: !check.ok }
 }
 
+function planElectricalItem(model: SketchModel, item: SketchPlacedCatalogItem): PlanPlacedItem | null {
+  const cellFt = modelCellFt(model)
+  const electrical = isOutletPlacedCatalogItem(item) ? 'outlet' : isSwitchPlacedCatalogItem(item) ? 'switch' : null
+  if (!electrical) return null
+  const seg = Number.isInteger(item.c) && Number.isInteger(item.s)
+    ? eachSegment(model).find((candidate) => candidate.c === item.c && candidate.s === item.s)
+    : null
+  if (seg) {
+    const t = Math.max(0, Math.min(1, Number.isFinite(item.t) ? item.t ?? 0.5 : 0.5))
+    const x = (seg.a.x + (seg.b.x - seg.a.x) * t) * CELL_PX
+    const y = (seg.a.y + (seg.b.y - seg.a.y) * t) * CELL_PX
+    return {
+      item,
+      x,
+      y,
+      angle: readableSvgAngle(seg.b.x - seg.a.x, seg.b.y - seg.a.y),
+      width: (0.58 / cellFt) * CELL_PX,
+      depth: (0.58 / cellFt) * CELL_PX,
+      warning: false,
+      toilet: false,
+      showerPan: false,
+      showerPanShape: 'rect',
+      cabinet: false,
+      cabinetCode: '',
+      filler: false,
+      electrical,
+    }
+  }
+  if (!Number.isFinite(item.xFt) || !Number.isFinite(item.zFt)) return null
+  return {
+    item,
+    x: (item.xFt / cellFt) * CELL_PX,
+    y: (item.zFt / cellFt) * CELL_PX,
+    angle: 0,
+    width: (0.58 / cellFt) * CELL_PX,
+    depth: (0.58 / cellFt) * CELL_PX,
+    warning: false,
+    toilet: false,
+    showerPan: false,
+    showerPanShape: 'rect',
+    cabinet: false,
+    cabinetCode: '',
+    filler: false,
+    electrical,
+  }
+}
+
 function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlacedItem[] {
   const cellFt = modelCellFt(model)
   return sanitizePlacedCatalogItems(model.placedItems)
     .map((item): PlanPlacedItem | null => {
       if (item.surface === 'ceiling' || item.category === 'light' || item.category === 'fan') return null
+      const electrical = planElectricalItem(model, item)
+      if (electrical) return electrical
       const widthIn = Number(item.widthIn)
       const depthIn = Number(item.depthIn)
       if (!Number.isFinite(widthIn) || !Number.isFinite(depthIn) || widthIn <= 0 || depthIn <= 0) return null
@@ -953,6 +1022,32 @@ function drawCanvasPlanItem(ctx: CanvasRenderingContext2D, entry: PlanPlacedItem
     return
   }
 
+  if (entry.electrical) {
+    const size = Math.max(10 / viewScale, entry.width)
+    ctx.fillStyle = entry.electrical === 'outlet' ? 'rgba(59, 130, 246, .14)' : 'rgba(245, 158, 11, .16)'
+    ctx.strokeStyle = entry.electrical === 'outlet' ? '#1d4ed8' : '#b45309'
+    ctx.lineWidth = 1.7 / viewScale
+    ctx.beginPath()
+    ctx.roundRect(-size / 2, -size / 2, size, size, Math.max(2 / viewScale, size * 0.18))
+    ctx.fill()
+    ctx.stroke()
+    if (entry.electrical === 'outlet') {
+      ctx.beginPath()
+      ctx.arc(-size * 0.14, -size * 0.07, Math.max(1.1 / viewScale, size * 0.045), 0, Math.PI * 2)
+      ctx.arc(size * 0.14, -size * 0.07, Math.max(1.1 / viewScale, size * 0.045), 0, Math.PI * 2)
+      ctx.moveTo(-size * 0.18, size * 0.18)
+      ctx.lineTo(size * 0.18, size * 0.18)
+      ctx.stroke()
+    } else {
+      ctx.beginPath()
+      ctx.moveTo(0, -size * 0.24)
+      ctx.lineTo(size * 0.12, size * 0.22)
+      ctx.stroke()
+    }
+    ctx.restore()
+    return
+  }
+
   ctx.fillRect(-entry.width / 2, -entry.depth / 2, entry.width, entry.depth)
   ctx.strokeRect(-entry.width / 2, -entry.depth / 2, entry.width, entry.depth)
   if (entry.cabinet) {
@@ -1063,13 +1158,12 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
   }
   ctx.restore()
   // сводка
-  const area = model.contours.reduce((s, c) => s + contourArea(c), 0)
-  const perim = model.contours.reduce((s, c) => s + contourPerimeter(c), 0)
+  const stats = buildSketchContourStats(model)
   ctx.fillStyle = '#0f172a'
   ctx.font = 'bold 13px sans-serif'
   ctx.textAlign = 'left'
   ctx.fillText(
-    `${t('hub_sketch_area')}: ${(area * CELL_FT * CELL_FT).toFixed(1)} ft²  ·  ${t('hub_sketch_perimeter')}: ${fmtFt(perim * CELL_FT)}`,
+    `${t('hub_sketch_area')}: ${stats.totalArea.toFixed(1)} ft²  ·  ${t('hub_sketch_perimeter')}: ${fmtFt(stats.totalPerimeter)}`,
     8,
     VIEW_H - 10,
   )
@@ -1100,6 +1194,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [feetDrafts, setFeetDrafts] = useState<Partial<Record<FeetDraftField, string>>>({})
   const [cabinetCodes, setCabinetCodes] = useState('B30 2DB27 W3030')
   const [selectedCabinetWallKey, setSelectedCabinetWallKey] = useState<string | null>(null)
+  const [includePrimer, setIncludePrimer] = useState(true)
+  const [includeTexture, setIncludeTexture] = useState(true)
+  const [sketchMaterials, setSketchMaterials] = useState<SketchMaterialsResult | null>(null)
+  const [sketchMaterialsBusy, setSketchMaterialsBusy] = useState(false)
+  const [sketchMaterialsAppendBusy, setSketchMaterialsAppendBusy] = useState(false)
+  const [sketchMaterialsAdded, setSketchMaterialsAdded] = useState<number | null>(null)
   // NAV-FIX-2: общий выбор стены (2D-план ↔ 3D-вид). null = ничего не выбрано.
   const [selectedWallKey, setSelectedWallKey] = useState<string | null>(null)
   // Перетаскивание проёма вдоль стены.
@@ -1137,16 +1237,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [canvasBrowserFullscreen, setCanvasBrowserFullscreen] = useState(false)
   const [canvasFullscreenFallback, setCanvasFullscreenFallback] = useState(false)
 
-  const stats = useMemo(() => {
-    const perContour = model.contours.map((c) => ({
-      area: contourArea(c) * CELL_FT * CELL_FT,
-      perimeter: contourPerimeter(c) * CELL_FT,
-      closed: c.closed,
-    }))
-    const totalArea = perContour.reduce((s, c) => s + c.area, 0)
-    const totalPerimeter = perContour.reduce((s, c) => s + c.perimeter, 0)
-    return { perContour, totalArea, totalPerimeter }
-  }, [model])
+  const stats = useMemo(() => buildSketchContourStats(model), [model])
   const activeSnapFt = snapModeStep(snapMode)
   const activeSnapFtRef = useRef(activeSnapFt)
   const canvasFullscreenActive = canvasBrowserFullscreen || canvasFullscreenFallback
@@ -1229,6 +1320,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const commit = (next: SketchModel) => {
     setHistory((h) => [...h.slice(-HISTORY_MAX + 1), model])
     setModel(next)
+    setSketchMaterials(null)
+    setSketchMaterialsAdded(null)
     setStatus(null)
     setError(null)
   }
@@ -1453,6 +1546,36 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         ? { kind: 'door', c, s, t: rawT, w: Math.max(0.5, snapOpeningFeetToPrecision(doorW)), h: Math.max(0.5, snapOpeningFeetToPrecision(doorH)) }
         : { kind: 'window', c, s, t: rawT, w: Math.max(0.5, snapOpeningFeetToPrecision(winW)), h: Math.max(0.5, snapOpeningFeetToPrecision(winH)), sill: Math.max(0, snapOpeningFeetToPrecision(winSill)) }
     return { ...draft, t: snapOpeningT(model, draft, rawT, activeSnapFt) }
+  }
+
+  const electricalPlacedAt = (kind: 'outlet' | 'switch', c: number, s: number, rawT: number): SketchPlacedCatalogItem | null => {
+    const seg = eachSegment(model).find((candidate) => candidate.c === c && candidate.s === s)
+    if (!seg) return null
+    const cellFt = modelCellFt(model)
+    const tValue = Math.max(0, Math.min(1, rawT))
+    const ax = seg.a.x * cellFt
+    const az = seg.a.y * cellFt
+    const bx = seg.b.x * cellFt
+    const bz = seg.b.y * cellFt
+    const xFt = ax + (bx - ax) * tValue
+    const zFt = az + (bz - az) * tValue
+    const markerKind = kind === 'outlet' ? SKETCH_CATALOG_KIND_OUTLET : SKETCH_CATALOG_KIND_SWITCH
+    return {
+      id: makeId(kind),
+      catalogItemId: kind === 'outlet' ? BUILTIN_OUTLET_CATALOG_ID : BUILTIN_SWITCH_CATALOG_ID,
+      category: 'other',
+      kind: markerKind,
+      name: t(kind === 'outlet' ? 'hub_sketch_outlet' : 'hub_sketch_switch'),
+      model: markerKind,
+      xFt,
+      yFt: kind === 'outlet' ? 1.5 : 4,
+      zFt,
+      rotationY: -Math.atan2(bz - az, bx - ax),
+      surface: 'wall',
+      c,
+      s,
+      t: tValue,
+    }
   }
 
   const canvasPoint = (clientX: number, clientY: number, view = canvasViewRef.current): { x: number; y: number } | null => {
@@ -1877,6 +2000,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     })
     dragIdxRef.current = null
     setDragIdx(null)
+    setSketchMaterials(null)
+    setSketchMaterialsAdded(null)
   }
 
   const handleClick = (e: React.MouseEvent) => {
@@ -1909,6 +2034,21 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       commit({ ...model, measurements: [...(model.measurements ?? []), nextMeasurement] })
       setMeasurementDraft(null)
       setSelectedMeasurementIndex((model.measurements ?? []).length)
+      return
+    }
+
+    if (tool === 'outlet' || tool === 'switch') {
+      const near = nearestSegment(model, raw)
+      if (!near || near.d > SEG_HIT) {
+        setError('hub_sketch_no_segment')
+        return
+      }
+      const placed = electricalPlacedAt(tool, near.c, near.s, near.t)
+      if (!placed) {
+        setError('hub_sketch_no_segment')
+        return
+      }
+      commit({ ...model, placedItems: [...sanitizePlacedCatalogItems(model.placedItems), placed] })
       return
     }
 
@@ -1958,6 +2098,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const prev = history[history.length - 1]
     setHistory((h) => h.slice(0, -1))
     setModel(prev)
+    setSketchMaterials(null)
+    setSketchMaterialsAdded(null)
     setStatus(null)
     setError(null)
   }
@@ -1969,6 +2111,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setModel(EMPTY_MODEL)
     setMeasurementDraft(null)
     setSelectedMeasurementIndex(null)
+    setSketchMaterials(null)
+    setSketchMaterialsAdded(null)
     setStatus(null)
     setError(null)
   }
@@ -2000,6 +2144,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const updateModelFrom3D = useCallback((next: SketchModel) => {
     setModel(normalizeSketchModelForStorage(next))
+    setSketchMaterials(null)
+    setSketchMaterialsAdded(null)
     setStatus(null)
     setError(null)
   }, [])
@@ -2048,9 +2194,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setStatus(null)
     try {
       const lines: string[] = [`${t('hub_sketch_material_title')} — ${name.trim() || 'room'}`, '']
-      stats.perContour.forEach((c, i) => {
+      stats.perContour.forEach((c) => {
         lines.push(
-          `${t('hub_sketch_contour')} ${i + 1}: ${t('hub_sketch_area')} ${c.area.toFixed(1)} ft² · ${t('hub_sketch_perimeter')} ${fmtFt(c.perimeter)}${c.closed ? '' : ` (${t('hub_sketch_open')})`}`,
+          `${t('hub_sketch_contour')} ${c.index + 1}: ${t('hub_sketch_area')} ${c.area.toFixed(1)} ft² · ${t('hub_sketch_perimeter')} ${fmtFt(c.perimeter)}`,
         )
       })
       lines.push('')
@@ -2061,6 +2207,52 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setError('hub_sketch_material_failed')
     } finally {
       setBusy(false)
+    }
+  }
+
+  const runSketchMaterials = async () => {
+    if (!profile || sketchMaterialsBusy) return
+    if (stats.perContour.length === 0) {
+      setError('hub_sketch_empty')
+      return
+    }
+    setSketchMaterialsBusy(true)
+    setSketchMaterialsAdded(null)
+    setError(null)
+    setStatus(null)
+    try {
+      const result = await calculateSketchMaterials(normalizeSketchModelForStorage(model), {
+        includePrimer,
+        includeTexture,
+        labels: {
+          outletName: t('hub_sketch_outlet'),
+          switchName: t('hub_sketch_switch'),
+          eachUnit: t('hub_sketch_material_unit_each'),
+        },
+      })
+      setSketchMaterials(result)
+      setStatus('hub_sketch_materials_ready')
+    } catch {
+      setError('hub_sketch_materials_failed')
+    } finally {
+      setSketchMaterialsBusy(false)
+    }
+  }
+
+  const appendSketchMaterialsToSpec = async () => {
+    if (!profile || !sketchMaterials || sketchMaterialsAppendBusy) return
+    setSketchMaterialsAppendBusy(true)
+    setSketchMaterialsAdded(null)
+    setError(null)
+    setStatus(null)
+    try {
+      const created = await appendSketchMaterialRows(profile, project.id, sketchMaterials.rows)
+      setSketchMaterialsAdded(created.length)
+      setStatus('hub_sketch_materials_added')
+    } catch {
+      setError('hub_sketch_materials_append_failed')
+    } finally {
+      setSketchMaterialsAppendBusy(false)
     }
   }
 
@@ -2123,7 +2315,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const canClose = !!activeContour && !activeContour.closed && activeContour.points.length >= 3
   // NAV-FIX-2: выбор стены на 2D активен, когда клики не заняты установкой проёмов/замеров и не идёт рисование контура.
   const activeContourOpen = !!activeContour && !activeContour.closed && activeContour.points.length > 0
-  const wallSelectEnabled = canEdit && tool !== 'door' && tool !== 'window' && tool !== 'measure' && !activeContourOpen
+  const wallSelectEnabled = canEdit && tool !== 'door' && tool !== 'window' && tool !== 'measure' && tool !== 'outlet' && tool !== 'switch' && !activeContourOpen
   const heightFt = wallHeightFt(model)
   const pxPerFt = (canvasSize.width * CELL_PX) / Math.max(1, canvasView.width)
   const gridLines = useMemo(() => canvasGridLines(canvasView, activeSnapFt, pxPerFt), [canvasView, activeSnapFt, pxPerFt])
@@ -2207,6 +2399,22 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     </g>
   )
 
+  const sketchMaterialSectionLabel = (section: SketchMaterialRow['section']): string => {
+    if (section === TILE_MATERIAL_SECTION) return t('hub_sketch_material_section_tile')
+    if (section === WALL_MATERIAL_SECTION) return t('hub_sketch_material_section_walls')
+    if (section === CABINET_MATERIAL_SECTION) return t('hub_sketch_material_section_cabinets')
+    if (section === ELECTRICAL_MATERIAL_SECTION) return t('hub_sketch_material_section_electrical')
+    return section
+  }
+
+  const fmtMaterialQty = (value: number | null): string => {
+    if (value == null) return '—'
+    return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, '')
+  }
+
+  const sketchMaterialRowsBySection = (section: SketchMaterialRow['section']) =>
+    sketchMaterials?.rows.filter((row) => row.section === section) ?? []
+
   return (
     <section className="hub-tab-panel hub-sketch">
       <div className="card hub-sketch-viewbar">
@@ -2242,7 +2450,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       {canEdit && viewMode === '2d' && (
         <div className="card hub-sketch-toolbar">
           <div className="hub-sketch-tools">
-            {(['wall', 'door', 'window', 'measure', 'cabinet'] as Tool[]).map((tl) => (
+            {(['wall', 'door', 'window', 'measure', 'cabinet', 'outlet', 'switch'] as Tool[]).map((tl) => (
               <button
                 key={tl}
                 type="button"
@@ -2262,6 +2470,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               >
                 {tl === 'measure' && <span aria-hidden="true">📏</span>}
                 {tl === 'cabinet' && <span aria-hidden="true">▣</span>}
+                {tl === 'outlet' && <span aria-hidden="true">⊙</span>}
+                {tl === 'switch' && <span aria-hidden="true">⏽</span>}
                 <span>{t(`hub_sketch_tool_${tl}`)}</span>
               </button>
             ))}
@@ -2573,7 +2783,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           ))}
 
           {planItems.map((entry) => {
-            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}`
+            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.electrical ? ` hub-sketch-plan-electrical hub-sketch-plan-${entry.electrical}` : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}`
             const labelFontSize = Math.max(5 * screenWorldPx, Math.min(11 * screenWorldPx, entry.width / Math.max(4, entry.cabinetCode.length * 0.6)))
             return (
               <g
@@ -2581,8 +2791,21 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 className={className}
                 transform={`translate(${entry.x} ${entry.y}) rotate(${entry.angle})`}
               >
-                <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
-                {entry.toilet ? (
+                <title>{entry.item.name ?? (entry.electrical === 'outlet' ? t('hub_sketch_outlet') : entry.electrical === 'switch' ? t('hub_sketch_switch') : entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
+                {entry.electrical ? (
+                  <>
+                    <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(4 * screenWorldPx, entry.width * 0.18)} />
+                    {entry.electrical === 'outlet' ? (
+                      <>
+                        <circle className="hub-sketch-plan-electrical-mark" cx={-entry.width * 0.14} cy={-entry.depth * 0.07} r={Math.max(1.2 * screenWorldPx, entry.width * 0.045)} />
+                        <circle className="hub-sketch-plan-electrical-mark" cx={entry.width * 0.14} cy={-entry.depth * 0.07} r={Math.max(1.2 * screenWorldPx, entry.width * 0.045)} />
+                        <line className="hub-sketch-plan-electrical-mark" x1={-entry.width * 0.18} y1={entry.depth * 0.18} x2={entry.width * 0.18} y2={entry.depth * 0.18} />
+                      </>
+                    ) : (
+                      <line className="hub-sketch-plan-electrical-mark" x1={0} y1={-entry.depth * 0.24} x2={entry.width * 0.12} y2={entry.depth * 0.22} />
+                    )}
+                  </>
+                ) : entry.toilet ? (
                   <>
                     <rect
                       className="hub-sketch-plan-toilet-tank"
@@ -2939,12 +3162,33 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             placeholder="room-1"
             disabled={busy}
           />
+          <div className="hub-sketch-material-options">
+            <label className="hub-sketch-layer-toggle">
+              <input
+                type="checkbox"
+                checked={includePrimer}
+                onChange={(event) => setIncludePrimer(event.target.checked)}
+              />
+              <span>{t('hub_sketch_material_include_primer')}</span>
+            </label>
+            <label className="hub-sketch-layer-toggle">
+              <input
+                type="checkbox"
+                checked={includeTexture}
+                onChange={(event) => setIncludeTexture(event.target.checked)}
+              />
+              <span>{t('hub_sketch_material_include_texture')}</span>
+            </label>
+          </div>
           <div className="hub-sketch-save-actions">
             <button type="button" className="btn small" disabled={busy} onClick={save}>
               {busy ? t('saving') : t('hub_sketch_save')}
             </button>
             <button type="button" className="btn ghost small" disabled={busy} onClick={calcMaterial}>
               {t('hub_sketch_material')}
+            </button>
+            <button type="button" className="btn ghost small" disabled={sketchMaterialsBusy} onClick={runSketchMaterials}>
+              {sketchMaterialsBusy ? t('loading') : t('hub_sketch_materials_from_sketch')}
             </button>
             <button type="button" className="btn ghost small" disabled={loadBusy} onClick={openLoader}>
               {t('hub_sketch_load')}
@@ -2961,6 +3205,61 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     {f.name.replace(/^sketch-/, '').replace(/\.json$/, '')}
                   </button>
                 ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {sketchMaterials && (
+        <div className="card hub-sketch-materials-result">
+          <div className="hub-sketch-materials-head">
+            <div>
+              <h3>{t('hub_sketch_materials_from_sketch')}</h3>
+              <p className="muted">
+                {[
+                  `${t('hub_sketch_material_fact_paint')} ${sketchMaterials.facts.paintAreaSqft.toFixed(1)} ft²`,
+                  `${t('hub_sketch_material_fact_tile')} ${sketchMaterials.facts.tileAreaSqft.toFixed(1)} ft²`,
+                  `${t('hub_sketch_material_fact_patch')} ${sketchMaterials.facts.patchAreaSqft.toFixed(1)} ft²`,
+                ].join(' · ')}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn small"
+              disabled={sketchMaterialsAppendBusy || sketchMaterials.rows.length === 0}
+              onClick={appendSketchMaterialsToSpec}
+            >
+              {sketchMaterialsAppendBusy ? t('saving') : t('hub_sketch_materials_to_spec')}
+            </button>
+          </div>
+          {sketchMaterialsAdded != null && <p className="ok-msg">{`${t('hub_sketch_materials_added_count')}: ${sketchMaterialsAdded}`}</p>}
+          {sketchMaterials.rows.length === 0 ? (
+            <p className="muted">{t('hub_sketch_materials_empty')}</p>
+          ) : (
+            <div className="hub-sketch-material-table">
+              <div className="hub-sketch-material-table-head">
+                <span>{t('mat_col_name')}</span>
+                <span>{t('mat_col_qty')}</span>
+                <span>{t('mat_col_unit')}</span>
+                <span>{t('mat_col_note')}</span>
+              </div>
+              {SKETCH_MATERIAL_SECTIONS.map((section) => {
+                const rows = sketchMaterialRowsBySection(section)
+                if (rows.length === 0) return null
+                return (
+                  <div className="hub-sketch-material-section" key={section}>
+                    <h4>{sketchMaterialSectionLabel(section)}</h4>
+                    {rows.map((row, index) => (
+                      <div className="hub-sketch-material-row" key={`${section}-${row.name}-${index}`}>
+                        <span className="hub-sketch-material-name">{row.name}</span>
+                        <span>{fmtMaterialQty(row.qty)}</span>
+                        <span>{row.unit ?? '—'}</span>
+                        <span className="muted">{row.note ?? '—'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>

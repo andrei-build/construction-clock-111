@@ -93,6 +93,7 @@ export type SketchSurfaceFinish = SketchPaintFinish | SketchTileFinish | SketchD
 export type SketchFinishes = {
   walls?: SketchSurfaceFinish
   floor?: SketchSurfaceFinish
+  ceiling?: SketchSurfaceFinish
   wallPaint?: string
   wallFinishes?: Record<string, SketchSurfaceFinish>
 }
@@ -249,6 +250,7 @@ export function normalizeFinishes(finishes?: SketchFinishes): Required<SketchFin
     wallPaint,
     walls: normalizeSurface(finishes?.walls, wallPaint),
     floor: normalizeSurface(finishes?.floor, DEFAULT_FLOOR_PAINT),
+    ceiling: normalizeSurface(finishes?.ceiling, DEFAULT_WALL_PAINT),
     wallFinishes,
   }
 }
@@ -280,17 +282,19 @@ function sanitizeWallFinishes(value: unknown): Record<string, SketchSurfaceFinis
 
 export function sanitizeSketchFinishes(value: unknown): SketchFinishes | undefined {
   if (!value || typeof value !== 'object') return undefined
-  const raw = value as { walls?: unknown; floor?: unknown; wallPaint?: unknown; wallFinishes?: unknown }
+  const raw = value as { walls?: unknown; floor?: unknown; ceiling?: unknown; wallPaint?: unknown; wallFinishes?: unknown }
   const finishes: SketchFinishes = {}
   const wallPaint = typeof raw.wallPaint === 'string' ? cleanColor(raw.wallPaint, DEFAULT_WALL_PAINT) : undefined
   const walls = sanitizeSurface(raw.walls)
   const floor = sanitizeSurface(raw.floor)
+  const ceiling = sanitizeSurface(raw.ceiling)
   const wallFinishes = sanitizeWallFinishes(raw.wallFinishes)
   if (wallPaint) finishes.wallPaint = wallPaint
   if (walls) finishes.walls = walls
   if (floor) finishes.floor = floor
+  if (ceiling) finishes.ceiling = ceiling
   if (Object.keys(wallFinishes).length > 0) finishes.wallFinishes = wallFinishes
-  return finishes.wallPaint || finishes.walls || finishes.floor || finishes.wallFinishes ? finishes : undefined
+  return finishes.wallPaint || finishes.walls || finishes.floor || finishes.ceiling || finishes.wallFinishes ? finishes : undefined
 }
 
 export function sanitizeSketchOpenings(value: unknown): Opening[] {

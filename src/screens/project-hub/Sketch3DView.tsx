@@ -59,7 +59,10 @@ import {
   catalogItemHasExactDims,
   isBuiltinToiletCatalogItem,
   isBuiltinShowerPanCatalogItem,
+  isElectricalPlacedCatalogItem,
+  isOutletPlacedCatalogItem,
   isShowerPanPlacedCatalogItem,
+  isSwitchPlacedCatalogItem,
   isToiletPlacedCatalogItem,
   movePlacedOnCeiling,
   movePlacedOnFloor,
@@ -1347,6 +1350,11 @@ function switchName(sw: SketchSwitch, index: number, t: (k: string) => string): 
   return sw.label?.trim() || `${t('hub_sketch_3d_switch')} ${index + 1}`
 }
 
+function electricalPlacedName(item: SketchPlacedCatalogItem, t: (k: string) => string): string {
+  if (item.name?.trim()) return item.name.trim()
+  return isOutletPlacedCatalogItem(item) ? t('hub_sketch_outlet') : t('hub_sketch_switch')
+}
+
 function catalogCategoryLabelKey(category: CatalogCategory): string {
   return `catalog_cat_${category}`
 }
@@ -2103,12 +2111,14 @@ export default function Sketch3DView({
   const catalogById = useMemo(() => new Map(catalogItems.map((item) => [item.id, item])), [catalogItems])
   const resolvedPlacedItems = useMemo(
     () => placedItems
+      .filter((placed) => !isElectricalPlacedCatalogItem(placed))
       .map((placed) => resolvePlacedCatalogItem(placed, catalogById.get(placed.catalogItemId) ?? null))
       .filter((item): item is CatalogResolvedPlacedItem => !!item),
     [placedItems, catalogById],
   )
   const selectedLight = lights.find((light) => light.id === selectedId) ?? null
   const selectedSwitch = switches.find((sw) => sw.id === selectedId) ?? null
+  const selectedElectrical = placedItems.find((item) => item.id === selectedId && isElectricalPlacedCatalogItem(item)) ?? null
   const selectedPlaced = resolvedPlacedItems.find((item) => item.placed.id === selectedId) ?? null
   const selectedOpeningIndex = openingIndexFromId(selectedId)
   const selectedOpening = selectedOpeningIndex !== null ? model.openings[selectedOpeningIndex] ?? null : null
@@ -2537,7 +2547,7 @@ export default function Sketch3DView({
   }, [])
 
   useEffect(() => {
-    if (!canEdit || (!selectedPlaced && !selectedOpening && !selectedMeasurement && !measure3DActive)) return
+    if (!canEdit || (!selectedPlaced && !selectedElectrical && !selectedOpening && !selectedMeasurement && !measure3DActive)) return
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return
@@ -2555,7 +2565,7 @@ export default function Sketch3DView({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, selectedPlaced, selectedOpening, selectedMeasurement, measure3DActive, placedItems, selectedId, model.openings, measurements])
+  }, [canEdit, selectedPlaced, selectedElectrical, selectedOpening, selectedMeasurement, measure3DActive, placedItems, selectedId, model.openings, measurements])
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -3161,6 +3171,55 @@ export default function Sketch3DView({
             const sprite = createLabelSprite(THREE, text)
             sprite.position.copy(group.position)
             sprite.position.y += 0.72
+            scene.add(sprite)
+          }
+        })
+
+        placedItems.filter(isElectricalPlacedCatalogItem).forEach((placed) => {
+          const isOutlet = isOutletPlacedCatalogItem(placed)
+          const markerY = Math.max(0.4, Math.min(height - 0.35, Number.isFinite(placed.yFt) ? placed.yFt : isOutlet ? 1.5 : DEFAULT_SWITCH_HEIGHT_FT))
+          const anchor = Number.isInteger(placed.c) && Number.isInteger(placed.s)
+            ? wallAnchor(model, placed.c ?? 0, placed.s ?? 0, placed.t ?? 0.5, markerY)
+            : null
+          const group = new THREE.Group()
+          const plate = new THREE.Mesh(
+            new THREE.BoxGeometry(0.34, 0.42, 0.055),
+            new THREE.MeshStandardMaterial({ color: isOutlet ? 0xe8f0ff : 0xfff4dc, roughness: 0.38 }),
+          )
+          group.add(plate)
+          if (isOutlet) {
+            const holeMaterial = new THREE.MeshStandardMaterial({ color: 0x1f2937, roughness: 0.42 })
+            const leftHole = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.09, 0.016), holeMaterial)
+            const rightHole = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.09, 0.016), holeMaterial)
+            const ground = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.022, 0.016), holeMaterial)
+            leftHole.position.set(-0.065, 0.04, 0.036)
+            rightHole.position.set(0.065, 0.04, 0.036)
+            ground.position.set(0, -0.105, 0.036)
+            group.add(leftHole, rightHole, ground)
+          } else {
+            const toggle = new THREE.Mesh(
+              new THREE.BoxGeometry(0.055, 0.22, 0.025),
+              new THREE.MeshStandardMaterial({ color: 0x9a6a24, roughness: 0.3 }),
+            )
+            toggle.position.set(0.025, 0, 0.04)
+            toggle.rotation.z = -0.16
+            group.add(toggle)
+          }
+          if (anchor) {
+            group.position.set(anchor.x + anchor.nx * (WALL_THICKNESS_FT / 2 + 0.07), anchor.y, anchor.z + anchor.nz * (WALL_THICKNESS_FT / 2 + 0.07))
+            group.rotation.y = anchor.rotationY
+          } else {
+            group.position.set(placed.xFt, markerY, placed.zFt)
+            group.rotation.y = placed.rotationY
+          }
+          tagInteractive(group, 'catalog', placed.id)
+          scene.add(group)
+          itemTargets.push(group)
+          if (selectedId === placed.id) {
+            addMeshWithEdges(THREE, group, plate, isOutlet ? 0x1d4ed8 : 0xb45309, 0.95)
+            const sprite = createLabelSprite(THREE, electricalPlacedName(placed, t))
+            sprite.position.copy(group.position)
+            sprite.position.y += 0.46
             scene.add(sprite)
           }
         })
@@ -4199,6 +4258,24 @@ export default function Sketch3DView({
                   <button type="button" className="btn ghost small" onClick={rotateSelectedPlaced}>
                     {t('hub_sketch_3d_rotate')}
                   </button>
+                  <button type="button" className="btn ghost small" onClick={removeSelected}>
+                    {t('hub_sketch_3d_remove')}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {selectedElectrical && (
+          <div className="hub-sketch-3d-item-popover">
+            <div className={isOutletPlacedCatalogItem(selectedElectrical) ? 'hub-sketch-3d-electrical-thumb hub-sketch-3d-electrical-thumb-outlet' : 'hub-sketch-3d-electrical-thumb hub-sketch-3d-electrical-thumb-switch'} aria-hidden="true">
+              {isOutletPlacedCatalogItem(selectedElectrical) ? '⊙' : '⏽'}
+            </div>
+            <div className="hub-sketch-3d-item-popover-body">
+              <div className="item-title">{electricalPlacedName(selectedElectrical, t)}</div>
+              <div className="muted">{t('hub_sketch_material_section_electrical')}</div>
+              {canEdit && (
+                <div className="hub-sketch-3d-item-actions">
                   <button type="button" className="btn ghost small" onClick={removeSelected}>
                     {t('hub_sketch_3d_remove')}
                   </button>
