@@ -202,6 +202,18 @@ type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winS
 type SegmentLengthEdit = { ref: SketchSegmentRef; value: string }
 type OpeningOffsetEdit = { index: number; side: OpeningOffsetSide; value: string }
 type DragNode = { c: number; p: number }
+type CanvasPointer = { clientX: number; clientY: number; pointerType: string }
+type CanvasTapGesture = {
+  id: number
+  startX: number
+  startY: number
+  pointerType: string
+  moved: boolean
+  longPressed: boolean
+  longPressTimer: number | null
+}
+type SketchSheetKind = 'context' | 'properties'
+type SheetSwipe = { kind: SketchSheetKind; pointerId: number; startX: number; startY: number; lastY: number }
 
 const SNAP_OPTIONS: Array<{ mode: SnapMode; stepFt: number; labelKey: string }> = [
   { mode: '1ft', stepFt: 1, labelKey: 'hub_sketch_snap_1ft' },
@@ -686,6 +698,19 @@ function projectT(p: Pt, a: Pt, b: Pt): number {
   const len2 = dx * dx + dy * dy
   if (len2 === 0) return 0
   return Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
+}
+
+function pointInContour(p: Pt, contour: Contour): boolean {
+  if (!contour.closed || contour.points.length < 3) return false
+  let inside = false
+  const points = contour.points
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const a = points[i]
+    const b = points[j]
+    const crosses = (a.y > p.y) !== (b.y > p.y)
+    if (crosses && p.x < ((b.x - a.x) * (p.y - a.y)) / ((b.y - a.y) || 1) + a.x) inside = !inside
+  }
+  return inside
 }
 
 // Список сегментов (с индексами контура/сегмента и концами) для поиска ближайшего.
@@ -1631,6 +1656,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
   const [tool, setTool] = useState<Tool>('wall')
   const [activeMode, setActiveMode] = useState<SketchMode>('wall')
+  const [contextSheetOpen, setContextSheetOpen] = useState(false)
   const [snapMode, setSnapMode] = useState<SnapMode>('1ft')
   const [showMeasurements, setShowMeasurements] = useState(true)
   const [codeCheckEnabled, setCodeCheckEnabled] = useState(true)
@@ -1690,9 +1716,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const canvasAutoFitRef = useRef(true)
   const canvasSuppressClickRef = useRef(false)
-  const canvasPointersRef = useRef<Map<number, { clientX: number; clientY: number }>>(new Map())
+  const canvasPointersRef = useRef<Map<number, CanvasPointer>>(new Map())
+  const canvasTapRef = useRef<CanvasTapGesture | null>(null)
   const canvasPanRef = useRef<{ startX: number; startY: number; view: CanvasView; moved: boolean } | null>(null)
   const canvasPinchRef = useRef<{ startDistance: number; startMid: { x: number; y: number }; view: CanvasView } | null>(null)
+  const penActiveRef = useRef(false)
+  const activePenPointerIdRef = useRef<number | null>(null)
+  const sheetSwipeRef = useRef<SheetSwipe | null>(null)
   const edgeAutoPanPointerRef = useRef<{ clientX: number; clientY: number } | null>(null)
   const edgeAutoPanFrameRef = useRef<number | null>(null)
   const edgeAutoPanLastTimeRef = useRef(0)
@@ -2306,6 +2336,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const openWallFinish = () => {
     if (!selectedWall) return
     setActiveMode('finish')
+    setContextSheetOpen(true)
     setMeasurementDraft(null)
     setSelectedMeasurementIndex(null)
     setWallElevationFullscreen(true)
@@ -2313,6 +2344,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const openWallOpenings = () => {
     if (!selectedWall) return
     setActiveMode('opening')
+    setContextSheetOpen(true)
     setWallElevationFullscreen(false)
     canvasAutoFitRef.current = false
     setMeasurementDraft(null)
@@ -2322,6 +2354,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const openWallCabinets = () => {
     if (!selectedWall) return
     setActiveMode('cabinet')
+    setContextSheetOpen(true)
     setWallElevationFullscreen(false)
     canvasAutoFitRef.current = false
     setMeasurementDraft(null)
@@ -2332,6 +2365,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const selectSketchMode = (mode: SketchMode) => {
     setActiveMode(mode)
+    setContextSheetOpen(true)
     setWallElevationFullscreen(false)
     setOpeningOffsetEdit(null)
     setOpeningSnapGuide(null)
@@ -2447,6 +2481,17 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       } else {
         setCanvasBrowserFullscreen(false)
       }
+      return
+    }
+    const preferCssFullscreen = typeof window !== 'undefined' && (
+      window.matchMedia('(max-width: 720px)').matches ||
+      /iP(hone|od)/.test(window.navigator.userAgent) ||
+      !document.fullscreenEnabled ||
+      !shell.requestFullscreen
+    )
+    if (preferCssFullscreen) {
+      setCanvasBrowserFullscreen(false)
+      setCanvasFullscreenFallback(true)
       return
     }
     if (shell.requestFullscreen) {
@@ -3029,55 +3074,166 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
   }, [model.measurements, selectedMeasurementIndex])
 
+  const closeSketchPropertiesPanel = () => {
+    setWallElevationFullscreen(false)
+    setSelectedWallKey(null)
+    setSelectedContourIndex(null)
+    setSelectedNode(null)
+    selectedOpeningIndexRef.current = null
+    setSelectedOpeningIndex(null)
+    setOpeningOffsetEdit(null)
+    setOpeningSnapGuide(null)
+    setSelectedMeasurementIndex(null)
+  }
+
+  const clearCanvasTapTimer = () => {
+    const tap = canvasTapRef.current
+    if (tap && tap.longPressTimer !== null) {
+      window.clearTimeout(tap.longPressTimer)
+      tap.longPressTimer = null
+    }
+  }
+
+  const shouldIgnoreTouchForActivePen = (e: React.PointerEvent): boolean => (
+    e.pointerType === 'touch' && penActiveRef.current && activePenPointerIdRef.current !== e.pointerId
+  )
+
+  const finishPenPointer = (e: React.PointerEvent) => {
+    if (e.pointerType !== 'pen' || activePenPointerIdRef.current !== e.pointerId) return
+    penActiveRef.current = false
+    activePenPointerIdRef.current = null
+  }
+
+  const activeTouchPointers = (): CanvasPointer[] => (
+    Array.from(canvasPointersRef.current.values()).filter((pointer) => pointer.pointerType === 'touch')
+  )
+
+  const beginCanvasPinchFromTouches = () => {
+    const touches = activeTouchPointers()
+    if (touches.length < 2) return false
+    const [a, b] = touches
+    clearCanvasTapTimer()
+    canvasTapRef.current = null
+    canvasPanRef.current = null
+    canvasPinchRef.current = {
+      startDistance: Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)),
+      startMid: { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
+      view: canvasViewRef.current,
+    }
+    canvasSuppressClickRef.current = true
+    return true
+  }
+
+  const beginCanvasTapGesture = (e: React.PointerEvent<SVGSVGElement>) => {
+    clearCanvasTapTimer()
+    const gesture: CanvasTapGesture = {
+      id: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      pointerType: e.pointerType,
+      moved: false,
+      longPressed: false,
+      longPressTimer: null,
+    }
+    gesture.longPressTimer = window.setTimeout(() => {
+      const current = canvasTapRef.current
+      if (!current || current.id !== gesture.id || current.moved) return
+      current.longPressed = true
+      current.longPressTimer = null
+      if (selectCanvasObjectAt(current.startX, current.startY)) {
+        canvasSuppressClickRef.current = true
+      }
+    }, 560)
+    canvasTapRef.current = gesture
+  }
+
+  const markCanvasTapMoved = (e: React.PointerEvent) => {
+    const tap = canvasTapRef.current
+    if (!tap || tap.id !== e.pointerId) return
+    if (Math.hypot(e.clientX - tap.startX, e.clientY - tap.startY) <= 10) return
+    tap.moved = true
+    clearCanvasTapTimer()
+  }
+
+  const isCanvasTapActionTarget = (target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return true
+    const currentTool = toolRef.current
+    if (target.closest('.hub-sketch-node-hit, .hub-sketch-node, .hub-sketch-opening, .hub-sketch-opening-hit, .hub-sketch-plan-item, .hub-sketch-measurement, .hub-sketch-measurement-delete, .hub-sketch-dim-line-editable, .hub-sketch-wall-hit')) {
+      return false
+    }
+    if (target.closest('.hub-sketch-wall')) {
+      if (currentTool === 'door' || currentTool === 'window' || currentTool === 'outlet' || currentTool === 'switch' || currentTool === 'measure') return true
+      const currentModel = modelRef.current
+      const active = currentModel.contours[currentModel.contours.length - 1]
+      return !!active && !active.closed
+    }
+    return true
+  }
+
   const handleMove = (e: React.PointerEvent) => {
     if (!canEdit) return
     applyPointerMoveAt(e.clientX, e.clientY)
-    updateEdgeAutoPan(e.clientX, e.clientY)
+    if (e.pointerType === 'mouse') updateEdgeAutoPan(e.clientX, e.clientY)
   }
 
   const handleCanvasPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (e.button !== 0) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (shouldIgnoreTouchForActivePen(e)) {
+      e.preventDefault()
+      return
+    }
+    if (e.pointerType === 'pen') {
+      penActiveRef.current = true
+      activePenPointerIdRef.current = e.pointerId
+    }
+
     stopEdgeAutoPan()
-    canvasPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY })
+    canvasPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType })
     e.currentTarget.setPointerCapture?.(e.pointerId)
-    if (canvasPointersRef.current.size === 1) {
-      canvasPanRef.current = { startX: e.clientX, startY: e.clientY, view: canvasView, moved: false }
+
+    if (beginCanvasPinchFromTouches()) return
+
+    if (e.pointerType === 'mouse') {
+      canvasTapRef.current = null
+      canvasPanRef.current = { startX: e.clientX, startY: e.clientY, view: canvasViewRef.current, moved: false }
       canvasPinchRef.current = null
       return
     }
-    if (canvasPointersRef.current.size === 2) {
-      const points = Array.from(canvasPointersRef.current.values())
-      const [a, b] = points
+
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') {
       canvasPanRef.current = null
-      canvasPinchRef.current = {
-        startDistance: Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)),
-        startMid: { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
-        view: canvasView,
-      }
-      canvasSuppressClickRef.current = true
+      canvasPinchRef.current = null
+      beginCanvasTapGesture(e)
+      applyPointerMoveAt(e.clientX, e.clientY)
     }
   }
 
   const handleCanvasPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (shouldIgnoreTouchForActivePen(e)) {
+      e.preventDefault()
+      return
+    }
     if (canvasPointersRef.current.has(e.pointerId)) {
-      canvasPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY })
+      canvasPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType })
     }
 
-    if (canvasPointersRef.current.size >= 2 && canvasPinchRef.current) {
-      const points = Array.from(canvasPointersRef.current.values())
-      const [a, b] = points
+    const touches = activeTouchPointers()
+    if (touches.length >= 2 && (canvasPinchRef.current || beginCanvasPinchFromTouches())) {
+      const [a, b] = touches
+      const pinch = canvasPinchRef.current
+      if (!pinch) return
       const currentDistance = Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY))
       const currentMid = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
-      const factor = canvasPinchRef.current.startDistance / currentDistance
-      const anchor = canvasPoint(canvasPinchRef.current.startMid.x, canvasPinchRef.current.startMid.y, canvasPinchRef.current.view)
+      const factor = pinch.startDistance / currentDistance
+      const anchor = canvasPoint(pinch.startMid.x, pinch.startMid.y, pinch.view)
       const svg = svgRef.current
       if (anchor && svg) {
         const rect = svg.getBoundingClientRect()
-        const nextWidth = canvasPinchRef.current.view.width * factor
-        const nextHeight = canvasPinchRef.current.view.height * factor
+        const nextWidth = pinch.view.width * factor
+        const nextHeight = pinch.view.height * factor
         const ratioX = (currentMid.x - rect.left) / Math.max(1, rect.width)
         const ratioY = (currentMid.y - rect.top) / Math.max(1, rect.height)
-        const nextView = normalizeCanvasView(canvasSize, {
+        const nextView = normalizeCanvasView(canvasSizeRef.current, {
           x: anchor.x - ratioX * nextWidth,
           y: anchor.y - ratioY * nextHeight,
           width: nextWidth,
@@ -3093,6 +3249,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       return
     }
 
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+      markCanvasTapMoved(e)
+      applyPointerMoveAt(e.clientX, e.clientY)
+      e.preventDefault()
+      return
+    }
+
     const pan = canvasPanRef.current
     if (pan) {
       const dx = e.clientX - pan.startX
@@ -3102,10 +3265,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         canvasAutoFitRef.current = false
         canvasSuppressClickRef.current = true
         canvasPanRef.current = { ...pan, moved: true }
-        const nextView = normalizeCanvasView(canvasSize, {
+        const nextView = normalizeCanvasView(canvasSizeRef.current, {
           ...pan.view,
-          x: pan.view.x - dx * (pan.view.width / Math.max(1, canvasSize.width)),
-          y: pan.view.y - dy * (pan.view.height / Math.max(1, canvasSize.height)),
+          x: pan.view.x - dx * (pan.view.width / Math.max(1, canvasSizeRef.current.width)),
+          y: pan.view.y - dy * (pan.view.height / Math.max(1, canvasSizeRef.current.height)),
         })
         canvasViewRef.current = nextView
         setCanvasView(nextView)
@@ -3120,12 +3283,25 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const handleCanvasPointerEnd = (e: React.PointerEvent<SVGSVGElement>) => {
+    const stored = canvasPointersRef.current.get(e.pointerId)
+    const tap = canvasTapRef.current?.id === e.pointerId ? canvasTapRef.current : null
+    const tapMoved = tap ? tap.moved || Math.hypot(e.clientX - tap.startX, e.clientY - tap.startY) > 10 : false
+    const tapLongPressed = !!tap?.longPressed
+    if (tap) {
+      clearCanvasTapTimer()
+      canvasTapRef.current = null
+    }
+
     canvasPointersRef.current.delete(e.pointerId)
     if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
-    if (canvasPointersRef.current.size < 2) canvasPinchRef.current = null
+    finishPenPointer(e)
+
+    if (activeTouchPointers().length < 2) canvasPinchRef.current = null
     if (canvasPointersRef.current.size === 1) {
       const remaining = Array.from(canvasPointersRef.current.values())[0]
-      canvasPanRef.current = { startX: remaining.clientX, startY: remaining.clientY, view: canvasView, moved: false }
+      canvasPanRef.current = remaining.pointerType === 'mouse'
+        ? { startX: remaining.clientX, startY: remaining.clientY, view: canvasViewRef.current, moved: false }
+        : null
     } else {
       canvasPanRef.current = null
     }
@@ -3133,10 +3309,27 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     endDragOpening()
     endDragNode()
     endDragPlaced()
+
+    if (stored && (stored.pointerType === 'touch' || stored.pointerType === 'pen')) {
+      if (tapLongPressed) {
+        canvasSuppressClickRef.current = true
+        e.preventDefault()
+        return
+      }
+      if (!tapMoved && isCanvasTapActionTarget(e.target)) {
+        const handled = applyCanvasActionAt(e.clientX, e.clientY)
+        if (handled) {
+          canvasSuppressClickRef.current = true
+          e.preventDefault()
+        }
+      }
+    }
   }
 
   const handleCanvasPointerLeave = () => {
     if (canvasPointersRef.current.size > 0) return
+    clearCanvasTapTimer()
+    canvasTapRef.current = null
     stopEdgeAutoPan()
     endDragOpening()
     endDragNode()
@@ -3159,6 +3352,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   // Начало перетаскивания существующего проёма.
   const startDragOpening = (i: number) => (e: React.PointerEvent) => {
     if (!canEdit) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (shouldIgnoreTouchForActivePen(e)) return
+    if (e.pointerType === 'pen') {
+      penActiveRef.current = true
+      activePenPointerIdRef.current = e.pointerId
+    }
     e.stopPropagation()
     recordHistoryStep()
     // любое взаимодействие с проёмом подавляет следующий click (иначе поставили бы новую точку/проём)
@@ -3179,6 +3378,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const startDragNode = (c: number, p: number) => (e: React.PointerEvent) => {
     if (!canEdit) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (shouldIgnoreTouchForActivePen(e)) return
+    if (e.pointerType === 'pen') {
+      penActiveRef.current = true
+      activePenPointerIdRef.current = e.pointerId
+    }
     e.stopPropagation()
     recordHistoryStep()
     const node = { c, p }
@@ -3199,6 +3404,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const startDragPlanItem = (item: SketchPlacedCatalogItem) => (e: React.PointerEvent) => {
     if (!canEdit || tool === 'measure') return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (shouldIgnoreTouchForActivePen(e)) return
+    if (e.pointerType === 'pen') {
+      penActiveRef.current = true
+      activePenPointerIdRef.current = e.pointerId
+    }
     e.stopPropagation()
     recordHistoryStep()
     dragMovedRef.current = true
@@ -3246,24 +3457,24 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSketchMaterialsAdded(null)
   }
 
-  const handleClick = (e: React.MouseEvent) => {
-    if (!canEdit) return
+  const applyCanvasActionAt = (clientX: number, clientY: number): boolean => {
+    if (!canEdit) return false
     if (canvasSuppressClickRef.current) {
       canvasSuppressClickRef.current = false
       dragMovedRef.current = false
-      return
+      return false
     }
     // клик после перетаскивания проёма не должен ставить новый
     if (dragMovedRef.current) {
       dragMovedRef.current = false
-      return
+      return false
     }
     // NAV-FIX-2: клик по пустому месту снимает выделение стены (клик по самой стене обрабатывает хит-таргет со stopPropagation).
     if (wallSelectEnabled && selectedWallKey !== null) setSelectedWallKey(null)
     if (wallSelectEnabled && selectedContourIndex !== null) setSelectedContourIndex(null)
     if (wallSelectEnabled && selectedNode !== null) setSelectedNode(null)
-    const raw = pointerCell(e)
-    if (!raw) return
+    const raw = pointerCellAt(clientX, clientY)
+    if (!raw) return false
 
     if (tool === 'measure') {
       const p = measurementPoint(raw).p
@@ -3272,29 +3483,29 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setSelectedMeasurementIndex(null)
       if (!measurementDraft) {
         setMeasurementDraft(p)
-        return
+        return true
       }
-      if (dist(measurementDraft, p) < 0.01) return
+      if (dist(measurementDraft, p) < 0.01) return false
       const nextMeasurement: SketchMeasurement = { id: makeId('measure'), scope: 'plan', a: measurementDraft, b: p }
       commit({ ...model, measurements: [...(model.measurements ?? []), nextMeasurement] })
       setMeasurementDraft(null)
       setSelectedMeasurementIndex((model.measurements ?? []).length)
-      return
+      return true
     }
 
     if (tool === 'outlet' || tool === 'switch') {
       const near = nearestSegment(model, raw)
       if (!near || near.d > SEG_HIT) {
         setError('hub_sketch_no_segment')
-        return
+        return true
       }
       const placed = electricalPlacedAt(tool, near.c, near.s, near.t)
       if (!placed) {
         setError('hub_sketch_no_segment')
-        return
+        return true
       }
       commit({ ...model, placedItems: [...sanitizePlacedCatalogItems(model.placedItems), placed] })
-      return
+      return true
     }
 
     if (tool === 'wall') {
@@ -3305,27 +3516,27 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       if (last && !last.closed && last.points.length >= 3 && dist(p, last.points[0]) <= CLOSE_SNAP) {
         const next = { ...model, contours: contours.map((c, i) => (i === contours.length - 1 ? { ...c, closed: true } : c)) }
         commit(next)
-        return
+        return true
       }
       if (last && !last.closed && last.points.length > 0) {
         // не дублируем точку, совпадающую с предыдущей
         const prev = last.points[last.points.length - 1]
-        if (dist(p, prev) < 0.01) return
+        if (dist(p, prev) < 0.01) return false
         const next = { ...model, contours: contours.map((c, i) => (i === contours.length - 1 ? { ...c, points: [...c.points, p] } : c)) }
         commit(next)
       } else {
         commit({ ...model, contours: [...contours, { points: [p], closed: false }] })
       }
-      return
+      return true
     }
 
-    if (tool !== 'door' && tool !== 'window') return
+    if (tool !== 'door' && tool !== 'window') return false
 
     // door / window: ставим на ближайший сегмент в пределах порога
     const near = nearestSegment(model, raw)
     if (!near || near.d > SEG_HIT) {
       setError('hub_sketch_no_segment')
-      return
+      return true
     }
     const opening = openingDraftAt(tool, near.c, near.s, near.t)
     const nextIndex = model.openings.length
@@ -3333,6 +3544,112 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     selectedOpeningIndexRef.current = nextIndex
     setSelectedOpeningIndex(nextIndex)
     setActiveMode('opening')
+    return true
+  }
+
+  const handleClick = (e: React.MouseEvent) => {
+    applyCanvasActionAt(e.clientX, e.clientY)
+  }
+
+  function selectCanvasObjectAt(clientX: number, clientY: number): boolean {
+    if (!canEditRef.current) return false
+    const raw = pointerCellAt(clientX, clientY)
+    const point = canvasPoint(clientX, clientY)
+    if (!raw || !point) return false
+    const hitCells = Math.max(SEG_HIT, (30 * screenWorldPxForView()) / CELL_PX)
+    const hitWorldPx = 30 * screenWorldPxForView()
+
+    let nodeHit: { node: DragNode; d: number } | null = null
+    const currentModel = modelRef.current
+    for (let c = 0; c < currentModel.contours.length; c++) {
+      const contour = currentModel.contours[c]
+      for (let p = 0; p < contour.points.length; p++) {
+        const candidate = contour.points[p]
+        const d = dist(raw, candidate)
+        if (d <= hitCells && (!nodeHit || d < nodeHit.d)) nodeHit = { node: { c, p }, d }
+      }
+    }
+    if (nodeHit) {
+      setActiveMode('wall')
+      setSelectedNode(nodeHit.node)
+      setSelectedContourIndex(nodeHit.node.c)
+      setSelectedWallKey(null)
+      selectedOpeningIndexRef.current = null
+      setSelectedOpeningIndex(null)
+      setSelectedMeasurementIndex(null)
+      setMeasurementDraft(null)
+      return true
+    }
+
+    let openingHit: { index: number; d: number } | null = null
+    for (let index = 0; index < currentModel.openings.length; index++) {
+      const opening = currentModel.openings[index]
+      const geom = openingGeom(currentModel, opening)
+      if (!geom) continue
+      const widthCells = Math.min(openingWidthFt(opening) / modelCellFt(currentModel), dist(geom.a, geom.b))
+      const a = { x: geom.p.x - (geom.ux * widthCells) / 2, y: geom.p.y - (geom.uy * widthCells) / 2 }
+      const b = { x: geom.p.x + (geom.ux * widthCells) / 2, y: geom.p.y + (geom.uy * widthCells) / 2 }
+      const tValue = projectT(raw, a, b)
+      const projected = { x: a.x + (b.x - a.x) * tValue, y: a.y + (b.y - a.y) * tValue }
+      const d = dist(raw, projected)
+      if (d <= hitCells && (!openingHit || d < openingHit.d)) openingHit = { index, d }
+    }
+    if (openingHit) {
+      setActiveMode('opening')
+      selectedOpeningIndexRef.current = openingHit.index
+      setSelectedOpeningIndex(openingHit.index)
+      setSelectedWallKey(null)
+      setSelectedContourIndex(null)
+      setSelectedNode(null)
+      setSelectedMeasurementIndex(null)
+      setMeasurementDraft(null)
+      return true
+    }
+
+    for (const { index, line } of planMeasurementLines) {
+      const tValue = projectT(point, { x: line.x1, y: line.y1 }, { x: line.x2, y: line.y2 })
+      const projected = { x: line.x1 + (line.x2 - line.x1) * tValue, y: line.y1 + (line.y2 - line.y1) * tValue }
+      if (dist(point, projected) <= hitWorldPx) {
+        setActiveMode('measure')
+        setSelectedMeasurementIndex(index)
+        setMeasurementDraft(null)
+        setSelectedWallKey(null)
+        setSelectedContourIndex(null)
+        setSelectedNode(null)
+        selectedOpeningIndexRef.current = null
+        setSelectedOpeningIndex(null)
+        return true
+      }
+    }
+
+    const near = nearestSegment(modelRef.current, raw)
+    if (near && near.d <= hitCells) {
+      setActiveMode('wall')
+      setSelectedWallKey(sketchWallKey(near.c, near.s))
+      setSelectedContourIndex(null)
+      setSelectedNode(null)
+      selectedOpeningIndexRef.current = null
+      setSelectedOpeningIndex(null)
+      setSelectedMeasurementIndex(null)
+      setMeasurementDraft(null)
+      return true
+    }
+
+    for (let index = modelRef.current.contours.length - 1; index >= 0; index--) {
+      const contour = modelRef.current.contours[index]
+      if (!pointInContour(raw, contour)) continue
+      setActiveMode('wall')
+      setSelectedContourIndex(index)
+      setSelectedNode(null)
+      setSelectedWallKey(null)
+      selectedOpeningIndexRef.current = null
+      setSelectedOpeningIndex(null)
+      setSelectedMeasurementIndex(null)
+      setMeasurementDraft(null)
+      return true
+    }
+
+    return false
   }
 
   const finishShape = () => {
@@ -4073,15 +4390,66 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     </div>
   )
 
+  const closeSketchSheet = (kind: SketchSheetKind) => {
+    if (kind === 'context') setContextSheetOpen(false)
+    else closeSketchPropertiesPanel()
+  }
+
+  const startSheetSwipe = (kind: SketchSheetKind) => (event: React.PointerEvent<HTMLElement>) => {
+    if (event.pointerType === 'mouse') return
+    sheetSwipeRef.current = {
+      kind,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastY: event.clientY,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const moveSheetSwipe = (event: React.PointerEvent<HTMLElement>) => {
+    const swipe = sheetSwipeRef.current
+    if (!swipe || swipe.pointerId !== event.pointerId) return
+    swipe.lastY = event.clientY
+  }
+
+  const endSheetSwipe = (event: React.PointerEvent<HTMLElement>) => {
+    const swipe = sheetSwipeRef.current
+    if (!swipe || swipe.pointerId !== event.pointerId) return
+    sheetSwipeRef.current = null
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    const dy = swipe.lastY - swipe.startY
+    const dx = event.clientX - swipe.startX
+    if (dy > 56 && dy > Math.abs(dx) * 1.25) closeSketchSheet(swipe.kind)
+  }
+
   const renderSketchContextPanel = (fullscreen = false) => {
     const activeModeMeta = SKETCH_MODE_OPTIONS.find((option) => option.mode === activeMode) ?? SKETCH_MODE_OPTIONS[0]
     const copySelection = activeCopySelection()
     const canSaveRoomTemplate = model.contours.some((contour) => contour.closed && contour.points.length >= 3)
     return (
-      <aside className={fullscreen ? 'hub-sketch-context-panel hub-sketch-context-panel-fullscreen' : 'hub-sketch-context-panel'} aria-label={t('hub_sketch_context_panel')}>
+      <aside
+        className={[
+          'hub-sketch-context-panel',
+          fullscreen ? 'hub-sketch-context-panel-fullscreen' : '',
+          contextSheetOpen ? 'hub-sketch-sheet-open' : 'hub-sketch-sheet-closed',
+        ].filter(Boolean).join(' ')}
+        aria-label={t('hub_sketch_context_panel')}
+      >
+        <div
+          className="hub-sketch-sheet-grip"
+          aria-hidden="true"
+          onPointerDown={startSheetSwipe('context')}
+          onPointerMove={moveSheetSwipe}
+          onPointerUp={endSheetSwipe}
+          onPointerCancel={endSheetSwipe}
+        />
         <div className="hub-sketch-context-head">
           <span className="hub-sketch-context-icon" aria-hidden="true">{activeModeMeta.icon}</span>
           <h3>{t(activeModeMeta.labelKey)}</h3>
+          <button type="button" className="hub-sketch-sheet-close btn ghost small" onClick={() => closeSketchSheet('context')}>
+            {t('close')}
+          </button>
         </div>
 
         {activeMode === 'wall' && (
@@ -4630,7 +4998,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const selectedMeasurement = selectedMeasurementIndex !== null ? model.measurements?.[selectedMeasurementIndex] ?? null : null
     if (!selectedWall && !selectedContour && !selectedOpening && !selectedMeasurement) return null
     return (
-      <aside className="hub-sketch-properties-panel" aria-label={t('hub_sketch_properties_panel')}>
+      <aside className="hub-sketch-properties-panel hub-sketch-sheet-open" aria-label={t('hub_sketch_properties_panel')}>
+        <div
+          className="hub-sketch-sheet-grip"
+          aria-hidden="true"
+          onPointerDown={startSheetSwipe('properties')}
+          onPointerMove={moveSheetSwipe}
+          onPointerUp={endSheetSwipe}
+          onPointerCancel={endSheetSwipe}
+        />
         {selectedWall && (
           <section className="hub-sketch-properties-section">
             <div className="hub-sketch-properties-head">
@@ -4785,6 +5161,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const use3DContextPanel = canEdit && viewMode === '3d' && MODES_WITH_3D_CONTEXT.has(activeMode)
   const hasPropertiesPanel = Boolean(selectedWall || selectedContour || selectedOpening || (selectedMeasurementIndex !== null && model.measurements?.[selectedMeasurementIndex]))
+  useEffect(() => {
+    if (hasPropertiesPanel) setContextSheetOpen(false)
+  }, [hasPropertiesPanel])
   const workspaceClass = [
     'hub-sketch-workspace',
     use3DContextPanel ? 'hub-sketch-workspace-no-context' : '',
@@ -4792,7 +5171,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   ].filter(Boolean).join(' ')
 
   return (
-    <section className="hub-tab-panel hub-sketch">
+    <section className={canvasFullscreenActive ? 'hub-tab-panel hub-sketch hub-sketch-2d-fullscreen-active' : 'hub-tab-panel hub-sketch'}>
       {renderSketchTopbar()}
 
       <div className={workspaceClass}>
@@ -4987,15 +5366,24 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             c.points.map((p, pi) => {
               const selected = selectedNode?.c === ci && selectedNode.p === pi
               const dragging = dragNode?.c === ci && dragNode.p === pi
+              const nodeHitRadius = Math.max(nodeRadius + 4 * screenWorldPx, 24 * screenWorldPx)
               return (
-                <circle
-                  key={`n${ci}-${pi}`}
-                  className={`hub-sketch-node${selected ? ' hub-sketch-node-selected' : ''}${dragging ? ' hub-sketch-node-dragging' : ''}`}
-                  cx={p.x * CELL_PX}
-                  cy={p.y * CELL_PX}
-                  r={nodeRadius}
-                  onPointerDown={canEdit ? startDragNode(ci, pi) : undefined}
-                />
+                <g key={`n${ci}-${pi}`} className="hub-sketch-node-group">
+                  <circle
+                    className="hub-sketch-node-hit"
+                    cx={p.x * CELL_PX}
+                    cy={p.y * CELL_PX}
+                    r={nodeHitRadius}
+                    onPointerDown={canEdit ? startDragNode(ci, pi) : undefined}
+                  />
+                  <circle
+                    className={`hub-sketch-node${selected ? ' hub-sketch-node-selected' : ''}${dragging ? ' hub-sketch-node-dragging' : ''}`}
+                    cx={p.x * CELL_PX}
+                    cy={p.y * CELL_PX}
+                    r={nodeRadius}
+                    onPointerDown={canEdit ? startDragNode(ci, pi) : undefined}
+                  />
+                </g>
               )
             }),
           )}
@@ -5145,6 +5533,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 onPointerDown={canEdit ? startDragPlanItem(entry.item) : undefined}
               >
                 <title>{entry.item.name ?? (entry.electrical === 'outlet' ? t('hub_sketch_outlet') : entry.electrical === 'switch' ? t('hub_sketch_switch') : entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
+                <rect
+                  className="hub-sketch-plan-item-hit"
+                  x={-Math.max(entry.width, 44 * screenWorldPx) / 2}
+                  y={-Math.max(entry.depth, 44 * screenWorldPx) / 2}
+                  width={Math.max(entry.width, 44 * screenWorldPx)}
+                  height={Math.max(entry.depth, 44 * screenWorldPx)}
+                  rx={6 * screenWorldPx}
+                />
                 {entry.electrical ? (
                   <>
                     <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(4 * screenWorldPx, entry.width * 0.18)} />

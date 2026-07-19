@@ -3852,6 +3852,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 
 /* Эскиз помещения (SKETCH-1) */
 .hub-sketch {
+  --sketch-phone-rail-h: 72px;
+  --sketch-app-bottom-offset: calc(72px + var(--safe-bottom));
   display: grid;
   gap: 12px;
 }
@@ -3862,12 +3864,26 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   gap: 10px;
   padding: 8px 10px;
 }
+.hub-sketch .btn.small {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+}
+.hub-sketch input,
+.hub-sketch select {
+  min-height: 44px;
+}
 .hub-sketch-topbar-fullscreen {
   flex: 0 0 auto;
   border-radius: 0;
   border-width: 0 0 1px;
   background: rgba(248, 250, 252, .97);
   box-shadow: 0 8px 24px rgba(15, 23, 42, .12);
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  padding-left: calc(10px + env(safe-area-inset-left, 0px));
+  padding-right: calc(10px + env(safe-area-inset-right, 0px));
   z-index: 8;
 }
 .hub-sketch-topbar-group {
@@ -3982,6 +3998,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel2);
+}
+.hub-sketch-sheet-grip,
+.hub-sketch-sheet-close {
+  display: none;
 }
 .hub-sketch-context-panel-fullscreen {
   max-height: 30dvh;
@@ -4219,6 +4239,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   z-index: 1000;
   display: flex;
   flex-direction: column;
+  height: 100dvh;
   border-radius: 0;
 }
 .hub-sketch-svg {
@@ -4325,8 +4346,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-2d-control-stack {
   position: absolute;
-  top: 10px;
   right: 10px;
+  bottom: 10px;
   z-index: 5;
   display: flex;
   flex-direction: column;
@@ -4353,8 +4374,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   pointer-events: auto;
 }
 .hub-sketch-round-btn {
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   display: inline-grid;
   place-items: center;
   flex: 0 0 auto;
@@ -4363,7 +4384,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border-radius: 999px;
   background: rgba(21,29,45,.94);
   color: var(--text);
-  font: 800 17px/1 var(--font-numeric);
+  font: 800 19px/1 var(--font-numeric);
   cursor: pointer;
   box-shadow: 0 8px 20px rgba(0,0,0,.22);
   transition: background .12s, color .12s, border-color .12s, transform .06s, opacity .12s;
@@ -4735,6 +4756,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-wall-selected,
 .hub-sketch-wall-conflict,
 .hub-sketch-wall-hit,
+.hub-sketch-node-hit,
 .hub-sketch-door,
 .hub-sketch-window,
 .hub-sketch-preview,
@@ -4745,12 +4767,17 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-measurement-line,
 .hub-sketch-measurement-hit,
 .hub-sketch-plan-item *,
+.hub-sketch-plan-item-hit,
 .hub-sketch-code-clearance-line,
 .hub-sketch-code-arc,
 .hub-sketch-dim-main,
 .hub-sketch-dim-extension,
 .hub-sketch-dim-tick {
   vector-effect: non-scaling-stroke;
+}
+.hub-sketch-subgrid,
+.hub-sketch-grid {
+  pointer-events: none;
 }
 .hub-sketch-subgrid line { stroke: #edf1f5; stroke-width: 1; }
 .hub-sketch-grid line { stroke: #d7dee8; stroke-width: 1; }
@@ -4761,7 +4788,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   fill: rgba(37, 99, 235, .08);
 }
 /* NAV-FIX-2: выбор стены на 2D-плане */
-.hub-sketch-wall-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; fill: none; cursor: pointer; }
+.hub-sketch-wall-hit { stroke: transparent; stroke-width: 22; stroke-linecap: round; fill: none; cursor: pointer; }
 .hub-sketch-wall-selected { stroke: #2563eb; stroke-width: 5; stroke-linecap: round; fill: none; pointer-events: none; }
 .hub-sketch-wall-conflict { stroke: #dc2626; stroke-width: 6; stroke-linecap: round; fill: none; pointer-events: none; }
 .hub-sketch-dim { fill: #334155; font-size: 12px; font-weight: 700; pointer-events: none; }
@@ -4828,6 +4855,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: #ffffff;
   stroke-width: 2;
   cursor: grab;
+}
+.hub-sketch-node-hit {
+  fill: transparent;
+  stroke: transparent;
+  cursor: grab;
+  pointer-events: all;
 }
 .hub-sketch-node-selected,
 .hub-sketch-node-dragging {
@@ -5299,10 +5332,15 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-opening { cursor: grab; }
 .hub-sketch-door { stroke: #b45309; stroke-width: 6; stroke-linecap: butt; }
 .hub-sketch-window { stroke: #2563eb; stroke-width: 6; stroke-linecap: butt; }
-.hub-sketch-opening-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
+.hub-sketch-opening-hit { stroke: transparent; stroke-width: 24; stroke-linecap: round; }
 .hub-sketch-plan-item {
   pointer-events: auto;
   cursor: grab;
+}
+.hub-sketch-plan-item-hit {
+  fill: transparent !important;
+  stroke: transparent !important;
+  pointer-events: all;
 }
 .hub-sketch-plan-item-dragging {
   cursor: grabbing;
@@ -6979,6 +7017,340 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   }
   .hub-sketch-fullscreen-context-row .hub-sketch-context-panel {
     order: 2;
+  }
+}
+
+@media (pointer: coarse) {
+  .hub-sketch .btn.small {
+    min-height: 48px;
+    padding: 12px 14px;
+  }
+  .hub-sketch input,
+  .hub-sketch select {
+    min-height: 48px;
+  }
+  .hub-sketch-layer-toggle {
+    min-height: 48px;
+  }
+  .hub-sketch-layer-toggle input {
+    width: 20px;
+    height: 20px;
+  }
+  .hub-sketch-wall-hit,
+  .hub-sketch-opening-hit,
+  .hub-sketch-measurement-hit {
+    stroke-width: 30;
+  }
+  .hub-sketch-round-btn {
+    width: 48px;
+    height: 48px;
+  }
+}
+
+@media (min-width: 721px) and (max-width: 1180px) {
+  .hub-sketch-workspace,
+  .hub-sketch-workspace-no-context,
+  .hub-sketch-workspace-has-properties,
+  .hub-sketch-workspace-no-context.hub-sketch-workspace-has-properties {
+    display: grid;
+    grid-template-columns: 78px minmax(208px, 260px) minmax(0, 1fr);
+    gap: 8px;
+    padding-bottom: 0;
+  }
+  .hub-sketch-workspace-no-context {
+    grid-template-columns: 78px minmax(0, 1fr);
+  }
+  .hub-sketch-workspace-has-properties {
+    grid-template-columns: 78px minmax(200px, 248px) minmax(0, 1fr) minmax(220px, 280px);
+  }
+  .hub-sketch-workspace-no-context.hub-sketch-workspace-has-properties {
+    grid-template-columns: 78px minmax(0, 1fr) minmax(220px, 280px);
+  }
+  .hub-sketch-mode-rail {
+    position: static;
+    order: initial;
+    flex-direction: column;
+    overflow: visible;
+    padding: 6px;
+    border-radius: 8px;
+    box-shadow: none;
+  }
+  .hub-sketch-mode-btn {
+    flex: 0 0 auto;
+    min-height: 58px;
+    gap: 3px;
+    padding: 5px 4px;
+  }
+  .hub-sketch-mode-label {
+    position: static;
+    max-width: 68px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 10px;
+    opacity: 1;
+    transform: none;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hub-sketch-mode-btn:hover .hub-sketch-mode-label,
+  .hub-sketch-mode-btn:focus-visible .hub-sketch-mode-label {
+    transform: none;
+  }
+  .hub-sketch-context-panel,
+  .hub-sketch-properties-panel {
+    order: initial;
+    max-height: calc(100dvh - 156px);
+    padding: 8px;
+    border-radius: 8px;
+  }
+  .hub-sketch-main {
+    order: initial;
+  }
+  .hub-sketch-svg,
+  .hub-sketch-3d-shell {
+    height: clamp(500px, calc(100dvh - 180px), 880px);
+  }
+  .hub-sketch-topbar {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .hub-sketch-topbar-center {
+    flex: 1 1 420px;
+  }
+  .hub-sketch-topbar-left,
+  .hub-sketch-topbar-right {
+    flex: 0 1 auto;
+  }
+}
+
+@media (min-width: 721px) and (max-width: 1180px) and (orientation: landscape) {
+  .hub-sketch-svg,
+  .hub-sketch-3d-shell {
+    height: clamp(520px, calc(100dvh - 150px), 920px);
+  }
+  .hub-sketch-context-panel,
+  .hub-sketch-properties-panel {
+    max-height: calc(100dvh - 132px);
+  }
+}
+
+@media (max-width: 720px) {
+  .hub-sketch {
+    --sketch-phone-rail-h: 76px;
+    gap: 10px;
+  }
+  .hub-sketch-topbar {
+    overflow-x: auto;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    padding: 8px;
+    scrollbar-width: thin;
+  }
+  .hub-sketch-topbar-group {
+    width: auto;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+  }
+  .hub-sketch-topbar-center {
+    min-width: max-content;
+  }
+  .hub-sketch-view-preset-group,
+  .hub-sketch-snap {
+    flex-wrap: nowrap;
+  }
+  .hub-sketch-height-field input {
+    width: 112px;
+  }
+  .hub-sketch-workspace,
+  .hub-sketch-workspace-no-context,
+  .hub-sketch-workspace-has-properties,
+  .hub-sketch-workspace-no-context.hub-sketch-workspace-has-properties {
+    display: block;
+    padding-bottom: calc(var(--sketch-phone-rail-h) + 18px);
+  }
+  .hub-sketch-canvas-card {
+    padding: 6px;
+  }
+  .hub-sketch-svg,
+  .hub-sketch-3d-shell {
+    min-height: 360px;
+    height: min(68dvh, 640px);
+  }
+  .hub-sketch-scale {
+    margin-bottom: 0;
+  }
+  .hub-sketch-mode-rail {
+    position: fixed;
+    left: calc(8px + env(safe-area-inset-left, 0px));
+    right: calc(8px + env(safe-area-inset-right, 0px));
+    bottom: var(--sketch-app-bottom-offset);
+    z-index: 1010;
+    height: var(--sketch-phone-rail-h);
+    min-width: 0;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 7px;
+    border-radius: 12px;
+    background: rgba(248, 250, 252, .96);
+    box-shadow: 0 -12px 32px rgba(15, 23, 42, .2);
+    -webkit-overflow-scrolling: touch;
+  }
+  .hub-sketch-mode-btn {
+    flex: 1 0 64px;
+    min-width: 64px;
+    min-height: 60px;
+    padding: 5px 4px;
+  }
+  .hub-sketch-mode-label {
+    position: static;
+    max-width: 58px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 9.5px;
+    opacity: 1;
+    transform: none;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hub-sketch-mode-btn:hover .hub-sketch-mode-label,
+  .hub-sketch-mode-btn:focus-visible .hub-sketch-mode-label {
+    transform: none;
+  }
+  .hub-sketch-context-panel,
+  .hub-sketch-properties-panel {
+    position: fixed;
+    left: calc(8px + env(safe-area-inset-left, 0px));
+    right: calc(8px + env(safe-area-inset-right, 0px));
+    bottom: calc(var(--sketch-app-bottom-offset) + var(--sketch-phone-rail-h) + 8px);
+    z-index: 1011;
+    max-height: min(66dvh, 560px);
+    overflow: auto;
+    padding: 6px 10px 12px;
+    border-radius: 14px 14px 8px 8px;
+    background: rgba(248, 250, 252, .98);
+    box-shadow: 0 -18px 44px rgba(15, 23, 42, .24);
+    transform: translateY(0);
+    transition: transform .2s ease, opacity .2s ease;
+    -webkit-overflow-scrolling: touch;
+  }
+  .hub-sketch-properties-panel {
+    z-index: 1012;
+  }
+  .hub-sketch-context-panel.hub-sketch-sheet-closed {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(calc(100% + var(--sketch-phone-rail-h) + var(--sketch-app-bottom-offset) + 24px));
+  }
+  .hub-sketch-sheet-grip {
+    display: grid;
+    place-items: center;
+    height: 24px;
+    margin: -2px 0 0;
+    touch-action: none;
+  }
+  .hub-sketch-sheet-grip::before {
+    content: "";
+    width: 46px;
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(100, 116, 139, .45);
+  }
+  .hub-sketch-sheet-close {
+    display: inline-flex;
+    min-width: 48px;
+    margin-left: auto;
+  }
+  .hub-sketch-context-head,
+  .hub-sketch-properties-head {
+    position: sticky;
+    top: -6px;
+    z-index: 2;
+    padding: 2px 0 8px;
+    background: rgba(248, 250, 252, .98);
+  }
+  .hub-sketch-context-panel .hub-sketch-cabinet-tools {
+    gap: 10px;
+  }
+  .hub-sketch-cabinet-gallery-grid,
+  .hub-sketch-tile-catalog-grid {
+    grid-template-columns: 1fr;
+  }
+  .hub-sketch-2d-control-stack {
+    right: calc(10px + env(safe-area-inset-right, 0px));
+    bottom: 10px;
+  }
+  .hub-sketch-2d-control-group,
+  .hub-sketch-2d-tools,
+  .hub-sketch-3d-camera-tools {
+    padding: 5px;
+  }
+  .hub-sketch-2d-tools .btn {
+    min-height: 40px;
+    padding: 8px 10px;
+  }
+  .hub-sketch-2d-fullscreen-active .hub-sketch-workspace > .hub-sketch-mode-rail,
+  .hub-sketch-2d-fullscreen-active .hub-sketch-workspace > .hub-sketch-context-panel {
+    display: none;
+  }
+  .hub-sketch-svg-shell-fullscreen {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    background: #ffffff;
+  }
+  .hub-sketch-svg-shell-fullscreen .hub-sketch-fullscreen-context-row {
+    display: contents;
+  }
+  .hub-sketch-svg-shell-fullscreen .hub-sketch-mode-rail {
+    bottom: var(--safe-bottom);
+    left: calc(8px + env(safe-area-inset-left, 0px));
+    right: calc(8px + env(safe-area-inset-right, 0px));
+  }
+  .hub-sketch-svg-shell-fullscreen .hub-sketch-context-panel,
+  .hub-sketch-svg-shell-fullscreen .hub-sketch-properties-panel {
+    bottom: calc(var(--safe-bottom) + var(--sketch-phone-rail-h) + 8px);
+  }
+  .hub-sketch-svg-shell-fullscreen .hub-sketch-2d-control-stack {
+    bottom: calc(var(--sketch-phone-rail-h) + var(--safe-bottom) + 12px);
+  }
+  .hub-sketch-elevation-lightbox {
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+  .hub-sketch-elevation-lightbox-bar {
+    align-items: center;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+}
+
+@media (max-width: 720px) and (orientation: landscape) {
+  .hub-sketch-svg,
+  .hub-sketch-3d-shell {
+    min-height: 300px;
+    height: calc(100dvh - 146px);
+  }
+  .hub-sketch-context-panel,
+  .hub-sketch-properties-panel {
+    max-height: min(72dvh, 520px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-sketch-context-panel,
+  .hub-sketch-properties-panel {
+    transition: none;
   }
 }
 
