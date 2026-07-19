@@ -4458,6 +4458,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-window,
 .hub-sketch-preview,
 .hub-sketch-opening-hit,
+.hub-sketch-opening-selection-halo,
+.hub-sketch-opening-snap-guide line,
 .hub-sketch-measurement-line,
 .hub-sketch-measurement-hit,
 .hub-sketch-plan-item *,
@@ -4537,6 +4539,36 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-node { fill: #0f172a; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-door { fill: #b45309; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-window { fill: #2563eb; stroke: #ffffff; stroke-width: 2; }
+.hub-sketch-opening-selection-halo {
+  stroke: rgba(15, 23, 42, .55);
+  stroke-width: 7;
+  stroke-linecap: round;
+  fill: none;
+}
+.hub-sketch-opening-clearance-dim-editable {
+  pointer-events: auto;
+}
+.hub-sketch-opening-snap-guide {
+  pointer-events: none;
+}
+.hub-sketch-opening-snap-guide line {
+  stroke: #f59e0b;
+  stroke-width: 2.3;
+  stroke-linecap: round;
+}
+.hub-sketch-opening-snap-guide circle {
+  fill: #f59e0b;
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+.hub-sketch-opening-snap-guide text {
+  fill: #92400e;
+  stroke: rgba(255, 255, 255, .96);
+  stroke-width: 3.5;
+  paint-order: stroke;
+  font-weight: 850;
+  letter-spacing: 0;
+}
 .hub-sketch-hover { fill: rgba(37, 99, 235, .35); stroke: #2563eb; stroke-width: 1.5; }
 .hub-sketch-scale { margin: 8px 2px 0; font-size: 12px; }
 .hub-sketch-stats {
@@ -5094,6 +5126,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-opening-clearance-dim {
   pointer-events: none;
+}
+.hub-sketch-opening-clearance-dim-editable {
+  pointer-events: auto;
 }
 .hub-sketch-opening-clearance-dim .hub-sketch-dim-main,
 .hub-sketch-opening-clearance-dim .hub-sketch-dim-extension,
