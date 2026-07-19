@@ -22,6 +22,7 @@ export type ParsedCabinetCode = {
 export type CabinetCodeParseResult = {
   cabinets: ParsedCabinetCode[]
   invalidCodes: string[]
+  suggestions: Record<string, string[]>
 }
 
 export type CabinetLayoutWall = {
@@ -49,6 +50,7 @@ export type CabinetLayoutResult = {
   items: SketchPlacedCatalogItem[]
   parsed: ParsedCabinetCode[]
   invalidCodes: string[]
+  suggestions: Record<string, string[]>
   summaries: CabinetLayoutLayerSummary[]
   wallLengthIn: number
   overflow: boolean
@@ -69,7 +71,49 @@ export const CABINET_COUNTERTOP_HEIGHT_IN = 36
 export const CABINET_TOE_KICK_IN = 4
 export const CABINET_MIN_FILLER_IN = 3
 
-const PREFIXES = ['WINE', '2DB', 'BEP', 'REP', 'BLS', 'BBC', 'SB', 'DB', 'BF', 'B', 'W', 'U', 'V', 'F'] as const
+const PREFIXES = ['RANGE', 'WINE', '3DB', '2DB', 'BEP', 'REP', 'BLS', 'BBC', 'REF', 'SB', 'DB', 'BF', 'DW', 'B', 'W', 'U', 'V', 'F'] as const
+const PREFIX_SET = new Set<string>(PREFIXES)
+const DEFAULT_REFRIGERATOR_HEIGHT_IN = 72
+const DEFAULT_REFRIGERATOR_DEPTH_IN = 30
+const DEFAULT_SUGGESTION_WIDTH_IN = 30
+const STANDARD_SUGGESTION_WIDTHS_IN = [12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48]
+const CYRILLIC_PREFIX_ALIASES: Array<[RegExp, string]> = [
+  [/(^|[^0-9A-Za-zА-Яа-яЁё])([Вв][Бб]|[Сс][Бб])(?=\s*\d)/g, '$1SB'],
+]
+const CYRILLIC_VISUALS: Record<string, string> = {
+  А: 'A',
+  а: 'A',
+  В: 'B',
+  в: 'B',
+  Б: 'B',
+  б: 'B',
+  Е: 'E',
+  е: 'E',
+  С: 'C',
+  с: 'C',
+  Р: 'P',
+  р: 'P',
+  Н: 'H',
+  н: 'H',
+  К: 'K',
+  к: 'K',
+  М: 'M',
+  м: 'M',
+  Т: 'T',
+  т: 'T',
+  О: 'O',
+  о: 'O',
+  У: 'Y',
+  у: 'Y',
+  Х: 'X',
+  х: 'X',
+  З: '3',
+  з: '3',
+  Ф: 'F',
+  ф: 'F',
+  Д: 'D',
+  д: 'D',
+}
 
 function finite(value: unknown): number | null {
   const n = Number(value)
@@ -81,15 +125,69 @@ function modelCellFt(model: CabinetLayoutModel): number {
   return cellFt !== null && cellFt > 0 ? cellFt : 1
 }
 
+function transliterateCabinetText(value: string): string {
+  const withAliases = CYRILLIC_PREFIX_ALIASES.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value)
+  return Array.from(withAliases).map((char) => CYRILLIC_VISUALS[char] ?? char).join('')
+}
+
+function normalizeDigitLookalikes(value: string): string {
+  const chars = Array.from(value)
+  return chars.map((char, index) => {
+    if (char !== 'O') return char
+    const prev = chars[index - 1]
+    const next = chars[index + 1]
+    return (prev && /\d/.test(prev)) || (next && /\d/.test(next)) ? '0' : char
+  }).join('')
+}
+
+function normalizeCabinetText(value: string): string {
+  return normalizeDigitLookalikes(transliterateCabinetText(value).toUpperCase())
+}
+
 function normalizeCode(value: string): string {
-  return value.trim().toUpperCase().replace(/\s+/g, '')
+  return normalizeCabinetText(value).trim().replace(/\s+/g, '')
+}
+
+export function normalizeCabinetCodeInput(value: string): string {
+  return normalizeCode(value)
+}
+
+function startsNumberToken(value: string): boolean {
+  return /^\d/.test(value)
+}
+
+function isStandalonePrefixToken(value: string): boolean {
+  return PREFIX_SET.has(normalizeCode(value))
+}
+
+function isSimpleWallSizeToken(value: string): boolean {
+  return /^\d{1,2}$/.test(value)
 }
 
 function cabinetTokens(input: string): string[] {
-  return input
-    .split(/[\s,;]+/)
+  const parts = normalizeCabinetText(input)
+    .replace(/[,;]+/g, ' ')
+    .split(/\s+/)
     .map((part) => part.trim())
     .filter(Boolean)
+  const tokens: string[] = []
+  for (let i = 0; i < parts.length; i += 1) {
+    const token = parts[i]
+    const prefix = normalizeCode(token)
+    const next = parts[i + 1]
+    if (next && isStandalonePrefixToken(prefix) && startsNumberToken(next)) {
+      if (prefix === 'W' && parts[i + 2] && isSimpleWallSizeToken(next) && isSimpleWallSizeToken(parts[i + 2])) {
+        tokens.push(`${prefix}${next}${parts[i + 2]}`)
+        i += 2
+      } else {
+        tokens.push(`${prefix}${next}`)
+        i += 1
+      }
+    } else {
+      tokens.push(token)
+    }
+  }
+  return tokens
 }
 
 function parseNumberToken(value: string): number | null {
@@ -164,18 +262,61 @@ function parseGenericCabinet(code: string, body: string, prefix: string, hinge?:
   const wall = prefix === 'W'
   const vanity = prefix === 'V'
   const filler = prefix === 'F' || prefix === 'BF'
+  const refrigerator = prefix === 'REF'
   return {
     raw: code,
     code,
     prefix,
     widthIn,
-    heightIn: wall ? DEFAULT_WALL_HEIGHT_IN : DEFAULT_BASE_HEIGHT_IN,
-    depthIn: wall ? DEFAULT_WALL_DEPTH_IN : vanity ? DEFAULT_VANITY_DEPTH_IN : DEFAULT_BASE_DEPTH_IN,
+    heightIn: refrigerator ? DEFAULT_REFRIGERATOR_HEIGHT_IN : wall ? DEFAULT_WALL_HEIGHT_IN : DEFAULT_BASE_HEIGHT_IN,
+    depthIn: refrigerator ? DEFAULT_REFRIGERATOR_DEPTH_IN : wall ? DEFAULT_WALL_DEPTH_IN : vanity ? DEFAULT_VANITY_DEPTH_IN : DEFAULT_BASE_DEPTH_IN,
     layer: wall ? 'wall' : 'base',
     hinge,
     filler,
     panel: false,
   }
+}
+
+function nearestStandardSuggestionWidth(width: number | null): number {
+  if (!width || width <= 0) return DEFAULT_SUGGESTION_WIDTH_IN
+  return STANDARD_SUGGESTION_WIDTHS_IN.reduce((best, candidate) => (
+    Math.abs(candidate - width) < Math.abs(best - width) ? candidate : best
+  ), STANDARD_SUGGESTION_WIDTHS_IN[0])
+}
+
+function suggestionWidth(value: string): number {
+  return nearestStandardSuggestionWidth(parseFirstNumber(normalizeCode(value)))
+}
+
+function suggestionCode(prefix: string, widthIn: number): string {
+  if (prefix === 'W') return `W${String(widthIn).padStart(2, '0')}30`
+  return `${prefix}${widthIn}`
+}
+
+function preferredSuggestionPrefixes(value: string): string[] {
+  const alpha = normalizeCode(value).replace(/[^A-Z]/g, '')
+  if (alpha.startsWith('SB') || alpha === 'S') return ['SB', 'B', 'DB', 'W']
+  if (alpha.startsWith('DB') || alpha.startsWith('D')) return ['DB', 'B', 'SB', 'W']
+  if (alpha.startsWith('W')) return ['W', 'B', 'DB', 'SB']
+  if (alpha.startsWith('V')) return ['V', 'B', 'SB', 'DB']
+  if (alpha.startsWith('BF') || alpha.startsWith('F')) return ['BF', 'B', 'DB', 'W']
+  if (alpha.startsWith('DW')) return ['DW', 'RANGE', 'REF', 'B']
+  if (alpha.startsWith('REF')) return ['REF', 'RANGE', 'DW', 'B']
+  if (alpha.startsWith('R')) return ['RANGE', 'REF', 'DW', 'B']
+  return ['B', 'DB', 'W', 'SB']
+}
+
+export function suggestCabinetCodes(value: string, limit = 4): string[] {
+  const normalized = normalizeCode(value)
+  if (!normalized || parseCabinetCode(normalized)) return []
+  const widthIn = suggestionWidth(normalized)
+  const candidates: string[] = []
+  const add = (code: string) => {
+    if (!candidates.includes(code) && parseCabinetCode(code)) candidates.push(code)
+  }
+  preferredSuggestionPrefixes(normalized).forEach((prefix) => add(suggestionCode(prefix, widthIn)))
+  ;['B', 'DB', 'W', 'SB'].forEach((prefix) => add(suggestionCode(prefix, widthIn)))
+  return candidates.slice(0, Math.max(0, limit))
 }
 
 export function parseCabinetCode(value: string): ParsedCabinetCode | null {
@@ -193,12 +334,17 @@ export function parseCabinetCode(value: string): ParsedCabinetCode | null {
 export function parseCabinetCodes(input: string): CabinetCodeParseResult {
   const cabinets: ParsedCabinetCode[] = []
   const invalidCodes: string[] = []
+  const suggestions: Record<string, string[]> = {}
   cabinetTokens(input).forEach((token) => {
     const parsed = parseCabinetCode(token)
     if (parsed) cabinets.push(parsed)
-    else invalidCodes.push(normalizeCode(token) || token)
+    else {
+      const invalid = normalizeCode(token) || token
+      invalidCodes.push(invalid)
+      suggestions[invalid] = suggestCabinetCodes(invalid)
+    }
   })
-  return { cabinets, invalidCodes }
+  return { cabinets, invalidCodes, suggestions }
 }
 
 export function isCabinetPlacedItem(item: Pick<SketchPlacedCatalogItem, 'category' | 'model' | 'code' | 'layer'>): boolean {
@@ -343,7 +489,7 @@ export function layoutCabinetRunOnWall(
   input: string,
   runId = `cabinet-run-${wall.c}-${wall.s}`,
 ): CabinetLayoutResult {
-  const { cabinets, invalidCodes } = parseCabinetCodes(input)
+  const { cabinets, invalidCodes, suggestions } = parseCabinetCodes(input)
   const wallLengthIn = snapInchesToPrecision(wallLengthFt(model, wall) * IN_PER_FT)
   const items: SketchPlacedCatalogItem[] = []
   const summaries: CabinetLayoutLayerSummary[] = []
@@ -405,6 +551,7 @@ export function layoutCabinetRunOnWall(
     items,
     parsed: cabinets,
     invalidCodes,
+    suggestions,
     summaries,
     wallLengthIn,
     overflow,
