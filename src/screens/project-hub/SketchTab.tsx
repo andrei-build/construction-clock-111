@@ -1691,6 +1691,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [selectedWallKey, setSelectedWallKey] = useState<string | null>(null)
   const [selectedContourIndex, setSelectedContourIndex] = useState<number | null>(null)
   const [wallElevationFullscreen, setWallElevationFullscreen] = useState(false)
+  const [wallElevationFinishPanelOpen, setWallElevationFinishPanelOpen] = useState(false)
   // Перетаскивание проёма вдоль стены.
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dragNode, setDragNode] = useState<DragNode | null>(null)
@@ -2314,8 +2315,25 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [selectedWallKey, cabinetWallOptions])
 
   useEffect(() => {
-    if (!selectedWall) setWallElevationFullscreen(false)
+    if (!selectedWall) {
+      setWallElevationFullscreen(false)
+      setWallElevationFinishPanelOpen(false)
+    }
   }, [selectedWall])
+
+  const openWallElevationFullscreen = useCallback((finishPanelOpen = false) => {
+    setWallElevationFinishPanelOpen(finishPanelOpen)
+    setWallElevationFullscreen(true)
+  }, [])
+
+  const closeWallElevationFullscreen = useCallback(() => {
+    setWallElevationFullscreen(false)
+  }, [])
+
+  const handle3DWallPick = useCallback((key: string | null) => {
+    setSelectedWallKey(key)
+    if (key) openWallElevationFullscreen(false)
+  }, [openWallElevationFullscreen])
 
   // NAV-FIX-2: Esc снимает выделение стены в обоих видах (2D и 3D), а сначала закрывает fullscreen-развёртку.
   useEffect(() => {
@@ -2339,7 +2357,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setContextSheetOpen(true)
     setMeasurementDraft(null)
     setSelectedMeasurementIndex(null)
-    setWallElevationFullscreen(true)
+    openWallElevationFullscreen(true)
   }
   const openWallOpenings = () => {
     if (!selectedWall) return
@@ -5278,7 +5296,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     y2={y2}
                     onClick={(event) => {
                       event.stopPropagation()
-                      setSelectedWallKey((current) => (current === key ? null : key))
+                      if (selectedWallKey === key) {
+                        setSelectedWallKey(null)
+                      } else {
+                        setSelectedWallKey(key)
+                        openWallElevationFullscreen(false)
+                      }
                       setSelectedContourIndex(null)
                       setSelectedNode(null)
                     }}
@@ -5801,7 +5824,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                       type="button"
                       className="hub-sketch-wall-elevation-mini-button"
                       aria-label={t('hub_sketch_elevation_fullscreen_open')}
-                      onClick={() => setWallElevationFullscreen(true)}
+                      onClick={() => openWallElevationFullscreen(false)}
                     >
                       <WallElevation
                         model={model}
@@ -5862,7 +5885,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             codeCheckEnabled={codeCheckEnabled}
             onCodeCheckChange={setCodeCheckEnabled}
             pickedWallKey={selectedWallKey}
-            onPickWall={setSelectedWallKey}
+            onPickWall={handle3DWallPick}
             contextMode={activeMode}
             cameraPresetRequest={threeDCameraPresetRequest}
             fullscreenRequestKey={threeDFullscreenRequest}
@@ -5878,22 +5901,27 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       </div>
 
       {wallElevationFullscreen && selectedWall && selectedWallSurface && (
-        <div className="hub-sketch-elevation-lightbox" role="dialog" aria-modal="true" aria-label={t('hub_sketch_3d_wall_elevation')}>
+        <div
+          className={wallElevationFinishPanelOpen ? 'hub-sketch-elevation-lightbox hub-sketch-elevation-lightbox-finish-open' : 'hub-sketch-elevation-lightbox'}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('hub_sketch_3d_wall_elevation')}
+        >
           <div className="hub-sketch-elevation-lightbox-bar">
+            <button type="button" className="hub-sketch-elevation-back" onClick={closeWallElevationFullscreen}>
+              <span aria-hidden="true">←</span>
+              <span>{t('hub_sketch_elevation_back')}</span>
+            </button>
             <div className="hub-sketch-elevation-lightbox-title">
               <strong>{`${t('hub_sketch_wall_panel_title')} ${selectedWall.index + 1}`}</strong>
               <span className="muted">{`${t('hub_sketch_dim_length_short')}: ${fmtFt(selectedWall.lengthFt)}`}</span>
             </div>
             {renderViewModeToggle(true)}
-            {renderWallElevationFinishControls(true)}
-            <button type="button" className="btn ghost small" onClick={() => setWallElevationFullscreen(false)}>
-              {t('hub_sketch_elevation_fullscreen_exit')}
-            </button>
             <button
               type="button"
               className="hub-sketch-elevation-lightbox-close"
               aria-label={t('lightbox_close')}
-              onClick={() => setWallElevationFullscreen(false)}
+              onClick={closeWallElevationFullscreen}
             >
               ×
             </button>
@@ -5911,6 +5939,28 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               onModelChange={updateWallElevationModel}
             />
           </div>
+          {canEdit && (
+            <button
+              type="button"
+              className={wallElevationFinishPanelOpen ? 'btn small hub-sketch-elevation-finish-toggle hub-sketch-elevation-finish-toggle-open' : 'btn ghost small hub-sketch-elevation-finish-toggle'}
+              aria-controls="hub-sketch-elevation-finish-panel"
+              aria-expanded={wallElevationFinishPanelOpen}
+              onClick={() => setWallElevationFinishPanelOpen((open) => !open)}
+            >
+              {t(wallElevationFinishPanelOpen ? 'hub_sketch_elevation_finish_hide' : 'hub_sketch_elevation_finish_show')}
+            </button>
+          )}
+          {canEdit && wallElevationFinishPanelOpen && (
+            <aside id="hub-sketch-elevation-finish-panel" className="hub-sketch-elevation-finish-panel" aria-label={t('hub_sketch_elevation_finish_show')}>
+              <div className="hub-sketch-elevation-finish-panel-head">
+                <h2>{t('hub_sketch_elevation_finish_show')}</h2>
+                <button type="button" className="btn ghost small" onClick={() => setWallElevationFinishPanelOpen(false)}>
+                  {t('hub_sketch_elevation_finish_hide')}
+                </button>
+              </div>
+              {renderWallElevationFinishControls(true)}
+            </aside>
+          )}
         </div>
       )}
 
