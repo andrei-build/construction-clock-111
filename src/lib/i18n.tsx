@@ -1427,6 +1427,8 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_3d_dimensions: { ru: 'Размеры', en: 'Dimensions', es: 'Dimensiones' },
   hub_sketch_3d_ceiling: { ru: 'Потолок', en: 'Ceiling', es: 'Techo' },
   hub_sketch_3d_panel: { ru: '3D настройки', en: '3D controls', es: 'Controles 3D' },
+  hub_sketch_3d_panel_show: { ru: 'Показать панель отделки', en: 'Show finish panel', es: 'Mostrar panel de acabados' },
+  hub_sketch_3d_panel_hide: { ru: 'Скрыть панель отделки', en: 'Hide finish panel', es: 'Ocultar panel de acabados' },
   hub_sketch_3d_finishes: { ru: 'Отделка', en: 'Finishes', es: 'Acabados' },
   hub_sketch_3d_surface: { ru: 'Поверхность', en: 'Surface', es: 'Superficie' },
   hub_sketch_3d_walls: { ru: 'Стены', en: 'Walls', es: 'Paredes' },
