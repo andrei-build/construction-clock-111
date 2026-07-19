@@ -7,6 +7,12 @@ import {
   parseCabinetCodes,
   suggestCabinetCodes,
 } from '../src/screens/project-hub/cabinetCodes'
+import {
+  CABINET_CATALOG_CATEGORIES,
+  CABINET_CATALOG_ENTRIES,
+  cabinetCatalogDefaultWallHeight,
+  cabinetCatalogEntryCode,
+} from '../src/screens/project-hub/cabinetCatalog'
 import { sanitizePlacedCatalogItems } from '../src/screens/project-hub/sketchCatalog'
 
 const sixFootWallModel = {
@@ -40,6 +46,7 @@ describe('cabinet code parsing', () => {
       layer: 'base',
       hinge: 'R',
     })
+    expect(parseCabinetCode('1DB18')).toMatchObject({ prefix: '1DB', widthIn: 18, depthIn: 24, layer: 'base' })
     expect(parseCabinetCode('W3030')).toMatchObject({ prefix: 'W', widthIn: 30, heightIn: 30, depthIn: 12, layer: 'wall' })
     expect(parseCabinetCode('W2442-L')).toMatchObject({ prefix: 'W', widthIn: 24, heightIn: 42, hinge: 'L', layer: 'wall' })
     expect(parseCabinetCode('U189024')).toMatchObject({ prefix: 'U', widthIn: 18, heightIn: 90, depthIn: 24, layer: 'base' })
@@ -47,6 +54,7 @@ describe('cabinet code parsing', () => {
     expect(parseCabinetCode('BF3')).toMatchObject({ prefix: 'BF', widthIn: 3, filler: true, layer: 'base' })
     expect(parseCabinetCode('BEP24-3/4')).toMatchObject({ prefix: 'BEP', widthIn: 0.75, depthIn: 24, panel: true })
     expect(parseCabinetCode('WINE.24')).toMatchObject({ prefix: 'WINE', widthIn: 24, depthIn: 24, layer: 'base' })
+    expect(parseCabinetCode('HOOD30')).toMatchObject({ prefix: 'HOOD', widthIn: 30, heightIn: 18, depthIn: 18, layer: 'wall' })
   })
 
   it('keeps invalid tokens separate from parsed cabinets', () => {
@@ -86,6 +94,35 @@ describe('cabinet code parsing', () => {
 
     expect(suggestions).toEqual(expect.arrayContaining(['B30', 'DB30', 'W3030']))
     expect(parsed.suggestions.X30).toEqual(expect.arrayContaining(['B30', 'DB30', 'W3030']))
+  })
+})
+
+describe('cabinet catalog', () => {
+  it('groups every gallery card under a non-empty category', () => {
+    expect(CABINET_CATALOG_CATEGORIES.length).toBeGreaterThan(0)
+    expect(CABINET_CATALOG_ENTRIES.length).toBeGreaterThan(0)
+
+    CABINET_CATALOG_CATEGORIES.forEach((category) => {
+      expect(CABINET_CATALOG_ENTRIES.some((entry) => entry.categoryId === category.id)).toBe(true)
+    })
+  })
+
+  it('generates parser-valid codes for every gallery size chip', () => {
+    CABINET_CATALOG_ENTRIES.forEach((entry) => {
+      expect(entry.widthsIn.length).toBeGreaterThan(0)
+      entry.widthsIn.forEach((widthIn) => {
+        const code = cabinetCatalogEntryCode(entry, widthIn, cabinetCatalogDefaultWallHeight(entry))
+        const parsed = parseCabinetCode(code)
+        if (!parsed) throw new Error(`Invalid catalog code: ${entry.id} ${code}`)
+
+        expect(parsed.prefix).toBe(entry.codePrefix)
+        if (entry.sizeKind === 'panelDepth') {
+          expect(parsed.depthIn).toBe(widthIn)
+        } else {
+          expect(parsed.widthIn).toBe(widthIn)
+        }
+      })
+    })
   })
 })
 
