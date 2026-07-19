@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent as ReactChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent as ReactChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CATALOG_CATEGORIES, getCatalogItems, getProjectFileDownloadUrl, getProjectHubFiles, mediaUrl, uploadProjectFileToR2 } from '../../lib/api'
 import type { CatalogCategory, CatalogItem } from '../../lib/api'
@@ -230,6 +230,8 @@ interface Sketch3DViewProps {
   openingDefaults?: Sketch3DOpeningDefaults
   onOpeningDefaultsChange?: (patch: Partial<Sketch3DOpeningDefaults>) => void
   snapControls?: Array<{ key: string; label: string; active: boolean; onSelect: () => void }>
+  fullscreenRequestKey?: number
+  viewModeControl?: ReactNode
   label: string
   loadingLabel: string
   errorLabel: string
@@ -2248,6 +2250,8 @@ export default function Sketch3DView({
   openingDefaults,
   onOpeningDefaultsChange,
   snapControls,
+  fullscreenRequestKey = 0,
+  viewModeControl,
   label,
   loadingLabel,
   errorLabel,
@@ -2342,6 +2346,13 @@ export default function Sketch3DView({
   const selectedOpeningMetrics = selectedOpening ? openingMetrics(model, selectedOpening, heightFt) : null
   const catalogPlacementItem = catalogPlacementId ? catalogById.get(catalogPlacementId) ?? null : null
   const fullscreenActive = browserFullscreen || fullscreenFallback
+
+  useEffect(() => {
+    if (fullscreenRequestKey <= 0) return
+    setBrowserFullscreen(false)
+    setFullscreenFallback(true)
+  }, [fullscreenRequestKey])
+
   const catalogGroups = useMemo(
     () => CATALOG_CATEGORIES.filter((category) => category !== 'tile')
       .map((category) => ({ category, rows: catalogItems.filter((item) => item.category === category) }))
@@ -4651,6 +4662,7 @@ export default function Sketch3DView({
           <span>{t('hub_sketch_3d_dimensions')}</span>
         </label>
         <div className="hub-sketch-3d-camera-tools" role="toolbar" aria-label={t('hub_sketch_3d_camera')}>
+          {fullscreenActive && viewModeControl}
           <button type="button" className={cameraButtonClass('fit')} onClick={() => setCameraPreset('fit')}>
             {t('hub_sketch_camera_fit')}
           </button>

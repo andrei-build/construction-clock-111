@@ -3,6 +3,7 @@ import { useI18n } from '../../lib/i18n'
 import VoiceMic from '../../components/VoiceMic'
 import {
   bulkInsertProjectMaterials,
+  createDeliveryFromProjectMaterials,
   getCatalogItems,
   getProjectMaterialTasks,
   getProjectMaterials,
@@ -10,6 +11,7 @@ import {
   softDeleteProjectMaterial,
   subscribeToTaskChanges,
   updateProjectMaterial,
+  updateProjectMaterialNeededBy,
   type CatalogItem,
   type ProjectMaterialInput,
 } from '../../lib/api'
@@ -426,6 +428,9 @@ export default function MaterialsTab({ project, profile }: MaterialsTabProps) {
   const [editId, setEditId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState<DraftRow>(blankDraft())
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [deliveryBusy, setDeliveryBusy] = useState(false)
+  const [deliveryNotice, setDeliveryNotice] = useState<number | null>(null)
   const canManage = profile ? isManagerWrite(profile.role) : false
 
   useEffect(() => {
@@ -470,6 +475,24 @@ export default function MaterialsTab({ project, profile }: MaterialsTabProps) {
     }
     return order
   }, [materials])
+
+  const selectableMaterials = useMemo(
+    () => materials.filter((m) => derivedStatus(m, taskById) === 'plan'),
+    [materials, taskById],
+  )
+
+  const selectedMaterials = useMemo(
+    () => selectableMaterials.filter((m) => selectedIds.has(m.id)),
+    [selectableMaterials, selectedIds],
+  )
+
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const allowed = new Set(selectableMaterials.map((m) => m.id))
+      const next = new Set([...current].filter((id) => allowed.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [selectableMaterials])
 
   const updateDraft = (idx: number, patch: Partial<DraftRow>) => {
     setDrafts((rows) => rows.map((row, i) => (i === idx ? { ...row, ...patch } : row)))
@@ -578,15 +601,74 @@ export default function MaterialsTab({ project, profile }: MaterialsTabProps) {
     }
   }
 
+  const saveNeededBy = async (m: ProjectMaterial, value: string) => {
+    if (!profile || rowBusy) return
+    setRowBusy(m.id)
+    setError(null)
+    setDeliveryNotice(null)
+    try {
+      const updated = await updateProjectMaterialNeededBy(profile, m.id, value || null)
+      setMaterials((rows) => rows.map((r) => (r.id === m.id ? updated : r)))
+    } catch {
+      setError('mat_needed_by_failed')
+    } finally {
+      setRowBusy(null)
+    }
+  }
+
+  const toggleSelection = (id: string, checked: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = (checked: boolean) => {
+    setSelectedIds(checked ? new Set(selectableMaterials.map((m) => m.id)) : new Set())
+  }
+
+  const createDelivery = async () => {
+    if (!profile || deliveryBusy) return
+    if (selectedMaterials.length === 0) {
+      setError('mat_delivery_select_empty')
+      return
+    }
+    setDeliveryBusy(true)
+    setError(null)
+    setDeliveryNotice(null)
+    try {
+      const projectLabel = project.name || project.id
+      const result = await createDeliveryFromProjectMaterials(profile, {
+        projectId: project.id,
+        title: t('mat_delivery_task_title').replace('{project}', projectLabel),
+        description: t('mat_delivery_task_desc').replace('{n}', String(selectedMaterials.length)),
+        materials: selectedMaterials,
+      })
+      const updatedById = new Map(result.materials.map((m) => [m.id, m]))
+      setMaterials((rows) => rows.map((row) => updatedById.get(row.id) ?? row))
+      setSelectedIds(new Set())
+      setDeliveryNotice(result.items.length)
+      const tasks = await getProjectMaterialTasks(project.id)
+      setTaskById(new Map(tasks.map((tk) => [tk.id, tk])))
+    } catch {
+      setError('mat_delivery_failed')
+    } finally {
+      setDeliveryBusy(false)
+    }
+  }
+
   // MAT-4-мини: экспорт спецификации в CSV-файл (без тяжёлых зависимостей). Читаемый для Excel
   // (BOM + заголовок), колонки как у импорта плюс секция. Доступен любому, кто видит вкладку.
   const exportSpec = () => {
-    const header = ['Section', 'Name', 'Qty', 'Unit', 'Supplier', 'URL', 'Note']
+    const header = ['Section', 'Name', 'Qty', 'Unit', 'Needed by', 'Supplier', 'URL', 'Note']
     const rows = materials.map((m) => [
       m.section ?? '',
       m.name,
       m.qty != null ? String(m.qty) : '',
       m.unit ?? '',
+      m.needed_by ?? '',
       m.supplier ?? '',
       m.url ?? '',
       m.note ?? '',
@@ -630,6 +712,16 @@ export default function MaterialsTab({ project, profile }: MaterialsTabProps) {
     }
     return (
       <div className="card material-row" key={m.id}>
+        {canManage && (
+          <label className="material-row-check" aria-label={t('mat_to_delivery')}>
+            <input
+              type="checkbox"
+              checked={selectedIds.has(m.id)}
+              disabled={status !== 'plan' || deliveryBusy}
+              onChange={(e) => toggleSelection(m.id, e.target.checked)}
+            />
+          </label>
+        )}
         <div className="material-row-main">
           <div className="material-row-title">
             <span className="item-title">{m.name}</span>
@@ -642,6 +734,23 @@ export default function MaterialsTab({ project, profile }: MaterialsTabProps) {
             {m.note && <span>{m.note}</span>}
           </div>
         </div>
+        {(canManage || m.needed_by) && (
+          <div className="material-row-needed">
+            {canManage ? (
+              <label>
+                <span>{t('mat_col_needed_by')}</span>
+                <input
+                  type="date"
+                  value={m.needed_by ?? ''}
+                  disabled={rowBusy === m.id}
+                  onChange={(e) => { void saveNeededBy(m, e.target.value) }}
+                />
+              </label>
+            ) : (
+              <span className="badge grey">{`${t('mat_col_needed_by')}: ${m.needed_by}`}</span>
+            )}
+          </div>
+        )}
         {canManage && (
           <div className="row material-row-actions">
             {status === 'plan' && (
@@ -726,9 +835,32 @@ export default function MaterialsTab({ project, profile }: MaterialsTabProps) {
 
       {!loading && !loadError && materials.length > 0 && (
         <div className="row material-list-toolbar">
+          {canManage && (
+            <>
+              <label className="material-select-all">
+                <input
+                  type="checkbox"
+                  checked={selectableMaterials.length > 0 && selectedMaterials.length === selectableMaterials.length}
+                  disabled={deliveryBusy || selectableMaterials.length === 0}
+                  onChange={(e) => toggleSelectAll(e.target.checked)}
+                />
+                <span>{t('mat_select_all')}</span>
+              </label>
+              <button
+                className="btn small"
+                type="button"
+                disabled={deliveryBusy || selectedMaterials.length === 0}
+                onClick={createDelivery}
+              >
+                {deliveryBusy ? t('saving') : t('mat_to_delivery')}
+              </button>
+              <span className="muted">{t('mat_selected_count').replace('{n}', String(selectedMaterials.length))}</span>
+            </>
+          )}
           <button className="btn ghost small" type="button" onClick={exportSpec}>{t('mat_export')}</button>
         </div>
       )}
+      {deliveryNotice != null && <p className="ok-msg">{t('mat_delivery_created').replace('{n}', String(deliveryNotice))}</p>}
 
       {!loading && !loadError && materials.length > 0 && (
         <div className="material-list">

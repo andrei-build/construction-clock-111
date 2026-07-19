@@ -1606,6 +1606,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [canvasView, setCanvasView] = useState<CanvasView>({ x: 0, y: 0, width: VIEW_W, height: VIEW_H })
   const [canvasBrowserFullscreen, setCanvasBrowserFullscreen] = useState(false)
   const [canvasFullscreenFallback, setCanvasFullscreenFallback] = useState(false)
+  const [threeDFullscreenRequest, setThreeDFullscreenRequest] = useState(0)
 
   const stats = useMemo(() => buildSketchContourStats(model), [model])
   const activeSnapFt = snapModeStep(snapMode)
@@ -2028,6 +2029,27 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
     setCanvasFullscreenFallback(true)
   }
+
+  const switchSketchViewMode = useCallback((mode: ViewMode, preserveFullscreen = false) => {
+    if (mode === viewMode) return
+    if (mode === '2d') canvasAutoFitRef.current = true
+    setWallElevationFullscreen(false)
+    setMeasurementDraft(null)
+    setSelectedMeasurementIndex(null)
+
+    if (preserveFullscreen) {
+      if (mode === '2d') {
+        setCanvasBrowserFullscreen(false)
+        setCanvasFullscreenFallback(true)
+      } else {
+        setCanvasBrowserFullscreen(false)
+        setCanvasFullscreenFallback(false)
+        setThreeDFullscreenRequest((value) => value + 1)
+      }
+    }
+
+    setViewMode(mode)
+  }, [viewMode])
 
   const feetInputValue = (field: FeetDraftField, fallbackFt: number): string => {
     return feetDrafts[field] ?? (field === 'wallHeight' ? formatLengthFt(fallbackFt) : formatOpeningFt(fallbackFt))
@@ -3338,6 +3360,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     )
   }
 
+  const renderViewModeToggle = (fullscreen = false) => (
+    <div
+      className={fullscreen ? 'hub-sketch-view-toggle hub-sketch-view-toggle-fullscreen' : 'hub-sketch-view-toggle'}
+      role="group"
+      aria-label={t('hub_sketch_view_mode')}
+    >
+      {(['2d', '3d'] as ViewMode[]).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          className={viewMode === mode ? 'btn small' : 'btn ghost small'}
+          aria-pressed={viewMode === mode}
+          onClick={() => switchSketchViewMode(mode, fullscreen)}
+        >
+          {t(mode === '2d' ? 'hub_sketch_view_2d' : 'hub_sketch_view_3d')}
+        </button>
+      ))}
+    </div>
+  )
+
   const renderCanvasControls = () => (
     <div className="hub-sketch-2d-control-stack" role="toolbar" aria-label={t('hub_sketch_2d_canvas_tools')}>
       <div className="hub-sketch-2d-control-group" role="group" aria-label={t('hub_sketch_history_controls')}>
@@ -3397,6 +3439,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     <div className={fullscreen ? 'hub-sketch-toolbar hub-sketch-toolbar-fullscreen' : 'card hub-sketch-toolbar'}>
       {fullscreen && (
         <div className="hub-sketch-fullscreen-meta-tools">
+          {renderViewModeToggle(true)}
           <label className="hub-sketch-layer-toggle hub-sketch-code-toggle">
             <input
               type="checkbox"
@@ -3729,25 +3772,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   return (
     <section className="hub-tab-panel hub-sketch">
       <div className="card hub-sketch-viewbar">
-        <div className="hub-sketch-view-toggle" role="group" aria-label={t('hub_sketch_view_mode')}>
-          {(['2d', '3d'] as ViewMode[]).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={viewMode === mode ? 'btn small' : 'btn ghost small'}
-              aria-pressed={viewMode === mode}
-              onClick={() => {
-                if (mode === '2d') canvasAutoFitRef.current = true
-                setWallElevationFullscreen(false)
-                setMeasurementDraft(null)
-                setSelectedMeasurementIndex(null)
-                setViewMode(mode)
-              }}
-            >
-              {t(mode === '2d' ? 'hub_sketch_view_2d' : 'hub_sketch_view_3d')}
-            </button>
-          ))}
-        </div>
+        {renderViewModeToggle()}
         <label className="hub-sketch-layer-toggle hub-sketch-code-toggle">
           <input
             type="checkbox"
@@ -4370,6 +4395,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             onCodeCheckChange={setCodeCheckEnabled}
             pickedWallKey={selectedWallKey}
             onPickWall={setSelectedWallKey}
+            fullscreenRequestKey={threeDFullscreenRequest}
+            viewModeControl={renderViewModeToggle(true)}
             label={t('hub_sketch_3d_label')}
             loadingLabel={t('hub_sketch_3d_loading')}
             errorLabel={t('hub_sketch_3d_error')}
@@ -4384,6 +4411,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               <strong>{`${t('hub_sketch_wall_panel_title')} ${selectedWall.index + 1}`}</strong>
               <span className="muted">{`${t('hub_sketch_dim_length_short')}: ${fmtFt(selectedWall.lengthFt)}`}</span>
             </div>
+            {renderViewModeToggle(true)}
             {renderWallElevationFinishControls(true)}
             <button type="button" className="btn ghost small" onClick={() => setWallElevationFullscreen(false)}>
               {t('hub_sketch_elevation_fullscreen_exit')}

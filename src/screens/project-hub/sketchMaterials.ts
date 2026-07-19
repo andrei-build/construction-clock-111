@@ -123,7 +123,7 @@ export type SketchMaterialsResult = {
 }
 
 const PROJECT_MATERIAL_SELECT =
-  'id, org_id, project_id, section, name, qty, unit, supplier, url, note, sort_order, status, task_id, created_by, created_at, updated_at, deleted_at'
+  'id, org_id, project_id, section, name, qty, unit, supplier, url, note, sort_order, status, task_id, needed_by, created_by, created_at, updated_at, deleted_at'
 const DEFAULT_WALL_HEIGHT_FT = 8
 const DEFAULT_TILE_THICKNESS_IN = 0.3125
 const AREA_EPS = 0.01

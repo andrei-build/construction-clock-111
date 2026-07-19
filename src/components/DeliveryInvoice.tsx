@@ -4,6 +4,7 @@ import {
   getDeliveryItems,
   addDeliveryItem,
   setDeliveryItemStatus,
+  updateDeliveryItemNeededBy,
   deleteDeliveryItem,
   subscribeToDeliveryItems,
   DeliveryItemConflictError,
@@ -41,6 +42,12 @@ function fmtWhen(iso: string | null | undefined) {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleString()
 }
 
+function fmtDate(value: string | null | undefined) {
+  if (!value) return ''
+  const d = new Date(`${value}T00:00:00`)
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString()
+}
+
 export default function DeliveryInvoice({ task, profile, team, onClose, onProgressChange }: DeliveryInvoiceProps) {
   const { t } = useI18n()
   const [items, setItems] = useState<DeliveryItem[]>([])
@@ -56,6 +63,7 @@ export default function DeliveryInvoice({ task, profile, team, onClose, onProgre
   // Построчный ввод: одна всегда-присутствующая пустая строка (title + details).
   const [dTitle, setDTitle] = useState('')
   const [dDetails, setDDetails] = useState('')
+  const [dNeededBy, setDNeededBy] = useState('')
   const [adding, setAdding] = useState(false)
   const titleRef = useRef<HTMLInputElement>(null)
 
@@ -64,6 +72,7 @@ export default function DeliveryInvoice({ task, profile, team, onClose, onProgre
 
   // Все активные роли КРОМЕ client могут добавлять/отмечать (RLS delivery_items_members).
   const canWrite = Boolean(profile && profile.role !== 'client')
+  const canEditNeededBy = Boolean(profile && isManagerWrite(profile.role))
   // Удалять — менеджер+ или создатель (позиции либо самой доставки).
   const canDelete = (item: DeliveryItem) =>
     Boolean(profile && (isManagerWrite(profile.role) || item.created_by === profile.id || task.created_by === profile.id))
@@ -110,12 +119,14 @@ export default function DeliveryInvoice({ task, profile, team, onClose, onProgre
       const created = await addDeliveryItem(profile, task, {
         title,
         details: dDetails.trim() || null,
+        needed_by: dNeededBy || null,
         position: items.length,
       })
       setItems((rows) => [...rows, created])
       // Как в Check Time: очищаем строку и сразу возвращаем фокус — можно бить позиции подряд.
       setDTitle('')
       setDDetails('')
+      setDNeededBy('')
       titleRef.current?.focus()
     } catch {
       setError('delivery_add_error')
@@ -151,6 +162,21 @@ export default function DeliveryInvoice({ task, profile, team, onClose, onProgre
       } else {
         setError('delivery_mark_error')
       }
+    } finally {
+      setRowBusy(null)
+    }
+  }
+
+  const saveNeededBy = async (item: DeliveryItem, value: string) => {
+    if (!profile || rowBusy) return
+    setRowBusy(item.id)
+    setError(null)
+    setConflict(null)
+    try {
+      const updated = await updateDeliveryItemNeededBy(profile, item, value || null)
+      setItems((rows) => rows.map((r) => (r.id === item.id ? updated : r)))
+    } catch {
+      setError('delivery_needed_by_error')
     } finally {
       setRowBusy(null)
     }
@@ -204,6 +230,23 @@ export default function DeliveryInvoice({ task, profile, team, onClose, onProgre
                     <span className={STATUS_BADGE[item.status]}>{t(`delivery_status_${item.status}`)}</span>
                   </div>
                   {item.details && <div className="muted delivery-item-details">{item.details}</div>}
+                  {(canEditNeededBy || item.needed_by) && (
+                    <div className="delivery-item-needed">
+                      {canEditNeededBy ? (
+                        <label>
+                          <span>{t('delivery_needed_by')}</span>
+                          <input
+                            type="date"
+                            value={item.needed_by ?? ''}
+                            disabled={rowBusy === item.id}
+                            onChange={(e) => { void saveNeededBy(item, e.target.value) }}
+                          />
+                        </label>
+                      ) : (
+                        <span className="badge grey">{`${t('delivery_needed_by')}: ${fmtDate(item.needed_by)}`}</span>
+                      )}
+                    </div>
+                  )}
                   {item.status !== 'needed' && (
                     <div className="muted delivery-item-meta">
                       {item.status === 'have' && item.claimed_by
@@ -261,6 +304,15 @@ export default function DeliveryInvoice({ task, profile, team, onClose, onProgre
               placeholder={t('delivery_item_details_ph')}
               className="delivery-add-details"
             />
+            <label className="delivery-add-needed">
+              <span>{t('delivery_needed_by')}</span>
+              <input
+                type="date"
+                value={dNeededBy}
+                onChange={(e) => setDNeededBy(e.target.value)}
+                onKeyDown={onDraftKeyDown}
+              />
+            </label>
             <button className="btn small delivery-add-btn" type="button" disabled={adding || !dTitle.trim()} onClick={addItem} aria-label={t('delivery_add')}>+</button>
           </div>
         )}

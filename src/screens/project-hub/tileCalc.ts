@@ -43,7 +43,7 @@ export interface TileCalcResult {
 }
 
 const PROJECT_MATERIAL_SELECT =
-  'id, org_id, project_id, section, name, qty, unit, supplier, url, note, sort_order, status, task_id, created_by, created_at, updated_at, deleted_at'
+  'id, org_id, project_id, section, name, qty, unit, supplier, url, note, sort_order, status, task_id, needed_by, created_by, created_at, updated_at, deleted_at'
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}

@@ -1,13 +1,14 @@
 import { supabase } from '../supabase'
 import { logEvent, warnReadError } from './_shared'
-import { TASK_SELECT, createMaterialRequest } from './tasks'
-import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment } from '../types'
+import { TASK_SELECT, addDeliveryItems, createMaterialRequest, createTask } from './tasks'
+import { materialsToDeliveryItemDrafts } from '../materialDelivery'
+import type { Profile, Project, ProjectProfit, ProjectPhoto, GalleryPhoto, TimeEvent, ProjectTimeEvent, WorkInterval, Task, TaskMedia, EventRow, TimelineEventRow, TimeEventType, ProfileRate, PayPeriod, MessageRow, ProjectAssignment, ScheduleAssignment, ProjectExclusion, CalendarEvent, Deal, DealStage, ReportKind, ReportRow, Role, SuspiciousShift, WorkerConsentRow, SafetyAckRow, AppSettings, LiveLastLocation, ShiftGeoEvent, ArchiveTable, ArchivedProject, ArchivedTask, ArchivedMedia, ArchiveProjectSummary, ArchivePayItem, ArchivePayPeriod, YearlyPayReportRow, DeactivatedWorker, TrashItem, SupplyStore, StoreVisit, UserCapability, DailyReport, MediaFlag, MediaComment, Account, AccountInput, Contact, ContactInput, ClientGrant, ClientProjectSummary, DocumentProjectOption, DocumentRow, DocumentItem, ProjectExpense, Unit, FileRow, ProjectHubFile, ProjectNote, ProjectMaterial, MaterialSpecStatus, AccountRating, GalleryVideo, GalleryPdf, ProjectHubData, TaskAttachment, DeliveryItem } from '../types'
 
 
 // --- MAT-3: Спецификация материалов (plan-BOM, project_materials) ---
 // БЕЗ цен — в таблице нет ценовых колонок. RLS: SELECT участники проекта; INSERT/UPDATE менеджер+.
 const PROJECT_MATERIAL_SELECT =
-  'id, org_id, project_id, section, name, qty, unit, supplier, url, note, sort_order, status, task_id, created_by, created_at, updated_at, deleted_at'
+  'id, org_id, project_id, section, name, qty, unit, supplier, url, note, sort_order, status, task_id, needed_by, created_by, created_at, updated_at, deleted_at'
 
 // Черновая позиция для формы/импорта — только пользовательские поля.
 export interface ProjectMaterialInput {
@@ -18,6 +19,7 @@ export interface ProjectMaterialInput {
   supplier?: string | null
   url?: string | null
   note?: string | null
+  needed_by?: string | null
 }
 
 export type TileNormPattern = 'straight' | 'offset' | 'diagonal' | 'herringbone'
@@ -167,6 +169,7 @@ function cleanMaterialRow(p: Profile, projectId: string, row: ProjectMaterialInp
     supplier: row.supplier?.trim() || null,
     url: row.url?.trim() || null,
     note: row.note?.trim() || null,
+    needed_by: row.needed_by?.trim() || null,
     sort_order: sortOrder,
     status: 'plan' as MaterialSpecStatus,
   }
@@ -248,6 +251,73 @@ export async function updateProjectMaterial(
     .single()
   if (error) throw error
   return data as unknown as ProjectMaterial
+}
+
+export async function updateProjectMaterialNeededBy(
+  p: Profile,
+  id: string,
+  neededBy: string | null,
+): Promise<ProjectMaterial> {
+  return updateProjectMaterial(p, id, { needed_by: neededBy?.trim() || null })
+}
+
+export interface CreateDeliveryFromProjectMaterialsInput {
+  projectId: string
+  title: string
+  description?: string | null
+  materials: ProjectMaterial[]
+}
+
+export interface CreateDeliveryFromProjectMaterialsResult {
+  taskId: string
+  items: DeliveryItem[]
+  materials: ProjectMaterial[]
+}
+
+export async function createDeliveryFromProjectMaterials(
+  p: Profile,
+  input: CreateDeliveryFromProjectMaterialsInput,
+): Promise<CreateDeliveryFromProjectMaterialsResult> {
+  const materials = input.materials.filter((m) => m.name.trim())
+  if (materials.length === 0) throw new Error('no_materials_for_delivery')
+
+  const taskId = await createTask(p, {
+    project_id: input.projectId,
+    title: input.title.trim(),
+    task_type: 'delivery',
+    priority: 'urgent',
+    description: input.description?.trim() || null,
+  })
+  const taskForItems = {
+    id: taskId,
+    org_id: p.org_id,
+    project_id: input.projectId,
+  } as Task
+  const itemDrafts = materialsToDeliveryItemDrafts(materials)
+  const items = await addDeliveryItems(p, taskForItems, itemDrafts.map((item) => ({
+    title: item.title,
+    details: item.details,
+    needed_by: item.needed_by,
+    position: item.position,
+  })))
+
+  const ids = materials.map((m) => m.id)
+  const { data, error } = await supabase.from('project_materials')
+    .update({ task_id: taskId, status: 'requested' as MaterialSpecStatus })
+    .in('id', ids)
+    .select(PROJECT_MATERIAL_SELECT)
+    .order('sort_order', { ascending: true })
+  if (error) throw error
+  await logEvent(p, 'project_material.delivery_created', 'project', input.projectId, {
+    task_id: taskId,
+    count: materials.length,
+  })
+
+  return {
+    taskId,
+    items,
+    materials: (data as unknown as ProjectMaterial[]) ?? [],
+  }
 }
 
 // Мягкое удаление позиции: deleted_at = now() (RLS UPDATE менеджер+).

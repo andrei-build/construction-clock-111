@@ -3863,6 +3863,16 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   flex-wrap: wrap;
   gap: 8px;
 }
+.hub-sketch-view-toggle-fullscreen {
+  flex: 0 0 auto;
+  padding: 3px;
+  border: 1px solid rgba(126,160,190,.28);
+  border-radius: 8px;
+  background: rgba(255,255,255,.72);
+}
+.hub-sketch-view-toggle-fullscreen .btn {
+  width: auto;
+}
 .hub-sketch-height-field {
   display: inline-flex;
   align-items: center;
@@ -6785,19 +6795,46 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .material-remove-draft { flex: 0 0 auto; margin-top: 0; }
 .material-form-actions { justify-content: flex-end; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 .material-file-label { cursor: pointer; display: inline-flex; align-items: center; }
+.material-list-toolbar { gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.material-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.material-select-all input,
+.material-row-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
 .material-list { display: flex; flex-direction: column; gap: 14px; }
 .material-section { display: flex; flex-direction: column; gap: 8px; }
 .material-section-title { margin: 4px 0 2px; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .material-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .material-row.editing { align-items: stretch; flex-direction: column; }
+.material-row-check { flex: 0 0 auto; display: inline-flex; align-items: center; }
 .material-row-main { flex: 1; min-width: 200px; }
 .material-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .material-row-meta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; font-size: 13px; }
+.material-row-needed { flex: 0 1 160px; }
+.material-row-needed label {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+}
+.material-row-needed input { margin: 0; min-width: 142px; }
 .material-row-actions { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 @media (max-width: 720px) {
   .material-edit-grid { grid-template-columns: 1fr 1fr; }
   .tile-calc-actions { justify-content: stretch; }
   .tile-calc-actions .btn { flex: 1; }
+  .material-row-needed { flex: 1 1 100%; }
+  .material-row-needed input { width: 100%; }
 }
 
 /* DISP-1: конструктор плана в командном центре (дополнительно, не трогает /dispatch). */
@@ -7694,6 +7731,18 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .delivery-item-main { flex: 1; min-width: 180px; }
 .delivery-item-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .delivery-item-details { margin-top: 2px; overflow-wrap: anywhere; }
+.delivery-item-needed { margin-top: 6px; }
+.delivery-item-needed label {
+  display: inline-grid;
+  grid-template-columns: auto minmax(140px, 1fr);
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+}
+.delivery-item-needed input { margin: 0; min-width: 138px; }
 .delivery-item-meta { margin-top: 4px; font-size: 12px; }
 .delivery-item-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .delivery-item-actions .btn { width: auto; }
@@ -7703,6 +7752,16 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .delivery-add-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
 .delivery-add-title { flex: 2; min-width: 140px; margin-bottom: 0; }
 .delivery-add-details { flex: 1; min-width: 120px; margin-bottom: 0; }
+.delivery-add-needed {
+  display: grid;
+  gap: 2px;
+  flex: 0 1 150px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+}
+.delivery-add-needed input { margin: 0; }
 .delivery-add-btn { width: auto; flex: 0 0 auto; font-size: 20px; line-height: 1; padding: 10px 16px; }
 .delivery-add-hint { margin: 2px 0 0; font-size: 12px; }
 
