@@ -162,6 +162,9 @@ interface Sketch3DViewProps {
   onModelChange?: (model: Sketch3DModelWithCatalog) => void
   snapStepFt?: number
   codeCheckEnabled?: boolean
+  // NAV-FIX-2: общий с 2D выбор стены (клик по стене в 3D подсвечивает её и открывает панель «Стена N»).
+  pickedWallKey?: string | null
+  onPickWall?: (key: string | null) => void
   openingDefaults?: {
     doorW: number
     doorH: number
@@ -1863,6 +1866,8 @@ export default function Sketch3DView({
   onModelChange,
   snapStepFt = EIGHTH_IN_FT,
   codeCheckEnabled = true,
+  pickedWallKey = null,
+  onPickWall,
   openingDefaults,
   label,
   loadingLabel,
@@ -1882,6 +1887,10 @@ export default function Sketch3DView({
   const dimensionsVisibleRef = useRef(false)
   const invalidate3DRef = useRef<(() => void) | null>(null)
   const placementRef = useRef<PlacementKind>(null)
+  // NAV-FIX-2: подсветка выбранной стены применяется БЕЗ пересоздания сцены (через api-ref).
+  const wallHighlightApiRef = useRef<{ setSelected: (key: string | null) => void } | null>(null)
+  const pickedWallKeyRef = useRef<string | null>(null)
+  const onPickWallRef = useRef<Sketch3DViewProps['onPickWall']>(undefined)
   const measure3DActiveRef = useRef(false)
   const measure3DDraftRef = useRef<SketchMeasurementPoint | null>(null)
   const catalogPlacementItemRef = useRef<CatalogItem | null>(null)
@@ -2004,6 +2013,21 @@ export default function Sketch3DView({
     if (!measure3DActive) measure3DDraftRef.current = null
     invalidate3DRef.current?.()
   }, [measure3DActive])
+
+  useEffect(() => {
+    onPickWallRef.current = onPickWall
+  }, [onPickWall])
+
+  // NAV-FIX-2: подсветить выбранную стену (без пересоздания сцены) и навести панель отделки на неё.
+  useEffect(() => {
+    pickedWallKeyRef.current = pickedWallKey
+    wallHighlightApiRef.current?.setSelected(pickedWallKey)
+    if (pickedWallKey) {
+      setSurfaceTarget('wall')
+      setSelectedWallKey(pickedWallKey)
+    }
+    invalidate3DRef.current?.()
+  }, [pickedWallKey])
 
   useEffect(() => {
     ceilingVisibilityApiRef.current?.setVisible(cameraMode === 'inside' || showCeiling)
@@ -2560,7 +2584,8 @@ export default function Sketch3DView({
           insideMode = false
           stopInsideJoystick()
           resetInsidePointers()
-          controls.enabled = !measure3DActiveRef.current
+          // NAV-FIX-2: рулетка НЕ должна отключать орбиту/зум — осмотр сцены остаётся свободным.
+          controls.enabled = true
           camera.fov = orbitFov
           const direction =
             preset === 'top'
@@ -2608,6 +2633,7 @@ export default function Sketch3DView({
 
         const floorTargets: any[] = [ground]
         const wallTargets: any[] = []
+        const wallMeshByKey = new Map<string, any>()
         const itemTargets: any[] = []
         const dimensionGroup = new THREE.Group()
         dimensionGroup.visible = dimensionsVisibleRef.current
@@ -2684,6 +2710,7 @@ export default function Sketch3DView({
           wall.userData.wallS = seg.s
           scene.add(wall)
           wallTargets.push(wall)
+          wallMeshByKey.set(sketchWallKey(seg.c, seg.s), wall)
 
           let nx = -dz / len
           let nz = dx / len
@@ -2709,6 +2736,33 @@ export default function Sketch3DView({
             formatFeet(height),
           )
         })
+
+        // NAV-FIX-2: подсветка выбранной стены — контур-обводка поверх меша, добавляется/снимается
+        // без пересоздания сцены (иначе камера/рулетка сбивались бы при каждом выборе).
+        let wallHighlight: any = null
+        const setWallHighlight = (key: string | null) => {
+          if (wallHighlight) {
+            scene.remove(wallHighlight)
+            disposeObjectWithMaterial(wallHighlight)
+            wallHighlight = null
+          }
+          const mesh = key ? wallMeshByKey.get(key) : null
+          if (mesh) {
+            const edges = new THREE.LineSegments(
+              new THREE.EdgesGeometry(mesh.geometry),
+              new THREE.LineBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.95, depthTest: false }),
+            )
+            edges.position.copy(mesh.position)
+            edges.rotation.copy(mesh.rotation)
+            edges.scale.copy(mesh.scale)
+            edges.renderOrder = 999
+            scene.add(edges)
+            wallHighlight = edges
+          }
+          invalidate()
+        }
+        wallHighlightApiRef.current = { setSelected: setWallHighlight }
+        setWallHighlight(pickedWallKeyRef.current)
 
         const applyOpeningPose = (object: any, opening: Opening) => {
           const metrics = openingMetrics(model, opening, height)
@@ -3184,11 +3238,9 @@ export default function Sketch3DView({
           pointerDown = { x: event.clientX, y: event.clientY }
           if (event.button !== 0) return
           if (measure3DActiveRef.current) {
-            controls.enabled = false
+            // NAV-FIX-2: в режиме рулетки НЕ перехватываем указатель и НЕ трогаем камеру —
+            // OrbitControls продолжает вращать/зумить сцену; замер ставится кликом на pointerup (delta<=4).
             drag = null
-            resetInsidePointers()
-            renderer.domElement.setPointerCapture?.(event.pointerId)
-            event.preventDefault()
             return
           }
           if (insideMode) {
@@ -3362,7 +3414,20 @@ export default function Sketch3DView({
             event.preventDefault()
             return
           }
-          if (delta <= 4) placeAtPointer(event)
+          if (delta <= 4) {
+            placeAtPointer(event)
+            // NAV-FIX-2: одиночный клик (без активной установки объектов) выбирает стену; по пустому — снимает выбор.
+            // Выбор синхронизируется с 2D-планом через onPickWall (общий selectedWallKey у SketchTab).
+            if (!placementRef.current && !catalogPlacementItemRef.current && onPickWallRef.current) {
+              updatePointer(event)
+              const itemHit = raycaster.intersectObjects(itemTargets, true)[0]
+              if (!itemHit) {
+                const wallHit = raycaster.intersectObjects(wallTargets, true)[0]
+                const pickedWall = wallHit ? taggedWall(wallHit.object) : null
+                onPickWallRef.current(pickedWall ? sketchWallKey(pickedWall.c, pickedWall.s) : null)
+              }
+            }
+          }
         }
 
         const onWheel = (event: WheelEvent) => {
@@ -3451,6 +3516,7 @@ export default function Sketch3DView({
           cameraApiRef.current = null
           if (dimensionGroupRef.current === dimensionGroup) dimensionGroupRef.current = null
           if (ceilingVisibilityApiRef.current?.setVisible) ceilingVisibilityApiRef.current = null
+          if (wallHighlightApiRef.current?.setSelected === setWallHighlight) wallHighlightApiRef.current = null
           controls.dispose()
           scene.traverse((object: { geometry?: unknown; material?: unknown }) => disposeObjectWithMaterial(object))
           renderer.dispose()
@@ -3481,7 +3547,8 @@ export default function Sketch3DView({
     fullscreenActive,
     snapStepFt,
     openingDefaults,
-    measure3DActive,
+    // NAV-FIX-2: measure3DActive намеренно НЕ в зависимостях — переключение рулетки читается
+    // через measure3DActiveRef.current и НЕ пересоздаёт сцену (иначе камера сбрасывалась в пресет).
     codeCheckEnabled,
     codeClearanceChecks,
     codeClearanceViolations,

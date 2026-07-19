@@ -28,6 +28,9 @@ import {
   DOOR_WIDTH_PRESETS_FT,
   WINDOW_WIDTH_PRESETS_FT,
   OPENING_DEFAULTS_FT,
+  DEFAULT_WALL_PAINT,
+  cleanColor,
+  normalizeFinishes,
   sanitizeSketchFinishes,
   sanitizeSketchLights,
   sanitizeSketchMeasurements,
@@ -1061,6 +1064,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [feetDrafts, setFeetDrafts] = useState<Partial<Record<FeetDraftField, string>>>({})
   const [cabinetCodes, setCabinetCodes] = useState('B30 2DB27 W3030')
   const [selectedCabinetWallKey, setSelectedCabinetWallKey] = useState<string | null>(null)
+  // NAV-FIX-2: общий выбор стены (2D-план ↔ 3D-вид). null = ничего не выбрано.
+  const [selectedWallKey, setSelectedWallKey] = useState<string | null>(null)
   // Перетаскивание проёма вдоль стены.
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const dragMovedRef = useRef(false)
@@ -1124,6 +1129,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     [model, selectedCabinetWall, cabinetCodes],
   )
 
+  // NAV-FIX-2: сведения о выбранной стене для панели «Стена N» (номер стены общий для 2D и 3D — eachSegment).
+  const selectedWall = useMemo(() => {
+    if (!selectedWallKey) return null
+    const index = cabinetWallOptions.findIndex((seg) => sketchWallKey(seg.c, seg.s) === selectedWallKey)
+    if (index < 0) return null
+    const seg = cabinetWallOptions[index]
+    return { index, seg, key: selectedWallKey, lengthFt: dist(seg.a, seg.b) * modelCellFt(model) }
+  }, [selectedWallKey, cabinetWallOptions, model])
+  const selectedWallFinish = useMemo(() => {
+    if (!selectedWallKey) return null
+    const finishes = normalizeFinishes(model.finishes)
+    const override = finishes.wallFinishes[selectedWallKey]
+    const surface = override ?? finishes.walls
+    return {
+      overridden: Boolean(override),
+      kind: surface.kind,
+      color: surface.kind === 'paint' ? cleanColor(surface.color, DEFAULT_WALL_PAINT) : null,
+    }
+  }, [selectedWallKey, model.finishes])
+
   useEffect(() => {
     modelRef.current = model
   }, [model])
@@ -1175,6 +1200,52 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
     if (selectedCabinetWallKey !== effectiveCabinetWallKey) setSelectedCabinetWallKey(effectiveCabinetWallKey)
   }, [effectiveCabinetWallKey, selectedCabinetWallKey])
+
+  // NAV-FIX-2: снять выбор стены, если её сегмент исчез (перерисовали план).
+  useEffect(() => {
+    if (selectedWallKey && !cabinetWallOptions.some((seg) => sketchWallKey(seg.c, seg.s) === selectedWallKey)) {
+      setSelectedWallKey(null)
+    }
+  }, [selectedWallKey, cabinetWallOptions])
+
+  // NAV-FIX-2: Esc снимает выделение стены в обоих видах (2D и 3D).
+  useEffect(() => {
+    if (selectedWallKey === null) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return
+      if (event.key === 'Escape') {
+        setSelectedWallKey(null)
+        event.preventDefault()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [selectedWallKey])
+
+  // NAV-FIX-2: кнопки панели «Стена N» — только навигация в существующие режимы с уже выбранной стеной.
+  const openWallFinish = () => {
+    if (!selectedWall) return
+    // выбор общий → Sketch3DView сам наведёт отделку/развёртку (SKETCH-WALL-1) на эту стену.
+    setMeasurementDraft(null)
+    setSelectedMeasurementIndex(null)
+    setViewMode('3d')
+  }
+  const openWallOpenings = () => {
+    if (!selectedWall) return
+    canvasAutoFitRef.current = false
+    setMeasurementDraft(null)
+    setViewMode('2d')
+    setTool('door')
+  }
+  const openWallCabinets = () => {
+    if (!selectedWall) return
+    canvasAutoFitRef.current = false
+    setMeasurementDraft(null)
+    setViewMode('2d')
+    setTool('cabinet')
+    setSelectedCabinetWallKey(selectedWall.key)
+  }
 
   useEffect(() => {
     if (viewMode !== '2d') return
@@ -1780,6 +1851,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       dragMovedRef.current = false
       return
     }
+    // NAV-FIX-2: клик по пустому месту снимает выделение стены (клик по самой стене обрабатывает хит-таргет со stopPropagation).
+    if (wallSelectEnabled && selectedWallKey !== null) setSelectedWallKey(null)
     const raw = pointerCell(e)
     if (!raw) return
 
@@ -2008,6 +2081,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const activeContour = model.contours[model.contours.length - 1]
   const canClose = !!activeContour && !activeContour.closed && activeContour.points.length >= 3
+  // NAV-FIX-2: выбор стены на 2D активен, когда клики не заняты установкой проёмов/замеров и не идёт рисование контура.
+  const activeContourOpen = !!activeContour && !activeContour.closed && activeContour.points.length > 0
+  const wallSelectEnabled = canEdit && tool !== 'door' && tool !== 'window' && tool !== 'measure' && !activeContourOpen
   const heightFt = wallHeightFt(model)
   const pxPerFt = (canvasSize.width * CELL_PX) / Math.max(1, canvasView.width)
   const gridLines = useMemo(() => canvasGridLines(canvasView, activeSnapFt, pxPerFt), [canvasView, activeSnapFt, pxPerFt])
@@ -2312,6 +2388,34 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               <polygon key={`c${ci}`} className="hub-sketch-wall" points={pts} />
             ) : (
               <polyline key={`c${ci}`} className="hub-sketch-wall" points={pts} fill="none" />
+            )
+          })}
+
+          {/* NAV-FIX-2: выбор стены на 2D — подсветка выбранной + невидимые хит-таргеты по сегментам */}
+          {cabinetWallOptions.map((seg) => {
+            const key = sketchWallKey(seg.c, seg.s)
+            const x1 = seg.a.x * CELL_PX
+            const y1 = seg.a.y * CELL_PX
+            const x2 = seg.b.x * CELL_PX
+            const y2 = seg.b.y * CELL_PX
+            const selected = selectedWallKey === key
+            return (
+              <g key={`ws-${key}`}>
+                {selected && <line className="hub-sketch-wall-selected" x1={x1} y1={y1} x2={x2} y2={y2} />}
+                {wallSelectEnabled && (
+                  <line
+                    className="hub-sketch-wall-hit"
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setSelectedWallKey((current) => (current === key ? null : key))
+                    }}
+                  />
+                )}
+              </g>
             )
           })}
 
@@ -2694,12 +2798,58 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             snapStepFt={activeSnapFt}
             openingDefaults={openingDefaults}
             codeCheckEnabled={codeCheckEnabled}
+            pickedWallKey={selectedWallKey}
+            onPickWall={setSelectedWallKey}
             label={t('hub_sketch_3d_label')}
             loadingLabel={t('hub_sketch_3d_loading')}
             errorLabel={t('hub_sketch_3d_error')}
           />
         )}
       </div>
+
+      {/* NAV-FIX-2: панель «Стена N» — общая для 2D и 3D; только навигация в существующие режимы */}
+      {selectedWall && (
+        <div className="card hub-sketch-wall-panel">
+          <div className="hub-sketch-wall-panel-head">
+            <h3>{`${t('hub_sketch_wall_panel_title')} ${selectedWall.index + 1}`}</h3>
+            <button
+              type="button"
+              className="btn ghost small"
+              aria-label={t('hub_sketch_wall_panel_close')}
+              onClick={() => setSelectedWallKey(null)}
+            >
+              ×
+            </button>
+          </div>
+          <div className="hub-sketch-wall-panel-facts">
+            <span className="muted">{t('hub_sketch_dim_length_short')}</span>
+            <span className="hub-sketch-stat-value">{fmtFt(selectedWall.lengthFt)}</span>
+            <span className="muted">{t('hub_sketch_wall_height')}</span>
+            <span className="hub-sketch-stat-value">{fmtFt(heightFt)}</span>
+            <span className="muted">{t('hub_sketch_wall_panel_finish')}</span>
+            <span className="hub-sketch-wall-panel-finish">
+              {selectedWallFinish?.color && (
+                <span className="hub-sketch-wall-panel-swatch" style={{ backgroundColor: selectedWallFinish.color }} aria-hidden="true" />
+              )}
+              {t(selectedWallFinish?.kind === 'tile' ? 'hub_sketch_3d_tile' : 'hub_sketch_3d_paint')}
+              {selectedWallFinish && !selectedWallFinish.overridden ? ` · ${t('hub_sketch_wall_panel_finish_default')}` : ''}
+            </span>
+          </div>
+          {canEdit && (
+            <div className="hub-sketch-wall-panel-actions">
+              <button type="button" className="btn small" onClick={openWallFinish}>
+                {t('hub_sketch_wall_panel_finish_action')}
+              </button>
+              <button type="button" className="btn ghost small" onClick={openWallOpenings}>
+                {t('hub_sketch_wall_panel_openings')}
+              </button>
+              <button type="button" className="btn ghost small" onClick={openWallCabinets}>
+                {t('hub_sketch_wall_panel_cabinets')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* сводка */}
       <div className="card hub-sketch-stats">

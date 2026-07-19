@@ -4179,6 +4179,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-subgrid line,
 .hub-sketch-grid line,
 .hub-sketch-wall,
+.hub-sketch-wall-selected,
+.hub-sketch-wall-hit,
 .hub-sketch-door,
 .hub-sketch-window,
 .hub-sketch-preview,
@@ -4196,6 +4198,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-subgrid line { stroke: #edf1f5; stroke-width: 1; }
 .hub-sketch-grid line { stroke: #d7dee8; stroke-width: 1; }
 .hub-sketch-wall { stroke: #1f2933; stroke-width: 3; fill: rgba(31, 41, 51, .06); stroke-linejoin: round; stroke-linecap: round; }
+/* NAV-FIX-2: выбор стены на 2D-плане */
+.hub-sketch-wall-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; fill: none; cursor: pointer; }
+.hub-sketch-wall-selected { stroke: #2563eb; stroke-width: 5; stroke-linecap: round; fill: none; pointer-events: none; }
 .hub-sketch-dim { fill: #334155; font-size: 12px; font-weight: 700; pointer-events: none; }
 .hub-sketch-dim-line,
 .hub-sketch-opening-dim {
@@ -4786,6 +4791,43 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-wall-tools .btn {
   width: auto;
   justify-self: start;
+}
+/* NAV-FIX-2: панель «Стена N» (общая 2D/3D) */
+.hub-sketch-wall-panel {
+  display: grid;
+  gap: 10px;
+}
+.hub-sketch-wall-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hub-sketch-wall-panel-head h3 {
+  margin: 0;
+}
+.hub-sketch-wall-panel-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  align-items: center;
+}
+.hub-sketch-wall-panel-finish {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hub-sketch-wall-panel-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(15, 23, 42, .25);
+  display: inline-block;
+}
+.hub-sketch-wall-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .hub-sketch-elevation {
   display: grid;
