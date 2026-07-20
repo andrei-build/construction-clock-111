@@ -24,6 +24,7 @@ import {
   cleanColor,
   createTilePatternCanvas,
   finishCoverageBoundsFt,
+  finishCoverageRegionsFt,
   normalizeDrywallPatchSurface,
   normalizeFinishes,
   normalizeTileSurface,
@@ -97,6 +98,13 @@ import {
 } from './cabinetCodes'
 import { SHERWIN_WILLIAMS_COLORS } from './sw-colors'
 import { DEFAULT_TILE_WASTE_FACTOR, estimateTileLayout, type TileLayoutOpening } from './tileLayout'
+import {
+  buildSketch3DWallPlan,
+  evaluateSketch3DInsideStanding,
+  sketch3dFitDistanceForExtents,
+  sketch3dFitPad,
+  type Sketch3DWallPiece,
+} from './sketch3dGeometry'
 
 const CELL_FT = 1
 const DEFAULT_WALL_HEIGHT_FT = 8
@@ -105,7 +113,7 @@ const EIGHTH_IN_FT = 1 / 96
 const DEFAULT_SWITCH_HEIGHT_FT = 4
 const DEFAULT_SCONCE_HEIGHT_FT = 5.6
 const ORBIT_FOV_DEG = 65
-const INSIDE_FOV_DEG = 70
+const INSIDE_FOV_DEG = 76
 const FULLSCREEN_FOV_DEG = 75
 const EYE_HEIGHT_FT = 5 + 7 / 12
 const INSIDE_BODY_CLEARANCE_FT = 0.5
@@ -492,8 +500,7 @@ function insideCatalogObstacles(items: CatalogResolvedPlacedItem[]): InsideRectO
 }
 
 function evaluateInsideStanding(
-  contour: SketchContour | null,
-  cellFt: number,
+  model: Sketch3DModel,
   obstacles: InsideRectObstacle[],
   x: number,
   z: number,
@@ -514,12 +521,8 @@ function evaluateInsideStanding(
     }
   }
 
-  if (contour) {
-    const inside = pointInContourWorld(contour, cellFt, x, z)
-    const wall = nearestContourWall(contour, cellFt, x, z)
-    const wallScore = wall ? wall.distance - INSIDE_WALL_CLEARANCE_FT : 100
-    record(inside && wallScore >= -0.0001, wallScore, wall?.normal ?? null)
-  }
+  const wallResult = evaluateSketch3DInsideStanding(model, x, z, { wallClearanceFt: INSIDE_WALL_CLEARANCE_FT, roomHeightFt: model.height ?? DEFAULT_WALL_HEIGHT_FT })
+  record(wallResult.valid, wallResult.score, wallResult.normal)
 
   obstacles.forEach((obstacle) => {
     const result = evaluateRectObstacle(obstacle, x, z)
@@ -530,11 +533,12 @@ function evaluateInsideStanding(
 }
 
 function findInsideStartWorld(
+  model: Sketch3DModel,
   contour: SketchContour | null,
-  cellFt: number,
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number; width: number; depth: number },
   obstacles: InsideRectObstacle[],
 ): InsidePoint {
+  const cellFt = modelCellFt(model)
   if (!contour) return { x: bounds.minX + bounds.width / 2, z: bounds.minZ + bounds.depth / 2 }
 
   const contourBounds = contourBoundsWorld(contour, cellFt)
@@ -542,7 +546,7 @@ function findInsideStartWorld(
   const fallback = pointInContourWorld(contour, cellFt, centroid.x, centroid.z)
     ? centroid
     : { x: contourBounds.minX + contourBounds.width / 2, z: contourBounds.minZ + contourBounds.depth / 2 }
-  const fallbackResult = evaluateInsideStanding(contour, cellFt, obstacles, fallback.x, fallback.z)
+  const fallbackResult = evaluateInsideStanding(model, obstacles, fallback.x, fallback.z)
   let best: { point: InsidePoint; score: number } | null = fallbackResult.valid ? { point: fallback, score: fallbackResult.score } : null
   let bestAny: { point: InsidePoint; score: number } = {
     point: fallback,
@@ -550,7 +554,7 @@ function findInsideStartWorld(
   }
 
   const consider = (point: InsidePoint) => {
-    const result = evaluateInsideStanding(contour, cellFt, obstacles, point.x, point.z)
+    const result = evaluateInsideStanding(model, obstacles, point.x, point.z)
     if (result.score > bestAny.score) bestAny = { point, score: result.score }
     if (result.valid && (!best || result.score > best.score)) best = { point, score: result.score }
   }
@@ -611,8 +615,7 @@ function insideLongAxisDirection(
 function insideRayDistance(
   start: InsidePoint,
   direction: InsideVector,
-  contour: SketchContour | null,
-  cellFt: number,
+  model: Sketch3DModel,
   obstacles: InsideRectObstacle[],
   maxDistance: number,
 ): number {
@@ -620,7 +623,7 @@ function insideRayDistance(
   for (let distanceFt = step; distanceFt <= maxDistance; distanceFt += step) {
     const x = start.x + direction.x * distanceFt
     const z = start.z + direction.z * distanceFt
-    if (!evaluateInsideStanding(contour, cellFt, obstacles, x, z).valid) return Math.max(0, distanceFt - step)
+    if (!evaluateInsideStanding(model, obstacles, x, z).valid) return Math.max(0, distanceFt - step)
   }
   return maxDistance
 }
@@ -631,6 +634,7 @@ function insideYawFromDirection(direction: InsideVector): number {
 }
 
 function insideStartYaw(
+  model: Sketch3DModel,
   contour: SketchContour | null,
   cellFt: number,
   bounds: { width: number; depth: number },
@@ -639,8 +643,8 @@ function insideStartYaw(
 ): number {
   let axis = insideLongAxisDirection(contour, cellFt, bounds)
   const maxDistance = Math.max(8, bounds.width, bounds.depth)
-  const forward = insideRayDistance(start, axis, contour, cellFt, obstacles, maxDistance)
-  const backward = insideRayDistance(start, { x: -axis.x, z: -axis.z }, contour, cellFt, obstacles, maxDistance)
+  const forward = insideRayDistance(start, axis, model, obstacles, maxDistance)
+  const backward = insideRayDistance(start, { x: -axis.x, z: -axis.z }, model, obstacles, maxDistance)
   if (backward > forward + 0.25) axis = { x: -axis.x, z: -axis.z }
   return insideYawFromDirection(axis)
 }
@@ -1475,6 +1479,52 @@ function addWallFinishOverlay(
   panel.position.set(0, coverage.bottomFt + height / 2 - wallHeightFt / 2, WALL_THICKNESS_FT / 2 + 0.014)
   panel.renderOrder = 4
   wall.add(panel)
+}
+
+function addWallPieceFinishOverlay(
+  THREE: any,
+  pieceMesh: any,
+  surface: SketchSurfaceFinish,
+  wallLengthFt: number,
+  wallHeightFt: number,
+  piece: Sketch3DWallPiece,
+  fallbackPaint = DEFAULT_WALL_PAINT,
+  textureLoader?: any,
+  maxAnisotropy = 4,
+  onTextureReady?: () => void,
+) {
+  if (surface.kind !== 'drywall-patch' && surface.coverage?.mode !== 'partial') return
+  const pieceWidth = Math.max(0.001, piece.endFt - piece.startFt)
+  const pieceHeight = Math.max(0.001, piece.topFt - piece.bottomFt)
+  finishCoverageRegionsFt(surface, wallLengthFt, wallHeightFt).forEach((region) => {
+    const x0 = Math.max(piece.startFt, region.x0Ft)
+    const x1 = Math.min(piece.endFt, region.x1Ft)
+    const y0 = Math.max(piece.bottomFt, region.y0Ft)
+    const y1 = Math.min(piece.topFt, region.y1Ft)
+    const width = x1 - x0
+    const height = y1 - y0
+    if (width <= 0.02 || height <= 0.02) return
+    const panel = new THREE.Mesh(
+      new THREE.BoxGeometry(width, height, 0.018),
+      createWallOverlayMaterial(THREE, surface, width, height, fallbackPaint, textureLoader, maxAnisotropy, onTextureReady),
+    )
+    panel.position.set(
+      x0 - piece.startFt + width / 2 - pieceWidth / 2,
+      y0 - piece.bottomFt + height / 2 - pieceHeight / 2,
+      WALL_THICKNESS_FT / 2 + 0.014,
+    )
+    panel.renderOrder = 4
+    pieceMesh.add(panel)
+    if (surface.kind === 'drywall-patch') {
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(panel.geometry),
+        new THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.58 }),
+      )
+      edges.position.copy(panel.position)
+      edges.renderOrder = 5
+      pieceMesh.add(edges)
+    }
+  })
 }
 
 function createFloorMaterial(THREE: any, surface: SketchSurfaceFinish, textureLoader?: any, maxAnisotropy = 4, onTextureReady?: () => void) {
@@ -3059,14 +3109,14 @@ export default function Sketch3DView({
         const bounds = modelBounds(model)
         const insideRoom = largestClosedContour(model)
         const insideObstacles = insideCatalogObstacles(resolvedPlacedItems)
-        const insideStart = findInsideStartWorld(insideRoom, cellFt, bounds, insideObstacles)
+        const insideStart = findInsideStartWorld(model, insideRoom, bounds, insideObstacles)
         const height = Number.isFinite(heightFt) && heightFt > 0 ? heightFt : DEFAULT_WALL_HEIGHT_FT
         const span = Math.max(bounds.width, bounds.depth, height, 12)
         const centerX = bounds.minX + bounds.width / 2
         const centerZ = bounds.minZ + bounds.depth / 2
         const orbitFov = fullscreenActive ? FULLSCREEN_FOV_DEG : ORBIT_FOV_DEG
         const insideFov = fullscreenActive ? FULLSCREEN_FOV_DEG : INSIDE_FOV_DEG
-        const fitPad = Math.max(1.25, Math.min(8, span * 0.08))
+        const fitPad = sketch3dFitPad(span)
         const sceneMinX = bounds.minX - WALL_THICKNESS_FT / 2 - fitPad
         const sceneMaxX = bounds.maxX + WALL_THICKNESS_FT / 2 + fitPad
         const sceneMinZ = bounds.minZ - WALL_THICKNESS_FT / 2 - fitPad
@@ -3151,19 +3201,25 @@ export default function Sketch3DView({
             depthHalf = Math.max(depthHalf, Math.abs(rel.dot(viewDir)))
           })
           const vFov = THREE.MathUtils.degToRad(camera.fov)
-          const hFov = 2 * Math.atan(Math.tan(vFov / 2) * Math.max(0.1, camera.aspect))
-          const fitDistance = (Math.max(halfH / Math.tan(vFov / 2), halfW / Math.tan(hFov / 2)) + depthHalf) * 1.12
-          return Math.max(minCameraDistance, Math.min(maxCameraDistance * 0.9, fitDistance))
+          return sketch3dFitDistanceForExtents({
+            halfWidthFt: halfW,
+            halfHeightFt: halfH,
+            depthHalfFt: depthHalf,
+            verticalFovRad: vFov,
+            aspect: camera.aspect,
+            minCameraDistanceFt: minCameraDistance,
+            maxCameraDistanceFt: maxCameraDistance,
+          })
         }
 
         let insideMode = false
-        let insideYaw = insideStartYaw(insideRoom, cellFt, bounds, insideObstacles, insideStart)
+        let insideYaw = insideStartYaw(model, insideRoom, cellFt, bounds, insideObstacles, insideStart)
         let insidePitch = 0
         const eyeY = Math.max(1.25, Math.min(EYE_HEIGHT_FT, Math.max(1.25, height - 0.25)))
         let insideJoystickVector = { strafe: 0, forward: 0 }
         let insideJoystickFrame = 0
         let insideJoystickLastTime = 0
-        const insideStandingAt = (x: number, z: number) => evaluateInsideStanding(insideRoom, cellFt, insideObstacles, x, z)
+        const insideStandingAt = (x: number, z: number) => evaluateInsideStanding(model, insideObstacles, x, z)
         const insideCanStandAt = (x: number, z: number) => insideStandingAt(x, z).valid
         const applyInsideLook = () => {
           camera.rotation.order = 'YXZ'
@@ -3269,7 +3325,7 @@ export default function Sketch3DView({
           camera.fov = insideFov
           camera.near = 0.05
           camera.far = Math.max(300, maxCameraDistance * 4)
-          insideYaw = insideStartYaw(insideRoom, cellFt, bounds, insideObstacles, insideStart)
+          insideYaw = insideStartYaw(model, insideRoom, cellFt, bounds, insideObstacles, insideStart)
           insidePitch = 0
           camera.position.set(insideStart.x, eyeY, insideStart.z)
           if (!insideCanStandAt(camera.position.x, camera.position.z)) {
@@ -3367,6 +3423,15 @@ export default function Sketch3DView({
           roughness: 0.36,
           metalness: 0.08,
         })
+        const windowPaneMaterial = new THREE.MeshStandardMaterial({
+          color: 0x9bd5ff,
+          roughness: 0.18,
+          metalness: 0.02,
+          transparent: true,
+          opacity: 0.42,
+          depthWrite: false,
+        })
+        const openingPickMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.01, depthWrite: false })
         model.contours.forEach((contour) => {
           if (!contour.closed || contour.points.length < 3) return
           const shape = new THREE.Shape()
@@ -3408,17 +3473,44 @@ export default function Sketch3DView({
           sharedWallOccurrences.set(occurrenceKey, occurrence + 1)
           const wallOffsetFt = occurrence === 0 ? 0 : 0.012 * Math.ceil(occurrence / 2) * (occurrence % 2 === 1 ? 1 : -1)
           const wallFinish = finishes.wallFinishes[sketchWallKey(seg.c, seg.s)] ?? wallSurface
-          const wall = new THREE.Mesh(new THREE.BoxGeometry(len, height, WALL_THICKNESS_FT), createWallMaterial(THREE, wallFinish, len, height, finishes.wallPaint, textureLoader, maxAnisotropy, invalidate))
-          wall.position.set((a.x + b.x) / 2 + (-dz / len) * wallOffsetFt, height / 2, (a.z + b.z) / 2 + (dx / len) * wallOffsetFt)
-          wall.rotation.y = -Math.atan2(dz, dx)
-          wall.castShadow = false
-          wall.receiveShadow = false
-          wall.userData.wallC = seg.c
-          wall.userData.wallS = seg.s
-          addWallFinishOverlay(THREE, wall, wallFinish, len, height, finishes.wallPaint, textureLoader, maxAnisotropy, invalidate)
-          scene.add(wall)
-          wallTargets.push(wall)
-          wallMeshByKey.set(sketchWallKey(seg.c, seg.s), wall)
+          const wallPlan = buildSketch3DWallPlan(model, seg, height)
+          const wallObject = wallPlan.openings.length > 0
+            ? new THREE.Group()
+            : new THREE.Mesh(new THREE.BoxGeometry(len, height, WALL_THICKNESS_FT), createWallMaterial(THREE, wallFinish, len, height, finishes.wallPaint, textureLoader, maxAnisotropy, invalidate))
+          wallObject.position.set((a.x + b.x) / 2 + (-dz / len) * wallOffsetFt, height / 2, (a.z + b.z) / 2 + (dx / len) * wallOffsetFt)
+          wallObject.rotation.y = -Math.atan2(dz, dx)
+          wallObject.userData.wallC = seg.c
+          wallObject.userData.wallS = seg.s
+
+          if (wallPlan.openings.length > 0) {
+            wallPlan.pieces.forEach((piece) => {
+              const pieceWidth = Math.max(0.02, piece.endFt - piece.startFt)
+              const pieceHeight = Math.max(0.02, piece.topFt - piece.bottomFt)
+              const pieceMesh = new THREE.Mesh(
+                new THREE.BoxGeometry(pieceWidth, pieceHeight, WALL_THICKNESS_FT),
+                createWallMaterial(THREE, wallFinish, pieceWidth, pieceHeight, finishes.wallPaint, textureLoader, maxAnisotropy, invalidate),
+              )
+              pieceMesh.position.set(
+                piece.startFt + pieceWidth / 2 - len / 2,
+                piece.bottomFt + pieceHeight / 2 - height / 2,
+                0,
+              )
+              pieceMesh.castShadow = false
+              pieceMesh.receiveShadow = false
+              pieceMesh.userData.wallC = seg.c
+              pieceMesh.userData.wallS = seg.s
+              addWallPieceFinishOverlay(THREE, pieceMesh, wallFinish, len, height, piece, finishes.wallPaint, textureLoader, maxAnisotropy, invalidate)
+              wallObject.add(pieceMesh)
+            })
+          } else {
+            wallObject.castShadow = false
+            wallObject.receiveShadow = false
+            addWallFinishOverlay(THREE, wallObject, wallFinish, len, height, finishes.wallPaint, textureLoader, maxAnisotropy, invalidate)
+          }
+
+          scene.add(wallObject)
+          wallTargets.push(wallObject)
+          wallMeshByKey.set(sketchWallKey(seg.c, seg.s), wallObject)
 
           let nx = -dz / len
           let nz = dx / len
@@ -3451,21 +3543,31 @@ export default function Sketch3DView({
         const setWallHighlight = (key: string | null) => {
           if (wallHighlight) {
             scene.remove(wallHighlight)
-            disposeObjectWithMaterial(wallHighlight)
+            wallHighlight.traverse?.((object: { geometry?: unknown; material?: unknown }) => disposeObjectWithMaterial(object))
             wallHighlight = null
           }
           const mesh = key ? wallMeshByKey.get(key) : null
           if (mesh) {
-            const edges = new THREE.LineSegments(
-              new THREE.EdgesGeometry(mesh.geometry),
-              new THREE.LineBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.95, depthTest: false }),
-            )
-            edges.position.copy(mesh.position)
-            edges.rotation.copy(mesh.rotation)
-            edges.scale.copy(mesh.scale)
-            edges.renderOrder = 999
-            scene.add(edges)
-            wallHighlight = edges
+            const highlight = new THREE.Group()
+            const addEdges = (child: any) => {
+              if (!child.geometry) return
+              child.updateWorldMatrix?.(true, false)
+              const edges = new THREE.LineSegments(
+                new THREE.EdgesGeometry(child.geometry),
+                new THREE.LineBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.95, depthTest: false }),
+              )
+              child.getWorldPosition?.(edges.position)
+              child.getWorldQuaternion?.(edges.quaternion)
+              child.getWorldScale?.(edges.scale)
+              edges.renderOrder = 999
+              highlight.add(edges)
+            }
+            if (mesh.traverse) mesh.traverse(addEdges)
+            else addEdges(mesh)
+            if (highlight.children.length > 0) {
+              scene.add(highlight)
+              wallHighlight = highlight
+            }
           }
           invalidate()
         }
@@ -3486,16 +3588,41 @@ export default function Sketch3DView({
           const group = new THREE.Group()
           group.position.set(metrics.centerX, 0, metrics.centerZ)
           group.rotation.y = metrics.rotationY
-          const insert = new THREE.Mesh(
-            new THREE.BoxGeometry(metrics.width, metrics.height, 0.08),
-            opening.kind === 'door' ? doorMaterial : windowMaterial,
+          const trim = Math.max(0.055, Math.min(0.12, metrics.width * 0.045))
+          const frameDepth = 0.12
+          const frameMaterial = opening.kind === 'door' ? doorMaterial : windowMaterial
+          const addFramePiece = (width: number, frameHeight: number, x: number, y: number) => {
+            const frame = new THREE.Mesh(new THREE.BoxGeometry(width, frameHeight, frameDepth), frameMaterial)
+            frame.position.set(x, y, 0)
+            frame.castShadow = false
+            frame.receiveShadow = false
+            group.add(frame)
+            return frame
+          }
+          addFramePiece(trim, metrics.height, -metrics.width / 2 + trim / 2, metrics.sill + metrics.height / 2)
+          addFramePiece(trim, metrics.height, metrics.width / 2 - trim / 2, metrics.sill + metrics.height / 2)
+          addFramePiece(metrics.width, trim, 0, metrics.sill + metrics.height - trim / 2)
+          if (opening.kind === 'window') {
+            addFramePiece(metrics.width, trim, 0, metrics.sill + trim / 2)
+            const paneWidth = Math.max(0.02, metrics.width - trim * 2)
+            const paneHeight = Math.max(0.02, metrics.height - trim * 2)
+            const pane = new THREE.Mesh(new THREE.BoxGeometry(paneWidth, paneHeight, 0.035), windowPaneMaterial)
+            pane.position.set(0, metrics.sill + metrics.height / 2, 0)
+            pane.castShadow = false
+            pane.receiveShadow = false
+            group.add(pane)
+          }
+          const pickFace = new THREE.Mesh(
+            new THREE.BoxGeometry(metrics.width, metrics.height, 0.025),
+            openingPickMaterial,
           )
-          insert.position.set(0, metrics.sill + metrics.height / 2, WALL_THICKNESS_FT / 2 + 0.055)
-          insert.castShadow = false
-          insert.receiveShadow = false
-          group.add(insert)
+          pickFace.position.set(0, metrics.sill + metrics.height / 2, 0)
+          pickFace.castShadow = false
+          pickFace.receiveShadow = false
+          pickFace.renderOrder = 3
+          group.add(pickFace)
           if (selectedId === openingInteractiveId(index)) {
-            addMeshWithEdges(THREE, group, insert, opening.kind === 'door' ? 0x7c2d12 : 0x1d4ed8, 0.95)
+            addMeshWithEdges(THREE, group, pickFace, opening.kind === 'door' ? 0x7c2d12 : 0x1d4ed8, 0.95)
             const sprite = createLabelSprite(THREE, `${openingName(opening, index, t)}\n${openingDimensionText(opening, metrics, t)}`)
             sprite.position.set(metrics.centerX + metrics.nx * 0.34, metrics.sill + metrics.height + 0.48, metrics.centerZ + metrics.nz * 0.34)
             scene.add(sprite)
