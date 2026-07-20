@@ -37,4 +37,18 @@ describe('ai voice orb helpers', () => {
       speakOn: true,
     })
   })
+
+  it('can arm voice from an already open inactive assistant panel', () => {
+    expect(getNextAiOrbToggleState({
+      open: true,
+      wakeOn: false,
+      speakOn: true,
+      voiceStatus: 'off',
+    })).toEqual({
+      intent: 'activate',
+      open: true,
+      wakeOn: true,
+      speakOn: true,
+    })
+  })
 })

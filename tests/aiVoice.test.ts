@@ -3,6 +3,7 @@ import {
   isVoiceAffirm,
   isVoiceCancel,
   isVoiceStopCommand,
+  shouldAcceptAssistantVoiceResult,
   looksLikeTtsEcho,
   normalizeVoiceText,
   splitCompletedSpeechSegments,
@@ -20,6 +21,52 @@ describe('ai voice helpers', () => {
     const res = splitCompletedSpeechSegments('No punctuation yet', { force: true })
     expect(res.segments).toEqual(['No punctuation yet'])
     expect(res.rest).toBe('')
+  })
+
+  it('flushes an incremental stream tail once after completed segments', () => {
+    let buffer = ''
+    const queued: string[] = []
+
+    buffer += 'First sentence. Second sentence without'
+    let split = splitCompletedSpeechSegments(buffer)
+    queued.push(...split.segments)
+    buffer = split.rest
+
+    buffer += ' punctuation yet'
+    split = splitCompletedSpeechSegments(buffer, { force: true })
+    queued.push(...split.segments)
+    buffer = split.rest
+
+    split = splitCompletedSpeechSegments(buffer, { force: true })
+    queued.push(...split.segments)
+
+    expect(queued).toEqual(['First sentence.', 'Second sentence without punctuation yet'])
+    expect(buffer).toBe('')
+  })
+
+  it('accepts assistant mic results only in the active listening orb window', () => {
+    expect(shouldAcceptAssistantVoiceResult({
+      wakeOn: true,
+      open: true,
+      voiceStatus: 'listening',
+    })).toBe(true)
+    expect(shouldAcceptAssistantVoiceResult({
+      wakeOn: false,
+      open: true,
+      voiceStatus: 'listening',
+    })).toBe(false)
+    expect(shouldAcceptAssistantVoiceResult({
+      wakeOn: true,
+      open: true,
+      voiceStatus: 'speaking',
+      ttsBusy: true,
+    })).toBe(false)
+    expect(shouldAcceptAssistantVoiceResult({
+      wakeOn: true,
+      open: true,
+      voiceStatus: 'listening',
+      queuedTtsSegments: 1,
+    })).toBe(false)
   })
 
   it('strips markdown before sending text to speech', () => {
