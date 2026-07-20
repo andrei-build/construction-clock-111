@@ -2414,6 +2414,9 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_mic_denied_hint: { ru: 'Разрешите доступ к микрофону в настройках сайта (значок 🔒 в адресной строке), чтобы говорить с ассистентом.', en: 'Allow microphone access in your site settings (the 🔒 icon in the address bar) to talk to the assistant.', es: 'Permita el acceso al micrófono en la configuración del sitio (el icono 🔒 en la barra de direcciones) para hablar con el asistente.' },
   // AI-UX-1: орб-сущность (подпись покоя), свёрнутая история, роли в истории.
   ai_orb_idle: { ru: 'Готов помочь', en: 'Ready to help', es: 'Listo para ayudar' },
+  ai_orb_active: { ru: 'Ассистент активен', en: 'Assistant active', es: 'Asistente activo' },
+  ai_orb_activate: { ru: 'Включить ассистента', en: 'Turn assistant on', es: 'Activar asistente' },
+  ai_orb_deactivate: { ru: 'Выключить ассистента', en: 'Turn assistant off', es: 'Desactivar asistente' },
   ai_history: { ru: 'История', en: 'History', es: 'Historial' },
   ai_history_hide: { ru: 'Скрыть историю', en: 'Hide history', es: 'Ocultar historial' },
   ai_hist_you: { ru: 'Вы', en: 'You', es: 'Usted' },
@@ -2422,6 +2425,7 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_show_text: { ru: 'Показать текст', en: 'Show text', es: 'Ver texto' },
   ai_drawer_title: { ru: 'Диалог с ассистентом', en: 'Assistant dialog', es: 'Diálogo con el asistente' },
   ai_proposal_badge: { ru: 'Предложение', en: 'Proposal', es: 'Propuesta' },
+  ai_bug_recorded: { ru: 'Записано, передам строителям', en: 'Recorded; I will pass it to the builders', es: 'Registrado; se lo pasaré al equipo' },
   // AI-UX-2 (п.5): контекст экрана, который «сущность видит».
   ai_context_info: { ru: 'Контекст экрана', en: 'Screen context', es: 'Contexto de pantalla' },
   ai_ctx_seeing: { ru: 'Вижу экран', en: 'Seeing', es: 'Viendo' },

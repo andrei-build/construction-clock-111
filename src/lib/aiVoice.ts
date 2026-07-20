@@ -1,5 +1,43 @@
 export type SpeechLang = 'ru' | 'en' | 'es'
 
+export type AiOrbToggleIntent = 'activate' | 'deactivate'
+
+export type AiOrbToggleSnapshot = {
+  open: boolean
+  wakeOn: boolean
+  speakOn: boolean
+  thinking?: boolean
+  streaming?: boolean
+  ttsBusy?: boolean
+  voiceStatus?: string
+}
+
+export type AiOrbToggleNextState = {
+  intent: AiOrbToggleIntent
+  open: boolean
+  wakeOn: boolean
+  speakOn: boolean
+}
+
+const ACTIVE_ORB_VOICE_STATES = new Set(['wake', 'listening', 'thinking', 'speaking'])
+
+export function isAiInfoProposalAction(actionType: string): boolean {
+  return actionType === 'report_bug'
+}
+
+export function getAiOrbToggleIntent(state: AiOrbToggleSnapshot): AiOrbToggleIntent {
+  const activeVoice = state.voiceStatus ? ACTIVE_ORB_VOICE_STATES.has(state.voiceStatus) : false
+  return state.open || state.wakeOn || state.thinking || state.streaming || state.ttsBusy || activeVoice
+    ? 'deactivate'
+    : 'activate'
+}
+
+export function getNextAiOrbToggleState(state: AiOrbToggleSnapshot): AiOrbToggleNextState {
+  const intent = getAiOrbToggleIntent(state)
+  if (intent === 'activate') return { intent, open: true, wakeOn: true, speakOn: true }
+  return { intent, open: false, wakeOn: false, speakOn: state.speakOn }
+}
+
 const SENTENCE_END_RE = /[.!?]+|[。！？]+|…+/g
 const LONG_SEGMENT_LIMIT = 220
 
