@@ -283,7 +283,8 @@ export default function WorkerDetail() {
   const [publicBio, setPublicBio] = useState('')
   const avatarInputRef = useRef<HTMLInputElement>(null)
 
-  // TEAM-DOSSIER-1: контактные/кадровые поля досье (profiles). Редактирует manager+.
+  // TEAM-DOSSIER-1: контакты читаются из profile_contact; кадровые поля — из profile_dossier.
+  // Сохранение идёт через data-access helper с раздельными RLS-запросами.
   // dossier_notes («заметки владельца») — только manager+ (экран уже гейтит canView).
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
@@ -392,7 +393,7 @@ export default function WorkerDetail() {
         // TEAM-2: клиент-facing поля.
         setAvatarUrl(workerRow.avatar_url ?? null)
         setPublicBio(workerRow.public_bio ?? '')
-        // TEAM-DOSSIER-1: контактные/кадровые поля досье.
+        // TEAM-DOSSIER-1: контактные/кадровые поля уже склеены data-access helper-ом.
         setPhone(workerRow.phone ?? '')
         setEmail(workerRow.email ?? '')
         setHomeAddress(workerRow.home_address ?? '')
@@ -907,8 +908,8 @@ export default function WorkerDetail() {
     return t('files_expires_in').replace('{n}', String(d))
   }
 
-  // TEAM-DOSSIER-1: сохранение контактных/кадровых полей досье (manager+). Пустые → null, кроме
-  // language (колонка NOT NULL) — пустое значение пропускаем (undefined), не пытаясь записать null.
+  // TEAM-DOSSIER-1: сохранение контактных/кадровых полей досье. Helper пишет contacts/dossier/language
+  // в разные таблицы. Пустые → null, кроме language (колонка NOT NULL) — пустое значение пропускаем.
   const saveDossier = async () => {
     if (!profile || !worker || !canEditProfile || busy) return
     setBusy('dossier')
@@ -1329,8 +1330,8 @@ export default function WorkerDetail() {
           </section>
 
           {/* TEAM-DOSSIER-1: единая карточка-досье (ЗАКОН ДНК §10: ЧЕЛОВЕК = ДОСЬЕ). Контакты,
-              кадровые данные, язык + сводка навыков/ставки в одном месте. Редактирует manager+.
-              dossier_notes («заметки владельца») показываем только manager+ — экран уже canView. */}
+              кадровые данные, язык + сводка навыков/ставки в одном месте. Helper читает contacts и
+              dossier раздельно из новых таблиц; dossier_notes не видны работнику по RLS. */}
           <section className="card worker-dossier-card">
             <h2>{t('dossier_section')}</h2>
             <p className="muted">{t('dossier_hint')}</p>
