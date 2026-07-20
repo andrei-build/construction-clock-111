@@ -49,6 +49,17 @@ export type SketchOpenContourFinishResult<TModel> = {
   changed: boolean
   action: 'closed' | 'discarded' | 'none'
 }
+export type SketchWallDraftUiState<TSnapGuide = unknown> = {
+  hover: SketchGuidePoint | null
+  hoverSnapped: boolean
+  hoverSnapGuide: TSnapGuide | null
+  newRoomDraftPending: boolean
+}
+export type SketchClearableModel = Pick<SketchGuideModel, 'contours'> & {
+  openings?: readonly unknown[]
+  measurements?: readonly unknown[]
+  placedItems?: readonly unknown[]
+}
 
 type SmartGuideCandidate = {
   kind: SketchSmartGuideKind
@@ -102,6 +113,42 @@ export function shouldCloseOpenContourFromPoint(
 ): boolean {
   const threshold = Number.isFinite(thresholdCells) && thresholdCells > 0 ? thresholdCells : 0
   return !!contour && !contour.closed && contour.points.length >= 3 && pointDistance(point, contour.points[0]) <= threshold
+}
+
+export function shouldResetWallDraftAfterContourFinish(
+  result: Pick<SketchOpenContourFinishResult<unknown>, 'changed' | 'action'>,
+): boolean {
+  return result.changed && (result.action === 'closed' || result.action === 'discarded')
+}
+
+export function resolveWallDraftAfterContourFinish<TSnapGuide>(
+  result: Pick<SketchOpenContourFinishResult<unknown>, 'changed' | 'action'>,
+  draft: SketchWallDraftUiState<TSnapGuide>,
+): SketchWallDraftUiState<TSnapGuide> {
+  if (!shouldResetWallDraftAfterContourFinish(result)) return draft
+  return {
+    ...draft,
+    hover: null,
+    hoverSnapped: false,
+    hoverSnapGuide: null,
+    newRoomDraftPending: false,
+  }
+}
+
+export function shouldTrackWallDraftPointer(
+  activeContour: SketchGuideContour | null | undefined,
+  newRoomDraftPending: boolean,
+): boolean {
+  return newRoomDraftPending || !!activeContour && !activeContour.closed && activeContour.points.length > 0
+}
+
+export function hasClearableSketchContent(model: SketchClearableModel): boolean {
+  return (
+    model.contours.length > 0 ||
+    (model.openings?.length ?? 0) > 0 ||
+    (model.measurements?.length ?? 0) > 0 ||
+    (model.placedItems?.length ?? 0) > 0
+  )
 }
 
 export function finishLastOpenContour<

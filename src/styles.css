@@ -4074,6 +4074,26 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   flex-wrap: wrap;
   gap: 7px;
 }
+.hub-sketch-clear-confirm {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid rgba(220, 38, 38, .24);
+  border-radius: 8px;
+  background: rgba(254, 242, 242, .86);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, .08);
+}
+.hub-sketch-clear-confirm span {
+  flex: 1 1 120px;
+  min-width: 0;
+  color: #7f1d1d;
+  font-size: 13px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
 .hub-sketch-template-list {
   display: grid;
   grid-template-columns: 1fr;
@@ -4753,6 +4773,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-grid line,
 .hub-sketch-wall,
 .hub-sketch-room-selected,
+.hub-sketch-room-just-closed,
 .hub-sketch-wall-selected,
 .hub-sketch-wall-conflict,
 .hub-sketch-wall-hit,
@@ -4789,6 +4810,22 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke-width: 4;
   fill: rgba(37, 99, 235, .08);
 }
+.hub-sketch-room-just-closed {
+  stroke: #16a34a;
+  stroke-width: 5;
+  fill: rgba(22, 163, 74, .12);
+  animation: hub-sketch-room-closed-flash 1.4s ease-out;
+}
+@keyframes hub-sketch-room-closed-flash {
+  0% {
+    stroke-width: 7;
+    fill: rgba(22, 163, 74, .22);
+  }
+  100% {
+    stroke-width: 5;
+    fill: rgba(22, 163, 74, .12);
+  }
+}
 .hub-sketch-room-labels,
 .hub-sketch-room-snap-guide {
   pointer-events: none;
@@ -4803,6 +4840,16 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-room-label-selected {
   fill: #1d4ed8;
+}
+.hub-sketch-room-closed-badge rect {
+  fill: rgba(22, 101, 52, .94);
+  stroke: rgba(255, 255, 255, .96);
+  stroke-width: 1.5;
+}
+.hub-sketch-room-closed-badge text {
+  fill: #ffffff;
+  font-weight: 900;
+  letter-spacing: 0;
 }
 .hub-sketch-room-snap-edge {
   stroke: #16a34a;

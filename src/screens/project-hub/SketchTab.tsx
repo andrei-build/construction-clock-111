@@ -130,8 +130,12 @@ import {
 } from './sketchTemplates'
 import {
   finishLastOpenContour,
+  hasClearableSketchContent,
+  resolveWallDraftAfterContourFinish,
   screenPointerMovedBeyondThreshold,
   shouldCloseOpenContourFromPoint,
+  shouldResetWallDraftAfterContourFinish,
+  shouldTrackWallDraftPointer,
   snapCornerSquare,
   snapToExistingGeometry,
   snapPointWithSmartGuides,
@@ -1743,6 +1747,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [hoverSnapped, setHoverSnapped] = useState(false)
   const [hoverSnapGuide, setHoverSnapGuide] = useState<SketchExistingSnapResult | null>(null)
   const [newRoomDraftPending, setNewRoomDraftPending] = useState(false)
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
+  const [recentlyClosedContourIndex, setRecentlyClosedContourIndex] = useState<number | null>(null)
   const [segmentLengthEdit, setSegmentLengthEdit] = useState<SegmentLengthEdit | null>(null)
   const [segmentResizeConflict, setSegmentResizeConflict] = useState<SketchSegmentResizeConflict | null>(null)
   // Габариты проёмов (в футах), задаются перед вставкой.
@@ -1809,6 +1815,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const edgeAutoPanPointerRef = useRef<{ clientX: number; clientY: number } | null>(null)
   const edgeAutoPanFrameRef = useRef<number | null>(null)
   const edgeAutoPanLastTimeRef = useRef(0)
+  const closedContourFlashTimerRef = useRef<number | null>(null)
   const modelRef = useRef(model)
   const canvasSizeRef = useRef<CanvasSize>({ width: VIEW_W, height: VIEW_H })
   const canvasViewRef = useRef<CanvasView>({ x: 0, y: 0, width: VIEW_W, height: VIEW_H })
@@ -2061,6 +2068,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setOpeningOffsetEdit(null)
     setOpeningSnapGuide(null)
     setHoverSnapGuide(null)
+    setClearConfirmOpen(false)
     setSmartGuides([])
   }, [])
 
@@ -3066,6 +3074,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const currentModel = modelRef.current
     const currentTool = toolRef.current
     if (currentTool === 'wall') {
+      const active = currentModel.contours[currentModel.contours.length - 1]
+      if (!shouldTrackWallDraftPointer(active, newRoomDraftPendingRef.current)) {
+        setHover(null)
+        setHoverSnapped(false)
+        setHoverSnapGuide(null)
+        setSmartGuides([])
+        return
+      }
       const wp = wallPointForModel(currentModel, raw, activeSnapFtRef.current)
       setHover(wp.p)
       setHoverSnapped(wp.snapped)
@@ -3174,6 +3190,42 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   useEffect(() => () => stopEdgeAutoPan(), [])
 
+  const resetWallDraftAfterFinish = useCallback((result: { changed: boolean; action: 'closed' | 'discarded' | 'none' }) => {
+    if (!shouldResetWallDraftAfterContourFinish(result)) return
+    const nextDraft = resolveWallDraftAfterContourFinish(result, {
+      hover: null,
+      hoverSnapped: false,
+      hoverSnapGuide: null as SketchExistingSnapResult | null,
+      newRoomDraftPending: newRoomDraftPendingRef.current,
+    })
+    setHover(nextDraft.hover)
+    setHoverSnapped(nextDraft.hoverSnapped)
+    setHoverSnapGuide(nextDraft.hoverSnapGuide)
+    setNewRoomPending(nextDraft.newRoomDraftPending)
+    setSmartGuides([])
+    stopEdgeAutoPan()
+  }, [])
+
+  const markContourJustClosed = useCallback((contourIndex: number) => {
+    if (contourIndex < 0) return
+    if (closedContourFlashTimerRef.current !== null) {
+      window.clearTimeout(closedContourFlashTimerRef.current)
+      closedContourFlashTimerRef.current = null
+    }
+    setRecentlyClosedContourIndex(contourIndex)
+    closedContourFlashTimerRef.current = window.setTimeout(() => {
+      setRecentlyClosedContourIndex((current) => (current === contourIndex ? null : current))
+      closedContourFlashTimerRef.current = null
+    }, 1400)
+  }, [])
+
+  useEffect(() => () => {
+    if (closedContourFlashTimerRef.current !== null) {
+      window.clearTimeout(closedContourFlashTimerRef.current)
+      closedContourFlashTimerRef.current = null
+    }
+  }, [])
+
   const removeMeasurement = (index: number) => {
     const measurements = model.measurements ?? []
     if (!measurements[index]) return
@@ -3186,26 +3238,31 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setMeasurementDraft(null)
   }
 
-  const finishActiveOpenContour = useCallback((options: {
+  const finishOpenContourFromModel = useCallback((baseModel: SketchModel, options: {
     minClosedPoints?: number
     discardIncomplete?: boolean
     closeComplete?: boolean
   } = {}) => {
-    const result = finishLastOpenContour(modelRef.current, options)
+    const finishedContourIndex = baseModel.contours.length - 1
+    const result = finishLastOpenContour(baseModel, options)
     if (!result.changed) return false
     commit(result.model as SketchModel)
     lastWallClickAppendRef.current = null
-    setNewRoomPending(false)
-    setHover(null)
-    setHoverSnapped(false)
-    setHoverSnapGuide(null)
+    resetWallDraftAfterFinish(result)
+    if (result.action === 'closed') markContourJustClosed(finishedContourIndex)
     if (result.action === 'discarded') {
       setSelectedNode(null)
       setSelectedContourIndex(null)
       setSelectedWallKey(null)
     }
     return true
-  }, [commit])
+  }, [commit, markContourJustClosed, resetWallDraftAfterFinish])
+
+  const finishActiveOpenContour = useCallback((options: {
+    minClosedPoints?: number
+    discardIncomplete?: boolean
+    closeComplete?: boolean
+  } = {}) => finishOpenContourFromModel(modelRef.current, options), [finishOpenContourFromModel])
 
   useEffect(() => {
     if (!canEdit || viewMode !== '2d') return
@@ -3768,6 +3825,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         commit({ ...model, contours: [...contours, nextContour] })
         lastWallClickAppendRef.current = { contourIndex: contours.length, pointIndex: 0, point: p, clientX, clientY, time: appendTime }
         setNewRoomPending(false)
+        setHover(null)
+        setHoverSnapped(false)
+        setHoverSnapGuide(null)
         setSelectedContourIndex(null)
         setSelectedNode(null)
         setSelectedWallKey(null)
@@ -3775,11 +3835,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       }
       // Замыкание: клик рядом со стартовой точкой активного контура (≥3 точек).
       if (shouldCloseOpenContourFromPoint(last, p, CLOSE_SNAP)) {
-        const next = { ...model, contours: contours.map((c, i) => (i === contours.length - 1 ? { ...c, closed: true } : c)) }
-        commit(next)
-        lastWallClickAppendRef.current = null
-        setNewRoomPending(false)
-        return true
+        return finishActiveOpenContour({ discardIncomplete: false })
       }
       if (last && !last.closed && last.points.length > 0) {
         // не дублируем точку, совпадающую с предыдущей
@@ -3792,6 +3848,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         commit({ ...model, contours: [...contours, { points: [p], closed: false }] })
         lastWallClickAppendRef.current = { contourIndex: contours.length, pointIndex: 0, point: p, clientX, clientY, time: appendTime }
         setNewRoomPending(false)
+        setHover(null)
+        setHoverSnapped(false)
+        setHoverSnapGuide(null)
       }
       return true
     }
@@ -3857,19 +3916,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
     e.preventDefault()
     const baseModel = rollbackDoubleClickWallAppend(modelRef.current, e)
-    const result = finishLastOpenContour(baseModel)
     lastWallClickAppendRef.current = null
-    if (!result.changed) return
-    commit(result.model as SketchModel)
-    setNewRoomPending(false)
-    setHover(null)
-    setHoverSnapped(false)
-    setHoverSnapGuide(null)
-    if (result.action === 'discarded') {
-      setSelectedNode(null)
-      setSelectedContourIndex(null)
-      setSelectedWallKey(null)
-    }
+    finishOpenContourFromModel(baseModel)
   }
 
   function selectCanvasObjectAt(clientX: number, clientY: number): boolean {
@@ -3985,6 +4033,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setTool('wall')
     setMeasurementDraft(null)
     setSelectedMeasurementIndex(null)
+    setClearConfirmOpen(false)
     selectedOpeningIndexRef.current = null
     setSelectedOpeningIndex(null)
     setSelectedContourIndex(null)
@@ -4060,7 +4109,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [history, clearModelChangeState])
 
   const clearAll = () => {
-    if (model.contours.length === 0 && model.openings.length === 0 && (model.measurements ?? []).length === 0 && (model.placedItems ?? []).length === 0) return
+    setClearConfirmOpen(false)
+    if (!hasClearableSketchContent(model)) return
     canvasAutoFitRef.current = true
     commit(EMPTY_MODEL)
     setMeasurementDraft(null)
@@ -4073,6 +4123,20 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedNode(null)
     setSelectedContourIndex(null)
     setNewRoomPending(false)
+    lastWallClickAppendRef.current = null
+    setHover(null)
+    setHoverSnapped(false)
+    setHoverSnapGuide(null)
+    setRecentlyClosedContourIndex(null)
+  }
+
+  const requestClearAll = () => {
+    if (!hasClearableSketchContent(model)) return
+    setClearConfirmOpen(true)
+  }
+
+  const cancelClearAll = () => {
+    setClearConfirmOpen(false)
   }
 
   useEffect(() => {
@@ -4380,6 +4444,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const canClose = !!activeContour && !activeContour.closed && activeContour.points.length >= 3
   // NAV-FIX-2: выбор стены на 2D активен, когда клики не заняты установкой проёмов/замеров и не идёт рисование контура.
   const activeContourOpen = !!activeContour && !activeContour.closed && activeContour.points.length > 0
+  const wallDraftPointerActive = shouldTrackWallDraftPointer(activeContour, newRoomDraftPending)
+  const canClearSketch = hasClearableSketchContent(model)
   const wallSelectEnabled = canEdit && tool !== 'door' && tool !== 'window' && tool !== 'measure' && tool !== 'outlet' && tool !== 'switch' && !activeContourOpen
   const selectedOpening = selectedOpeningIndex !== null ? model.openings[selectedOpeningIndex] ?? null : null
   const canCenterOpening = canEdit && !!selectedOpening && !!openingEnds(model, selectedOpening)
@@ -4462,6 +4528,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       .filter((label): label is { index: number; center: Pt; label: string; shortLabel: string } => !!label),
     [model.contours, t],
   )
+
+  useEffect(() => {
+    if (recentlyClosedContourIndex === null) return
+    const contour = model.contours[recentlyClosedContourIndex]
+    if (!contour || !contour.closed) setRecentlyClosedContourIndex(null)
+  }, [model.contours, recentlyClosedContourIndex])
 
   const renderDimLine2D = (dim: DimLine2D, key: string, className: string, fontScale = 10.5) => (
     <g key={key} className={className}>
@@ -4761,8 +4833,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   )
 
   const closeSketchSheet = (kind: SketchSheetKind) => {
-    if (kind === 'context') setContextSheetOpen(false)
-    else closeSketchPropertiesPanel()
+    if (kind === 'context') {
+      setContextSheetOpen(false)
+      setClearConfirmOpen(false)
+    } else {
+      closeSketchPropertiesPanel()
+    }
   }
 
   const startSheetSwipe = (kind: SketchSheetKind) => (event: React.PointerEvent<HTMLElement>) => {
@@ -4835,9 +4911,20 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             >
               {`+ ${t('hub_sketch_room_add')}`}
             </button>
-            <button type="button" className="btn ghost small" onClick={clearAll}>
+            <button type="button" className="btn ghost small" disabled={!canClearSketch} onClick={requestClearAll}>
               {t('hub_sketch_clear')}
             </button>
+            {clearConfirmOpen && (
+              <div className="hub-sketch-clear-confirm" role="group" aria-label={t('hub_sketch_clear_confirm')}>
+                <span>{t('hub_sketch_clear_confirm')}</span>
+                <button type="button" className="btn red small" onClick={clearAll}>
+                  {t('hub_sketch_clear_confirm_yes')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={cancelClearAll}>
+                  {t('hub_sketch_cancel')}
+                </button>
+              </div>
+            )}
             <button type="button" className="btn ghost small" onClick={() => setTemplatePickerOpen((value) => !value)}>
               {t('hub_sketch_template_new')}
             </button>
@@ -5572,7 +5659,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const use3DContextPanel = canEdit && viewMode === '3d' && MODES_WITH_3D_CONTEXT.has(activeMode)
   const hasPropertiesPanel = Boolean(selectedWall || selectedContour || selectedOpening || (selectedMeasurementIndex !== null && model.measurements?.[selectedMeasurementIndex]))
   useEffect(() => {
-    if (hasPropertiesPanel) setContextSheetOpen(false)
+    if (!hasPropertiesPanel) return
+    setContextSheetOpen(false)
+    setClearConfirmOpen(false)
   }, [hasPropertiesPanel])
   const workspaceClass = [
     'hub-sketch-workspace',
@@ -5648,10 +5737,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             if (c.points.length === 0) return null
             const pts = c.points.map((p) => `${p.x * CELL_PX},${p.y * CELL_PX}`).join(' ')
             const selected = selectedContourIndex === ci
+            const justClosed = recentlyClosedContourIndex === ci
             return c.closed && c.points.length >= 3 ? (
               <polygon
                 key={`c${ci}`}
-                className={selected ? 'hub-sketch-wall hub-sketch-room-selected' : 'hub-sketch-wall'}
+                className={[
+                  'hub-sketch-wall',
+                  selected ? 'hub-sketch-room-selected' : '',
+                  justClosed ? 'hub-sketch-room-just-closed' : '',
+                ].filter(Boolean).join(' ')}
                 points={pts}
                 onClick={wallSelectEnabled ? (event) => {
                   event.stopPropagation()
@@ -5669,20 +5763,43 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
           {roomLabels.length > 0 && (
             <g className="hub-sketch-room-labels">
-              {roomLabels.map((entry) => (
-                <text
-                  key={`room-label-${entry.index}`}
-                  className={selectedContourIndex === entry.index ? 'hub-sketch-room-label hub-sketch-room-label-selected' : 'hub-sketch-room-label'}
-                  x={entry.center.x * CELL_PX}
-                  y={entry.center.y * CELL_PX}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  style={{ fontSize: 12 * screenWorldPx }}
-                >
-                  <title>{entry.label}</title>
-                  {entry.shortLabel}
-                </text>
-              ))}
+              {roomLabels.map((entry) => {
+                const justClosed = recentlyClosedContourIndex === entry.index
+                const badgeText = t('hub_sketch_closed_badge')
+                const badgeWidth = Math.max(74, badgeText.length * 7 + 28) * screenWorldPx
+                const badgeHeight = 22 * screenWorldPx
+                const badgeX = entry.center.x * CELL_PX - badgeWidth / 2
+                const badgeY = entry.center.y * CELL_PX + 12 * screenWorldPx
+                return (
+                  <g key={`room-label-${entry.index}`}>
+                    <text
+                      className={selectedContourIndex === entry.index ? 'hub-sketch-room-label hub-sketch-room-label-selected' : 'hub-sketch-room-label'}
+                      x={entry.center.x * CELL_PX}
+                      y={entry.center.y * CELL_PX}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      style={{ fontSize: 12 * screenWorldPx }}
+                    >
+                      <title>{entry.label}</title>
+                      {entry.shortLabel}
+                    </text>
+                    {justClosed && (
+                      <g className="hub-sketch-room-closed-badge">
+                        <rect x={badgeX} y={badgeY} width={badgeWidth} height={badgeHeight} rx={5 * screenWorldPx} />
+                        <text
+                          x={entry.center.x * CELL_PX}
+                          y={badgeY + badgeHeight / 2}
+                          textAnchor="middle"
+                          dominantBaseline="central"
+                          style={{ fontSize: 10.5 * screenWorldPx }}
+                        >
+                          {`✓ ${badgeText}`}
+                        </text>
+                      </g>
+                    )}
+                  </g>
+                )
+              })}
             </g>
           )}
 
@@ -5934,7 +6051,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             </g>
           )}
 
-          {hoverSnapGuide && tool === 'wall' && (
+          {hoverSnapGuide && tool === 'wall' && wallDraftPointerActive && (
             <g className="hub-sketch-room-snap-guide">
               {hoverSnapGuide.target.kind === 'segment' && (
                 <line
@@ -6273,7 +6390,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             })()}
 
           {/* превью курсора */}
-          {canEdit && hover && (tool === 'wall' || tool === 'measure') && (
+          {canEdit && hover && ((tool === 'wall' && wallDraftPointerActive) || tool === 'measure') && (
             <circle
               className={hoverSnapped ? 'hub-sketch-hover hub-sketch-hover-snap' : 'hub-sketch-hover'}
               cx={hover.x * CELL_PX}
