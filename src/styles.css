@@ -4901,6 +4901,17 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: #ffffff;
   stroke-width: 2.5;
 }
+.hub-sketch-node-active-end {
+  fill: #facc15;
+  stroke: #0f172a;
+  stroke-width: 2.8;
+}
+.hub-sketch-node-active-end.hub-sketch-node-selected,
+.hub-sketch-node-active-end.hub-sketch-node-dragging {
+  fill: #facc15;
+  stroke: #2563eb;
+  stroke-width: 3.2;
+}
 .hub-sketch-door { fill: #b45309; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-window { fill: #2563eb; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-opening-selection-halo {

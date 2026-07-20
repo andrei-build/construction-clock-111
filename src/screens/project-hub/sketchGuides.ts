@@ -11,6 +11,7 @@ export type SketchGuideModel = {
   contours: SketchGuideContour[]
   placedItems?: SketchGuidePlacedItem[]
 }
+export type SketchScreenPoint = { clientX: number; clientY: number }
 export type SketchSmartGuideKind = 'center' | 'edge' | 'axis' | 'equal-offset' | 'corner-square'
 export type SketchSmartGuide = {
   kind: SketchSmartGuideKind
@@ -42,6 +43,11 @@ export type SketchExistingSnapResult = {
   point: SketchGuidePoint
   target: SketchExistingSnapTarget
   distance: number
+}
+export type SketchOpenContourFinishResult<TModel> = {
+  model: TModel
+  changed: boolean
+  action: 'closed' | 'discarded' | 'none'
 }
 
 type SmartGuideCandidate = {
@@ -78,6 +84,64 @@ function segmentEnd(contour: SketchGuideContour, index: number): SketchGuidePoin
 
 function pointDistance(a: SketchGuidePoint, b: SketchGuidePoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+export function screenPointerMovedBeyondThreshold(
+  origin: SketchScreenPoint,
+  current: SketchScreenPoint,
+  thresholdPx: number,
+): boolean {
+  const threshold = Number.isFinite(thresholdPx) && thresholdPx > 0 ? thresholdPx : 0
+  return Math.hypot(current.clientX - origin.clientX, current.clientY - origin.clientY) > threshold
+}
+
+export function shouldCloseOpenContourFromPoint(
+  contour: SketchGuideContour | null | undefined,
+  point: SketchGuidePoint,
+  thresholdCells: number,
+): boolean {
+  const threshold = Number.isFinite(thresholdCells) && thresholdCells > 0 ? thresholdCells : 0
+  return !!contour && !contour.closed && contour.points.length >= 3 && pointDistance(point, contour.points[0]) <= threshold
+}
+
+export function finishLastOpenContour<
+  TContour extends SketchGuideContour,
+  TModel extends { contours: TContour[] },
+>(
+  model: TModel,
+  options: { minClosedPoints?: number; discardIncomplete?: boolean; closeComplete?: boolean } = {},
+): SketchOpenContourFinishResult<TModel> {
+  const minClosedPoints = Number.isFinite(options.minClosedPoints) && (options.minClosedPoints ?? 0) > 0
+    ? options.minClosedPoints ?? 3
+    : 3
+  const lastIndex = model.contours.length - 1
+  const last = model.contours[lastIndex]
+  if (!last || last.closed || last.points.length === 0) {
+    return { model, changed: false, action: 'none' }
+  }
+  if (last.points.length >= minClosedPoints && options.closeComplete !== false) {
+    return {
+      model: {
+        ...model,
+        contours: model.contours.map((contour, index) => (
+          index === lastIndex ? { ...contour, closed: true } : contour
+        )),
+      },
+      changed: true,
+      action: 'closed',
+    }
+  }
+  if (options.discardIncomplete === false) {
+    return { model, changed: false, action: 'none' }
+  }
+  return {
+    model: {
+      ...model,
+      contours: model.contours.filter((_, index) => index !== lastIndex),
+    },
+    changed: true,
+    action: 'discarded',
+  }
 }
 
 function projectSegmentT(p: SketchGuidePoint, a: SketchGuidePoint, b: SketchGuidePoint): number {
