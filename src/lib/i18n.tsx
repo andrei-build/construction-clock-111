@@ -449,6 +449,8 @@ const dict: Record<string, Record<Lang, string>> = {
   plan_add_project_search: { ru: 'Найти проект, чтобы добавить в день…', en: 'Find a project to add to the day…', es: 'Buscar proyecto para añadir al día…' },
   plan_no_projects_for_day: { ru: 'На день ничего нет — добавьте проект через поиск выше.', en: 'Nothing for the day yet — add a project from the search above.', es: 'Nada para el día todavía — añada un proyecto desde la búsqueda de arriba.' },
   plan_conflict_no_crew: { ru: 'Есть задачи, но никого не назначено: {project}', en: 'Has tasks but nobody assigned: {project}', es: 'Tiene tareas pero nadie asignado: {project}' },
+  plan_free_workers: { ru: 'Свободные работники', en: 'Unassigned workers', es: 'Trabajadores sin asignar' },
+  plan_free_workers_empty: { ru: 'Свободных работников нет', en: 'No unassigned workers', es: 'No hay trabajadores sin asignar' },
   plan_add_task: { ru: '+ задача', en: '+ task', es: '+ tarea' },
   plan_task_title_ph: { ru: 'Название задачи', en: 'Task title', es: 'Título de la tarea' },
   plan_assignee_none: { ru: 'Без исполнителя', en: 'Unassigned', es: 'Sin asignar' },
