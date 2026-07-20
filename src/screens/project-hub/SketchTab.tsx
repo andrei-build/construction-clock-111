@@ -129,6 +129,7 @@ import {
   type SketchRoomTemplate,
 } from './sketchTemplates'
 import {
+  snapCornerSquare,
   snapToExistingGeometry,
   snapPointWithSmartGuides,
   smartGuideLabelKey,
@@ -2845,8 +2846,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const snap = (p: Pt): Pt => snapForModel(model, p, activeSnapFt)
 
   // Прилипание новой точки к вершинам/стенам ДРУГИХ контуров.
-  const snapToExistingForModel = (baseModel: SketchModel, p: Pt): SketchExistingSnapResult | null => (
-    snapToExistingGeometry(baseModel, p, { radiusCells: ROOM_SNAP })
+  const snapToExistingForModel = (
+    baseModel: SketchModel,
+    p: Pt,
+    options: { excludeContourIndex?: number } = {},
+  ): SketchExistingSnapResult | null => (
+    snapToExistingGeometry(baseModel, p, { radiusCells: ROOM_SNAP, excludeContourIndex: options.excludeContourIndex })
   )
 
   // Точка для установки угла стены: прилипание к чужой геометрии имеет приоритет над сеткой.
@@ -2885,19 +2890,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           setSmartGuides([])
           return m
         }
-        const fallback = snapForModel(m, raw, activeSnapFtRef.current)
+        const thresholdCells = smartGuideThresholdCells(view)
+        const existingSnap = snapToExistingForModel(m, raw, { excludeContourIndex: currentDragNode.c })
+        const fallback = existingSnap?.point ?? snapForModel(m, raw, activeSnapFtRef.current)
         const guided = snapPointWithSmartGuides(m, raw, {
           fallbackPoint: fallback,
-          thresholdCells: smartGuideThresholdCells(view),
+          thresholdCells,
           excludeContourIndex: currentDragNode.c,
           excludePointIndex: currentDragNode.p,
         })
-        setSmartGuides(guided.guides)
+        const cornerSquare = snapCornerSquare(m, existingSnap?.point ?? guided.point, {
+          contourIndex: currentDragNode.c,
+          pointIndex: currentDragNode.p,
+          thresholdCells,
+        })
+        setSmartGuides([...(existingSnap ? [] : guided.guides), ...cornerSquare.guides])
         const nextContours = m.contours.map((item, contourIndex) => (
           contourIndex === currentDragNode.c
             ? {
                 ...item,
-                points: item.points.map((point, pointIndex) => (pointIndex === currentDragNode.p ? guided.point : point)),
+                points: item.points.map((point, pointIndex) => (pointIndex === currentDragNode.p ? cornerSquare.point : point)),
               }
             : item
         ))
@@ -5759,17 +5771,48 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               {smartGuides.map((guide, index) => {
                 const value = guide.value * CELL_PX
                 const label = t(smartGuideLabelKey(guide.kind))
+                const line = guide.from && guide.to
+                  ? {
+                      x1: guide.from.x * CELL_PX,
+                      y1: guide.from.y * CELL_PX,
+                      x2: guide.to.x * CELL_PX,
+                      y2: guide.to.y * CELL_PX,
+                    }
+                  : null
+                const markerPath = guide.cornerMarker
+                  ? (() => {
+                      const marker = guide.cornerMarker
+                      const markerSizeCells = Math.max(0.25, Math.min(0.75, (12 * screenWorldPx) / CELL_PX))
+                      const horizontalX = (marker.corner.x + marker.horizontalSign * markerSizeCells) * CELL_PX
+                      const verticalY = (marker.corner.y + marker.verticalSign * markerSizeCells) * CELL_PX
+                      const cornerX = marker.corner.x * CELL_PX
+                      const cornerY = marker.corner.y * CELL_PX
+                      return `M ${horizontalX} ${cornerY} L ${horizontalX} ${verticalY} L ${cornerX} ${verticalY}`
+                    })()
+                  : null
                 return guide.axis === 'x' ? (
                   <g key={`sg-${guide.axis}-${guide.kind}-${index}`} className={`hub-sketch-smart-guide hub-sketch-smart-guide-${guide.kind}`}>
-                    <line x1={value} y1={canvasView.y} x2={value} y2={canvasView.y + canvasView.height} />
-                    <text x={value + 8 * screenWorldPx} y={canvasView.y + 18 * screenWorldPx}>
+                    <line
+                      x1={line ? line.x1 : value}
+                      y1={line ? line.y1 : canvasView.y}
+                      x2={line ? line.x2 : value}
+                      y2={line ? line.y2 : canvasView.y + canvasView.height}
+                    />
+                    {markerPath && <path className="hub-sketch-smart-guide-corner-marker" d={markerPath} />}
+                    <text x={(line ? line.x2 : value) + 8 * screenWorldPx} y={line ? line.y2 - 8 * screenWorldPx : canvasView.y + 18 * screenWorldPx}>
                       {label}
                     </text>
                   </g>
                 ) : (
                   <g key={`sg-${guide.axis}-${guide.kind}-${index}`} className={`hub-sketch-smart-guide hub-sketch-smart-guide-${guide.kind}`}>
-                    <line x1={canvasView.x} y1={value} x2={canvasView.x + canvasView.width} y2={value} />
-                    <text x={canvasView.x + 8 * screenWorldPx} y={value - 8 * screenWorldPx}>
+                    <line
+                      x1={line ? line.x1 : canvasView.x}
+                      y1={line ? line.y1 : value}
+                      x2={line ? line.x2 : canvasView.x + canvasView.width}
+                      y2={line ? line.y2 : value}
+                    />
+                    {markerPath && <path className="hub-sketch-smart-guide-corner-marker" d={markerPath} />}
+                    <text x={line ? line.x2 + 8 * screenWorldPx : canvasView.x + 8 * screenWorldPx} y={(line ? line.y2 : value) - 8 * screenWorldPx}>
                       {label}
                     </text>
                   </g>

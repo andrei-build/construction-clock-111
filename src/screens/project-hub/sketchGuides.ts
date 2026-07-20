@@ -11,17 +11,29 @@ export type SketchGuideModel = {
   contours: SketchGuideContour[]
   placedItems?: SketchGuidePlacedItem[]
 }
-export type SketchSmartGuideKind = 'center' | 'edge' | 'axis' | 'equal-offset'
+export type SketchSmartGuideKind = 'center' | 'edge' | 'axis' | 'equal-offset' | 'corner-square'
 export type SketchSmartGuide = {
   kind: SketchSmartGuideKind
   axis: 'x' | 'y'
   value: number
   distance: number
+  from?: SketchGuidePoint
+  to?: SketchGuidePoint
+  cornerMarker?: {
+    corner: SketchGuidePoint
+    horizontalSign: -1 | 1
+    verticalSign: -1 | 1
+  }
 }
 export type SketchSmartGuideResult = {
   point: SketchGuidePoint
   guides: SketchSmartGuide[]
   snapped: boolean
+}
+export type SketchCornerSquareSnapResult = {
+  point: SketchGuidePoint
+  guides: SketchSmartGuide[]
+  squared: boolean
 }
 export type SketchExistingSnapTarget =
   | { kind: 'point'; c: number; p: number; point: SketchGuidePoint }
@@ -36,6 +48,22 @@ type SmartGuideCandidate = {
   kind: SketchSmartGuideKind
   value: number
   priority: number
+}
+
+type CornerNeighbor = {
+  point: SketchGuidePoint
+  index: number
+}
+
+type CornerAxisSnap = {
+  value: number
+  distance: number
+  neighbor: SketchGuidePoint
+}
+
+type AxisDirection = {
+  axis: 'x' | 'y'
+  sign: -1 | 1
 }
 
 function modelCellFt(model: SketchGuideModel): number {
@@ -150,6 +178,7 @@ export function smartGuideLabelKey(kind: SketchSmartGuideKind): string {
   if (kind === 'center') return 'hub_sketch_guide_center'
   if (kind === 'edge') return 'hub_sketch_guide_edge'
   if (kind === 'axis') return 'hub_sketch_guide_axis'
+  if (kind === 'corner-square') return 'hub_sketch_guide_corner_square'
   return 'hub_sketch_guide_equal'
 }
 
@@ -215,6 +244,133 @@ export function snapToExistingGeometry(
     }
   })
   return bestSegment
+}
+
+function cornerNeighbors(contour: SketchGuideContour, pointIndex: number): CornerNeighbor[] {
+  if (!contour.points[pointIndex]) return []
+  const lastIndex = contour.points.length - 1
+  const prevIndex = pointIndex > 0
+    ? pointIndex - 1
+    : contour.closed && contour.points.length >= 3
+      ? lastIndex
+      : null
+  const nextIndex = pointIndex < lastIndex
+    ? pointIndex + 1
+    : contour.closed && contour.points.length >= 3
+      ? 0
+      : null
+  const neighbors: CornerNeighbor[] = []
+  if (prevIndex !== null) neighbors.push({ point: contour.points[prevIndex], index: prevIndex })
+  if (nextIndex !== null && nextIndex !== prevIndex) neighbors.push({ point: contour.points[nextIndex], index: nextIndex })
+  return neighbors
+}
+
+function bestCornerAxisSnap(
+  point: SketchGuidePoint,
+  neighbors: CornerNeighbor[],
+  axis: 'x' | 'y',
+  thresholdCells: number,
+): CornerAxisSnap | null {
+  const coordinate = axis === 'x' ? 'x' : 'y'
+  return neighbors
+    .map((neighbor) => ({
+      value: neighbor.point[coordinate],
+      distance: Math.abs(point[coordinate] - neighbor.point[coordinate]),
+      neighbor: neighbor.point,
+      index: neighbor.index,
+    }))
+    .filter((snap) => snap.distance < thresholdCells)
+    .sort((a, b) => a.distance - b.distance || a.index - b.index)[0] ?? null
+}
+
+function axisDirectionFromCorner(corner: SketchGuidePoint, neighbor: SketchGuidePoint): AxisDirection | null {
+  const dx = neighbor.x - corner.x
+  const dy = neighbor.y - corner.y
+  const epsilon = 0.000001
+  if (Math.abs(dy) <= epsilon && Math.abs(dx) > epsilon) {
+    return { axis: 'x', sign: dx > 0 ? 1 : -1 }
+  }
+  if (Math.abs(dx) <= epsilon && Math.abs(dy) > epsilon) {
+    return { axis: 'y', sign: dy > 0 ? 1 : -1 }
+  }
+  return null
+}
+
+function cornerSquareMarker(
+  corner: SketchGuidePoint,
+  neighbors: CornerNeighbor[],
+): SketchSmartGuide['cornerMarker'] | null {
+  const directions = neighbors
+    .map((neighbor) => axisDirectionFromCorner(corner, neighbor.point))
+    .filter((direction): direction is AxisDirection => !!direction)
+  const horizontal = directions.find((direction) => direction.axis === 'x')
+  const vertical = directions.find((direction) => direction.axis === 'y')
+  if (!horizontal || !vertical) return null
+  return {
+    corner: { x: corner.x, y: corner.y },
+    horizontalSign: horizontal.sign,
+    verticalSign: vertical.sign,
+  }
+}
+
+export function snapCornerSquare(
+  model: Pick<SketchGuideModel, 'contours'>,
+  draggedPoint: SketchGuidePoint,
+  options: {
+    contourIndex: number
+    pointIndex: number
+    thresholdCells: number
+  },
+): SketchCornerSquareSnapResult {
+  const contour = model.contours[options.contourIndex]
+  const threshold = Number.isFinite(options.thresholdCells) && options.thresholdCells > 0 ? options.thresholdCells : 0
+  if (!contour || !contour.points[options.pointIndex] || threshold <= 0) {
+    return { point: { x: draggedPoint.x, y: draggedPoint.y }, guides: [], squared: false }
+  }
+
+  const neighbors = cornerNeighbors(contour, options.pointIndex)
+  if (neighbors.length <= 0) {
+    return { point: { x: draggedPoint.x, y: draggedPoint.y }, guides: [], squared: false }
+  }
+
+  const xSnap = bestCornerAxisSnap(draggedPoint, neighbors, 'x', threshold)
+  const ySnap = bestCornerAxisSnap(draggedPoint, neighbors, 'y', threshold)
+  const point = {
+    x: xSnap ? xSnap.value : draggedPoint.x,
+    y: ySnap ? ySnap.value : draggedPoint.y,
+  }
+  const guides: SketchSmartGuide[] = []
+  if (xSnap) {
+    guides.push({
+      kind: 'corner-square',
+      axis: 'x',
+      value: xSnap.value,
+      distance: xSnap.distance,
+      from: { x: xSnap.value, y: xSnap.neighbor.y },
+      to: { x: xSnap.value, y: point.y },
+    })
+  }
+  if (ySnap) {
+    guides.push({
+      kind: 'corner-square',
+      axis: 'y',
+      value: ySnap.value,
+      distance: ySnap.distance,
+      from: { x: ySnap.neighbor.x, y: ySnap.value },
+      to: { x: point.x, y: ySnap.value },
+    })
+  }
+
+  const marker = guides.length > 0 ? cornerSquareMarker(point, neighbors) : null
+  if (marker && guides[0]) {
+    guides[0] = { ...guides[0], cornerMarker: marker }
+  }
+
+  return {
+    point,
+    guides,
+    squared: guides.length > 0,
+  }
 }
 
 export function snapPointWithSmartGuides(
