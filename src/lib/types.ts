@@ -21,7 +21,7 @@ export interface Profile {
   // видны клиенту; контакты и skills/skills_note остаются внутренними.
   avatar_url?: string | null
   public_bio?: string | null
-  // TEAM-DOSSIER-1: личное досье (migration 0059) — контактные/кадровые поля, редактирует manager+.
+  // TEAM-DOSSIER-1: личное досье склеивается API из profile_contact/profile_dossier.
   // dossier_notes («заметки владельца») ВИДНЫ ТОЛЬКО manager+ (работнику/самому не показываем).
   phone?: string | null
   email?: string | null

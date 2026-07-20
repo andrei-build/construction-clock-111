@@ -189,20 +189,66 @@ export async function getTeam(): Promise<Profile[]> {
   return (data as Profile[]) ?? []
 }
 
+interface ProfileContactRow {
+  phone: string | null
+  email: string | null
+  home_address: string | null
+  emergency_contact: string | null
+}
+
+interface ProfileDossierRow {
+  hire_date: string | null
+  dossier_notes: string | null
+}
+
+async function getProfileContact(profileId: string): Promise<ProfileContactRow | null> {
+  const { data, error } = await supabase.from('profile_contact')
+    .select('phone, email, home_address, emergency_contact')
+    .eq('profile_id', profileId)
+    .maybeSingle()
+  if (error) { warnReadError('getProfileContact', error); return null }
+  return (data as ProfileContactRow | null) ?? null
+}
+
+async function getProfileDossier(profileId: string): Promise<ProfileDossierRow | null> {
+  const { data, error } = await supabase.from('profile_dossier')
+    .select('hire_date, dossier_notes')
+    .eq('profile_id', profileId)
+    .maybeSingle()
+  if (error) { warnReadError('getProfileDossier', error); return null }
+  return (data as ProfileDossierRow | null) ?? null
+}
+
 export async function getWorkerProfile(workerId: string): Promise<Profile | null> {
   const { data, error } = await supabase.from('profiles')
-    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, pin_enabled, skills, skills_note, avatar_url, public_bio, phone, email, home_address, emergency_contact, hire_date, dossier_notes')
+    .select('id, org_id, name, role, language, is_active, project_access_mode, require_checkout_video, pin_enabled, skills, skills_note, avatar_url, public_bio')
     .eq('id', workerId)
     .maybeSingle()
   if (error) throw error
-  return (data as Profile | null) ?? null
+  if (!data) return null
+
+  const [contact, dossier] = await Promise.all([
+    getProfileContact(workerId),
+    getProfileDossier(workerId),
+  ])
+  return {
+    ...(data as Profile),
+    phone: contact?.phone ?? null,
+    email: contact?.email ?? null,
+    home_address: contact?.home_address ?? null,
+    emergency_contact: contact?.emergency_contact ?? null,
+    hire_date: dossier?.hire_date ?? null,
+    dossier_notes: dossier?.dossier_notes ?? null,
+  }
 }
 
-// TEAM-DOSSIER-1: контактные/кадровые поля досье (profiles.phone/email/home_address/
-// emergency_contact/hire_date/dossier_notes/language). Редактирует manager+ (RLS profiles_update:
-// is_manager_write() ИЛИ сам; UI гейтит canEditProfile). Триггер protect_profile_privileged_cols
-// эти колонки НЕ трогает (защищает только role/pin/org/is_active/access_mode/checkout_video), так
-// что update проходит. Аддитивно к updateWorkerSkills/updateWorkerPublicProfile — не смешиваем.
+function omitUndefined<T extends Record<string, unknown>>(values: T): Partial<T> {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as Partial<T>
+}
+
+// TEAM-DOSSIER-1: контакты живут в profile_contact, дата найма/заметки владельца — в
+// profile_dossier, язык остаётся в profiles. Пишем раздельно, потому что у таблиц разные RLS-замки:
+// profile_contact доступен самому работнику и менеджеру, profile_dossier — только manager+.
 export async function updateWorkerDossier(p: Profile, workerId: string, input: {
   phone?: string | null
   email?: string | null
@@ -212,13 +258,55 @@ export async function updateWorkerDossier(p: Profile, workerId: string, input: {
   dossier_notes?: string | null
   language?: string | null
 }) {
-  const payload = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined))
-  if (Object.keys(payload).length === 0) return
-  const { error } = await supabase.from('profiles')
-    .update(payload)
-    .eq('id', workerId)
-  if (error) throw error
-  await logEvent(p, 'team.dossier_updated', 'profile', workerId, payload)
+  const contactPayload = omitUndefined({
+    phone: input.phone,
+    email: input.email,
+    home_address: input.home_address,
+    emergency_contact: input.emergency_contact,
+  })
+  const dossierPayload = omitUndefined({
+    hire_date: input.hire_date,
+    dossier_notes: input.dossier_notes,
+  })
+  const profilePayload = omitUndefined({
+    language: input.language,
+  })
+  if (
+    Object.keys(contactPayload).length === 0 &&
+    Object.keys(dossierPayload).length === 0 &&
+    Object.keys(profilePayload).length === 0
+  ) return
+
+  if (Object.keys(contactPayload).length > 0) {
+    const { error } = await supabase.from('profile_contact')
+      .upsert(
+        { org_id: p.org_id, profile_id: workerId, ...contactPayload },
+        { onConflict: 'profile_id' },
+      )
+    if (error) throw error
+  }
+
+  if (Object.keys(dossierPayload).length > 0) {
+    const { error } = await supabase.from('profile_dossier')
+      .upsert(
+        { org_id: p.org_id, profile_id: workerId, ...dossierPayload },
+        { onConflict: 'profile_id' },
+      )
+    if (error) throw error
+  }
+
+  if (Object.keys(profilePayload).length > 0) {
+    const { error } = await supabase.from('profiles')
+      .update(profilePayload)
+      .eq('id', workerId)
+    if (error) throw error
+  }
+
+  await logEvent(p, 'team.dossier_updated', 'profile', workerId, {
+    ...contactPayload,
+    ...dossierPayload,
+    ...profilePayload,
+  })
 }
 
 // TEAM-DOSSIER-1: реквизиты субподрядчика (subcontractor_details). Только чтение полей,
