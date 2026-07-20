@@ -8313,6 +8313,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .ai-proposal-issue p { margin: 0; }
 .ai-proposal-issue ul { margin: 0; padding-left: 18px; color: var(--text); }
+.ai-proposal-info {
+  border-color: rgba(61, 214, 255, .32);
+  background: rgba(61, 214, 255, .08);
+}
 .ai-nokey {
   display: flex; flex-direction: column; gap: 2px; padding: 10px 12px;
   border: 1px solid var(--amber, #d98a00); border-radius: var(--radius);
@@ -8747,6 +8751,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-orb-launcher:hover { transform: translateY(-1px); border-color: rgba(61, 214, 255, .52); background: rgba(11, 24, 38, .96); }
 .ai-orb-launcher:active { transform: scale(.97); }
 .ai-orb-launcher .ai-orb { pointer-events: none; }
+.ai-orb-launcher-active { border-color: rgba(105,231,255,.48); }
 .ai-orb.ai-orb-xs {
   --orb-size: 46px;
   --orb-core-size: 20px;
@@ -8797,6 +8802,17 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-overlay-close:active { transform: scale(.9); }
 
 .ai-overlay-main { display: flex; align-items: center; gap: 12px; padding-right: 20px; }
+.ai-orb-toggle {
+  flex: 0 0 auto; display: inline-grid; place-items: center;
+  width: 72px; height: 72px; padding: 0; margin: 0;
+  border: 0; border-radius: 50%; background: transparent; color: inherit;
+  cursor: pointer;
+}
+.ai-orb-toggle:focus-visible {
+  outline: 2px solid rgba(61, 214, 255, .72);
+  outline-offset: 3px;
+}
+.ai-orb-toggle .ai-orb { pointer-events: none; }
 .ai-overlay-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; }
 .ai-overlay-meta .ai-orb-label { text-align: left; font-size: 14px; }
 .ai-overlay-status-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -8840,6 +8856,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-overlay-proposal {
   padding: 10px; display: flex; flex-direction: column; gap: 8px; text-align: left;
   border: 1px solid var(--line); border-radius: 8px; background: rgba(21,29,45,.72);
+}
+.ai-overlay-proposal-info {
+  border-color: rgba(61, 214, 255, .34);
+  background: rgba(61, 214, 255, .1);
 }
 .ai-overlay-proposal-head { display: flex; flex-direction: column; gap: 3px; }
 .ai-overlay-proposal-badge {

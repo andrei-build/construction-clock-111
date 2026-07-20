@@ -24,6 +24,9 @@ import {
   type AiProposal,
 } from '../lib/api/ai'
 import {
+  getAiOrbToggleIntent,
+  getNextAiOrbToggleState,
+  isAiInfoProposalAction,
   isVoiceAffirm,
   isVoiceCancel,
   isVoiceStopCommand,
@@ -301,6 +304,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const ttsErrorShownRef = useRef(false)
   const assistantTurnRef = useRef(0)
   const ttsAudioCtxRef = useRef<AudioContext | null>(null)
+  const ttsUnlockedRef = useRef(false)
   const ttsAnalyserRef = useRef<AnalyserNode | null>(null)
   const ttsSourceRef = useRef<MediaElementAudioSourceNode | null>(null)
   const ttsRafRef = useRef<number | null>(null)
@@ -312,6 +316,63 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   useEffect(() => { openRef.current = open }, [open])
   useEffect(() => { thinkingRef.current = thinking }, [thinking])
   useEffect(() => { ttsBusyRef.current = ttsBusy }, [ttsBusy])
+
+  const getTtsAudioContext = useCallback((): AudioContext | null => {
+    if (typeof window === 'undefined') return null
+    try {
+      const existing = ttsAudioCtxRef.current
+      if (existing && existing.state !== 'closed') return existing
+      const Ctx = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
+        .AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!Ctx) return null
+      const ctx = new Ctx()
+      ttsAudioCtxRef.current = ctx
+      ttsUnlockedRef.current = false
+      return ctx
+    } catch (err) {
+      console.warn('AI TTS AudioContext init failed', err)
+      return null
+    }
+  }, [])
+
+  const resumeTtsAudioContext = useCallback(async (): Promise<AudioContext | null> => {
+    const ctx = getTtsAudioContext()
+    if (!ctx) return null
+    if (ctx.state !== 'running') {
+      try {
+        await ctx.resume()
+      } catch (err) {
+        console.warn('AI TTS AudioContext resume failed', err)
+      }
+    }
+    return ctx
+  }, [getTtsAudioContext])
+
+  const unlockTtsAudio = useCallback(async (): Promise<void> => {
+    if (!AUDIO_TTS_SUPPORTED) return
+    const ctx = getTtsAudioContext()
+    if (!ctx) return
+    try {
+      if (!ttsUnlockedRef.current) {
+        const source = ctx.createBufferSource()
+        const gain = ctx.createGain()
+        source.buffer = ctx.createBuffer(1, 1, ctx.sampleRate)
+        gain.gain.value = 0
+        source.connect(gain)
+        gain.connect(ctx.destination)
+        source.onended = () => {
+          try { source.disconnect() } catch { /* ignore */ }
+          try { gain.disconnect() } catch { /* ignore */ }
+        }
+        source.start(0)
+      }
+      if (ctx.state !== 'running') await ctx.resume()
+      ttsUnlockedRef.current = ctx.state === 'running'
+    } catch (err) {
+      ttsUnlockedRef.current = false
+      console.warn('AI TTS audio unlock failed', err)
+    }
+  }, [getTtsAudioContext])
 
   const stopTtsMeter = useCallback(() => {
     if (ttsRafRef.current !== null) { cancelAnimationFrame(ttsRafRef.current); ttsRafRef.current = null }
@@ -356,15 +417,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     if (runIdle) onIdle?.()
   }, [stopCurrentTtsAudio])
 
-  const startTtsMeter = useCallback((audio: HTMLAudioElement) => {
+  const startTtsMeter = useCallback(async (audio: HTMLAudioElement): Promise<void> => {
     stopTtsMeter()
     try {
-      const Ctx = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
-        .AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-      if (!Ctx) { setTtsLevel(.45); return }
-      const ctx = ttsAudioCtxRef.current ?? new Ctx()
-      ttsAudioCtxRef.current = ctx
-      if (ctx.state === 'suspended') void ctx.resume()
+      const ctx = await resumeTtsAudioContext()
+      if (!ctx || ctx.state !== 'running') { setTtsLevel(.45); return }
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 256
       const source = ctx.createMediaElementSource(audio)
@@ -383,10 +440,62 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         ttsRafRef.current = requestAnimationFrame(tick)
       }
       ttsRafRef.current = requestAnimationFrame(tick)
-    } catch {
+    } catch (err) {
+      console.warn('AI TTS meter unavailable', err)
       setTtsLevel(.45)
     }
-  }, [stopTtsMeter])
+  }, [resumeTtsAudioContext, stopTtsMeter])
+
+  const playTtsAudioElement = useCallback(async (audio: HTMLAudioElement): Promise<void> => {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      const fail = (err: unknown) => {
+        if (settled) return
+        settled = true
+        reject(err)
+      }
+      const isAutoplayBlock = (err: unknown): boolean => {
+        const name = (err as { name?: string } | null)?.name
+        const message = (err as { message?: string } | null)?.message?.toLowerCase() ?? ''
+        return name === 'NotAllowedError' || message.includes('user gesture') || message.includes('play()')
+      }
+      const attemptPlay = async () => {
+        try {
+          await audio.play()
+        } catch (err) {
+          console.warn('AI TTS audio.play() rejected', err)
+          const ctx = ttsAudioCtxRef.current
+          if (isAutoplayBlock(err) && ctx?.state === 'suspended') {
+            try {
+              await ctx.resume()
+            } catch (resumeErr) {
+              console.warn('AI TTS AudioContext resume before retry failed', resumeErr)
+            }
+            if ((ctx as AudioContext).state === 'running') {
+              try {
+                await audio.play()
+                return
+              } catch (retryErr) {
+                console.warn('AI TTS audio.play() retry rejected', retryErr)
+                fail(retryErr)
+                return
+              }
+            }
+          }
+          fail(err)
+        }
+      }
+      audio.onended = finish
+      audio.onerror = finish
+      audio.onabort = finish
+      void attemptPlay()
+    })
+  }, [])
 
   // AI-VOICE-FIX-1: метр уровня звука — пульсация индикатора «слушаю» по громкости с микрофона.
   const stopMeter = useCallback(() => {
@@ -501,20 +610,9 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           ttsUrlRef.current = url
           const audio = new Audio(url)
           ttsAudioRef.current = audio
-          startTtsMeter(audio)
-          await new Promise<void>((resolve) => {
-            let settled = false
-            const finish = () => {
-              if (settled) return
-              settled = true
-              resolve()
-            }
-            audio.onended = finish
-            audio.onerror = finish
-            audio.onabort = finish
-            const playResult = audio.play()
-            if (playResult && typeof playResult.catch === 'function') playResult.catch(finish)
-          })
+          await startTtsMeter(audio)
+          if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
+          await playTtsAudioElement(audio)
 
           if (ttsAudioRef.current === audio) ttsAudioRef.current = null
           stopTtsMeter()
@@ -534,7 +632,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         finishTtsQueue(serial)
       }
     })()
-  }, [finishTtsQueue, flashToast, revokeTtsUrl, startTtsMeter, stopTtsMeter, t])
+  }, [finishTtsQueue, flashToast, playTtsAudioElement, revokeTtsUrl, startTtsMeter, stopTtsMeter, t])
 
   const enqueueTtsSegments = useCallback((segments: string[]): boolean => {
     if (!AUDIO_TTS_SUPPORTED || !speakOnRef.current) return false
@@ -947,9 +1045,25 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     }
   }, [announce, busyId, t])
 
+  const dismissInfoProposal = useCallback((id: string) => {
+    setProposals((prev) => prev.filter((x) => x.id !== id))
+    setProposalIssues((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+  }, [])
+
   const handleVoiceProposalIntent = useCallback(async (text: string): Promise<boolean> => {
     const pr = proposals[0]
     if (!pr) return false
+    if (isAiInfoProposalAction(pr.action_type)) {
+      if (isVoiceAffirm(text) || isVoiceCancel(text)) {
+        dismissInfoProposal(pr.id)
+        return true
+      }
+      return false
+    }
     if (isVoiceCancel(text)) {
       await rejectProposal(pr)
       return true
@@ -963,7 +1077,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       return true
     }
     return false
-  }, [announce, executeProposal, proposals, rejectProposal, t])
+  }, [announce, dismissInfoProposal, executeProposal, proposals, rejectProposal, t])
 
   const handleVoiceInput = useCallback(async (text: string) => {
     if (await handleVoiceProposalIntent(text)) return
@@ -1315,11 +1429,13 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (thinking) return
+    void unlockTtsAudio()
     // Ручная отправка: озвучку нового ответа делает эффект по messages (разговорный цикл не активен).
     await sendQuestion(input)
   }
 
   const proposalSummary = (pr: AiProposal): string => {
+    if (isAiInfoProposalAction(pr.action_type)) return t('ai_bug_recorded')
     if (pr.action_type === 'assign_worker') {
       const worker = pStr(pr.payload, 'worker_name', 'worker', 'profile_name', 'person_name', 'assignee_name') ?? t('ai_dispatch_worker_unknown')
       const project = pStr(pr.payload, 'project_name', 'project', 'site_name', 'site') ?? t('ai_dispatch_project_unknown')
@@ -1361,12 +1477,14 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   // listening — слушаю; thinking — думаю (идёт стрим/ответ); speaking — говорю (волны).
   const micDenied = wakeOn && wakeSupported && voiceStatus === 'denied'
   const assistantActive = thinking || streaming || ttsBusy
+  const orbToggleIntent = getAiOrbToggleIntent({ open, wakeOn, speakOn, thinking, streaming, ttsBusy, voiceStatus })
+  const orbToggleActive = orbToggleIntent === 'deactivate'
   const orbState: 'idle' | 'listening' | 'thinking' | 'speaking' =
     ttsBusy || voiceStatus === 'speaking'
       ? 'speaking'
       : thinking || streaming
       ? 'thinking'
-      : voiceStatus === 'listening'
+      : voiceStatus === 'listening' || voiceStatus === 'wake'
         ? 'listening'
         : 'idle'
   const orbLabel =
@@ -1374,14 +1492,15 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       ? t('ai_mic_denied_title')
       : orbState === 'thinking'
         ? t('ai_thinking')
-        : orbState === 'listening'
+        : voiceStatus === 'wake'
+          ? t('ai_wake_listening')
+          : orbState === 'listening'
           ? t('ai_status_listening')
           : orbState === 'speaking'
             ? t('ai_status_speaking')
             : t('ai_orb_idle')
 
   // Бейдж при закрытой панели (оставляем прежним — статус голоса без правки App/Nav).
-  const voicePulsing = voiceStatus === 'wake' || voiceStatus === 'listening'
   const badgeView: { label: string } | null =
     !wakeOn || !wakeSupported
       ? null
@@ -1396,6 +1515,33 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
               : voiceStatus === 'denied'
                 ? { label: t('ai_mic_denied_title') }
                 : null
+  const launcherPulsing = orbToggleActive && !micDenied
+  const launcherStatus = badgeView?.label ?? (orbToggleActive ? t('ai_orb_active') : t('ai_orb_idle'))
+  const orbToggleLabel = orbToggleActive ? t('ai_orb_deactivate') : t('ai_orb_activate')
+
+  const handleOrbToggle = useCallback(() => {
+    const next = getNextAiOrbToggleState({ open, wakeOn, speakOn, thinking, streaming, ttsBusy, voiceStatus })
+    if (next.intent === 'activate') {
+      void unlockTtsAudio()
+      speakOnRef.current = true
+      wakeOnRef.current = true
+      openRef.current = true
+      setSpeakOn(next.speakOn)
+      setWakeOn(next.wakeOn)
+      setOpen(next.open)
+      return
+    }
+
+    wakeOnRef.current = false
+    openRef.current = false
+    setWakeOn(false)
+    setOpen(false)
+    setDrawerOpen(false)
+    setContextOpen(false)
+    cancelActiveAssistant()
+    releaseMic()
+    setVoiceStatus('off')
+  }, [cancelActiveAssistant, open, releaseMic, speakOn, streaming, thinking, ttsBusy, unlockTtsAudio, voiceStatus, wakeOn])
 
   return (
     <>
@@ -1403,10 +1549,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       {!open && (
         <button
           type="button"
-          className={`ai-orb-launcher ai-voice-${voiceStatus}${voicePulsing ? ' ai-orb-launcher-pulse' : ''}`}
-          onClick={() => setOpen(true)}
-          aria-label={t('ai_title')}
-          title={badgeView?.label ?? t('ai_title')}
+          className={`ai-orb-launcher ai-voice-${voiceStatus}${launcherPulsing ? ' ai-orb-launcher-pulse' : ''}${orbToggleActive ? ' ai-orb-launcher-active' : ''}`}
+          onClick={handleOrbToggle}
+          aria-label={orbToggleLabel}
+          aria-pressed={orbToggleActive}
+          title={orbToggleLabel}
         >
           <span
             className={`ai-orb ai-orb-xs ai-orb-${orbState}${micDenied ? ' ai-orb-denied' : ''}`}
@@ -1422,7 +1569,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
             <span className="ai-orb-ring ai-orb-ring4" />
             <span className="ai-orb-core" />
           </span>
-          {badgeView && <span className="ai-launcher-status">{badgeView.label}</span>}
+          <span className="ai-launcher-status">{launcherStatus}</span>
         </button>
       )}
 
@@ -1439,20 +1586,29 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
 
           {/* СУЩНОСТЬ: пульсирующий орб (компактный) + короткая строка состояния + видимый контекст экрана. */}
           <div className="ai-overlay-main">
-            <div
-              className={`ai-orb ai-orb-sm ai-orb-${orbState}${micDenied ? ' ai-orb-denied' : ''}`}
-              style={{
-                '--mic': orbState === 'listening' ? micLevel : 0,
-                '--tts': orbState === 'speaking' ? ttsLevel : 0,
-              } as React.CSSProperties}
-              aria-hidden="true"
+            <button
+              type="button"
+              className="ai-orb-toggle"
+              onClick={handleOrbToggle}
+              aria-label={orbToggleLabel}
+              aria-pressed={orbToggleActive}
+              title={orbToggleLabel}
             >
-              <span className="ai-orb-ring" />
-              <span className="ai-orb-ring ai-orb-ring2" />
-              <span className="ai-orb-ring ai-orb-ring3" />
-              <span className="ai-orb-ring ai-orb-ring4" />
-              <span className="ai-orb-core" />
-            </div>
+              <span
+                className={`ai-orb ai-orb-sm ai-orb-${orbState}${micDenied ? ' ai-orb-denied' : ''}`}
+                style={{
+                  '--mic': orbState === 'listening' ? micLevel : 0,
+                  '--tts': orbState === 'speaking' ? ttsLevel : 0,
+                } as React.CSSProperties}
+                aria-hidden="true"
+              >
+                <span className="ai-orb-ring" />
+                <span className="ai-orb-ring ai-orb-ring2" />
+                <span className="ai-orb-ring ai-orb-ring3" />
+                <span className="ai-orb-ring ai-orb-ring4" />
+                <span className="ai-orb-core" />
+              </span>
+            </button>
             <div className="ai-overlay-meta">
               <div className="ai-overlay-status-row">
                 <p className="ai-orb-label" role="status" aria-live="polite">{orbLabel}</p>
@@ -1502,6 +1658,24 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
               {visibleOverlayProposals.map((pr) => {
                 const issue = proposalIssues[pr.id]
                 const candidates = issue?.candidates?.slice(0, 2) ?? []
+                if (isAiInfoProposalAction(pr.action_type)) {
+                  return (
+                    <div key={pr.id} className="ai-overlay-proposal ai-overlay-proposal-info" role="status">
+                      <div className="ai-overlay-proposal-head">
+                        <span className="ai-overlay-proposal-title">{t('ai_bug_recorded')}</span>
+                      </div>
+                      <div className="row ai-overlay-proposal-actions">
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={() => dismissInfoProposal(pr.id)}
+                        >
+                          {t('got_it')}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                }
                 return (
                   <div key={pr.id} className="ai-overlay-proposal">
                     <div className="ai-overlay-proposal-head">
@@ -1579,7 +1753,12 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
                   <input
                     type="checkbox"
                     checked={speakOn}
-                    onChange={(e) => { setSpeakOn(e.target.checked); if (!e.target.checked) cancelTtsQueue() }}
+                    onChange={(e) => {
+                      const checked = e.target.checked
+                      setSpeakOn(checked)
+                      if (checked) void unlockTtsAudio()
+                      else cancelTtsQueue()
+                    }}
                   />
                   <span>{t('ai_speak_toggle')}</span>
                 </label>
@@ -1589,7 +1768,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
                   <input
                     type="checkbox"
                     checked={wakeOn}
-                    onChange={(e) => setWakeOn(e.target.checked)}
+                    onChange={(e) => {
+                      const checked = e.target.checked
+                      setWakeOn(checked)
+                      if (checked) void unlockTtsAudio()
+                    }}
                   />
                   <span>{t('ai_wake_toggle')}</span>
                 </label>
@@ -1650,6 +1833,22 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
                   const rows = summarizePayload(pr.payload)
                   const issue = proposalIssues[pr.id]
                   const candidates = issue?.candidates?.slice(0, 6) ?? []
+                  if (isAiInfoProposalAction(pr.action_type)) {
+                    return (
+                      <div key={pr.id} className="ai-proposal ai-proposal-info card" role="status">
+                        <div className="ai-proposal-title">{t('ai_bug_recorded')}</div>
+                        <div className="row ai-proposal-actions">
+                          <button
+                            type="button"
+                            className="btn ghost"
+                            onClick={() => dismissInfoProposal(pr.id)}
+                          >
+                            {t('got_it')}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  }
                   return (
                     <div key={pr.id} className="ai-proposal card">
                       <div className="ai-proposal-title">
