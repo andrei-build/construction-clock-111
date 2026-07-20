@@ -27,7 +27,7 @@ export function isAiInfoProposalAction(actionType: string): boolean {
 
 export function getAiOrbToggleIntent(state: AiOrbToggleSnapshot): AiOrbToggleIntent {
   const activeVoice = state.voiceStatus ? ACTIVE_ORB_VOICE_STATES.has(state.voiceStatus) : false
-  return state.open || state.wakeOn || state.thinking || state.streaming || state.ttsBusy || activeVoice
+  return state.wakeOn || state.thinking || state.streaming || state.ttsBusy || activeVoice
     ? 'deactivate'
     : 'activate'
 }
@@ -36,6 +36,52 @@ export function getNextAiOrbToggleState(state: AiOrbToggleSnapshot): AiOrbToggle
   const intent = getAiOrbToggleIntent(state)
   if (intent === 'activate') return { intent, open: true, wakeOn: true, speakOn: true }
   return { intent, open: false, wakeOn: false, speakOn: state.speakOn }
+}
+
+export type AssistantVoiceGateSnapshot = {
+  wakeOn: boolean
+  open: boolean
+  voiceStatus?: string
+  thinking?: boolean
+  streaming?: boolean
+  ttsBusy?: boolean
+  ttsQueueRunning?: boolean
+  queuedTtsSegments?: number
+}
+
+export function hasPendingAssistantSpeech(state: Pick<
+  AssistantVoiceGateSnapshot,
+  'ttsBusy' | 'ttsQueueRunning' | 'queuedTtsSegments'
+>): boolean {
+  return Boolean(state.ttsBusy || state.ttsQueueRunning || (state.queuedTtsSegments ?? 0) > 0)
+}
+
+export function shouldAcceptWakePhraseResult(state: AssistantVoiceGateSnapshot): boolean {
+  return Boolean(
+    state.wakeOn &&
+    !state.open &&
+    state.voiceStatus === 'wake' &&
+    !state.thinking &&
+    !state.streaming &&
+    !hasPendingAssistantSpeech(state),
+  )
+}
+
+export function shouldAcceptAssistantVoiceResult(state: AssistantVoiceGateSnapshot): boolean {
+  return Boolean(
+    state.wakeOn &&
+    state.open &&
+    state.voiceStatus === 'listening' &&
+    !state.thinking &&
+    !state.streaming &&
+    !hasPendingAssistantSpeech(state),
+  )
+}
+
+export function isTtsPlaybackBlockedError(err: unknown): boolean {
+  const name = (err as { name?: string } | null)?.name
+  const message = (err as { message?: string } | null)?.message?.toLowerCase() ?? ''
+  return name === 'NotAllowedError' || message.includes('user gesture') || message.includes('play()')
 }
 
 const SENTENCE_END_RE = /[.!?]+|[。！？]+|…+/g

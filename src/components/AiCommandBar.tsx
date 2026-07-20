@@ -26,12 +26,13 @@ import {
 import {
   getAiOrbToggleIntent,
   getNextAiOrbToggleState,
+  hasPendingAssistantSpeech,
   isAiInfoProposalAction,
+  isTtsPlaybackBlockedError,
   isVoiceAffirm,
   isVoiceCancel,
-  isVoiceStopCommand,
-  looksLikeTtsEcho,
-  normalizeVoiceText,
+  shouldAcceptAssistantVoiceResult,
+  shouldAcceptWakePhraseResult,
   splitCompletedSpeechSegments,
   stripMarkdownForSpeech,
 } from '../lib/aiVoice'
@@ -290,6 +291,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const openRef = useRef(open)
   const thinkingRef = useRef(false)
   const ttsBusyRef = useRef(false)
+  const voiceStatusRef = useRef<VoiceStatus>('off')
   const convoActiveRef = useRef(false)
   const silenceTimerRef = useRef<number | null>(null)
   const assistantAbortRef = useRef<AbortController | null>(null)
@@ -300,7 +302,6 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const ttsQueueRunningRef = useRef(false)
   const ttsSerialRef = useRef(0)
   const ttsOnIdleRef = useRef<(() => void) | null>(null)
-  const ttsSpokenTextRef = useRef('')
   const ttsErrorShownRef = useRef(false)
   const assistantTurnRef = useRef(0)
   const ttsAudioCtxRef = useRef<AudioContext | null>(null)
@@ -316,6 +317,23 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   useEffect(() => { openRef.current = open }, [open])
   useEffect(() => { thinkingRef.current = thinking }, [thinking])
   useEffect(() => { ttsBusyRef.current = ttsBusy }, [ttsBusy])
+  useEffect(() => { voiceStatusRef.current = voiceStatus }, [voiceStatus])
+
+  const setVoiceStatusLive = useCallback((status: VoiceStatus) => {
+    voiceStatusRef.current = status
+    setVoiceStatus(status)
+  }, [])
+
+  const assistantSpeechGateSnapshot = useCallback(() => ({
+    wakeOn: wakeOnRef.current,
+    open: openRef.current,
+    voiceStatus: voiceStatusRef.current,
+    thinking: thinkingRef.current,
+    streaming: streamingRef.current,
+    ttsBusy: ttsBusyRef.current,
+    ttsQueueRunning: ttsQueueRunningRef.current,
+    queuedTtsSegments: ttsQueueRef.current.length,
+  }), [])
 
   const getTtsAudioContext = useCallback((): AudioContext | null => {
     if (typeof window === 'undefined') return null
@@ -409,7 +427,6 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     ttsSerialRef.current += 1
     ttsQueueRef.current = []
     ttsQueueRunningRef.current = false
-    ttsSpokenTextRef.current = ''
     stopCurrentTtsAudio()
     setTtsBusy(false)
     const onIdle = ttsOnIdleRef.current
@@ -459,24 +476,14 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         settled = true
         reject(err)
       }
-      const isAutoplayBlock = (err: unknown): boolean => {
-        const name = (err as { name?: string } | null)?.name
-        const message = (err as { message?: string } | null)?.message?.toLowerCase() ?? ''
-        return name === 'NotAllowedError' || message.includes('user gesture') || message.includes('play()')
-      }
       const attemptPlay = async () => {
         try {
           await audio.play()
         } catch (err) {
           console.warn('AI TTS audio.play() rejected', err)
-          const ctx = ttsAudioCtxRef.current
-          if (isAutoplayBlock(err) && ctx?.state === 'suspended') {
-            try {
-              await ctx.resume()
-            } catch (resumeErr) {
-              console.warn('AI TTS AudioContext resume before retry failed', resumeErr)
-            }
-            if ((ctx as AudioContext).state === 'running') {
+          if (isTtsPlaybackBlockedError(err)) {
+            const ctx = await resumeTtsAudioContext()
+            if (ctx?.state === 'running') {
               try {
                 await audio.play()
                 return
@@ -491,11 +498,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         }
       }
       audio.onended = finish
-      audio.onerror = finish
+      audio.onerror = () => fail(new Error('tts_audio_error'))
       audio.onabort = finish
       void attemptPlay()
     })
-  }, [])
+  }, [resumeTtsAudioContext])
 
   // AI-VOICE-FIX-1: метр уровня звука — пульсация индикатора «слушаю» по громкости с микрофона.
   const stopMeter = useCallback(() => {
@@ -578,7 +585,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     if (onIdle) {
       onIdle()
     } else {
-      setVoiceStatus((prev) => (prev === 'speaking' ? (wakeOnRef.current && !openRef.current ? 'wake' : 'off') : prev))
+      setVoiceStatus((prev) => {
+        const next: VoiceStatus = prev === 'speaking' ? (wakeOnRef.current && !openRef.current ? 'wake' : 'off') : prev
+        voiceStatusRef.current = next
+        return next
+      })
     }
   }, [revokeTtsUrl, stopTtsMeter])
 
@@ -588,7 +599,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     const serial = ttsSerialRef.current
     ttsQueueRunningRef.current = true
     setTtsBusy(true)
-    setVoiceStatus('speaking')
+    setVoiceStatusLive('speaking')
 
     void (async () => {
       try {
@@ -597,9 +608,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           speakOnRef.current &&
           ttsQueueRef.current.length > 0
         ) {
-          const text = ttsQueueRef.current.shift()
-          if (!text) continue
-          ttsSpokenTextRef.current = `${ttsSpokenTextRef.current} ${text}`.slice(-1400)
+          const text = ttsQueueRef.current[0]
+          if (!text) {
+            ttsQueueRef.current.shift()
+            continue
+          }
           const aborter = new AbortController()
           ttsAbortRef.current = aborter
           const { blob } = await synthesizeAiSpeech({ text, style: 'jarvis', signal: aborter.signal })
@@ -613,6 +626,9 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           await startTtsMeter(audio)
           if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
           await playTtsAudioElement(audio)
+          if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
+
+          if (ttsQueueRef.current[0] === text) ttsQueueRef.current.shift()
 
           if (ttsAudioRef.current === audio) ttsAudioRef.current = null
           stopTtsMeter()
@@ -622,7 +638,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       } catch (err) {
         const name = (err as { name?: string } | null)?.name
         if (serial === ttsSerialRef.current && name !== 'AbortError') {
-          ttsQueueRef.current = []
+          if (!isTtsPlaybackBlockedError(err)) ttsQueueRef.current = []
           if (!ttsErrorShownRef.current) {
             ttsErrorShownRef.current = true
             flashToast(t('ai_tts_error'))
@@ -632,7 +648,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         finishTtsQueue(serial)
       }
     })()
-  }, [finishTtsQueue, flashToast, playTtsAudioElement, revokeTtsUrl, startTtsMeter, stopTtsMeter, t])
+  }, [finishTtsQueue, flashToast, playTtsAudioElement, revokeTtsUrl, setVoiceStatusLive, startTtsMeter, stopTtsMeter, t])
 
   const enqueueTtsSegments = useCallback((segments: string[]): boolean => {
     if (!AUDIO_TTS_SUPPORTED || !speakOnRef.current) return false
@@ -658,8 +674,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     setThinking(false)
     setStreamText('')
     cancelTtsQueue(runTtsIdle)
-    if (openRef.current && wakeOnRef.current && SpeechRecognitionImpl) setVoiceStatus('listening')
-  }, [cancelTtsQueue])
+    if (openRef.current && wakeOnRef.current && SpeechRecognitionImpl) setVoiceStatusLive('off')
+  }, [cancelTtsQueue, setVoiceStatusLive])
 
   // Полная загрузка при открытии: история + pending-предложения + справочники для резолва имён.
   const load = useCallback(async () => {
@@ -750,6 +766,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       ttsErrorShownRef.current = false
       thinkingRef.current = true
       setThinking(true)
+      if (openRef.current && wakeOnRef.current && SpeechRecognitionImpl) setVoiceStatusLive('thinking')
       setNoKey(false)
       setStreamText('')
       setStreaming(true)
@@ -784,56 +801,68 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           let acc = ''
           let errored = false
           let stop = false
-          while (!stop) {
-            const { value, done } = await reader.read()
-            if (done) break
-            buf = (buf + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
+          let speechTailFlushed = false
+          const flushSpeechBuffer = (force = false) => {
+            if (force && speechTailFlushed) return
+            if (speakOnRef.current && AUDIO_TTS_SUPPORTED && turnId === assistantTurnRef.current) {
+              const split = splitCompletedSpeechSegments(speechBuffer, force ? { force: true } : undefined)
+              speechBuffer = split.rest
+              enqueueTtsSegments(split.segments)
+            }
+            if (force) speechTailFlushed = true
+          }
+          const handleStreamEvent = (ev: ReturnType<typeof parseSseEvent>) => {
+            if (ev.event === 'delta') {
+              const text = ev.data?.text
+              if (typeof text === 'string') {
+                acc += text
+                if (streamingRef.current && mountedRef.current && turnId === assistantTurnRef.current) {
+                  setStreamText(stripMarkdown(acc))
+                }
+                if (speakOnRef.current && AUDIO_TTS_SUPPORTED && turnId === assistantTurnRef.current) {
+                  speechBuffer += text
+                  flushSpeechBuffer()
+                }
+              }
+            } else if (ev.event === 'done') {
+              streamedReply = typeof ev.data?.reply === 'string' && ev.data.reply ? ev.data.reply : acc
+              flushSpeechBuffer(true)
+              stop = true
+            } else if (ev.event === 'error') {
+              errored = true
+              stop = true
+            }
+          }
+          const drainCompleteSseBlocks = () => {
             let sep: number
             while ((sep = buf.indexOf('\n\n')) !== -1) {
               const block = buf.slice(0, sep)
               buf = buf.slice(sep + 2)
               if (!block.trim()) continue
-              const ev = parseSseEvent(block)
-              if (ev.event === 'delta') {
-                const text = ev.data?.text
-                if (typeof text === 'string') {
-                  acc += text
-                  if (streamingRef.current && mountedRef.current && turnId === assistantTurnRef.current) {
-                    setStreamText(stripMarkdown(acc))
-                  }
-                  if (speakOnRef.current && AUDIO_TTS_SUPPORTED && turnId === assistantTurnRef.current) {
-                    speechBuffer += text
-                    const split = splitCompletedSpeechSegments(speechBuffer)
-                    speechBuffer = split.rest
-                    enqueueTtsSegments(split.segments)
-                  }
-                }
-              } else if (ev.event === 'done') {
-                streamedReply = typeof ev.data?.reply === 'string' && ev.data.reply ? ev.data.reply : acc
-                if (speakOnRef.current && AUDIO_TTS_SUPPORTED && turnId === assistantTurnRef.current) {
-                  const split = splitCompletedSpeechSegments(speechBuffer, { force: true })
-                  speechBuffer = split.rest
-                  enqueueTtsSegments(split.segments)
-                }
-                stop = true
-                break
-              } else if (ev.event === 'error') {
-                errored = true
-                stop = true
-                break
-              }
+              handleStreamEvent(parseSseEvent(block))
+              if (stop) break
             }
+          }
+          while (!stop) {
+            const { value, done } = await reader.read()
+            if (done) {
+              const tail = decoder.decode()
+              if (tail) buf = (buf + tail).replace(/\r\n/g, '\n')
+              break
+            }
+            buf = (buf + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
+            drainCompleteSseBlocks()
+          }
+          if (!stop) {
+            drainCompleteSseBlocks()
+            if (!stop && buf.trim()) handleStreamEvent(parseSseEvent(buf))
           }
           try { await reader.cancel() } catch { /* ignore */ }
           if (streamedReply === null) {
             // Поток закончился без «done»: если что-то напечаталось — считаем ответом, иначе фолбэк.
             if (!errored && acc.trim()) {
               streamedReply = acc
-              if (speakOnRef.current && AUDIO_TTS_SUPPORTED && turnId === assistantTurnRef.current) {
-                const split = splitCompletedSpeechSegments(speechBuffer, { force: true })
-                speechBuffer = split.rest
-                enqueueTtsSegments(split.segments)
-              }
+              flushSpeechBuffer(true)
             } else {
               streamFailed = true
             }
@@ -877,7 +906,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       }
       return { kind: 'ok', reply: streamedReply ?? undefined }
     },
-    [cancelActiveAssistant, enqueueTtsSegments, enqueueTtsText, sendViaPost],
+    [cancelActiveAssistant, enqueueTtsSegments, enqueueTtsText, sendViaPost, setVoiceStatusLive],
   )
 
   const announce = useCallback((text: string) => {
@@ -1080,9 +1109,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   }, [announce, dismissInfoProposal, executeProposal, proposals, rejectProposal, t])
 
   const handleVoiceInput = useCallback(async (text: string) => {
+    const snapshot = assistantSpeechGateSnapshot()
+    if (snapshot.thinking || snapshot.streaming || hasPendingAssistantSpeech(snapshot)) return
     if (await handleVoiceProposalIntent(text)) return
     if (!thinkingRef.current) await sendQuestion(text)
-  }, [handleVoiceProposalIntent, sendQuestion])
+  }, [assistantSpeechGateSnapshot, handleVoiceProposalIntent, sendQuestion])
 
   // Глобальные слушатели: Ctrl+K / Cmd+K и AI_OPEN_EVENT (кнопка «Спроси») открывают оверлей.
   useEffect(() => {
@@ -1133,6 +1164,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   // При закрытии оверлея останавливаем всё активное: SSE, TTS-fetch, Audio и очередь.
   useEffect(() => {
     if (open) { ttsPrimedRef.current = false; return }
+    wakeOnRef.current = false
+    setWakeOn(false)
     setContextOpen(false)
     cancelActiveAssistant()
   }, [open, cancelActiveAssistant])
@@ -1149,26 +1182,26 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   // AI-VOICE-FIX-1 (1): микрофон запрашиваем ЯВНО при включении тумблера голоса — браузер сразу
   // показывает промпт разрешения. Отказ → статус «микрофон запрещён ❌». Выключение → освобождаем поток.
   useEffect(() => {
-    if (!wakeOn || !SpeechRecognitionImpl) {
+    if (!wakeOn || !wakeOnRef.current || !SpeechRecognitionImpl) {
       releaseMic()
-      setVoiceStatus('off')
+      setVoiceStatusLive('off')
       return
     }
     let cancelled = false
     void (async () => {
       const ok = await ensureMic()
       if (cancelled) return
-      if (!ok) setVoiceStatus('denied')
+      if (!ok) setVoiceStatusLive('denied')
     })()
     return () => { cancelled = true }
-  }, [wakeOn, ensureMic, releaseMic])
+  }, [wakeOn, ensureMic, releaseMic, setVoiceStatusLive])
 
   // AI-VOICE-FIX-1 (2,3): непрерывное распознавание wake-фразы «окей, Клок». Активно пока тумблер включён
   // И панель закрыта (открытая панель → разговорный цикл, микрофон один). onend/onerror перезапускают
   // распознавание (Chrome глушит continuous каждые ~60с — без рестарта это и есть «ждёт, но не работает»);
   // таймер один, чистится при размонтировании/выключении. Отказ в доступе → статус ❌ без бесконечных попыток.
   useEffect(() => {
-    if (!wakeOn || !SpeechRecognitionImpl || open) return
+    if (!wakeOn || !wakeOnRef.current || !SpeechRecognitionImpl || open) return
     let active = true
     let rec: SpeechRecInstance | null = null
     let restartTimer: number | null = null
@@ -1188,6 +1221,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       r.interimResults = true
       r.maxAlternatives = 1
       r.onresult = (e) => {
+        if (!shouldAcceptWakePhraseResult(assistantSpeechGateSnapshot())) return
         for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
           const transcript = e.results[i]?.[0]?.transcript
           if (!transcript) continue
@@ -1199,18 +1233,19 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         }
       }
       r.onerror = (ev) => {
-        if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') { setVoiceStatus('denied'); return }
-        if (active) { setVoiceStatus('off'); scheduleRestart(800) }
+        if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') { setVoiceStatusLive('denied'); return }
+        if (active) { setVoiceStatusLive('off'); scheduleRestart(800) }
       }
       r.onend = () => { if (active) scheduleRestart(400) }
       rec = r
-      try { r.start(); setVoiceStatus('wake') } catch { scheduleRestart(800) }
+      setVoiceStatusLive('wake')
+      try { r.start() } catch { setVoiceStatusLive('off'); scheduleRestart(800) }
     }
 
     void (async () => {
       const ok = await ensureMic()
       if (!active) return
-      if (!ok) { setVoiceStatus('denied'); return }
+      if (!ok) { setVoiceStatusLive('denied'); return }
       start()
     })()
 
@@ -1223,11 +1258,10 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       }
       rec = null
     }
-  }, [wakeOn, open, lang, ensureMic])
+  }, [wakeOn, open, lang, ensureMic, assistantSpeechGateSnapshot, setVoiceStatusLive])
 
-  // AI-VOICE-FIX-1 (4): РАЗГОВОРНЫЙ ЦИКЛ. Активен пока тумблер голоса включён И панель открыта.
-  // listen → слушаем вопрос (continuous), таймер тишины 1.8с сбрасывается на каждый interim-результат →
-  // авто-отправка тем же путём (sendQuestion) → «думаю ⏳» → авто-озвучка ответа 🔊 → СНОВА listen.
+  // AI-VOICE-FIX-1 (4): окно push-to-talk через орб. Активно только пока wakeOn=true и панель открыта.
+  // Слушаем один вопрос, затем во время thinking/speaking recognition не работает; после ответа mic выключается.
   // Один инстанс распознавания за раз; всё останавливается при закрытии панели/выключении тумблера.
   useEffect(() => {
     if (!wakeOn || !SpeechRecognitionImpl || !open) { convoActiveRef.current = false; return }
@@ -1248,10 +1282,35 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       }
     }
 
+    const finishVoiceCapture = () => {
+      if (!active) return
+      wakeOnRef.current = false
+      setWakeOn(false)
+      setVoiceStatusLive('off')
+      stopMeter()
+    }
+
+    const finishAfterSpeech = () => {
+      const speechPending = hasPendingAssistantSpeech(assistantSpeechGateSnapshot())
+      if (speakOnRef.current && speechPending) {
+        setVoiceStatusLive('speaking')
+        ttsOnIdleRef.current = finishVoiceCapture
+      } else {
+        finishVoiceCapture()
+      }
+    }
+
     const listen = () => {
       if (!active) return
       stopRec()
-      if (ttsBusyRef.current) cancelTtsQueue()
+      const snapshot = assistantSpeechGateSnapshot()
+      const speechPending = hasPendingAssistantSpeech(snapshot)
+      if (snapshot.thinking || snapshot.streaming || speechPending) {
+        setVoiceStatusLive(speechPending ? 'speaking' : 'thinking')
+        if (speechPending) ttsOnIdleRef.current = finishVoiceCapture
+        return
+      }
+      setVoiceStatusLive('listening')
       const r = new SpeechRecognitionImpl!()
       r.lang = SPEECH_LOCALE[lang]
       r.continuous = true
@@ -1263,6 +1322,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         silenceTimerRef.current = window.setTimeout(() => { silenceTimerRef.current = null; finalize(finalText) }, 1800)
       }
       r.onresult = (e) => {
+        if (!shouldAcceptAssistantVoiceResult(assistantSpeechGateSnapshot())) {
+          finalText = ''
+          clearSilence()
+          return
+        }
         let interim = ''
         for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
           const res = e.results[i]
@@ -1277,16 +1341,18 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       // Chrome сам завершает continuous-распознавание — финализируем накопленное (пусто → просто слушаем дальше).
       r.onend = () => { if (active && rec === r) { clearSilence(); finalize(finalText) } }
       r.onerror = (ev) => {
-        if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') { active = false; convoActiveRef.current = false; stopRec(); setVoiceStatus('denied'); return }
+        if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') { active = false; convoActiveRef.current = false; stopRec(); setVoiceStatusLive('denied'); return }
         if (active && rec === r) { clearSilence(); stopMeter() } // no-speech/aborted → onend перезапустит
       }
       rec = r
-      try { r.start(); setVoiceStatus('listening'); startMeter() } catch { setVoiceStatus('listening') }
+      try { r.start(); startMeter() } catch { /* leave visible listening state; browser may recover on next toggle */ }
     }
 
     const finalize = (text: string) => {
       if (!active) return
+      const canAccept = shouldAcceptAssistantVoiceResult(assistantSpeechGateSnapshot())
       stopRec()
+      if (!canAccept) return
       const q = text.trim()
       if (!q) { listen(); return } // ничего не сказали — продолжаем слушать
       void runTurn(q)
@@ -1294,34 +1360,22 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
 
     const runTurn = async (q: string) => {
       if (!active) return
-      setVoiceStatus('thinking')
+      setVoiceStatusLive('thinking')
       if (await handleVoiceProposalIntent(q)) {
         if (!active) return
-        const speechPending = ttsBusyRef.current || ttsQueueRunningRef.current || ttsQueueRef.current.length > 0
-        if (speakOnRef.current && speechPending) {
-          setVoiceStatus('speaking')
-          ttsOnIdleRef.current = () => { if (active) listen() }
-        } else {
-          listen()
-        }
+        finishAfterSpeech()
         return
       }
       const res = await sendQuestion(q)
       if (!active) return
-      if (res.kind === 'nokey') { setVoiceStatus('off'); return } // нет ключа — цикл не крутим впустую
-      const speechPending = ttsBusyRef.current || ttsQueueRunningRef.current || ttsQueueRef.current.length > 0
-      if (res.kind === 'ok' && speakOnRef.current && speechPending) {
-        setVoiceStatus('speaking')
-        ttsOnIdleRef.current = () => { if (active) listen() }
-      } else {
-        listen() // ошибка/пусто/без озвучки — снова слушаем следующий вопрос
-      }
+      if (res.kind === 'nokey') { finishVoiceCapture(); return } // нет ключа — цикл не крутим впустую
+      finishAfterSpeech()
     }
 
     void (async () => {
       const ok = await ensureMic()
       if (!active) return
-      if (!ok) { setVoiceStatus('denied'); return }
+      if (!ok) { setVoiceStatusLive('denied'); return }
       listen()
     })()
 
@@ -1329,94 +1383,21 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       active = false
       convoActiveRef.current = false
       stopRec()
-      cancelTtsQueue()
     }
-  }, [wakeOn, open, lang, ensureMic, sendQuestion, cancelTtsQueue, startMeter, stopMeter, handleVoiceProposalIntent])
+  }, [
+    wakeOn,
+    open,
+    lang,
+    ensureMic,
+    sendQuestion,
+    startMeter,
+    stopMeter,
+    handleVoiceProposalIntent,
+    assistantSpeechGateSnapshot,
+    setVoiceStatusLive,
+  ])
 
-  // Barge-in: пока TTS играет, слушаем короткие вмешательства. Команды stop/quiet глушат вывод,
-  // финальная фраза, которая не похожа на эхо озвучки, становится следующим вопросом.
-  useEffect(() => {
-    if (!wakeOn || !SpeechRecognitionImpl || !open || !ttsBusy) return
-    let active = true
-    let rec: SpeechRecInstance | null = null
-
-    const stopBarge = () => {
-      if (!rec) return
-      rec.onresult = null; rec.onend = null; rec.onerror = null
-      try { rec.stop() } catch { /* ignore */ }
-      rec = null
-    }
-
-    const handleTranscript = async (text: string, final: boolean) => {
-      const heard = text.trim()
-      if (!heard || !active) return
-      if (isVoiceStopCommand(heard)) {
-        active = false
-        stopBarge()
-        cancelActiveAssistant(true)
-        return
-      }
-      if (!final) return
-      if (looksLikeTtsEcho(heard, ttsSpokenTextRef.current)) return
-      if (proposals.length > 0 && (isVoiceAffirm(heard) || isVoiceCancel(heard))) {
-        active = false
-        stopBarge()
-        cancelTtsQueue()
-        await handleVoiceProposalIntent(heard)
-        return
-      }
-      const normalized = normalizeVoiceText(heard)
-      const enoughSpeech = normalized.length >= 8 || normalized.split(' ').filter(Boolean).length >= 2
-      if (!enoughSpeech) return
-      active = false
-      stopBarge()
-      cancelActiveAssistant()
-      setInput(heard)
-      void sendQuestion(heard)
-    }
-
-    const start = async () => {
-      const ok = await ensureMic()
-      if (!active || !ok) { if (!ok) setVoiceStatus('denied'); return }
-      const r = new SpeechRecognitionImpl()
-      r.lang = SPEECH_LOCALE[lang]
-      r.continuous = true
-      r.interimResults = true
-      r.maxAlternatives = 1
-      r.onresult = (e) => {
-        let interim = ''
-        let finalText = ''
-        for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
-          const res = e.results[i]
-          const transcript = res?.[0]?.transcript ?? ''
-          if (res?.isFinal) finalText += transcript
-          else interim += transcript
-        }
-        void handleTranscript(finalText || interim, Boolean(finalText))
-      }
-      r.onerror = (ev) => {
-        if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') {
-          active = false
-          setVoiceStatus('denied')
-        }
-      }
-      r.onend = () => {
-        if (active && ttsBusyRef.current) {
-          window.setTimeout(() => {
-            if (active && ttsBusyRef.current) start()
-          }, 250)
-        }
-      }
-      rec = r
-      try { r.start() } catch { /* graceful: barge-in is optional */ }
-    }
-
-    void start()
-    return () => {
-      active = false
-      stopBarge()
-    }
-  }, [wakeOn, open, ttsBusy, lang, ensureMic, cancelActiveAssistant, sendQuestion, cancelTtsQueue, handleVoiceProposalIntent, proposals.length])
+  // PTT gate: while the assistant is thinking or speaking, no extra recognition is started.
 
   // AI-VOICE-FIX-1: подчистка на unmount — освобождаем микрофон/метр и гасим озвучку (нет утечек).
   useEffect(() => () => {
@@ -1522,7 +1503,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const handleOrbToggle = useCallback(() => {
     const next = getNextAiOrbToggleState({ open, wakeOn, speakOn, thinking, streaming, ttsBusy, voiceStatus })
     if (next.intent === 'activate') {
-      void unlockTtsAudio()
+      void unlockTtsAudio().then(() => playTtsQueue())
       speakOnRef.current = true
       wakeOnRef.current = true
       openRef.current = true
@@ -1540,8 +1521,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     setContextOpen(false)
     cancelActiveAssistant()
     releaseMic()
-    setVoiceStatus('off')
-  }, [cancelActiveAssistant, open, releaseMic, speakOn, streaming, thinking, ttsBusy, unlockTtsAudio, voiceStatus, wakeOn])
+    setVoiceStatusLive('off')
+  }, [cancelActiveAssistant, open, playTtsQueue, releaseMic, setVoiceStatusLive, speakOn, streaming, thinking, ttsBusy, unlockTtsAudio, voiceStatus, wakeOn])
 
   return (
     <>
@@ -1734,7 +1715,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
             <VoiceMic
               lang={lang}
               title={t('ai_voice_hint')}
-              onResult={(text) => { if (!thinking) void handleVoiceInput(text) }}
+              onResult={(text) => { void handleVoiceInput(text) }}
             />
             <button
               type="button"
@@ -1755,8 +1736,9 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
                     checked={speakOn}
                     onChange={(e) => {
                       const checked = e.target.checked
+                      speakOnRef.current = checked
                       setSpeakOn(checked)
-                      if (checked) void unlockTtsAudio()
+                      if (checked) void unlockTtsAudio().then(() => playTtsQueue())
                       else cancelTtsQueue()
                     }}
                   />
@@ -1770,6 +1752,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
                     checked={wakeOn}
                     onChange={(e) => {
                       const checked = e.target.checked
+                      wakeOnRef.current = checked
                       setWakeOn(checked)
                       if (checked) void unlockTtsAudio()
                     }}
@@ -1924,6 +1907,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
                 title={t('ai_voice_hint')}
                 onResult={(text) => {
                   void (async () => {
+                    const snapshot = assistantSpeechGateSnapshot()
+                    if (snapshot.thinking || snapshot.streaming || hasPendingAssistantSpeech(snapshot)) return
                     if (await handleVoiceProposalIntent(text)) return
                     setInput((v) => (v ? `${v} ${text}` : text))
                   })()
