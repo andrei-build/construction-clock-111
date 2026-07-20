@@ -1359,6 +1359,7 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_guide_edge: { ru: 'Край', en: 'Edge', es: 'Borde' },
   hub_sketch_guide_axis: { ru: 'Ось', en: 'Axis', es: 'Eje' },
   hub_sketch_guide_equal: { ru: 'Равный отступ', en: 'Equal offset', es: 'Distancia igual' },
+  hub_sketch_guide_corner_square: { ru: '90°', en: '90°', es: '90°' },
   hub_sketch_area: { ru: 'Площадь', en: 'Area', es: 'Área' },
   hub_sketch_perimeter: { ru: 'Периметр', en: 'Perimeter', es: 'Perímetro' },
   hub_sketch_contours: { ru: 'Контуры', en: 'Contours', es: 'Contornos' },

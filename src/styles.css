@@ -4765,6 +4765,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-opening-snap-guide line,
 .hub-sketch-room-snap-edge,
 .hub-sketch-smart-guide line,
+.hub-sketch-smart-guide-corner-marker,
 .hub-sketch-measurement-line,
 .hub-sketch-measurement-hit,
 .hub-sketch-plan-item *,
@@ -4943,6 +4944,16 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-smart-guide-center line {
   stroke-width: 2.2;
+}
+.hub-sketch-smart-guide-corner-square line {
+  stroke-width: 2.4;
+}
+.hub-sketch-smart-guide-corner-marker {
+  stroke: #f59e0b;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
 }
 .hub-sketch-smart-guide text {
   fill: #92400e;
