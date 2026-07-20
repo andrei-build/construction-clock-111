@@ -314,6 +314,48 @@ export interface ProjectAssignment {
   profile_id: string
 }
 
+export interface OnShiftNowRow {
+  org_id: string
+  profile_id: string
+  name: string
+  role: Role
+  project_id: string | null
+  since: string | null
+}
+
+export interface CurrentAssignmentRow {
+  org_id: string
+  project_id: string
+  project_name: string | null
+  profile_id: string
+  worker_name: string
+  role: Role
+  note: string | null
+  assigned_at: string | null
+}
+
+export interface UnassignedWorkerRow {
+  org_id: string
+  profile_id: string
+  name: string
+  role: Role
+}
+
+export interface OrgSnapshot {
+  projects: Project[]
+  team: Profile[]
+  on_shift: OnShiftNowRow[]
+  assignments: CurrentAssignmentRow[]
+  unassigned: UnassignedWorkerRow[]
+  open_tasks: Task[]
+  hours_today: number
+  hours_yesterday: number
+  risks: SuspiciousShift[]
+  projects_money: unknown[]
+  recent_events: EventRow[]
+  as_of: string | null
+}
+
 // Назначение с датой и именем проекта — для экрана «Расписание». assigned_at служит
 // днём, с которого назначение действует (project_assignments не датируется по дням).
 export interface ScheduleAssignment {

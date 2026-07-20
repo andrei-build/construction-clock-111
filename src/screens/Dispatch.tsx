@@ -3,8 +3,6 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 import {
-  getProjects,
-  getTeam,
   getAllTasks,
   getTasksCreatedBy,
   getMessages,
@@ -21,25 +19,26 @@ import {
   getSuspiciousShifts,
   approveShiftReview,
   getLiveLastLocations,
-  getTodayEvents,
   subscribeToTaskChanges,
   subscribeToMyMessages,
   subscribeToLiveLocations,
   subscribeToOrgEvents,
   getDeliveryProgress,
 } from '../lib/api'
+import { getOrgSnapshot } from '../lib/api/dashboard'
+import { elapsedSinceMs, profileFromWorkerSource } from '../lib/dashboardSnapshot'
 import { useLiveRefresh } from '../lib/useLiveRefresh'
-import { shiftState, workedMs, fmtHours, fmtClock } from '../lib/time'
+import { fmtHours, fmtClock } from '../lib/time'
 import { isManagerWrite } from '../lib/types'
 import type {
   LiveLastLocation,
   MessageRow,
+  OnShiftNowRow,
   Profile,
   Project,
   SuspiciousShift,
   Task,
   TaskAttachment,
-  TimeEvent,
 } from '../lib/types'
 import VoiceMic from '../components/VoiceMic'
 import { useImageLightbox, type LightboxImage } from '../components/ImageLightbox'
@@ -102,7 +101,7 @@ export default function Dispatch() {
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [suspicious, setSuspicious] = useState<SuspiciousShift[]>([])
   const [live, setLive] = useState<LiveLastLocation[]>([])
-  const [events, setEvents] = useState<TimeEvent[]>([])
+  const [onShiftNow, setOnShiftNow] = useState<OnShiftNowRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -121,8 +120,10 @@ export default function Dispatch() {
     setMessages(await getMessages(profile.id))
   }
   const loadOps = async () => {
-    const [ev, ll] = await Promise.all([getTodayEvents(), getLiveLastLocations()])
-    setEvents(ev)
+    const [snapshot, ll] = await Promise.all([getOrgSnapshot(), getLiveLastLocations()])
+    setProjects(snapshot.projects)
+    setTeam(snapshot.team)
+    setOnShiftNow(snapshot.on_shift)
     setLive(ll)
   }
 
@@ -133,23 +134,21 @@ export default function Dispatch() {
     if (!silent) setLoading(true)
     setError(false)
     try {
-      const [projectRows, people, taskRows, mine, msgs, susp, ev, ll] = await Promise.all([
-        getProjects(),
-        getTeam(),
+      const [snapshot, taskRows, mine, msgs, susp, ll] = await Promise.all([
+        getOrgSnapshot(),
         getAllTasks(),
         getTasksCreatedBy(profile.id),
         getMessages(profile.id),
         getSuspiciousShifts(),
-        getTodayEvents(),
         getLiveLastLocations(),
       ])
-      setProjects(projectRows)
-      setTeam(people)
+      setProjects(snapshot.projects)
+      setTeam(snapshot.team)
       setAllTasks(taskRows)
       setMyTasks(mine)
       setMessages(msgs)
       setSuspicious(susp)
-      setEvents(ev)
+      setOnShiftNow(snapshot.on_shift)
       setLive(ll)
     } catch {
       setError(true)
@@ -238,10 +237,10 @@ export default function Dispatch() {
           <OwnerQueue suspicious={suspicious} onReviewed={async () => setSuspicious(await getSuspiciousShifts())} />
 
           <OpsNow
-            team={team}
-            events={events}
+            onShiftNow={onShiftNow}
             live={live}
             tasks={allTasks}
+            peopleById={peopleById}
             projectName={projectName}
             now={now}
             onOpenWorker={openWorker}
@@ -577,30 +576,25 @@ function OwnerQueue({ suspicious, onReviewed }: { suspicious: SuspiciousShift[];
 }
 
 // ── (5) Операции сейчас ─────────────────────────────────────────────────────────
-function OpsNow({ team, events, live, tasks, projectName, now, onOpenWorker }: {
-  team: Profile[]
-  events: TimeEvent[]
+function OpsNow({ onShiftNow, live, tasks, peopleById, projectName, now, onOpenWorker }: {
+  onShiftNow: OnShiftNowRow[]
   live: LiveLastLocation[]
   tasks: Task[]
+  peopleById: Map<string, Profile>
   projectName: Map<string, string>
   now: number
   onOpenWorker: (p: Profile) => void
 }) {
   const { t } = useI18n()
-  const byWorker = useMemo(() => {
-    const m = new Map<string, TimeEvent[]>()
-    for (const e of events) {
-      if (!m.has(e.profile_id)) m.set(e.profile_id, [])
-      m.get(e.profile_id)!.push(e)
-    }
-    return m
-  }, [events])
   const liveById = useMemo(() => new Map(live.map((l) => [l.worker_id, l])), [live])
 
-  const onShift = team.filter((w) => {
-    const evs = byWorker.get(w.id) ?? []
-    return evs.length > 0 && shiftState(evs).status !== 'off'
-  })
+  const onShift = useMemo(() => onShiftNow
+    .map((row) => ({
+      row,
+      worker: profileFromWorkerSource(row, peopleById.get(row.profile_id)),
+      hoursMs: elapsedSinceMs(row.since, now),
+    }))
+    .sort((a, b) => a.worker.name.localeCompare(b.worker.name)), [now, onShiftNow, peopleById])
 
   const currentTask = (workerId: string) => {
     const active = tasks.filter((x) => x.assigned_to === workerId && (x.status === 'in_progress' || x.status === 'open'))
@@ -626,22 +620,18 @@ function OpsNow({ team, events, live, tasks, projectName, now, onOpenWorker }: {
         <p className="muted">{t('cc_nobody_on_shift')}</p>
       ) : (
         <div className="cc-ops-grid">
-          {onShift.map((w) => {
-            const evs = byWorker.get(w.id) ?? []
-            const st = shiftState(evs)
-            const task = currentTask(w.id)
-            const g = gps(w.id)
+          {onShift.map(({ row, worker, hoursMs }) => {
+            const task = currentTask(worker.id)
+            const g = gps(worker.id)
             return (
-              <div key={w.id} className="cc-ops-card">
+              <div key={worker.id} className="cc-ops-card">
                 <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <button className="inline-link item-title" onClick={() => onOpenWorker(w)}>{w.name}</button>
-                  <span className="badge blue">{w.role}</span>
+                  <button className="inline-link item-title" onClick={() => onOpenWorker(worker)}>{worker.name}</button>
+                  <span className="badge blue">{worker.role}</span>
                 </div>
-                <div className="muted">{st.projectId ? projectName.get(st.projectId) ?? t('unknown_project') : t('unknown_project')}</div>
+                <div className="muted">{row.project_id ? projectName.get(row.project_id) ?? t('unknown_project') : t('unknown_project')}</div>
                 <div className="row" style={{ gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <span className={`badge ${st.status === 'break' ? 'amber' : 'green'}`}>
-                    {st.status === 'break' ? t('on_break') : `${fmtHours(workedMs(evs, now))}${t('h')}`}
-                  </span>
+                  <span className="badge green">{hoursMs > 0 ? `${fmtHours(hoursMs)}${t('h')}` : t('on_shift')}</span>
                   <span className={`badge ${g.cls}`}>{g.label}</span>
                 </div>
                 <div className="cc-ops-task muted">

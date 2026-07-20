@@ -5,20 +5,19 @@ import {
   assignWorkerToProject,
   createMaterialRequest,
   createTask,
-  getOpenTasks,
-  getProjectAssignments,
-  getProjects,
   getRecentDispatchPlanSends,
-  getTeam,
   markMaterialStatus,
   sendDispatchPlan,
+  subscribeToOrgEvents,
   subscribeToTaskChanges,
   unassignWorkerFromProject,
   type DispatchPlanSend,
   type MaterialStatusAction,
 } from '../../lib/api'
+import { getOrgSnapshot } from '../../lib/api/dashboard'
+import { buildDashboardWorkerProfiles, buildUnassignedWorkerProfiles } from '../../lib/dashboardSnapshot'
 import { isManagerRole } from '../../lib/types'
-import type { Profile, Project, ProjectAssignment, Task } from '../../lib/types'
+import type { CurrentAssignmentRow, Profile, Project, Role, Task, UnassignedWorkerRow } from '../../lib/types'
 import { useEntityDrawer } from '../../components/EntityDrawer'
 import MaterialStatusChain, { isMaterialFlowTask } from '../../components/MaterialStatusChain'
 import VoiceMic from '../../components/VoiceMic'
@@ -31,7 +30,7 @@ type PlanConflict = {
 
 type TaskDraft = { title: string; type: Task['task_type']; assignee: string }
 
-const CREW_ROLES = ['worker', 'driver', 'supervisor']
+const CREW_ROLES: readonly Role[] = ['worker', 'driver', 'supervisor']
 
 function dateValue(date: Date) {
   const year = date.getFullYear()
@@ -64,7 +63,8 @@ export default function PlanConstructor() {
   const [projects, setProjects] = useState<Project[]>([])
   const [team, setTeam] = useState<Profile[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
-  const [assignments, setAssignments] = useState<ProjectAssignment[]>([])
+  const [assignments, setAssignments] = useState<CurrentAssignmentRow[]>([])
+  const [unassigned, setUnassigned] = useState<UnassignedWorkerRow[]>([])
   const [sends, setSends] = useState<DispatchPlanSend[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -82,15 +82,12 @@ export default function PlanConstructor() {
     setLoading(true)
     setError(false)
     try {
-      const [projectRows, people, taskRows] = await Promise.all([getProjects(), getTeam(), getOpenTasks()])
-      const [assignmentRows, sendRows] = await Promise.all([
-        getProjectAssignments(projectRows.map((project) => project.id)),
-        getRecentDispatchPlanSends(),
-      ])
-      setProjects(projectRows)
-      setTeam(people.filter((person) => CREW_ROLES.includes(person.role)))
-      setTasks(taskRows)
-      setAssignments(assignmentRows)
+      const [snapshot, sendRows] = await Promise.all([getOrgSnapshot(), getRecentDispatchPlanSends()])
+      setProjects(snapshot.projects)
+      setTeam(buildDashboardWorkerProfiles(snapshot.assignments, snapshot.unassigned, snapshot.team, CREW_ROLES))
+      setTasks(snapshot.open_tasks)
+      setAssignments(snapshot.assignments)
+      setUnassigned(snapshot.unassigned)
       setSends(sendRows)
     } catch {
       setError(true)
@@ -104,8 +101,13 @@ export default function PlanConstructor() {
     if (!manager || !profile?.org_id) return
     return subscribeToTaskChanges(profile.org_id, () => { void load() }, 'tasks:plan-constructor')
   }, [profile?.org_id])
+  useEffect(() => {
+    if (!manager || !profile?.org_id) return
+    return subscribeToOrgEvents(profile.org_id, () => { void load() }, `events:plan-constructor:${profile.org_id}`)
+  }, [profile?.org_id])
 
   const peopleById = useMemo(() => new Map(team.map((person) => [person.id, person.name])), [team])
+  const unassignedWorkers = useMemo(() => buildUnassignedWorkerProfiles(unassigned, team, CREW_ROLES), [team, unassigned])
   const assignedIds = (projectId: string) =>
     new Set(assignments.filter((a) => a.project_id === projectId).map((a) => a.profile_id))
   const projectTasks = (projectId: string) => tasks.filter((task) => task.project_id === projectId)
@@ -301,6 +303,29 @@ export default function PlanConstructor() {
                   <div className="item-title">{conflict.text}</div>
                 </div>
               ))
+            )}
+          </div>
+
+          <div className="plan-free-workers">
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>{t('plan_free_workers')}</h3>
+              <span className="badge blue">{unassignedWorkers.length}</span>
+            </div>
+            {unassignedWorkers.length === 0 ? (
+              <p className="muted">{t('plan_free_workers_empty')}</p>
+            ) : (
+              <div className="dispatch-workers">
+                {unassignedWorkers.map((worker) => (
+                  <button
+                    key={worker.id}
+                    type="button"
+                    className="inline-link"
+                    onClick={() => openWorker(worker)}
+                  >
+                    {worker.name} <span className="muted">· {worker.role}</span>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
 

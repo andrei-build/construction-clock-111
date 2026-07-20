@@ -12,12 +12,9 @@ import {
   getLiveLastLocations,
   getMaterialsSpendTotal,
   getOpenGeoEvents,
-  getOpenTasks,
   getProjectWeekHours,
-  getProjects,
   getRecentActivity,
   getSuspiciousShifts,
-  getTeam,
   getTodayEvents,
   getUnpaidWorkSummary,
   managerCheckoutWorker,
@@ -26,17 +23,19 @@ import {
   subscribeToOrgEvents,
   subscribeToTaskChanges,
 } from '../lib/api'
+import { getOrgSnapshot } from '../lib/api/dashboard'
+import { elapsedSinceMs, orgSnapshotHoursTodayMs, profileFromWorkerSource } from '../lib/dashboardSnapshot'
 import {
   DEFAULT_PAID_GAP_ALERT_HOURS,
   computeTravelGaps,
   fmtClock,
   fmtHours,
-  shiftState,
   todayStartISO,
   workedMs,
 } from '../lib/time'
+import type { ShiftState } from '../lib/time'
 import { hasFinanceAccess, isManagerWrite } from '../lib/types'
-import type { DueClientReminder, EventRow, LiveLastLocation, Profile, Project, ShiftGeoEvent, SuspiciousShift, Task, TimeEvent } from '../lib/types'
+import type { DueClientReminder, EventRow, LiveLastLocation, OnShiftNowRow, Profile, Project, ShiftGeoEvent, SuspiciousShift, Task, TimeEvent } from '../lib/types'
 
 type MetricTone = 'green' | 'amber' | 'red' | 'blue' | 'grey'
 
@@ -63,7 +62,7 @@ type OnSiteRow = {
   project: Project | null
   live: LiveLastLocation | null
   latestEvent: TimeEvent | null
-  state: ReturnType<typeof shiftState>
+  state: ShiftState
   hoursMs: number
 }
 
@@ -155,6 +154,8 @@ export default function Overview() {
   const [team, setTeam] = useState<Profile[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [onShiftNow, setOnShiftNow] = useState<OnShiftNowRow[]>([])
+  const [hoursTodayMs, setHoursTodayMs] = useState(0)
   const [activity, setActivity] = useState<EventRow[]>([])
   const [suspicious, setSuspicious] = useState<SuspiciousShift[]>([])
   const [geoEvents, setGeoEvents] = useState<ShiftGeoEvent[]>([])
@@ -192,10 +193,8 @@ export default function Overview() {
     setError(false)
     try {
       const [
+        dashboardSnapshot,
         todayEvents,
-        people,
-        projectRows,
-        taskRows,
         activityRows,
         suspiciousRows,
         geoRows,
@@ -206,10 +205,8 @@ export default function Overview() {
         materialTotal,
         dueReminders,
       ] = await Promise.all([
+        getOrgSnapshot(),
         getTodayEvents(),
-        getTeam(),
-        getProjects(),
-        getOpenTasks(),
         getRecentActivity(),
         getSuspiciousShifts(),
         getOpenGeoEvents(),
@@ -222,9 +219,11 @@ export default function Overview() {
       ])
       if (!mountedRef.current) return
       setEvents(todayEvents)
-      setTeam(people)
-      setProjects(projectRows)
-      setTasks(taskRows)
+      setTeam(dashboardSnapshot.team)
+      setProjects(dashboardSnapshot.projects)
+      setTasks(dashboardSnapshot.open_tasks)
+      setOnShiftNow(dashboardSnapshot.on_shift)
+      setHoursTodayMs(orgSnapshotHoursTodayMs(dashboardSnapshot))
       setActivity(activityRows)
       setSuspicious(suspiciousRows)
       setGeoEvents(geoRows)
@@ -260,8 +259,14 @@ export default function Overview() {
   useEffect(() => {
     if (!profile?.org_id) return
     return subscribeToTaskChanges(profile.org_id, () => {
-      getOpenTasks().then((rows) => {
-        if (mountedRef.current) setTasks(rows)
+      getOrgSnapshot().then((snapshot) => {
+        if (mountedRef.current) {
+          setTeam(snapshot.team)
+          setProjects(snapshot.projects)
+          setTasks(snapshot.open_tasks)
+          setOnShiftNow(snapshot.on_shift)
+          setHoursTodayMs(orgSnapshotHoursTodayMs(snapshot))
+        }
       }).catch(() => {
         if (mountedRef.current) setError(true)
       })
@@ -297,29 +302,30 @@ export default function Overview() {
     projectId ? projectById.get(projectId)?.name ?? t('unknown_project') : t('unknown_project')
   ), [projectById, t])
 
-  const onSiteRows = useMemo<OnSiteRow[]>(() => team
-    .map((worker) => {
-      const workerEvents = eventsByWorker.get(worker.id) ?? []
-      const state = shiftState(workerEvents)
-      if (state.status === 'off') return null
+  const onSiteRows = useMemo<OnSiteRow[]>(() => onShiftNow
+    .map((source) => {
+      const worker = profileFromWorkerSource(source, workerById.get(source.profile_id))
+      const workerEvents = eventsByWorker.get(source.profile_id) ?? []
+      const latest = latestEvent(workerEvents)
+      const state = {
+        status: latest?.event_type === 'break_start' ? 'break' as const : 'on' as const,
+        since: source.since,
+        projectId: source.project_id,
+      }
       return {
         worker,
         events: workerEvents,
-        project: state.projectId ? projectById.get(state.projectId) ?? null : null,
+        project: source.project_id ? projectById.get(source.project_id) ?? null : null,
         live: liveByWorker.get(worker.id) ?? null,
-        latestEvent: latestEvent(workerEvents),
+        latestEvent: latest,
         state,
-        hoursMs: workedMs(workerEvents, now),
+        hoursMs: workerEvents.length > 0 ? workedMs(workerEvents, now) : elapsedSinceMs(source.since, now),
       }
     })
-    .filter((row): row is OnSiteRow => row !== null), [eventsByWorker, liveByWorker, now, projectById, team])
-
-  const totalMs = useMemo(
-    () => Array.from(eventsByWorker.values()).reduce((sum, workerEvents) => sum + workedMs(workerEvents, now), 0),
-    [eventsByWorker, now],
-  )
+    .sort((a, b) => a.worker.name.localeCompare(b.worker.name)), [eventsByWorker, liveByWorker, now, onShiftNow, projectById, workerById])
 
   const sitesWithCrew = useMemo(() => new Set(onSiteRows.map((row) => row.state.projectId).filter(Boolean)).size, [onSiteRows])
+  const totalMs = hoursTodayMs
   const unreviewedSuspicious = useMemo(() => suspicious.filter((shift) => shift.review_status !== 'approved'), [suspicious])
   const priorityTasks = useMemo(() => tasks
     .filter((task) => task.urgent_flag || task.priority === 'urgent' || task.priority === 'high')
