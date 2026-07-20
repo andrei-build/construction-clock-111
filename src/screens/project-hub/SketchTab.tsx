@@ -129,6 +129,9 @@ import {
   type SketchRoomTemplate,
 } from './sketchTemplates'
 import {
+  finishLastOpenContour,
+  screenPointerMovedBeyondThreshold,
+  shouldCloseOpenContourFromPoint,
   snapCornerSquare,
   snapToExistingGeometry,
   snapPointWithSmartGuides,
@@ -155,6 +158,7 @@ const MIN_MINOR_GRID_SCREEN_PX = 8
 const CLOSE_SNAP = 0.45 // клетки — попадание в стартовую точку замыкает контур
 const SEG_HIT = 0.7 // клетки — попадание в сегмент при установке двери/окна
 const ROOM_SNAP = 0.6 // клетки — радиус прилипания новой комнаты к существующим вершинам/стенам
+const NODE_DRAG_THRESHOLD_PX = 6
 const ZOOM_BUTTON_STEP = 1.2
 const DEFAULT_WALL_HEIGHT_FT = 8
 const DIM_OFFSET_SCREEN_PX = 24
@@ -205,6 +209,8 @@ type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winS
 type SegmentLengthEdit = { ref: SketchSegmentRef; value: string }
 type OpeningOffsetEdit = { index: number; side: OpeningOffsetSide; value: string }
 type DragNode = { c: number; p: number }
+type NodeDragCandidate = DragNode & { pointerId: number; pointerType: string; origin: { clientX: number; clientY: number } }
+type WallClickAppend = { contourIndex: number; pointIndex: number; point: Pt; clientX: number; clientY: number; time: number }
 type CanvasPointer = { clientX: number; clientY: number; pointerType: string }
 type CanvasTapGesture = {
   id: number
@@ -1777,6 +1783,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
   const [customRoomTemplates, setCustomRoomTemplates] = useState<SketchRoomTemplate[]>([])
   const dragMovedRef = useRef(false)
+  const armedDragNodeRef = useRef<NodeDragCandidate | null>(null)
+  const nodeTapClickHandledRef = useRef<DragNode | null>(null)
+  const lastWallClickAppendRef = useRef<WallClickAppend | null>(null)
   const [name, setName] = useState('room-1')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -2857,7 +2866,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   // Точка для установки угла стены: прилипание к чужой геометрии имеет приоритет над сеткой.
   const wallPointForModel = (baseModel: SketchModel, raw: Pt, stepFt: number): { p: Pt; snapped: boolean; snap: SketchExistingSnapResult | null } => {
     const active = baseModel.contours[baseModel.contours.length - 1]
-    if (active && !active.closed && active.points.length >= 3 && dist(raw, active.points[0]) <= CLOSE_SNAP) {
+    if (shouldCloseOpenContourFromPoint(active, raw, CLOSE_SNAP)) {
       return { p: active.points[0], snapped: true, snap: null }
     }
     const s = snapToExistingForModel(baseModel, raw)
@@ -2873,9 +2882,31 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const measurementPoint = (raw: Pt): { p: Pt; snapped: boolean } => measurementPointForModel(model, raw, activeSnapFt)
 
-  const applyPointerMoveAt = (clientX: number, clientY: number, view = canvasViewRef.current) => {
+  const applyPointerMoveAt = (clientX: number, clientY: number, view = canvasViewRef.current, pointerId?: number) => {
     if (!canEditRef.current) return
     const raw = pointerCellAt(clientX, clientY, view)
+    const armedDragNode = armedDragNodeRef.current
+    if (
+      armedDragNode &&
+      dragNodeRef.current === null &&
+      (pointerId === undefined || armedDragNode.pointerId === pointerId)
+    ) {
+      const currentScreenPoint = { clientX, clientY }
+      if (!screenPointerMovedBeyondThreshold(armedDragNode.origin, currentScreenPoint, NODE_DRAG_THRESHOLD_PX)) return
+      if (!raw) {
+        setSmartGuides([])
+        setHoverSnapGuide(null)
+        return
+      }
+      const node = { c: armedDragNode.c, p: armedDragNode.p }
+      armedDragNodeRef.current = null
+      recordHistoryStep()
+      dragMovedRef.current = true
+      dragNodeRef.current = node
+      setDragNode(node)
+      edgeAutoPanPointerRef.current = currentScreenPoint
+      updateEdgeAutoPan(clientX, clientY)
+    }
     const currentDragNode = dragNodeRef.current
     if (currentDragNode) {
       if (!raw) {
@@ -3155,14 +3186,45 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setMeasurementDraft(null)
   }
 
+  const finishActiveOpenContour = useCallback((options: {
+    minClosedPoints?: number
+    discardIncomplete?: boolean
+    closeComplete?: boolean
+  } = {}) => {
+    const result = finishLastOpenContour(modelRef.current, options)
+    if (!result.changed) return false
+    commit(result.model as SketchModel)
+    lastWallClickAppendRef.current = null
+    setNewRoomPending(false)
+    setHover(null)
+    setHoverSnapped(false)
+    setHoverSnapGuide(null)
+    if (result.action === 'discarded') {
+      setSelectedNode(null)
+      setSelectedContourIndex(null)
+      setSelectedWallKey(null)
+    }
+    return true
+  }, [commit])
+
   useEffect(() => {
     if (!canEdit || viewMode !== '2d') return
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableKeyTarget(event.target)) return
-      if (event.key === 'Escape' && tool === 'measure') {
-        setTool('wall')
-        setMeasurementDraft(null)
-        setSelectedMeasurementIndex(null)
+      if (event.key === 'Escape') {
+        if (tool === 'measure') {
+          setTool('wall')
+          setMeasurementDraft(null)
+          setSelectedMeasurementIndex(null)
+          event.preventDefault()
+          return
+        }
+        if (tool === 'wall' && finishActiveOpenContour({ closeComplete: false })) {
+          event.preventDefault()
+          return
+        }
+      }
+      if (event.key === 'Enter' && tool === 'wall' && finishActiveOpenContour()) {
         event.preventDefault()
         return
       }
@@ -3183,7 +3245,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, viewMode, tool, selectedMeasurementIndex, selectedOpeningIndex, selectedNode, model])
+  }, [canEdit, viewMode, tool, selectedMeasurementIndex, selectedOpeningIndex, selectedNode, model, finishActiveOpenContour])
 
   useEffect(() => {
     if (selectedMeasurementIndex !== null && !model.measurements?.[selectedMeasurementIndex]) {
@@ -3289,7 +3351,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const handleMove = (e: React.PointerEvent) => {
     if (!canEdit) return
-    applyPointerMoveAt(e.clientX, e.clientY)
+    applyPointerMoveAt(e.clientX, e.clientY, canvasViewRef.current, e.pointerId)
     if (e.pointerType === 'mouse') updateEdgeAutoPan(e.clientX, e.clientY)
   }
 
@@ -3321,7 +3383,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       canvasPanRef.current = null
       canvasPinchRef.current = null
       beginCanvasTapGesture(e)
-      applyPointerMoveAt(e.clientX, e.clientY)
+      applyPointerMoveAt(e.clientX, e.clientY, canvasViewRef.current, e.pointerId)
     }
   }
 
@@ -3369,7 +3431,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
     if (e.pointerType === 'touch' || e.pointerType === 'pen') {
       markCanvasTapMoved(e)
-      applyPointerMoveAt(e.clientX, e.clientY)
+      applyPointerMoveAt(e.clientX, e.clientY, canvasViewRef.current, e.pointerId)
       e.preventDefault()
       return
     }
@@ -3414,6 +3476,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     canvasPointersRef.current.delete(e.pointerId)
     if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
     finishPenPointer(e)
+    const endingDragNode = dragNodeRef.current
+    const armedNode = armedDragNodeRef.current
+    const armedNodeTap = armedNode &&
+      armedNode.pointerId === e.pointerId &&
+      dragNodeRef.current === null &&
+      !screenPointerMovedBeyondThreshold(armedNode.origin, { clientX: e.clientX, clientY: e.clientY }, NODE_DRAG_THRESHOLD_PX)
+      ? { c: armedNode.c, p: armedNode.p, pointerType: armedNode.pointerType }
+      : null
 
     if (activeTouchPointers().length < 2) canvasPinchRef.current = null
     if (canvasPointersRef.current.size === 1) {
@@ -3428,6 +3498,23 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     endDragOpening()
     endDragNode()
     endDragPlaced()
+
+    if (endingDragNode && (e.pointerType === 'touch' || e.pointerType === 'pen')) {
+      nodeTapClickHandledRef.current = endingDragNode
+      dragMovedRef.current = false
+      canvasSuppressClickRef.current = true
+      e.preventDefault()
+      return
+    }
+
+    if (armedNodeTap && (armedNodeTap.pointerType === 'touch' || armedNodeTap.pointerType === 'pen')) {
+      const node = { c: armedNodeTap.c, p: armedNodeTap.p }
+      handleNodeTap(node)
+      nodeTapClickHandledRef.current = node
+      canvasSuppressClickRef.current = true
+      e.preventDefault()
+      return
+    }
 
     if (stored && (stored.pointerType === 'touch' || stored.pointerType === 'pen')) {
       if (tapLongPressed) {
@@ -3496,6 +3583,52 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   }
 
+  const sameNode = (a: DragNode | null, b: DragNode): boolean => !!a && a.c === b.c && a.p === b.p
+
+  const selectNodeForEdit = (node: DragNode) => {
+    setActiveMode('wall')
+    setSelectedNode(node)
+    setSelectedContourIndex(node.c)
+    setSelectedWallKey(null)
+    selectedOpeningIndexRef.current = null
+    setSelectedOpeningIndex(null)
+    setSelectedMeasurementIndex(null)
+    setMeasurementDraft(null)
+  }
+
+  const closeActiveContourFromStartNode = (node: DragNode): boolean => {
+    const currentModel = modelRef.current
+    const activeIndex = currentModel.contours.length - 1
+    const active = currentModel.contours[activeIndex]
+    if (!active || node.c !== activeIndex || node.p !== 0 || !shouldCloseOpenContourFromPoint(active, active.points[0], CLOSE_SNAP)) {
+      return false
+    }
+    return finishActiveOpenContour({ discardIncomplete: false })
+  }
+
+  const handleNodeTap = (node: DragNode): boolean => {
+    if (closeActiveContourFromStartNode(node)) return true
+    selectNodeForEdit(node)
+    return true
+  }
+
+  const handleNodeClick = (c: number, p: number) => (event: React.MouseEvent) => {
+    event.stopPropagation()
+    const node = { c, p }
+    if (!canEdit) return
+    if (sameNode(nodeTapClickHandledRef.current, node)) {
+      nodeTapClickHandledRef.current = null
+      canvasSuppressClickRef.current = false
+      return
+    }
+    nodeTapClickHandledRef.current = null
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false
+      return
+    }
+    handleNodeTap(node)
+  }
+
   const startDragNode = (c: number, p: number) => (e: React.PointerEvent) => {
     if (!canEdit) return
     if (e.pointerType === 'mouse' && e.button !== 0) return
@@ -3505,20 +3638,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       activePenPointerIdRef.current = e.pointerId
     }
     e.stopPropagation()
-    recordHistoryStep()
     const node = { c, p }
-    dragMovedRef.current = true
-    dragNodeRef.current = node
-    setDragNode(node)
-    setSelectedNode(node)
-    setSelectedContourIndex(c)
-    setSelectedWallKey(null)
-    setSelectedOpeningIndex(null)
-    setSelectedMeasurementIndex(null)
-    setMeasurementDraft(null)
-    setActiveMode('wall')
-    edgeAutoPanPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
-    updateEdgeAutoPan(e.clientX, e.clientY)
+    armedDragNodeRef.current = {
+      ...node,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      origin: { clientX: e.clientX, clientY: e.clientY },
+    }
+    dragNodeRef.current = null
+    setDragNode(null)
+    selectNodeForEdit(node)
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   }
 
@@ -3558,9 +3687,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const endDragNode = () => {
+    armedDragNodeRef.current = null
     if (dragNodeRef.current === null) return
-    stopEdgeAutoPan()
     dragNodeRef.current = null
+    stopEdgeAutoPan()
     setDragNode(null)
     setSmartGuides([])
     setSketchMaterials(null)
@@ -3632,9 +3762,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       const p = wallPoint(raw).p
       const contours = model.contours
       const last = contours[contours.length - 1]
+      const appendTime = typeof performance !== 'undefined' ? performance.now() : Date.now()
       if (newRoomDraftPendingRef.current) {
         const nextContour: Contour = { points: [p], closed: false }
         commit({ ...model, contours: [...contours, nextContour] })
+        lastWallClickAppendRef.current = { contourIndex: contours.length, pointIndex: 0, point: p, clientX, clientY, time: appendTime }
         setNewRoomPending(false)
         setSelectedContourIndex(null)
         setSelectedNode(null)
@@ -3642,9 +3774,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         return true
       }
       // Замыкание: клик рядом со стартовой точкой активного контура (≥3 точек).
-      if (last && !last.closed && last.points.length >= 3 && dist(p, last.points[0]) <= CLOSE_SNAP) {
+      if (shouldCloseOpenContourFromPoint(last, p, CLOSE_SNAP)) {
         const next = { ...model, contours: contours.map((c, i) => (i === contours.length - 1 ? { ...c, closed: true } : c)) }
         commit(next)
+        lastWallClickAppendRef.current = null
         setNewRoomPending(false)
         return true
       }
@@ -3654,8 +3787,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         if (dist(p, prev) < 0.01) return false
         const next = { ...model, contours: contours.map((c, i) => (i === contours.length - 1 ? { ...c, points: [...c.points, p] } : c)) }
         commit(next)
+        lastWallClickAppendRef.current = { contourIndex: contours.length - 1, pointIndex: last.points.length, point: p, clientX, clientY, time: appendTime }
       } else {
         commit({ ...model, contours: [...contours, { points: [p], closed: false }] })
+        lastWallClickAppendRef.current = { contourIndex: contours.length, pointIndex: 0, point: p, clientX, clientY, time: appendTime }
         setNewRoomPending(false)
       }
       return true
@@ -3678,8 +3813,63 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     return true
   }
 
+  const rollbackDoubleClickWallAppend = (baseModel: SketchModel, event: React.MouseEvent): SketchModel => {
+    const append = lastWallClickAppendRef.current
+    if (!append) return baseModel
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const contour = baseModel.contours[append.contourIndex]
+    const appendedPoint = contour?.points[append.pointIndex]
+    if (
+      now - append.time > 700 ||
+      append.contourIndex !== baseModel.contours.length - 1 ||
+      append.pointIndex < 3 ||
+      !contour ||
+      contour.closed ||
+      append.pointIndex !== contour.points.length - 1 ||
+      !appendedPoint ||
+      dist(appendedPoint, append.point) > 0.001 ||
+      Math.hypot(event.clientX - append.clientX, event.clientY - append.clientY) > NODE_DRAG_THRESHOLD_PX * 3
+    ) {
+      return baseModel
+    }
+    return {
+      ...baseModel,
+      contours: baseModel.contours.map((item, index) => (
+        index === append.contourIndex
+          ? { ...item, points: item.points.filter((_, pointIndex) => pointIndex !== append.pointIndex) }
+          : item
+      )),
+    }
+  }
+
   const handleClick = (e: React.MouseEvent) => {
+    if (e.detail > 1) return
     applyCanvasActionAt(e.clientX, e.clientY)
+  }
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    if (!canEdit || viewMode !== '2d' || tool !== 'wall') return
+    if (canvasSuppressClickRef.current || dragMovedRef.current) {
+      canvasSuppressClickRef.current = false
+      dragMovedRef.current = false
+      lastWallClickAppendRef.current = null
+      return
+    }
+    e.preventDefault()
+    const baseModel = rollbackDoubleClickWallAppend(modelRef.current, e)
+    const result = finishLastOpenContour(baseModel)
+    lastWallClickAppendRef.current = null
+    if (!result.changed) return
+    commit(result.model as SketchModel)
+    setNewRoomPending(false)
+    setHover(null)
+    setHoverSnapped(false)
+    setHoverSnapGuide(null)
+    if (result.action === 'discarded') {
+      setSelectedNode(null)
+      setSelectedContourIndex(null)
+      setSelectedWallKey(null)
+    }
   }
 
   function selectCanvasObjectAt(clientX: number, clientY: number): boolean {
@@ -3784,11 +3974,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const finishShape = () => {
-    const contours = model.contours
-    const last = contours[contours.length - 1]
-    if (!last || last.closed || last.points.length < 3) return
-    commit({ ...model, contours: contours.map((c, i) => (i === contours.length - 1 ? { ...c, closed: true } : c)) })
-    setNewRoomPending(false)
+    finishActiveOpenContour({ discardIncomplete: false })
   }
 
   const startNewRoom = () => {
@@ -5426,6 +5612,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                   role="img"
                   aria-label={t('hub_tab_sketch')}
                   onClick={handleClick}
+                  onDoubleClick={handleDoubleClick}
                   onPointerDown={handleCanvasPointerDown}
                   onPointerMove={handleCanvasPointerMove}
                   onPointerUp={handleCanvasPointerEnd}
@@ -5614,9 +5801,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             c.points.map((p, pi) => {
               const selected = selectedNode?.c === ci && selectedNode.p === pi
               const dragging = dragNode?.c === ci && dragNode.p === pi
+              const activeEnd = activeContourOpen && ci === model.contours.length - 1 && pi === c.points.length - 1
               const nodeHitRadius = Math.max(nodeRadius + 4 * screenWorldPx, 24 * screenWorldPx)
               return (
-                <g key={`n${ci}-${pi}`} className="hub-sketch-node-group">
+                <g key={`n${ci}-${pi}`} className="hub-sketch-node-group" onClick={canEdit ? handleNodeClick(ci, pi) : undefined}>
                   <circle
                     className="hub-sketch-node-hit"
                     cx={p.x * CELL_PX}
@@ -5625,7 +5813,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     onPointerDown={canEdit ? startDragNode(ci, pi) : undefined}
                   />
                   <circle
-                    className={`hub-sketch-node${selected ? ' hub-sketch-node-selected' : ''}${dragging ? ' hub-sketch-node-dragging' : ''}`}
+                    className={`hub-sketch-node${activeEnd ? ' hub-sketch-node-active-end' : ''}${selected ? ' hub-sketch-node-selected' : ''}${dragging ? ' hub-sketch-node-dragging' : ''}`}
                     cx={p.x * CELL_PX}
                     cy={p.y * CELL_PX}
                     r={nodeRadius}
