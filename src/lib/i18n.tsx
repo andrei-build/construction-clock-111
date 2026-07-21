@@ -1731,6 +1731,15 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_file_video_badge: { ru: 'Видео', en: 'Video', es: 'Video' },
   hub_file_uploader_unknown: { ru: 'Неизвестный автор', en: 'Unknown uploader', es: 'Autor desconocido' },
   hub_files_close: { ru: 'Закрыть', en: 'Close', es: 'Cerrar' },
+  // PHOTO-EXPORT: выбор фото и выгрузка подборки (маркетинг — Google Business / Instagram)
+  hub_files_export_select: { ru: 'Выбрать фото', en: 'Select photos', es: 'Seleccionar fotos' },
+  hub_files_export_cancel: { ru: 'Отменить выбор', en: 'Cancel selection', es: 'Cancelar selección' },
+  hub_files_export_watermark: { ru: 'Водяной знак логотипом', en: 'Logo watermark', es: 'Marca de agua con logo' },
+  hub_files_export_do: { ru: 'Выгрузить подборку', en: 'Export selection', es: 'Exportar selección' },
+  hub_files_export_working: { ru: 'Готовим подборку…', en: 'Preparing…', es: 'Preparando…' },
+  hub_files_export_cors: { ru: 'Не удалось прочитать фото для выгрузки. Откройте фото и скачайте его по одному.', en: 'Could not read photos for export. Open a photo and download it individually.', es: 'No se pudieron leer las fotos para exportar. Abre una foto y descárgala una por una.' },
+  hub_files_export_no_watermark: { ru: 'Подборка готова, но водяной знак не удалось нанести — выгружено без него.', en: 'Selection ready, but the watermark could not be applied — exported without it.', es: 'Selección lista, pero no se pudo aplicar la marca de agua — exportado sin ella.' },
+  hub_files_export_failed: { ru: 'Не удалось выгрузить подборку', en: 'Could not export selection', es: 'No se pudo exportar la selección' },
   // Вкладка «Время»
   hub_time_worker: { ru: 'Работник', en: 'Worker', es: 'Trabajador' },
   hub_time_hours: { ru: 'ч', en: 'h', es: 'h' },
