@@ -91,6 +91,7 @@ import {
   CABINET_CATALOG_ENTRIES,
   CABINET_CATALOG_STANDARD_WIDTHS_IN,
   CABINET_CATALOG_WALL_HEIGHTS_IN,
+  cabinetCatalogDefaultWidth,
   cabinetCatalogEntryCode,
   type CabinetCatalogEntry,
   type CabinetCatalogIcon,
@@ -168,6 +169,7 @@ import {
   nearestSegment,
   openingEnds,
   openingGeom,
+  type WallSegment,
 } from './sketchOpeningGeometry'
 
 interface SketchTabProps {
@@ -3961,6 +3963,74 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setStatus(layout.overflow ? 'hub_sketch_cabinet_overflow' : layout.smallFiller ? 'hub_sketch_cabinet_small_filler' : 'hub_sketch_cabinet_placed')
   }
 
+  // UX-CABINETS-6: визуальное размещение — ряд стены хранится как placedItems,
+  // код-строка собирается заново из уже стоящих шкафов (без авто-филлеров) → layoutCabinetRunOnWall.
+  const cabinetRunItemsForWall = useCallback((wallId: string): SketchPlacedCatalogItem[] => (
+    sanitizePlacedCatalogItems(model.placedItems)
+      .filter((item) => isCabinetPlacedItem(item) && item.wallId === wallId && !item.filler)
+      .sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
+  ), [model])
+
+  const rebuildCabinetWall = useCallback((wall: WallSegment, codes: string[]) => {
+    const wallId = sketchWallKey(wall.c, wall.s)
+    const kept = sanitizePlacedCatalogItems(model.placedItems)
+      .filter((item) => !(isCabinetPlacedItem(item) && item.wallId === wallId))
+    setError(null)
+    if (codes.length === 0) {
+      commit({ ...model, placedItems: kept })
+      setStatus(null)
+      return
+    }
+    const layout = layoutCabinetRunOnWall(model, wall, codes.join(' '))
+    commit({ ...model, placedItems: [...kept, ...layout.items] })
+    setStatus(layout.overflow ? 'hub_sketch_cabinet_overflow' : layout.smallFiller ? 'hub_sketch_cabinet_small_filler' : 'hub_sketch_cabinet_placed')
+  }, [commit, model])
+
+  const placeCabinetEntry = useCallback((entry: CabinetCatalogEntry, widthIn?: number) => {
+    if (!selectedCabinetWall) {
+      setError('hub_sketch_no_segment')
+      return
+    }
+    const width = widthIn ?? cabinetCatalogDefaultWidth(entry)
+    const code = cabinetCatalogEntryCode(entry, width, cabinetGalleryWallHeight)
+    const wallId = sketchWallKey(selectedCabinetWall.c, selectedCabinetWall.s)
+    const existing = cabinetRunItemsForWall(wallId).map((item) => cabinetDisplayCode(item)).filter(Boolean)
+    rebuildCabinetWall(selectedCabinetWall, [...existing, code])
+  }, [cabinetGalleryWallHeight, cabinetRunItemsForWall, rebuildCabinetWall, selectedCabinetWall])
+
+  const cabinetItemCodeWithSize = (item: SketchPlacedCatalogItem, widthIn: number, wallHeightIn?: number): string => {
+    const pad2 = (value: number) => String(Math.round(value)).padStart(2, '0')
+    if (item.layer === 'wall') {
+      const heightIn = wallHeightIn ?? Math.round(item.heightIn ?? 30)
+      return `W${pad2(widthIn)}${pad2(heightIn)}`
+    }
+    const prefix = item.cabinetPrefix || 'B'
+    return `${prefix}${Math.round(widthIn)}`
+  }
+
+  const handleCabinetResize = useCallback((item: SketchPlacedCatalogItem, widthIn: number, wallHeightIn?: number) => {
+    const wallId = item.wallId ?? ''
+    const wall = cabinetWallOptions.find((seg) => sketchWallKey(seg.c, seg.s) === wallId)
+    if (!wall) return
+    const codes = cabinetRunItemsForWall(wallId)
+      .map((it) => (it.id === item.id ? cabinetItemCodeWithSize(it, widthIn, wallHeightIn) : cabinetDisplayCode(it)))
+      .filter(Boolean)
+    rebuildCabinetWall(wall, codes)
+  }, [cabinetRunItemsForWall, cabinetWallOptions, rebuildCabinetWall])
+
+  const handleCabinetRemove = useCallback((item: SketchPlacedCatalogItem) => {
+    const wallId = item.wallId ?? ''
+    const wall = cabinetWallOptions.find((seg) => sketchWallKey(seg.c, seg.s) === wallId)
+    if (!wall) return
+    const codes = cabinetRunItemsForWall(wallId)
+      .filter((it) => it.id !== item.id)
+      .map((it) => cabinetDisplayCode(it))
+      .filter(Boolean)
+    rebuildCabinetWall(wall, codes)
+  }, [cabinetRunItemsForWall, cabinetWallOptions, rebuildCabinetWall])
+
+  const cabinetRunItems = effectiveCabinetWallKey ? cabinetRunItemsForWall(effectiveCabinetWallKey) : []
+
   const updateModelFrom3D = useCallback((next: SketchModel) => {
     commit(normalizeSketchModelForStorage(next))
   }, [commit])
@@ -4809,7 +4879,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             <span className="muted">{t('hub_sketch_cabinet_wall')}</span>
             <select
               value={effectiveCabinetWallKey ?? ''}
-              onChange={(event) => setSelectedCabinetWallKey(event.target.value || null)}
+              onChange={(event) => {
+                const key = event.target.value || null
+                setSelectedCabinetWallKey(key)
+                if (key) setSelectedWallKey(key)
+              }}
               disabled={cabinetWallOptions.length === 0}
             >
               {cabinetWallOptions.length === 0 && <option value="">{t('hub_sketch_no_segment')}</option>}
@@ -4824,97 +4898,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               ))}
             </select>
           </label>
-          <textarea
-            className="hub-sketch-cabinet-code-input"
-            value={cabinetCodes}
-            onChange={(event) => setCabinetCodes(event.target.value)}
-            rows={fullscreen ? 2 : 3}
-            spellCheck={false}
-            placeholder="B30 2DB27 W3030 BEP24-3/4 BF3"
-          />
-          <details className="hub-sketch-cabinet-cheatsheet" open>
-            <summary>{t('hub_sketch_cabinet_cheatsheet')}</summary>
-            <p>{t('hub_sketch_cabinet_codes_hint')}</p>
-            <div className="hub-sketch-cabinet-help-grid">
-              {CABINET_HELP_ITEMS.map((item) => (
-                <span key={item.code}>
-                  <strong>{item.code}</strong>
-                  {`=${t(item.labelKey)}`}
-                </span>
-              ))}
-            </div>
-          </details>
-          <div className="hub-sketch-cabinet-builder" role="group" aria-label={t('hub_sketch_cabinet_builder_label')}>
-            <div className="hub-sketch-cabinet-builder-row">
-              {CABINET_BUILDER_KINDS.map((kind) => (
-                <button
-                  key={kind}
-                  type="button"
-                  className={cabinetBuilderKind === kind ? 'btn small' : 'btn ghost small'}
-                  aria-pressed={cabinetBuilderKind === kind}
-                  onClick={() => setCabinetBuilderKind(kind)}
-                >
-                  {`+${t(CABINET_BUILDER_LABEL_KEYS[kind])}`}
-                </button>
-              ))}
-            </div>
-            {cabinetBuilderKind === 'wall' && (
-              <div className="hub-sketch-cabinet-builder-row" role="group" aria-label={t('hub_sketch_cabinet_wall_height')}>
-                <span className="muted">{t('hub_sketch_cabinet_wall_height')}</span>
-                {CABINET_WALL_HEIGHTS_IN.map((heightIn) => (
-                  <button
-                    key={heightIn}
-                    type="button"
-                    className={cabinetBuilderWallHeight === heightIn ? 'btn small' : 'btn ghost small'}
-                    aria-pressed={cabinetBuilderWallHeight === heightIn}
-                    onClick={() => setCabinetBuilderWallHeight(heightIn)}
-                  >
-                    {`${heightIn}"`}
-                  </button>
-                ))}
-              </div>
-            )}
-            {cabinetBuilderKind === 'appliance' && (
-              <div className="hub-sketch-cabinet-builder-row" role="group" aria-label={t('hub_sketch_cabinet_appliance_type')}>
-                <span className="muted">{t('hub_sketch_cabinet_appliance_type')}</span>
-                {CABINET_APPLIANCE_PREFIXES.map((prefix) => (
-                  <button
-                    key={prefix}
-                    type="button"
-                    className={cabinetBuilderAppliance === prefix ? 'btn small' : 'btn ghost small'}
-                    aria-pressed={cabinetBuilderAppliance === prefix}
-                    onClick={() => setCabinetBuilderAppliance(prefix)}
-                  >
-                    {t(CABINET_APPLIANCE_LABEL_KEYS[prefix])}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="hub-sketch-cabinet-builder-row" role="group" aria-label={t('hub_sketch_width')}>
-              <span className="muted">{t('hub_sketch_width')}</span>
-              {CABINET_STANDARD_WIDTHS_IN.map((widthIn) => (
-                <button key={widthIn} type="button" className="btn ghost small" onClick={() => addCabinetBuilderWidth(widthIn)}>
-                  {`+${widthIn}"`}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="hub-sketch-cabinet-actions">
-            <button type="button" className="btn small" disabled={!selectedCabinetWall || !cabinetCodes.trim()} onClick={applyCabinetLayout}>
-              {t('hub_sketch_cabinet_apply')}
-            </button>
-            {cabinetLayoutPreview && (
-              <span className={cabinetLayoutPreview.overflow || cabinetLayoutPreview.smallFiller || cabinetLayoutPreview.invalidCodes.length > 0 ? 'hub-sketch-cabinet-summary hub-sketch-cabinet-summary-warn' : 'hub-sketch-cabinet-summary'}>
-                {`${cabinetLayoutPreview.parsed.length} · ${t('hub_sketch_dim_length_short')} ${formatInches(cabinetLayoutPreview.wallLengthIn)}`}
-                {cabinetLayoutPreview.summaries.map((summary) => ` · ${t(summary.layer === 'base' ? 'hub_sketch_cabinet_base' : 'hub_sketch_cabinet_wall_layer')} ${formatInches(summary.totalWidthIn)}${summary.fillerWidthIn > 0 ? ` + ${formatInches(summary.fillerWidthIn)}` : ''}`).join('')}
-              </span>
-            )}
-          </div>
-          <details className="hub-sketch-cabinet-gallery">
-            <summary>
+          {/* UX-CABINETS-6: визуальные карточки — ГЛАВНЫЙ способ добавить шкаф (клик = шкаф в ряд) */}
+          <div className="hub-sketch-cabinet-gallery hub-sketch-cabinet-gallery-panel">
+            <div className="hub-sketch-cabinet-gallery-head">
               <span>{t('hub_sketch_cabinet_gallery_title')}</span>
               <span className="hub-sketch-cabinet-gallery-count">{CABINET_CATALOG_ENTRIES.length}</span>
-            </summary>
+            </div>
+            <p className="hub-sketch-cabinet-gallery-hint muted">{t('hub_sketch_cabinet_gallery_pick_hint')}</p>
             <div className="hub-sketch-cabinet-gallery-body">
               <label className="hub-sketch-field hub-sketch-cabinet-gallery-search">
                 <span className="muted">{t('hub_sketch_cabinet_gallery_search_label')}</span>
@@ -4934,20 +4924,31 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     <div className="hub-sketch-cabinet-gallery-grid">
                       {group.entries.map((entry) => {
                         const selected = selectedCabinetGalleryEntryId === entry.id
+                        const defaultCode = cabinetCatalogEntryCode(entry, cabinetCatalogDefaultWidth(entry), cabinetGalleryWallHeight)
                         return (
                           <div className={selected ? 'hub-sketch-cabinet-gallery-card hub-sketch-cabinet-gallery-card-active' : 'hub-sketch-cabinet-gallery-card'} key={entry.id}>
                             <button
                               type="button"
                               className="hub-sketch-cabinet-gallery-pick"
-                              aria-expanded={selected}
-                              aria-pressed={selected}
-                              onClick={() => setSelectedCabinetGalleryEntryId((current) => current === entry.id ? null : entry.id)}
+                              disabled={!selectedCabinetWall}
+                              title={t('hub_sketch_cabinet_gallery_add')}
+                              onClick={() => placeCabinetEntry(entry)}
                             >
                               <CabinetGalleryIcon icon={entry.icon} />
                               <span className="hub-sketch-cabinet-gallery-card-body">
                                 <span className="hub-sketch-cabinet-gallery-card-name">{t(entry.labelKey)}</span>
-                                <span className="hub-sketch-cabinet-gallery-card-code">{entry.codePrefix}</span>
+                                <span className="hub-sketch-cabinet-gallery-card-code">{defaultCode}</span>
                               </span>
+                              <span className="hub-sketch-cabinet-gallery-card-add" aria-hidden="true">+</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="hub-sketch-cabinet-gallery-more"
+                              aria-expanded={selected}
+                              onClick={() => setSelectedCabinetGalleryEntryId((current) => current === entry.id ? null : entry.id)}
+                            >
+                              {t(entry.sizeKind === 'panelDepth' ? 'hub_sketch_cabinet_gallery_depth' : 'hub_sketch_cabinet_gallery_sizes')}
+                              <span aria-hidden="true">{selected ? '▴' : '▾'}</span>
                             </button>
                             {selected && (
                               <div className="hub-sketch-cabinet-gallery-sizes">
@@ -4969,19 +4970,17 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                                 )}
                                 <div className="hub-sketch-cabinet-gallery-size-row" role="group" aria-label={t(entry.sizeKind === 'panelDepth' ? 'hub_sketch_cabinet_gallery_depth' : 'hub_sketch_width')}>
                                   <span className="muted">{t(entry.sizeKind === 'panelDepth' ? 'hub_sketch_cabinet_gallery_depth' : 'hub_sketch_width')}</span>
-                                  {entry.widthsIn.map((widthIn) => {
-                                    const code = cabinetCatalogEntryCode(entry, widthIn, cabinetGalleryWallHeight)
-                                    return (
-                                      <button
-                                        key={`${entry.id}-${widthIn}`}
-                                        type="button"
-                                        className="btn ghost small hub-sketch-cabinet-gallery-code-chip"
-                                        onClick={() => addCabinetGalleryCode(entry, widthIn)}
-                                      >
-                                        {`+${code}`}
-                                      </button>
-                                    )
-                                  })}
+                                  {entry.widthsIn.map((widthIn) => (
+                                    <button
+                                      key={`${entry.id}-${widthIn}`}
+                                      type="button"
+                                      className="btn ghost small hub-sketch-cabinet-gallery-code-chip"
+                                      disabled={!selectedCabinetWall}
+                                      onClick={() => placeCabinetEntry(entry, widthIn)}
+                                    >
+                                      {entry.sizeKind === 'wall' ? `${widthIn}"` : `+${cabinetCatalogEntryCode(entry, widthIn, cabinetGalleryWallHeight)}`}
+                                    </button>
+                                  ))}
                                 </div>
                               </div>
                             )}
@@ -4993,32 +4992,146 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 ))
               )}
             </div>
-          </details>
-          {cabinetLayoutPreview && cabinetLayoutPreview.invalidCodes.length > 0 && (
-            <div className="hub-sketch-cabinet-help">
-              {cabinetLayoutPreview.invalidCodes.map((invalidCode, invalidIndex) => {
-                const candidates = cabinetLayoutPreview.suggestions[invalidCode] ?? suggestCabinetCodes(invalidCode)
-                return (
-                  <div className="hub-sketch-cabinet-suggestion-row" key={`${invalidCode}-${invalidIndex}`}>
-                    <span className="hub-sketch-cabinet-suggestion-text">{`${t('hub_sketch_cabinet_invalid')}: ${invalidCode}`}</span>
-                    {candidates.length > 0 && <span className="muted">{`${t('hub_sketch_cabinet_maybe')}:`}</span>}
-                    {candidates.map((candidate) => (
+          </div>
+          {/* Текущий ряд на выбранной стене — видно и можно удалить в один клик */}
+          <div className="hub-sketch-cabinet-run" role="group" aria-label={t('hub_sketch_cabinet_run_label')}>
+            <span className="hub-sketch-cabinet-run-label muted">{t('hub_sketch_cabinet_run_label')}</span>
+            {cabinetRunItems.length === 0 ? (
+              <span className="muted">{t('hub_sketch_cabinet_run_empty')}</span>
+            ) : (
+              cabinetRunItems.map((item) => (
+                <span className="hub-sketch-cabinet-run-chip" key={item.id}>
+                  <span>{cabinetDisplayCode(item)}</span>
+                  <button
+                    type="button"
+                    className="hub-sketch-cabinet-run-remove"
+                    aria-label={`${t('hub_sketch_cabinet_remove')} ${cabinetDisplayCode(item)}`}
+                    onClick={() => handleCabinetRemove(item)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))
+            )}
+          </div>
+          {/* ПРО-режим: ввод кодами (эксперт) — свёрнут по умолчанию */}
+          <details className="hub-sketch-cabinet-expert">
+            <summary>{t('hub_sketch_cabinet_expert')}</summary>
+            <div className="hub-sketch-cabinet-expert-body">
+              <p className="hub-sketch-cabinet-expert-note muted">{t('hub_sketch_cabinet_expert_note')}</p>
+              <textarea
+                className="hub-sketch-cabinet-code-input"
+                value={cabinetCodes}
+                onChange={(event) => setCabinetCodes(event.target.value)}
+                rows={fullscreen ? 2 : 3}
+                spellCheck={false}
+                placeholder="B30 2DB27 W3030 BEP24-3/4 BF3"
+              />
+              <details className="hub-sketch-cabinet-cheatsheet">
+                <summary>{t('hub_sketch_cabinet_cheatsheet')}</summary>
+                <p>{t('hub_sketch_cabinet_codes_hint')}</p>
+                <div className="hub-sketch-cabinet-help-grid">
+                  {CABINET_HELP_ITEMS.map((item) => (
+                    <span key={item.code}>
+                      <strong>{item.code}</strong>
+                      {`=${t(item.labelKey)}`}
+                    </span>
+                  ))}
+                </div>
+              </details>
+              <div className="hub-sketch-cabinet-builder" role="group" aria-label={t('hub_sketch_cabinet_builder_label')}>
+                <div className="hub-sketch-cabinet-builder-row">
+                  {CABINET_BUILDER_KINDS.map((kind) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      className={cabinetBuilderKind === kind ? 'btn small' : 'btn ghost small'}
+                      aria-pressed={cabinetBuilderKind === kind}
+                      onClick={() => setCabinetBuilderKind(kind)}
+                    >
+                      {`+${t(CABINET_BUILDER_LABEL_KEYS[kind])}`}
+                    </button>
+                  ))}
+                </div>
+                {cabinetBuilderKind === 'wall' && (
+                  <div className="hub-sketch-cabinet-builder-row" role="group" aria-label={t('hub_sketch_cabinet_wall_height')}>
+                    <span className="muted">{t('hub_sketch_cabinet_wall_height')}</span>
+                    {CABINET_WALL_HEIGHTS_IN.map((heightIn) => (
                       <button
-                        key={`${invalidCode}-${invalidIndex}-${candidate}`}
+                        key={heightIn}
                         type="button"
-                        className="btn ghost small hub-sketch-cabinet-chip"
-                        onClick={() => applyCabinetSuggestion(invalidCode, candidate)}
+                        className={cabinetBuilderWallHeight === heightIn ? 'btn small' : 'btn ghost small'}
+                        aria-pressed={cabinetBuilderWallHeight === heightIn}
+                        onClick={() => setCabinetBuilderWallHeight(heightIn)}
                       >
-                        {cabinetSuggestionLabel(candidate)}
+                        {`${heightIn}"`}
                       </button>
                     ))}
                   </div>
-                )
-              })}
+                )}
+                {cabinetBuilderKind === 'appliance' && (
+                  <div className="hub-sketch-cabinet-builder-row" role="group" aria-label={t('hub_sketch_cabinet_appliance_type')}>
+                    <span className="muted">{t('hub_sketch_cabinet_appliance_type')}</span>
+                    {CABINET_APPLIANCE_PREFIXES.map((prefix) => (
+                      <button
+                        key={prefix}
+                        type="button"
+                        className={cabinetBuilderAppliance === prefix ? 'btn small' : 'btn ghost small'}
+                        aria-pressed={cabinetBuilderAppliance === prefix}
+                        onClick={() => setCabinetBuilderAppliance(prefix)}
+                      >
+                        {t(CABINET_APPLIANCE_LABEL_KEYS[prefix])}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="hub-sketch-cabinet-builder-row" role="group" aria-label={t('hub_sketch_width')}>
+                  <span className="muted">{t('hub_sketch_width')}</span>
+                  {CABINET_STANDARD_WIDTHS_IN.map((widthIn) => (
+                    <button key={widthIn} type="button" className="btn ghost small" onClick={() => addCabinetBuilderWidth(widthIn)}>
+                      {`+${widthIn}"`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="hub-sketch-cabinet-actions">
+                <button type="button" className="btn small" disabled={!selectedCabinetWall || !cabinetCodes.trim()} onClick={applyCabinetLayout}>
+                  {t('hub_sketch_cabinet_apply')}
+                </button>
+                {cabinetLayoutPreview && (
+                  <span className={cabinetLayoutPreview.overflow || cabinetLayoutPreview.smallFiller || cabinetLayoutPreview.invalidCodes.length > 0 ? 'hub-sketch-cabinet-summary hub-sketch-cabinet-summary-warn' : 'hub-sketch-cabinet-summary'}>
+                    {`${cabinetLayoutPreview.parsed.length} · ${t('hub_sketch_dim_length_short')} ${formatInches(cabinetLayoutPreview.wallLengthIn)}`}
+                    {cabinetLayoutPreview.summaries.map((summary) => ` · ${t(summary.layer === 'base' ? 'hub_sketch_cabinet_base' : 'hub_sketch_cabinet_wall_layer')} ${formatInches(summary.totalWidthIn)}${summary.fillerWidthIn > 0 ? ` + ${formatInches(summary.fillerWidthIn)}` : ''}`).join('')}
+                  </span>
+                )}
+              </div>
+              {cabinetLayoutPreview && cabinetLayoutPreview.invalidCodes.length > 0 && (
+                <div className="hub-sketch-cabinet-help">
+                  {cabinetLayoutPreview.invalidCodes.map((invalidCode, invalidIndex) => {
+                    const candidates = cabinetLayoutPreview.suggestions[invalidCode] ?? suggestCabinetCodes(invalidCode)
+                    return (
+                      <div className="hub-sketch-cabinet-suggestion-row" key={`${invalidCode}-${invalidIndex}`}>
+                        <span className="hub-sketch-cabinet-suggestion-text">{`${t('hub_sketch_cabinet_invalid')}: ${invalidCode}`}</span>
+                        {candidates.length > 0 && <span className="muted">{`${t('hub_sketch_cabinet_maybe')}:`}</span>}
+                        {candidates.map((candidate) => (
+                          <button
+                            key={`${invalidCode}-${invalidIndex}-${candidate}`}
+                            type="button"
+                            className="btn ghost small hub-sketch-cabinet-chip"
+                            onClick={() => applyCabinetSuggestion(invalidCode, candidate)}
+                          >
+                            {cabinetSuggestionLabel(candidate)}
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              {cabinetLayoutPreview?.overflow && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_overflow')}</div>}
+              {cabinetLayoutPreview?.smallFiller && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_small_filler')}</div>}
             </div>
-          )}
-          {cabinetLayoutPreview?.overflow && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_overflow')}</div>}
-          {cabinetLayoutPreview?.smallFiller && <div className="error-msg hub-sketch-cabinet-warning">{t('hub_sketch_cabinet_small_filler')}</div>}
+          </details>
         </div>
       )}
         {activeMode === 'measure' && (
@@ -6280,6 +6393,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             codeCheckEnabled={codeCheckEnabled}
             onMeasurementsChange={updateWallElevationMeasurements}
             onModelChange={updateWallElevationModel}
+            onCabinetResize={handleCabinetResize}
+            onCabinetRemove={handleCabinetRemove}
             onBack={closeWallElevationFullscreen}
             toolbarExtras={
               <>

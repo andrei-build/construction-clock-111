@@ -5424,7 +5424,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-cabinet-gallery-pick {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   width: 100%;
@@ -5436,8 +5436,47 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   text-align: left;
   cursor: pointer;
 }
-.hub-sketch-cabinet-gallery-pick:hover {
+.hub-sketch-cabinet-gallery-pick:hover:not(:disabled) {
   background: rgba(37, 99, 235, .08);
+}
+.hub-sketch-cabinet-gallery-pick:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.hub-sketch-cabinet-gallery-card-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, .14);
+  color: #1d4ed8;
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1;
+}
+.hub-sketch-cabinet-gallery-pick:hover:not(:disabled) .hub-sketch-cabinet-gallery-card-add {
+  background: rgba(37, 99, 235, .24);
+}
+.hub-sketch-cabinet-gallery-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-top: 1px solid rgba(126,160,190,.18);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.hub-sketch-cabinet-gallery-more:hover {
+  background: rgba(37, 99, 235, .06);
+  color: var(--text);
 }
 .hub-sketch-cabinet-gallery-card-body {
   display: grid;
@@ -5487,6 +5526,107 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+}
+.hub-sketch-cabinet-gallery-panel {
+  display: flex;
+  flex-direction: column;
+}
+.hub-sketch-cabinet-gallery-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px 4px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 900;
+}
+.hub-sketch-cabinet-gallery-hint {
+  margin: 0;
+  padding: 0 10px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.hub-sketch-cabinet-gallery-panel .hub-sketch-cabinet-gallery-body {
+  max-height: 340px;
+  overflow: auto;
+}
+.hub-sketch-cabinet-run {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(126,160,190,.24);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .035);
+  min-width: 0;
+}
+.hub-sketch-cabinet-run-label {
+  font-size: 12px;
+  font-weight: 900;
+}
+.hub-sketch-cabinet-run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid rgba(126,160,190,.32);
+  border-radius: 999px;
+  background: var(--panel);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 900;
+}
+.hub-sketch-cabinet-run-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(220, 38, 38, .12);
+  color: #b91c1c;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+.hub-sketch-cabinet-run-remove:hover {
+  background: rgba(220, 38, 38, .22);
+}
+.hub-sketch-cabinet-expert {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(126,160,190,.24);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .035);
+  overflow: hidden;
+}
+.hub-sketch-cabinet-expert > summary {
+  cursor: pointer;
+  padding: 9px 10px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 900;
+}
+.hub-sketch-cabinet-expert-body {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+.hub-sketch-cabinet-expert-note {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+}
+.hub-sketch-cabinet-expert-body .hub-sketch-cabinet-cheatsheet,
+.hub-sketch-cabinet-expert-body .hub-sketch-cabinet-builder,
+.hub-sketch-cabinet-expert-body .hub-sketch-cabinet-actions,
+.hub-sketch-cabinet-expert-body .hub-sketch-cabinet-help,
+.hub-sketch-cabinet-expert-body .hub-sketch-cabinet-warning {
+  grid-column: auto;
 }
 .hub-sketch-cabinet-icon {
   display: block;
@@ -7077,6 +7217,80 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: rgba(38, 63, 49, .82);
   stroke-width: .025;
   fill: none;
+}
+.hub-sketch-elevation-cabinet-editable {
+  cursor: pointer;
+}
+.hub-sketch-elevation-cabinet-editable:hover > rect:first-of-type {
+  stroke: #2563eb;
+  stroke-width: .05;
+}
+.hub-sketch-elevation-cabinet-selected > rect:first-of-type {
+  stroke: #2563eb;
+  stroke-width: .06;
+}
+.hub-sketch-elevation-cabinet-editor {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: min(94%, 460px);
+  padding: 10px 12px;
+  border: 1px solid rgba(37, 99, 235, .4);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, .22);
+}
+.hub-sketch-elevation-cabinet-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.hub-sketch-elevation-cabinet-editor-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, .08);
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+.hub-sketch-elevation-cabinet-editor-close:hover {
+  background: rgba(15, 23, 42, .16);
+}
+.hub-sketch-elevation-cabinet-editor-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  min-width: 0;
+}
+.hub-sketch-elevation-cabinet-editor-row .muted {
+  font-size: 11px;
+  font-weight: 900;
+}
+.hub-sketch-elevation-cabinet-editor-row .btn {
+  width: auto;
+}
+.hub-sketch-elevation-cabinet-editor-delete {
+  align-self: flex-start;
+  color: #b91c1c;
+  border-color: rgba(220, 38, 38, .4);
 }
 .hub-sketch-elevation-region-hit {
   fill: transparent;
