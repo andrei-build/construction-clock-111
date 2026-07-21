@@ -3317,6 +3317,42 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-file-name { overflow-wrap: anywhere; }
 .hub-file-sub { font-size: 12px; overflow-wrap: anywhere; }
+/* PHOTO-EXPORT: панель выбора и выгрузки подборки фото. */
+.hub-file-export-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 4px;
+}
+.hub-file-export-toggle.active { outline: 2px solid var(--accent, #f5a524); outline-offset: 1px; }
+.hub-file-export-wm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.hub-file-export-go { margin-left: auto; }
+.hub-file-export-msg { margin: 4px 0 0; }
+.hub-file-card.selected { outline: 2px solid var(--accent, #f5a524); outline-offset: 1px; }
+.hub-file-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(0, 0, 0, .55);
+  border: 2px solid #fff;
+}
+.hub-file-check.on { background: var(--accent, #f5a524); color: #0f1420; }
 .gallery-lightbox video {
   max-width: min(92vw, 1100px);
   max-height: 82vh;

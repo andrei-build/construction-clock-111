@@ -9,6 +9,7 @@ import {
 } from '../../lib/api'
 import type { Profile, Project, ProjectHubFile } from '../../lib/types'
 import { useImageLightbox, type LightboxImage } from '../../components/ImageLightbox'
+import { buildStoreZip, dedupeNames, watermarkGeometry } from './photoExport'
 
 interface FilesTabProps {
   project: Project
@@ -39,6 +40,31 @@ function fileUrl(file: ProjectHubFile): Promise<string | null> {
   return file.scope === 'project' ? getProjectFileDownloadUrl(file) : mediaUrl(file.storage_path)
 }
 
+// PHOTO-EXPORT: паттерн canvas-композиции — как в MarkupLayer (не импортируем приватное, копируем логику).
+// Грузим кросс-ориджин Image; здесь источник — локальный blob:-URL (байты фото уже у нас) + same-origin /icon.svg,
+// поэтому canvas не «тейнтится». crossOrigin='anonymous' оставлен для единообразия и безопасного случая R2-URL.
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('img-load-failed'))
+    img.src = src
+  })
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob-null'))), type)
+  })
+}
+
+// Безопасное имя для download-архива из названия проекта.
+function zipBaseName(projectName: string): string {
+  const cleaned = projectName.replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '')
+  return cleaned || 'photos'
+}
+
 const FILTERS: { key: FilterKey; labelKey: string }[] = [
   { key: 'all', labelKey: 'hub_files_all' },
   { key: 'photos', labelKey: 'hub_files_photos' },
@@ -58,6 +84,13 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [openBusyId, setOpenBusyId] = useState<string | null>(null)
   const [openError, setOpenError] = useState(false)
+  // PHOTO-EXPORT: режим выбора фото + опция водяного знака + подборка.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [watermark, setWatermark] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  // Ключ i18n сообщения об экспорте (ошибка/предупреждение) или null.
+  const [exportMsg, setExportMsg] = useState<string | null>(null)
   // LIGHTBOX-1: изображения — через общий лайтбокс (зум/листание/на весь экран/скачать В ПРИЛОЖЕНИИ).
   const lb = useImageLightbox()
   // Видео остаётся в простом оверлее; прочие файлы (pdf и т.п.) открываем в новой вкладке — прежнее поведение.
@@ -180,6 +213,149 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
     }
   }
 
+  // --- PHOTO-EXPORT ---
+  const exitSelect = () => {
+    setSelectMode(false)
+    setSelected(new Set())
+  }
+  const toggleSelectMode = () => {
+    setExportMsg(null)
+    if (selectMode) exitSelect()
+    else setSelectMode(true)
+  }
+  const toggleSelect = (id: string) => {
+    setExportMsg(null)
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Наложить полупрозрачный логотип в правый-нижний угол. Источник фото — локальный blob:-URL
+  // (байты уже получены fetch'ем), поэтому canvas не «тейнтится»; на любой сбой — бросаем, вызывающий оставит оригинал.
+  const composeWatermark = async (blob: Blob, logo: HTMLImageElement): Promise<Blob> => {
+    const url = URL.createObjectURL(blob)
+    try {
+      const img = await loadImage(url)
+      const w = img.naturalWidth
+      const h = img.naturalHeight
+      if (!w || !h) throw new Error('no-dims')
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('no-ctx')
+      ctx.drawImage(img, 0, 0, w, h)
+      const g = watermarkGeometry(w, h)
+      ctx.globalAlpha = 0.75
+      ctx.drawImage(logo, g.x, g.y, g.size, g.size)
+      ctx.globalAlpha = 1
+      // Экспорт как PNG у прозрачных, иначе JPEG — сохраняем исходный тип, где можем.
+      return await canvasToBlob(canvas, blob.type === 'image/png' ? 'image/png' : 'image/jpeg')
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  const runExport = async () => {
+    if (exporting) return
+    const chosen = files.filter((f) => fileCategory(f.mime) === 'photos' && selected.has(f.id))
+    if (chosen.length === 0) return
+    setExporting(true)
+    setExportMsg(null)
+    try {
+      // Логотип грузим один раз; не загрузился → просто без водяного знака (graceful).
+      let logo: HTMLImageElement | null = null
+      if (watermark) {
+        try {
+          logo = await loadImage('/icon.svg')
+        } catch {
+          logo = null
+        }
+      }
+
+      const items: { name: string; blob: Blob }[] = []
+      let watermarkFailed = false
+      for (const f of chosen) {
+        let url: string | null
+        try {
+          url = await fileUrl(f)
+        } catch {
+          continue
+        }
+        if (!url) continue
+        let blob: Blob
+        try {
+          // Программное чтение подписанного R2-URL может упереться в CORS — тогда мягко пропускаем это фото.
+          const res = await fetch(url)
+          if (!res.ok) continue
+          blob = await res.blob()
+        } catch {
+          continue
+        }
+        if (watermark && logo) {
+          try {
+            blob = await composeWatermark(blob, logo)
+          } catch {
+            // canvas «затейнился»/сбой → оставляем оригинал, помечаем, не крашим экспорт.
+            watermarkFailed = true
+          }
+        }
+        items.push({ name: f.name, blob })
+      }
+
+      if (items.length === 0) {
+        // Ни одно фото не удалось прочитать программно — честная ошибка, без ложного успеха.
+        setExportMsg('hub_files_export_cors')
+        return
+      }
+
+      const names = dedupeNames(items.map((it) => it.name))
+      const shareFiles = items.map(
+        (it, i) => new File([it.blob], names[i], { type: it.blob.type || 'image/jpeg' }),
+      )
+
+      // Главный путь для телефона: нативный share-sheet (Instagram / Google Business).
+      const nav = typeof navigator !== 'undefined' ? navigator : null
+      if (nav?.canShare && nav.canShare({ files: shareFiles })) {
+        try {
+          await nav.share({ files: shareFiles, title: project.name })
+          if (watermarkFailed) setExportMsg('hub_files_export_no_watermark')
+          exitSelect()
+          return
+        } catch (err) {
+          // Пользователь отменил share → тихо, без ошибки. Иначе — падаем в zip-путь.
+          if ((err as { name?: string })?.name === 'AbortError') return
+        }
+      }
+
+      // Десктоп/фолбэк: один STORE-only .zip ссылкой на скачивание.
+      const entries = await Promise.all(
+        items.map(async (it, i) => ({ name: names[i], bytes: new Uint8Array(await it.blob.arrayBuffer()) })),
+      )
+      const zip = buildStoreZip(entries)
+      const zipBlob = new Blob([zip as BlobPart], { type: 'application/zip' })
+      const zipUrl = URL.createObjectURL(zipBlob)
+      const a = document.createElement('a')
+      a.href = zipUrl
+      a.download = `${zipBaseName(project.name)}-photos.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(zipUrl), 10000)
+      if (watermarkFailed) setExportMsg('hub_files_export_no_watermark')
+      exitSelect()
+    } catch {
+      setExportMsg('hub_files_export_failed')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const selectedCount = selected.size
+
   return (
     <section className="hub-tab-panel hub-files">
       <div className="card hub-file-upload">
@@ -214,6 +390,42 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
         ))}
       </div>
 
+      {counts.photos > 0 && (
+        <div className="hub-file-export-bar">
+          <button
+            type="button"
+            className={`btn small hub-file-export-toggle${selectMode ? ' active' : ''}`}
+            onClick={toggleSelectMode}
+            aria-pressed={selectMode}
+          >
+            {selectMode ? t('hub_files_export_cancel') : t('hub_files_export_select')}
+          </button>
+          {selectMode && (
+            <>
+              <label className="hub-file-export-wm">
+                <input
+                  type="checkbox"
+                  checked={watermark}
+                  onChange={(e) => setWatermark(e.target.checked)}
+                />
+                {t('hub_files_export_watermark')}
+              </label>
+              <button
+                type="button"
+                className="btn small primary hub-file-export-go"
+                disabled={selectedCount < 1 || exporting}
+                onClick={runExport}
+              >
+                {exporting
+                  ? t('hub_files_export_working')
+                  : `${t('hub_files_export_do')} (${selectedCount})`}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {exportMsg && <p className="error-msg hub-file-export-msg">{t(exportMsg)}</p>}
+
       {openError && <p className="error-msg">{t('hub_file_open_failed')}</p>}
       {loading && <div className="card center muted">{t('loading')}</div>}
       {loadError && <p className="error-msg">{t('hub_files_load_error')}</p>}
@@ -227,13 +439,17 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
           {visible.map((file) => {
             const category = fileCategory(file.mime)
             const thumb = thumbs[file.id]
+            // В режиме выбора выбираемы только фото; клик по фото переключает выбор, а не открывает лайтбокс.
+            const selectable = selectMode && category === 'photos'
+            const isSelected = selectable && selected.has(file.id)
             return (
               <button
                 key={file.id}
                 type="button"
-                className="card hub-file-card"
+                className={`card hub-file-card${isSelected ? ' selected' : ''}`}
                 disabled={openBusyId === file.id}
-                onClick={() => openFile(file)}
+                aria-pressed={selectable ? isSelected : undefined}
+                onClick={() => (selectable ? toggleSelect(file.id) : openFile(file))}
               >
                 <div className="hub-file-preview">
                   {category === 'photos' && thumb ? (
@@ -244,6 +460,11 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
                     </span>
                   )}
                   {category === 'videos' && <span className="hub-file-badge">{t('hub_file_video_badge')}</span>}
+                  {selectable && (
+                    <span className={`hub-file-check${isSelected ? ' on' : ''}`} aria-hidden="true">
+                      {isSelected ? '✓' : ''}
+                    </span>
+                  )}
                 </div>
                 <div className="hub-file-meta">
                   <span className="item-title hub-file-name">{file.name}</span>
