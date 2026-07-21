@@ -4066,6 +4066,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border-color: rgba(47, 122, 94, .35);
   background: rgba(47, 122, 94, .1);
 }
+/* SKETCH-RAIL-FIX-19: в 3D-контекст-режимах кнопка-тоггл остаётся в потоке как
+   невидимый спейсер того же размера — слот сохраняется, кнопки режимов не съезжают
+   вверх, тултип совпадает с кнопкой под курсором. НЕ display:none (иначе layout сдвинется). */
+.hub-sketch-panel-toggle-btn-reserved {
+  visibility: hidden;
+  pointer-events: none;
+  background: transparent;
+}
 .hub-sketch-main {
   min-width: 0;
   display: grid;
@@ -4080,6 +4088,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border-radius: 8px;
   background: var(--panel2);
   align-self: start;
+  /* SKETCH-RAIL-FIX-19: рейл — панель управления НАД канвасом. Явные position+z-index
+     гарантируют, что nav.hub-sketch-mode-rail всегда выше .hub-sketch-svg по стек-контексту
+     и стабильно принимает клики, в т.ч. сразу после выхода из fullscreen (иначе SVG
+     иногда перехватывал pointer events по ☰/рейлу). В fullscreen рейл живёт внутри
+     .hub-sketch-fullscreen-context-row (z8, pointer-events управляется там) — этот z-index
+     остаётся локальным и раскладку overlay не ломает. */
+  position: relative;
+  z-index: 6;
 }
 .hub-sketch-mode-btn {
   position: relative;
