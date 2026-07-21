@@ -3095,7 +3095,7 @@ export default function Sketch3DView({
         renderer.outputColorSpace = THREE.SRGBColorSpace
         renderer.toneMapping = THREE.ACESFilmicToneMapping
         renderer.toneMappingExposure = 1.02
-        renderer.setClearColor(0xf7f8fb, 1)
+        renderer.setClearColor(0x0d1522, 1)
         renderer.shadowMap.enabled = false
         currentHost.appendChild(renderer.domElement)
         const textureLoader = new THREE.TextureLoader()
@@ -3103,7 +3103,7 @@ export default function Sketch3DView({
         const maxAnisotropy = renderer.capabilities?.getMaxAnisotropy?.() ?? 4
 
         const scene = new THREE.Scene()
-        scene.background = new THREE.Color(0xf7f8fb)
+        scene.background = new THREE.Color(0x0d1522)
 
         const cellFt = modelCellFt(model)
         const bounds = modelBounds(model)

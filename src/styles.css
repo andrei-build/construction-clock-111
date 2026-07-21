@@ -3913,22 +3913,43 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-topbar-fullscreen {
   flex: 0 0 auto;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  flex-wrap: nowrap;
+  align-items: center;
   justify-content: flex-start;
-  row-gap: 8px;
+  gap: 6px;
+  min-height: 56px;
   border-radius: 0;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   box-shadow: 0 10px 26px rgba(0, 0, 0, .38);
-  padding-top: calc(22px + env(safe-area-inset-top, 0px));
+  padding-top: calc(6px + env(safe-area-inset-top, 0px));
   padding-left: calc(10px + env(safe-area-inset-left, 0px));
   padding-right: calc(10px + env(safe-area-inset-right, 0px));
-  padding-bottom: 8px;
+  padding-bottom: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
   z-index: 8;
 }
 .hub-sketch-topbar-fullscreen .hub-sketch-topbar-group {
   overflow: visible;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+.hub-sketch-topbar-fullscreen .hub-sketch-view-preset-group {
+  flex-wrap: nowrap;
+}
+.hub-sketch-topbar-fullscreen .btn.small {
+  min-height: 44px;
+  padding: 6px 10px;
+}
+.hub-sketch-topbar-fullscreen .hub-sketch-height-field input {
+  width: 92px;
+  padding: 8px 10px;
+}
+.hub-sketch-topbar-fullscreen .hub-sketch-snap { width: auto; }
+.hub-sketch-topbar-fullscreen .hub-sketch-code-toggle {
+  min-height: 40px;
+  padding: 5px 9px;
 }
 .hub-sketch-topbar-group {
   min-width: 0;
@@ -4212,7 +4233,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding: 8px 9px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .48);
+  background: var(--panel2);
   color: var(--text);
   font: inherit;
   text-align: left;
@@ -4279,7 +4300,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding: 3px;
   border: 1px solid rgba(126,160,190,.28);
   border-radius: 8px;
-  background: rgba(255,255,255,.72);
+  background: var(--panel2);
 }
 .hub-sketch-view-toggle-fullscreen .btn {
   width: auto;
@@ -4360,7 +4381,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   position: relative;
   overflow: hidden;
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--panel);
 }
 .hub-sketch-svg-shell-fullscreen {
   position: fixed;
@@ -4379,7 +4400,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   width: 100%;
   height: clamp(440px, 70vh, 840px);
   display: block;
-  background: #ffffff;
+  background: var(--panel);
   touch-action: none;
   user-select: none;
 }
@@ -4410,8 +4431,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border: 0;
   border-bottom: 1px solid rgba(126,160,190,.34);
   border-radius: 0;
-  background: rgba(248, 250, 252, .96);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, .1);
+  background: rgba(13, 21, 34, .96);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .34);
   z-index: 6;
 }
 .hub-sketch-fullscreen-meta-tools {
@@ -4448,7 +4469,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   height: clamp(440px, 70vh, 840px);
   overflow: hidden;
   border-radius: 8px;
-  background: #f7f8fb;
+  background: var(--panel);
 }
 .hub-sketch-3d-shell-fullscreen {
   position: fixed;
@@ -4470,7 +4491,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   display: grid;
   place-items: center;
   padding: 16px;
-  background: rgba(247, 248, 251, .72);
+  background: rgba(7, 11, 18, .72);
 }
 .hub-sketch-3d-camera-tools {
   position: absolute;
@@ -4917,9 +4938,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-grid {
   pointer-events: none;
 }
-.hub-sketch-subgrid line { stroke: #edf1f5; stroke-width: 1; }
-.hub-sketch-grid line { stroke: #d7dee8; stroke-width: 1; }
-.hub-sketch-wall { stroke: #1f2933; stroke-width: 3; fill: rgba(31, 41, 51, .06); stroke-linejoin: round; stroke-linecap: round; }
+.hub-sketch-subgrid line { stroke: rgba(126, 160, 190, .08); stroke-width: 1; }
+.hub-sketch-grid line { stroke: rgba(126, 160, 190, .18); stroke-width: 1; }
+.hub-sketch-wall { stroke: var(--text); stroke-width: 3; fill: rgba(237, 246, 251, .05); stroke-linejoin: round; stroke-linecap: round; }
 .hub-sketch-room-selected {
   stroke: #2563eb;
   stroke-width: 4;
@@ -4946,15 +4967,15 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   pointer-events: none;
 }
 .hub-sketch-room-label {
-  fill: #0f172a;
-  stroke: rgba(255, 255, 255, .96);
+  fill: var(--text);
+  stroke: rgba(7, 11, 18, .92);
   stroke-width: 3.5;
   paint-order: stroke;
   font-weight: 850;
   letter-spacing: 0;
 }
 .hub-sketch-room-label-selected {
-  fill: #1d4ed8;
+  fill: var(--blue);
 }
 .hub-sketch-room-closed-badge rect {
   fill: rgba(22, 101, 52, .94);
@@ -4986,7 +5007,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-wall-hit { stroke: transparent; stroke-width: 22; stroke-linecap: round; fill: none; cursor: pointer; }
 .hub-sketch-wall-selected { stroke: #2563eb; stroke-width: 5; stroke-linecap: round; fill: none; pointer-events: none; }
 .hub-sketch-wall-conflict { stroke: #dc2626; stroke-width: 6; stroke-linecap: round; fill: none; pointer-events: none; }
-.hub-sketch-dim { fill: #334155; font-size: 12px; font-weight: 700; pointer-events: none; }
+.hub-sketch-dim { fill: var(--muted); font-size: 12px; font-weight: 700; pointer-events: none; }
 .hub-sketch-dim-line,
 .hub-sketch-opening-dim {
   pointer-events: none;
@@ -4997,7 +5018,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-dim-main,
 .hub-sketch-dim-extension,
 .hub-sketch-dim-tick {
-  stroke: #334155;
+  stroke: rgba(169, 183, 200, .75);
   stroke-width: 1.15;
   stroke-linecap: round;
   fill: none;
@@ -5006,8 +5027,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   opacity: .58;
 }
 .hub-sketch-dim-label {
-  fill: #334155;
-  stroke: rgba(255, 255, 255, .94);
+  fill: var(--text);
+  stroke: rgba(7, 11, 18, .92);
   stroke-width: 3.5;
   paint-order: stroke;
   font-weight: 850;
@@ -5046,8 +5067,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   box-shadow: 0 0 0 2px rgba(37, 99, 235, .16);
 }
 .hub-sketch-node {
-  fill: #0f172a;
-  stroke: #ffffff;
+  fill: var(--text);
+  stroke: var(--bg);
   stroke-width: 2;
   cursor: grab;
 }
@@ -5077,7 +5098,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-door { fill: #b45309; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-window { fill: #2563eb; stroke: #ffffff; stroke-width: 2; }
 .hub-sketch-opening-selection-halo {
-  stroke: rgba(15, 23, 42, .55);
+  stroke: rgba(237, 246, 251, .5);
   stroke-width: 7;
   stroke-linecap: round;
   fill: none;
@@ -5099,8 +5120,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke-width: 2;
 }
 .hub-sketch-opening-snap-guide text {
-  fill: #92400e;
-  stroke: rgba(255, 255, 255, .96);
+  fill: var(--amber-hover);
+  stroke: rgba(7, 11, 18, .92);
   stroke-width: 3.5;
   paint-order: stroke;
   font-weight: 850;
@@ -5129,8 +5150,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   fill: none;
 }
 .hub-sketch-smart-guide text {
-  fill: #92400e;
-  stroke: rgba(255, 255, 255, .96);
+  fill: var(--amber-hover);
+  stroke: rgba(7, 11, 18, .92);
   stroke-width: 3.5;
   paint-order: stroke;
   font-size: 11px;
@@ -5786,11 +5807,11 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   align-items: center;
   gap: 7px;
   padding: 8px;
-  border: 1px solid rgba(220, 38, 38, .28);
+  border: 1px solid rgba(220, 38, 38, .42);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .96);
-  color: #991b1b;
-  box-shadow: 0 12px 30px rgba(127, 29, 29, .14);
+  background: rgba(21, 29, 45, .96);
+  color: var(--red);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .34);
   font-size: 12px;
   font-weight: 850;
 }
@@ -5887,15 +5908,15 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   min-width: 0;
 }
 .hub-sketch-3d-panel {
-  --panel: #ffffff;
-  --panel2: #f8fafc;
-  --elevated: #eef2f7;
-  --line: rgba(15, 23, 42, .12);
-  --border: rgba(15, 23, 42, .14);
-  --text: #0f172a;
-  --muted: #475569;
-  --muted2: #64748b;
-  --card: #ffffff;
+  --panel: #0d1522;
+  --panel2: #151d2d;
+  --elevated: #1d2940;
+  --line: rgba(126, 160, 190, .2);
+  --border: rgba(126, 160, 190, .24);
+  --text: #edf6fb;
+  --muted: #a9b7c8;
+  --muted2: #748296;
+  --card: #0d1522;
   position: absolute;
   z-index: 8;
   top: 10px;
@@ -5908,7 +5929,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding: 10px;
   border: 1px solid rgba(126,160,190,.32);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .94);
+  background: rgba(13, 21, 34, .94);
   color: var(--text);
   box-shadow: 0 18px 48px rgba(8, 13, 22, .24);
   backdrop-filter: blur(14px);
@@ -5925,7 +5946,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin: -10px -10px 8px;
   padding: 10px;
   border-bottom: 1px solid rgba(126,160,190,.24);
-  background: rgba(248, 250, 252, .96);
+  background: rgba(21, 29, 45, .96);
   backdrop-filter: blur(14px);
 }
 .hub-sketch-3d-panel-head h2 {
@@ -5994,7 +6015,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   width: 100vw;
   height: 100dvh;
   overflow: hidden;
-  background: #f7f8fb;
+  background: var(--bg);
 }
 .hub-sketch-3d-layout-fullscreen .hub-sketch-3d-shell,
 .hub-sketch-3d-layout-fullscreen .hub-sketch-3d-shell-fullscreen {
@@ -6383,7 +6404,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding: 8px;
   border: 1px solid rgba(126,160,190,.22);
   border-radius: 8px;
-  background: rgba(248, 250, 252, .95);
+  background: var(--panel2);
 }
 .hub-sketch-wall-finishbar-fullscreen {
   width: 100%;
@@ -6421,11 +6442,11 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   display: grid;
   gap: 5px;
   padding: 8px;
-  border: 1px solid rgba(37, 99, 235, .34);
+  border: 1px solid rgba(107, 200, 255, .34);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .94);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, .16);
-  color: #1d4ed8;
+  background: rgba(13, 21, 34, .92);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .34);
+  color: var(--blue);
   font-size: 12px;
   font-weight: 850;
   text-align: left;
@@ -6444,7 +6465,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   z-index: 1120;
   display: flex;
   flex-direction: column;
-  background: #eef2f7;
+  background: var(--bg);
   overflow: hidden;
 }
 .hub-sketch-elevation-lightbox-bar {
@@ -6456,8 +6477,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   min-height: 58px;
   padding: calc(7px + env(safe-area-inset-top, 0px)) calc(10px + env(safe-area-inset-right, 0px)) 7px calc(10px + env(safe-area-inset-left, 0px));
   border-bottom: 1px solid rgba(126,160,190,.34);
-  background: rgba(248, 250, 252, .98);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, .12);
+  background: rgba(13, 21, 34, .98);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .34);
 }
 .hub-sketch-elevation-back {
   min-height: 44px;
@@ -6466,19 +6487,20 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   justify-content: center;
   gap: 8px;
   padding: 10px 16px;
-  border: 1px solid rgba(15, 23, 42, .16);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: #0f172a;
-  color: #ffffff;
+  background: var(--panel2);
+  color: var(--text);
   font-size: 15px;
   font-weight: 900;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, .18);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .3);
 }
 .hub-sketch-elevation-back:hover,
 .hub-sketch-elevation-back:focus-visible {
-  background: #1e293b;
+  background: var(--elevated);
+  border-color: var(--accent);
   outline: none;
 }
 .hub-sketch-elevation-lightbox-title {
@@ -6497,8 +6519,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   place-items: center;
   border: 1px solid rgba(126,160,190,.34);
   border-radius: 8px;
-  background: #ffffff;
-  color: #0f172a;
+  background: var(--panel2);
+  color: var(--text);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
@@ -6552,11 +6574,11 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   color: #070b12;
 }
 .hub-sketch-elevation-finish-panel {
-  --panel: #ffffff;
-  --panel2: #f8fafc;
-  --line: rgba(15, 23, 42, .12);
-  --text: #0f172a;
-  --muted: #475569;
+  --panel: #0d1522;
+  --panel2: #151d2d;
+  --line: rgba(126, 160, 190, .2);
+  --text: #edf6fb;
+  --muted: #a9b7c8;
   position: absolute;
   z-index: 6;
   top: calc(72px + env(safe-area-inset-top, 0px));
@@ -6569,7 +6591,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding: 10px;
   border: 1px solid rgba(126,160,190,.32);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .95);
+  background: rgba(13, 21, 34, .95);
   color: var(--text);
   box-shadow: 0 18px 48px rgba(8, 13, 22, .24);
   backdrop-filter: blur(14px);
@@ -6586,7 +6608,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   margin: -10px -10px 10px;
   padding: 10px;
   border-bottom: 1px solid rgba(126,160,190,.24);
-  background: rgba(248, 250, 252, .96);
+  background: rgba(21, 29, 45, .96);
   backdrop-filter: blur(14px);
 }
 .hub-sketch-elevation-finish-panel-head h2 {
@@ -6688,7 +6710,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   min-height: 160px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--panel);
 }
 .hub-sketch-elevation-svg-compact {
   min-height: 96px;
@@ -6743,13 +6765,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke-width: .075;
 }
 .hub-sketch-elevation-wall-dim line {
-  stroke: #334155;
+  stroke: rgba(169, 183, 200, .8);
   stroke-width: .026;
   vector-effect: non-scaling-stroke;
 }
 .hub-sketch-elevation-wall-dim text {
   cursor: text;
   pointer-events: auto;
+  fill: var(--text);
 }
 .hub-sketch-elevation-wall-dim-conflict line,
 .hub-sketch-elevation-wall-dim-conflict text {
@@ -6785,13 +6808,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   align-items: end;
   gap: 8px;
   padding: 8px;
-  border: 1px solid rgba(37, 99, 235, .24);
+  border: 1px solid rgba(107, 200, 255, .28);
   border-radius: 8px;
-  background: rgba(239, 246, 255, .72);
+  background: rgba(21, 29, 45, .82);
 }
 .hub-sketch-elevation-region-title {
   align-self: center;
-  color: #1e40af;
+  color: var(--blue);
   font-size: 12px;
   font-weight: 900;
 }
@@ -7614,8 +7637,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     overflow-x: auto;
     padding: 7px;
     border-radius: 12px;
-    background: rgba(248, 250, 252, .96);
-    box-shadow: 0 -12px 32px rgba(15, 23, 42, .2);
+    background: rgba(13, 21, 34, .96);
+    box-shadow: 0 -12px 32px rgba(0, 0, 0, .38);
     -webkit-overflow-scrolling: touch;
   }
   .hub-sketch-mode-btn {
@@ -7655,8 +7678,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     overflow: auto;
     padding: 6px 10px 12px;
     border-radius: 14px 14px 8px 8px;
-    background: rgba(248, 250, 252, .98);
-    box-shadow: 0 -18px 44px rgba(15, 23, 42, .24);
+    background: rgba(13, 21, 34, .98);
+    box-shadow: 0 -18px 44px rgba(0, 0, 0, .44);
     transform: translateY(0);
     transition: transform .2s ease, opacity .2s ease;
     -webkit-overflow-scrolling: touch;
@@ -7694,7 +7717,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     top: -6px;
     z-index: 2;
     padding: 2px 0 8px;
-    background: rgba(248, 250, 252, .98);
+    background: rgba(21, 29, 45, .98);
   }
   .hub-sketch-context-panel .hub-sketch-cabinet-tools {
     gap: 10px;
@@ -7723,7 +7746,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .hub-sketch-svg-shell-fullscreen {
     padding-left: env(safe-area-inset-left, 0px);
     padding-right: env(safe-area-inset-right, 0px);
-    background: #ffffff;
+    background: var(--bg);
   }
   .hub-sketch-svg-shell-fullscreen .hub-sketch-fullscreen-context-row {
     display: contents;
