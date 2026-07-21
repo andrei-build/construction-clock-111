@@ -86,6 +86,16 @@ export function shouldArmBargeIn(state: AssistantVoiceGateSnapshot): boolean {
   return Boolean(state.thinking || state.streaming || hasPendingAssistantSpeech(state))
 }
 
+// VOICE-CLIENT-DEBUG-1: единый формат строки телеметрии голосового клиента для таблицы client_errors.
+// В схеме client_errors НЕТ колонок category/stage (миграция 0037 — только message/stack_hash/…),
+// поэтому этап и деталь кодируем ПРЯМО в message: `voice:<stage>` (+ ` <detail>`). Чистая функция —
+// покрыта юнит-тестом; сам insert живёт в clientErrors.ts (там supabase-клиент).
+export function voiceEventMessage(stage: string, detail?: string): string {
+  const base = `voice:${stage}`
+  const trimmed = detail?.trim()
+  return trimmed ? `${base} ${trimmed}` : base
+}
+
 export function isTtsPlaybackBlockedError(err: unknown): boolean {
   const name = (err as { name?: string } | null)?.name
   const message = (err as { message?: string } | null)?.message?.toLowerCase() ?? ''

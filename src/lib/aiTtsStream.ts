@@ -35,6 +35,13 @@ export function isSupportedPcmFormat(format: string | null | undefined): boolean
   return f.includes('pcm16') && (f.includes('le') || f.includes('little'))
 }
 
+// VOICE-CLIENT-DEBUG-1: заголовок X-Fallback (какой путь взял edge: full/…) — нормализуем в
+// компактную строку для телеметрии. Пусто/пробелы → null (заголовка нет — обычный стрим).
+export function parseFallbackHeader(header: string | null | undefined): string | null {
+  const v = (header ?? '').trim()
+  return v ? v.slice(0, 40) : null
+}
+
 const EMPTY_BYTES = new Uint8Array(0)
 
 // Склейка остатка предыдущего чтения с новым чанком стрима.

@@ -39,6 +39,7 @@ import {
   stripMarkdownForSpeech,
 } from '../lib/aiVoice'
 import { concatBytes, framesForSeconds, pcm16ToFloat32, splitEvenPcmBytes } from '../lib/aiTtsStream'
+import { logVoiceClientEvent } from '../lib/clientErrors'
 import { loadBargeInVad, type BargeInVad } from '../lib/vadBargeIn'
 import type { Profile, Project } from '../lib/types'
 
@@ -68,6 +69,13 @@ const DISPATCH_ACTIONS = new Set(['assign_worker', 'unassign_worker', 'send_plan
 const KNOWN_ACTIONS = new Set([...LOCAL_ACTIONS, ...DISPATCH_ACTIONS])
 const OVERLAY_PROPOSAL_LIMIT = 4
 
+// VOICE-CLIENT-DEBUG-1: окно тишины перед отправкой распознанной фразы. Раньше ждали 1800мс ВСЕГДА —
+// голос «думал» лишние ~2с ещё до сети. Теперь после ФИНАЛА распознавания (isFinal) шлём почти сразу
+// (короткое окно — движок изредка досылает уточнение), а на голом интериме держим чуть дольше, чтобы не
+// оборвать копящуюся фразу. Итог: конец речи → отправка сокращается, целевой firstSound ≤5с достижим.
+const STT_SILENCE_AFTER_FINAL_MS = 350
+const STT_SILENCE_AFTER_INTERIM_MS = 900
+
 type ProposalIssue = {
   error: AiExecuteProposalErrorCode | 'failed'
   message?: string
@@ -76,6 +84,17 @@ type ProposalIssue = {
 
 function pickEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : fallback
+}
+
+// VOICE-CLIENT-DEBUG-1: компактная деталь ошибки воспроизведения для телеметрии (name + короткое
+// сообщение) — чтобы в client_errors.message было видно, ЧЕМ именно упал плеер, без гигантских строк.
+function voiceErrDetail(err: unknown): string {
+  const name = (err as { name?: string } | null)?.name
+  const message = (err as { message?: string } | null)?.message
+  const parts: string[] = []
+  if (name) parts.push(name)
+  if (message) parts.push(message)
+  return (parts.join(': ') || String(err)).slice(0, 160)
 }
 
 // Достаём первое непустое строковое/числовое значение из payload по списку синонимичных ключей
@@ -324,6 +343,12 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const vadLoadingRef = useRef(false)
   const bargeInListenRef = useRef<(() => void) | null>(null)
   const bargeInHandlerRef = useRef<(() => void) | null>(null)
+  // VOICE-CLIENT-DEBUG-1: клиентские тайминги голосового ответа (для телеметрии voice:timing).
+  // speechEnd — конец захвата речи (STT-финал); ttsResponseAt — получен TTS-ответ (streamAiSpeech
+  // резолвнулся); firstSoundLogged — первый звук уже отмечен в этом голосовом ходу (лог один раз).
+  const voiceSpeechEndAtRef = useRef<number | null>(null)
+  const voiceTtsResponseAtRef = useRef<number | null>(null)
+  const voiceFirstSoundLoggedRef = useRef(false)
 
   useEffect(() => { try { localStorage.setItem('ai_speak', speakOn ? '1' : '0') } catch { /* ignore */ } }, [speakOn])
   useEffect(() => { try { localStorage.setItem('ai_wake', wakeOn ? '1' : '0') } catch { /* ignore */ } }, [wakeOn])
@@ -406,6 +431,22 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       console.warn('AI TTS audio unlock failed', err)
     }
   }, [getTtsAudioContext])
+
+  // VOICE-CLIENT-DEBUG-1: отметка ПЕРВОГО реального звука голосового ответа. Логируем ОДИН раз за ход:
+  // voice:fetch-ok (аудио реально пошло + путь + response→firstSound) и voice:timing
+  // (speechEnd→firstSound — цель приёмки ≤5с). Тайминги пишем, только если известны конец речи/приём
+  // ответа (т.е. голосовой ход; ручная отправка их не ставит).
+  const markFirstVoiceSound = useCallback((path: string) => {
+    if (voiceFirstSoundLoggedRef.current) return
+    voiceFirstSoundLoggedRef.current = true
+    const now = Date.now()
+    const okDetail: string[] = [`path=${path}`]
+    const respAt = voiceTtsResponseAtRef.current
+    if (respAt !== null) okDetail.push(`resp2sound=${now - respAt}ms`)
+    logVoiceClientEvent('fetch-ok', okDetail.join(' '))
+    const speechEnd = voiceSpeechEndAtRef.current
+    if (speechEnd !== null) logVoiceClientEvent('timing', `path=${path} speechEnd2sound=${now - speechEnd}ms`)
+  }, [])
 
   const stopTtsMeter = useCallback(() => {
     if (ttsRafRef.current !== null) { cancelAnimationFrame(ttsRafRef.current); ttsRafRef.current = null }
@@ -499,7 +540,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     }
   }, [resumeTtsAudioContext, stopTtsMeter])
 
-  const playTtsAudioElement = useCallback(async (audio: HTMLAudioElement): Promise<void> => {
+  const playTtsAudioElement = useCallback(async (audio: HTMLAudioElement, onStarted?: () => void): Promise<void> => {
     await new Promise<void>((resolve, reject) => {
       let settled = false
       const finish = () => {
@@ -515,16 +556,23 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       const attemptPlay = async () => {
         try {
           await audio.play()
+          onStarted?.() // VOICE-CLIENT-DEBUG-1: play() принят — звук пошёл (первый звук WAV-пути)
         } catch (err) {
           console.warn('AI TTS audio.play() rejected', err)
-          if (isTtsPlaybackBlockedError(err)) {
+          const blocked = isTtsPlaybackBlockedError(err)
+          // VOICE-CLIENT-DEBUG-1: не глотаем — фиксируем причину. autoplay-block логируем ДАЖЕ если
+          // ретрай ниже спасёт (Андрею важно знать, что политика autoplay мешает без жеста).
+          logVoiceClientEvent(blocked ? 'autoplay-block' : 'play-fail', voiceErrDetail(err))
+          if (blocked) {
             const ctx = await resumeTtsAudioContext()
             if (ctx?.state === 'running') {
               try {
                 await audio.play()
+                onStarted?.() // VOICE-CLIENT-DEBUG-1: ретрай после resume удался — звук пошёл
                 return
               } catch (retryErr) {
                 console.warn('AI TTS audio.play() retry rejected', retryErr)
+                logVoiceClientEvent('play-fail', `retry ${voiceErrDetail(retryErr)}`)
                 fail(retryErr)
                 return
               }
@@ -567,9 +615,12 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     stream: { sampleRate: number; body: ReadableStream<Uint8Array> },
     serial: number,
     signal: AbortSignal,
+    path: string,
   ): Promise<void> => {
     const ctx = await resumeTtsAudioContext()
-    if (!ctx || ctx.state !== 'running') throw new Error('tts_no_audio_context')
+    // VOICE-CLIENT-DEBUG-1: нет живого AudioContext (autoplay/PWA не разблокирован) — не молчим,
+    // фиксируем decode-fail и бросаем: внешний цикл откатится на WAV, а телеметрия покажет причину.
+    if (!ctx || ctx.state !== 'running') { logVoiceClientEvent('decode-fail', 'no_audio_context'); throw new Error('tts_no_audio_context') }
 
     stopTtsMeter()
     stopPcmPlayback()
@@ -601,6 +652,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       nextTime = startAt + buffer.duration
       sources.add(src)
       src.onended = () => { sources.delete(src); try { src.disconnect() } catch { /* ignore */ } }
+      // VOICE-CLIENT-DEBUG-1: первый реально запланированный буфер = первый звук ответа.
+      if (!scheduledAny) markFirstVoiceSound(path)
       scheduledAny = true
     }
 
@@ -623,7 +676,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       schedule(splitEvenPcmBytes(pending).frames)
     } catch (err) {
       const name = (err as { name?: string } | null)?.name
-      if (name === 'AbortError' || aborted() || !scheduledAny) { stopPcmPlayback(); throw err }
+      if (name === 'AbortError' || aborted() || !scheduledAny) {
+        // VOICE-CLIENT-DEBUG-1: обрыв ДО первого звука (не barge-in/abort) — фиксируем decode-fail.
+        if (name !== 'AbortError' && !aborted() && !scheduledAny) logVoiceClientEvent('decode-fail', voiceErrDetail(err))
+        stopPcmPlayback(); throw err
+      }
       // частичное воспроизведение уже идёт — доигрываем запланированное, сетевой обрыв не роняем наружу
     } finally {
       if (ttsStreamReaderRef.current === reader) ttsStreamReaderRef.current = null
@@ -638,11 +695,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       check()
     })
     if (!aborted()) { stopTtsMeter(); stopPcmPlayback() }
-  }, [resumeTtsAudioContext, stopTtsMeter, stopPcmPlayback, runTtsMeterLoop])
+  }, [resumeTtsAudioContext, stopTtsMeter, stopPcmPlayback, runTtsMeterLoop, markFirstVoiceSound])
 
   // VOICE-FRONT-STREAM: проигрывание целого аудио-Blob (WAV) — общий путь для фолбэка ai-tts-stream
   // (X-Fallback: full) и старого ai-tts. Метр — через MediaElementSource (startTtsMeter), как раньше.
-  const playTtsBlob = useCallback(async (blob: Blob, serial: number, signal: AbortSignal): Promise<void> => {
+  const playTtsBlob = useCallback(async (blob: Blob, serial: number, signal: AbortSignal, path: string): Promise<void> => {
     revokeTtsUrl()
     const url = URL.createObjectURL(blob)
     ttsUrlRef.current = url
@@ -650,11 +707,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     ttsAudioRef.current = audio
     await startTtsMeter(audio)
     if (serial !== ttsSerialRef.current || signal.aborted) return
-    await playTtsAudioElement(audio)
+    await playTtsAudioElement(audio, () => markFirstVoiceSound(path))
     if (ttsAudioRef.current === audio) ttsAudioRef.current = null
     stopTtsMeter()
     revokeTtsUrl()
-  }, [revokeTtsUrl, startTtsMeter, playTtsAudioElement, stopTtsMeter])
+  }, [revokeTtsUrl, startTtsMeter, playTtsAudioElement, stopTtsMeter, markFirstVoiceSound])
 
   // AI-VOICE-FIX-1: метр уровня звука — пульсация индикатора «слушаю» по громкости с микрофона.
   const stopMeter = useCallback(() => {
@@ -773,10 +830,13 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           try {
             const streamed = await streamAiSpeech({ text, style: 'jarvis', signal: aborter.signal })
             if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
+            // VOICE-CLIENT-DEBUG-1: получен TTS-ответ — засекаем для response→firstSound; path несёт
+            // реальную ветку edge (X-Fallback) в телеметрию voice:fetch-ok/voice:timing.
+            voiceTtsResponseAtRef.current = Date.now()
             if (streamed.kind === 'stream') {
-              await playPcmStream(streamed, serial, aborter.signal)
+              await playPcmStream(streamed, serial, aborter.signal, streamed.fallback ? `stream:${streamed.fallback}` : 'stream')
             } else {
-              await playTtsBlob(streamed.blob, serial, aborter.signal)
+              await playTtsBlob(streamed.blob, serial, aborter.signal, streamed.fallback ? `wav:${streamed.fallback}` : 'wav')
             }
             played = true
           } catch (streamErr) {
@@ -787,7 +847,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           if (!played) {
             const { blob } = await synthesizeAiSpeech({ text, style: 'jarvis', signal: aborter.signal })
             if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
-            await playTtsBlob(blob, serial, aborter.signal)
+            voiceTtsResponseAtRef.current = Date.now()
+            await playTtsBlob(blob, serial, aborter.signal, 'legacy')
           }
           if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
 
@@ -800,6 +861,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       } catch (err) {
         const name = (err as { name?: string } | null)?.name
         if (serial === ttsSerialRef.current && name !== 'AbortError') {
+          // VOICE-CLIENT-DEBUG-1: не глотаем сбой озвучки — фиксируем ДО показа тоста.
+          logVoiceClientEvent(isTtsPlaybackBlockedError(err) ? 'autoplay-block' : 'play-fail', voiceErrDetail(err))
           if (!isTtsPlaybackBlockedError(err)) ttsQueueRef.current = []
           if (!ttsErrorShownRef.current) {
             ttsErrorShownRef.current = true
@@ -924,6 +987,9 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       const msg = raw.trim()
       if (!msg || thinkingRef.current) return { kind: 'empty' }
       cancelActiveAssistant() // прерываем текущую озвучку/стрим при новом вопросе
+      // VOICE-CLIENT-DEBUG-1: новый ход — сбрасываем метки «первого звука» и приёма TTS-ответа.
+      voiceFirstSoundLoggedRef.current = false
+      voiceTtsResponseAtRef.current = null
       const turnId = ++assistantTurnRef.current
       ttsErrorShownRef.current = false
       thinkingRef.current = true
@@ -943,6 +1009,9 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         const { data: { session } } = await supabase.auth.getSession()
         const token = session?.access_token
         if (!token) throw new Error('no_session')
+        // VOICE-CLIENT-DEBUG-1: конец речи → отправка запроса (только голосовой ход, где speechEnd задан).
+        const speechEndAt = voiceSpeechEndAtRef.current
+        if (speechEndAt !== null) logVoiceClientEvent('timing', `speechEnd2req=${Date.now() - speechEndAt}ms`)
         const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-assistant`, {
           method: 'POST',
           headers: {
@@ -1479,9 +1548,10 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       r.interimResults = true
       r.maxAlternatives = 1
       let finalText = ''
-      const resetSilence = () => {
+      const resetSilence = (finalReady: boolean) => {
         clearSilence()
-        silenceTimerRef.current = window.setTimeout(() => { silenceTimerRef.current = null; finalize(finalText) }, 1800)
+        const wait = finalReady ? STT_SILENCE_AFTER_FINAL_MS : STT_SILENCE_AFTER_INTERIM_MS
+        silenceTimerRef.current = window.setTimeout(() => { silenceTimerRef.current = null; finalize(finalText) }, wait)
       }
       r.onresult = (e) => {
         if (!shouldAcceptAssistantVoiceResult(assistantSpeechGateSnapshot())) {
@@ -1490,15 +1560,17 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           return
         }
         let interim = ''
+        let gotFinal = false
         for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
           const res = e.results[i]
           const transcript = res?.[0]?.transcript ?? ''
-          if (res?.isFinal) finalText += transcript
+          if (res?.isFinal) { finalText += transcript; gotFinal = true }
           else interim += transcript
         }
         const combined = (finalText + interim).trim()
         setInput(combined)
-        if (combined) resetSilence() // тишина отсчитывается только после того, как что-то сказали
+        // после финала — короткое окно (шлём почти сразу); на голом интериме — накопление фразы
+        if (combined) resetSilence(gotFinal)
       }
       // Chrome сам завершает continuous-распознавание — финализируем накопленное (пусто → просто слушаем дальше).
       r.onend = () => { if (active && rec === r) { clearSilence(); finalize(finalText) } }
@@ -1517,6 +1589,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       if (!canAccept) return
       const q = text.trim()
       if (!q) { listen(); return } // ничего не сказали — продолжаем слушать
+      voiceSpeechEndAtRef.current = Date.now() // VOICE-CLIENT-DEBUG-1: конец захвата речи (для таймингов)
       void runTurn(q)
     }
 
@@ -1613,6 +1686,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     e.preventDefault()
     if (thinking) return
     void unlockTtsAudio()
+    voiceSpeechEndAtRef.current = null // VOICE-CLIENT-DEBUG-1: ручная отправка — таймингов «конца речи» нет
     // Ручная отправка: озвучку нового ответа делает эффект по messages (разговорный цикл не активен).
     await sendQuestion(input)
   }
