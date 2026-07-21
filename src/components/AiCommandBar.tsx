@@ -18,6 +18,7 @@ import {
   executeAiProposal,
   resolveProposal,
   synthesizeAiSpeech,
+  streamAiSpeech,
   type AiExecuteCandidate,
   type AiExecuteProposalErrorCode,
   type AiMessage,
@@ -33,9 +34,12 @@ import {
   isVoiceCancel,
   shouldAcceptAssistantVoiceResult,
   shouldAcceptWakePhraseResult,
+  shouldArmBargeIn,
   splitCompletedSpeechSegments,
   stripMarkdownForSpeech,
 } from '../lib/aiVoice'
+import { concatBytes, framesForSeconds, pcm16ToFloat32, splitEvenPcmBytes } from '../lib/aiTtsStream'
+import { loadBargeInVad, type BargeInVad } from '../lib/vadBargeIn'
 import type { Profile, Project } from '../lib/types'
 
 // AI-1-UI: «строка-командир» — оверлей-диалог AI-ассистента ВЛАДЕЛЬЦА. Монтируется в App ТОЛЬКО
@@ -309,6 +313,17 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const ttsAnalyserRef = useRef<AnalyserNode | null>(null)
   const ttsSourceRef = useRef<MediaElementAudioSourceNode | null>(null)
   const ttsRafRef = useRef<number | null>(null)
+  // VOICE-FRONT-STREAM: прогрессивный PCM-стрим озвучки — планировщик буферов «встык» и его reader,
+  // чтобы barge-in/новый вопрос могли МГНОВЕННО оборвать и звук, и чтение сети.
+  const ttsPcmSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set())
+  const ttsPcmGainRef = useRef<GainNode | null>(null)
+  const ttsStreamReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null)
+  // VOICE-FRONT-STREAM: barge-in через Silero-VAD (ленивая загрузка). vadRef — инстанс, handler/listen —
+  // «свежие» колбэки в рефах, чтобы MicVAD (создан один раз) не пересоздавался при ребилде замыканий.
+  const vadRef = useRef<BargeInVad | null>(null)
+  const vadLoadingRef = useRef(false)
+  const bargeInListenRef = useRef<(() => void) | null>(null)
+  const bargeInHandlerRef = useRef<(() => void) | null>(null)
 
   useEffect(() => { try { localStorage.setItem('ai_speak', speakOn ? '1' : '0') } catch { /* ignore */ } }, [speakOn])
   useEffect(() => { try { localStorage.setItem('ai_wake', wakeOn ? '1' : '0') } catch { /* ignore */ } }, [wakeOn])
@@ -407,9 +422,27 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     ttsUrlRef.current = null
   }, [])
 
+  // VOICE-FRONT-STREAM: мгновенный стоп прогрессивного PCM-стрима — обрываем чтение сети и глушим ВСЕ
+  // запланированные встык AudioBufferSourceNode (barge-in требует <100мс). Идемпотентно.
+  const stopPcmPlayback = useCallback(() => {
+    const reader = ttsStreamReaderRef.current
+    ttsStreamReaderRef.current = null
+    if (reader) { try { void reader.cancel() } catch { /* ignore */ } }
+    const sources = ttsPcmSourcesRef.current
+    sources.forEach((src) => {
+      try { src.onended = null; src.stop() } catch { /* ignore */ }
+      try { src.disconnect() } catch { /* ignore */ }
+    })
+    sources.clear()
+    const gain = ttsPcmGainRef.current
+    ttsPcmGainRef.current = null
+    if (gain) { try { gain.disconnect() } catch { /* ignore */ } }
+  }, [])
+
   const stopCurrentTtsAudio = useCallback(() => {
     try { ttsAbortRef.current?.abort() } catch { /* ignore */ }
     ttsAbortRef.current = null
+    stopPcmPlayback()
     const audio = ttsAudioRef.current
     if (audio) {
       try {
@@ -421,13 +454,16 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     }
     stopTtsMeter()
     revokeTtsUrl()
-  }, [revokeTtsUrl, stopTtsMeter])
+  }, [revokeTtsUrl, stopTtsMeter, stopPcmPlayback])
 
   const cancelTtsQueue = useCallback((runIdle = false) => {
     ttsSerialRef.current += 1
     ttsQueueRef.current = []
     ttsQueueRunningRef.current = false
     stopCurrentTtsAudio()
+    // Синхронно гасим ttsBusyRef (иначе barge-in-relisten увидит устаревший «pending speech» и снова
+    // уйдёт в 'speaking'): setTtsBusy(false) обновит state-ref лишь на следующем рендере.
+    ttsBusyRef.current = false
     setTtsBusy(false)
     const onIdle = ttsOnIdleRef.current
     ttsOnIdleRef.current = null
@@ -503,6 +539,122 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       void attemptPlay()
     })
   }, [resumeTtsAudioContext])
+
+  // VOICE-FRONT-STREAM: RAF-метр для PCM-стрима — анализатор уже в графе (gain→analyser→destination),
+  // крутим тот же RMS-цикл, что и HTMLAudio-путь, читая ttsAnalyserRef.
+  const runTtsMeterLoop = useCallback(() => {
+    const analyser = ttsAnalyserRef.current
+    if (!analyser) return
+    const buf = new Uint8Array(analyser.fftSize)
+    const tick = () => {
+      const a = ttsAnalyserRef.current
+      if (!a) { ttsRafRef.current = null; return }
+      a.getByteTimeDomainData(buf)
+      let sum = 0
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v }
+      setTtsLevel(Math.min(1, Math.sqrt(sum / buf.length) * 4))
+      ttsRafRef.current = requestAnimationFrame(tick)
+    }
+    ttsRafRef.current = requestAnimationFrame(tick)
+  }, [])
+
+  // VOICE-FRONT-STREAM: прогрессивное проигрывание PCM16LE-стрима. Копим байты, режем на AudioBuffer'ы
+  // ~0.25с и планируем ВСТЫК через ttsAudioContext (source.start(nextTime); nextTime += duration) —
+  // первые слова звучат почти сразу. Бросаем, ТОЛЬКО если не успели запланировать НИ ОДНОГО буфера
+  // (тогда внешний цикл откатится на целый WAV ai-tts); если часть уже играет — глотаем сетевую ошибку
+  // (частичный ответ лучше двойного). Прерывание (barge-in/новый вопрос) — serial/abort + stopPcmPlayback.
+  const playPcmStream = useCallback(async (
+    stream: { sampleRate: number; body: ReadableStream<Uint8Array> },
+    serial: number,
+    signal: AbortSignal,
+  ): Promise<void> => {
+    const ctx = await resumeTtsAudioContext()
+    if (!ctx || ctx.state !== 'running') throw new Error('tts_no_audio_context')
+
+    stopTtsMeter()
+    stopPcmPlayback()
+    const gain = ctx.createGain()
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 256
+    gain.connect(analyser)
+    analyser.connect(ctx.destination)
+    ttsPcmGainRef.current = gain
+    ttsAnalyserRef.current = analyser
+    const sources = ttsPcmSourcesRef.current
+    runTtsMeterLoop()
+
+    const sampleRate = stream.sampleRate
+    const minChunkBytes = framesForSeconds(sampleRate, 0.25) * 2
+    let nextTime = ctx.currentTime + 0.06
+    let scheduledAny = false
+    const aborted = () => serial !== ttsSerialRef.current || signal.aborted
+
+    const schedule = (frames: Int16Array) => {
+      if (frames.length === 0) return
+      const buffer = ctx.createBuffer(1, frames.length, sampleRate)
+      buffer.getChannelData(0).set(pcm16ToFloat32(frames))
+      const src = ctx.createBufferSource()
+      src.buffer = buffer
+      src.connect(gain)
+      const startAt = Math.max(nextTime, ctx.currentTime)
+      src.start(startAt)
+      nextTime = startAt + buffer.duration
+      sources.add(src)
+      src.onended = () => { sources.delete(src); try { src.disconnect() } catch { /* ignore */ } }
+      scheduledAny = true
+    }
+
+    const reader = stream.body.getReader()
+    ttsStreamReaderRef.current = reader
+    let pending: Uint8Array = new Uint8Array(0)
+    try {
+      for (;;) {
+        if (aborted()) throw new DOMException('aborted', 'AbortError')
+        const { value, done } = await reader.read()
+        if (done) break
+        if (!value || value.length === 0) continue
+        pending = concatBytes(pending, value)
+        if (pending.length >= minChunkBytes) {
+          const { frames, leftover } = splitEvenPcmBytes(pending)
+          schedule(frames)
+          pending = leftover
+        }
+      }
+      schedule(splitEvenPcmBytes(pending).frames)
+    } catch (err) {
+      const name = (err as { name?: string } | null)?.name
+      if (name === 'AbortError' || aborted() || !scheduledAny) { stopPcmPlayback(); throw err }
+      // частичное воспроизведение уже идёт — доигрываем запланированное, сетевой обрыв не роняем наружу
+    } finally {
+      if (ttsStreamReaderRef.current === reader) ttsStreamReaderRef.current = null
+    }
+
+    // Ждём, пока доиграют запланированные буферы (или их прервут barge-in/новый вопрос).
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (aborted() || ctx.currentTime >= nextTime - 0.02) { resolve(); return }
+        window.setTimeout(check, 40)
+      }
+      check()
+    })
+    if (!aborted()) { stopTtsMeter(); stopPcmPlayback() }
+  }, [resumeTtsAudioContext, stopTtsMeter, stopPcmPlayback, runTtsMeterLoop])
+
+  // VOICE-FRONT-STREAM: проигрывание целого аудио-Blob (WAV) — общий путь для фолбэка ai-tts-stream
+  // (X-Fallback: full) и старого ai-tts. Метр — через MediaElementSource (startTtsMeter), как раньше.
+  const playTtsBlob = useCallback(async (blob: Blob, serial: number, signal: AbortSignal): Promise<void> => {
+    revokeTtsUrl()
+    const url = URL.createObjectURL(blob)
+    ttsUrlRef.current = url
+    const audio = new Audio(url)
+    ttsAudioRef.current = audio
+    await startTtsMeter(audio)
+    if (serial !== ttsSerialRef.current || signal.aborted) return
+    await playTtsAudioElement(audio)
+    if (ttsAudioRef.current === audio) ttsAudioRef.current = null
+    stopTtsMeter()
+    revokeTtsUrl()
+  }, [revokeTtsUrl, startTtsMeter, playTtsAudioElement, stopTtsMeter])
 
   // AI-VOICE-FIX-1: метр уровня звука — пульсация индикатора «слушаю» по громкости с микрофона.
   const stopMeter = useCallback(() => {
@@ -615,22 +767,32 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
           }
           const aborter = new AbortController()
           ttsAbortRef.current = aborter
-          const { blob } = await synthesizeAiSpeech({ text, style: 'jarvis', signal: aborter.signal })
-          if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
-
-          revokeTtsUrl()
-          const url = URL.createObjectURL(blob)
-          ttsUrlRef.current = url
-          const audio = new Audio(url)
-          ttsAudioRef.current = audio
-          await startTtsMeter(audio)
-          if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
-          await playTtsAudioElement(audio)
+          // VOICE-FRONT-STREAM: сначала прогрессивный стрим ai-tts-stream (звук идёт по мере генерации);
+          // при любой ошибке ДО первого звука — тихий откат на целый WAV ai-tts (прежнее поведение цело).
+          let played = false
+          try {
+            const streamed = await streamAiSpeech({ text, style: 'jarvis', signal: aborter.signal })
+            if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
+            if (streamed.kind === 'stream') {
+              await playPcmStream(streamed, serial, aborter.signal)
+            } else {
+              await playTtsBlob(streamed.blob, serial, aborter.signal)
+            }
+            played = true
+          } catch (streamErr) {
+            const sname = (streamErr as { name?: string } | null)?.name
+            if (sname === 'AbortError' || serial !== ttsSerialRef.current || aborter.signal.aborted) break
+            console.warn('AI TTS stream failed — fallback to ai-tts', streamErr)
+          }
+          if (!played) {
+            const { blob } = await synthesizeAiSpeech({ text, style: 'jarvis', signal: aborter.signal })
+            if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
+            await playTtsBlob(blob, serial, aborter.signal)
+          }
           if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
 
           if (ttsQueueRef.current[0] === text) ttsQueueRef.current.shift()
 
-          if (ttsAudioRef.current === audio) ttsAudioRef.current = null
           stopTtsMeter()
           revokeTtsUrl()
           ttsAbortRef.current = null
@@ -648,7 +810,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
         finishTtsQueue(serial)
       }
     })()
-  }, [finishTtsQueue, flashToast, playTtsAudioElement, revokeTtsUrl, setVoiceStatusLive, startTtsMeter, stopTtsMeter, t])
+  }, [finishTtsQueue, flashToast, playPcmStream, playTtsBlob, revokeTtsUrl, setVoiceStatusLive, stopTtsMeter, t])
 
   const enqueueTtsSegments = useCallback((segments: string[]): boolean => {
     if (!AUDIO_TTS_SUPPORTED || !speakOnRef.current) return false
@@ -1372,6 +1534,10 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       finishAfterSpeech()
     }
 
+    // VOICE-FRONT-STREAM: точка входа barge-in — VAD услышал речь во время загрузки/озвучки ответа,
+    // ответ уже оборван (cancelActiveAssistant), сразу возвращаемся к прослушиванию НОВОГО вопроса.
+    bargeInListenRef.current = () => { if (active) listen() }
+
     void (async () => {
       const ok = await ensureMic()
       if (!active) return
@@ -1382,6 +1548,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     return () => {
       active = false
       convoActiveRef.current = false
+      bargeInListenRef.current = null
       stopRec()
     }
   }, [
@@ -1397,6 +1564,39 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     setVoiceStatusLive,
   ])
 
+  // VOICE-FRONT-STREAM: свежий barge-in-обработчик в рефе (MicVAD создаётся один раз и дёргает его
+  // через ref, поэтому пересоздавать VAD при ребилде замыканий не нужно). Глушим ответ ТОЛЬКО если
+  // сейчас реально идёт загрузка/озвучка — иначе игнор (ложное срабатывание VAD вне окна).
+  useEffect(() => {
+    bargeInHandlerRef.current = () => {
+      if (!wakeOnRef.current || !openRef.current || !speakOnRef.current) return
+      const snap = assistantSpeechGateSnapshot()
+      if (!snap.thinking && !snap.streaming && !hasPendingAssistantSpeech(snap)) return
+      cancelActiveAssistant()      // мгновенно обрываем SSE-«мозг» + PCM-«рот»
+      bargeInListenRef.current?.() // и тут же слушаем новую фразу
+    }
+  })
+
+  // VOICE-FRONT-STREAM: вооружаем VAD-barge-in ТОЛЬКО в окне загрузки/озвучки ответа. Silero тянется
+  // лениво при первом вооружении; вне окна — pause() (микрофон VAD не держим). Нет VAD (сбой/старый
+  // браузер) → просто без barge-in.
+  const bargeArmed = !!SpeechRecognitionImpl && speakOn && shouldArmBargeIn({ wakeOn, open, thinking, streaming, ttsBusy })
+  useEffect(() => {
+    if (!bargeArmed) { vadRef.current?.pause(); return }
+    let cancelled = false
+    void (async () => {
+      if (!vadRef.current && !vadLoadingRef.current) {
+        vadLoadingRef.current = true
+        const vad = await loadBargeInVad({ onSpeechStart: () => bargeInHandlerRef.current?.() })
+        vadLoadingRef.current = false
+        vadRef.current = vad
+      }
+      if (cancelled) { vadRef.current?.pause(); return }
+      vadRef.current?.start()
+    })()
+    return () => { cancelled = true; vadRef.current?.pause() }
+  }, [bargeArmed])
+
   // PTT gate: while the assistant is thinking or speaking, no extra recognition is started.
 
   // AI-VOICE-FIX-1: подчистка на unmount — освобождаем микрофон/метр и гасим озвучку (нет утечек).
@@ -1405,6 +1605,8 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     cancelTtsQueue()
     try { assistantAbortRef.current?.abort() } catch { /* ignore */ }
     try { void ttsAudioCtxRef.current?.close() } catch { /* ignore */ }
+    try { vadRef.current?.destroy() } catch { /* ignore */ }
+    vadRef.current = null
   }, [cancelTtsQueue, releaseMic])
 
   const submit = async (e: React.FormEvent) => {
