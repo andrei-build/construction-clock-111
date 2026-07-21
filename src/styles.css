@@ -1,17 +1,19 @@
 /* Construction Clock — мобильный-первый, крупные кнопки (карта блок 25) */
 :root {
-  --bg: #070b12;
-  --panel: #0d1522;
-  --panel2: #151d2d;
-  --elevated: #1d2940;
-  --line: rgba(126,160,190,.2);
+  --bg: #08120d;
+  --panel: #0e1a14;
+  --panel2: #16261d;
+  --elevated: #1f3527;
+  --line: rgba(120,170,140,.2);
   --text: #edf6fb;
   --muted: #a9b7c8;
   --muted2: #748296;
-  --amber: #c8a93b;
-  --amber-hover: #e0c45a;
-  --amber-active: #9f842d;
-  --accent: var(--amber);
+  --amber: rgb(200,169,59);
+  --amber-hover: rgb(224,196,90);
+  --amber-active: rgb(159,132,45);
+  --accent: #3fae7a;
+  --accent-hover: #57c793;
+  --accent-active: #2f8a5f;
   --green: #30d39a;
   --red: #ef6674;
   --blue: #6bc8ff;
@@ -78,8 +80,8 @@ h2 { font-size: 16px; color: var(--muted); margin: 18px 0 8px; text-transform: u
   box-shadow: 0 10px 24px rgba(0,0,0,.22);
   transition: transform .05s, opacity .2s, background .15s, color .15s;
 }
-.btn:hover:not(:disabled) { background: var(--amber-hover); }
-.btn:active:not(:disabled) { background: var(--amber-active); transform: scale(.98); }
+.btn:hover:not(:disabled) { background: var(--accent-hover); }
+.btn:active:not(:disabled) { background: var(--accent-active); transform: scale(.98); }
 .btn:disabled { opacity: .45; }
 .btn.green { background: var(--green); }
 .btn.red { background: var(--red); }
@@ -133,7 +135,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .nav a .ico { display: flex; justify-content: center; margin-bottom: 2px; position: relative; }
 .nav a .ico svg { width: 24px; height: 24px; }
-.nav a.active { color: #e0c45a; }
+.nav a.active { color: var(--accent-hover); }
 
 /* MSG-1: бейдж непрочитанных сообщений на пункте «Сообщения». Мобайл — кружок поверх иконки,
    десктоп-сайдбар — компактный счётчик справа в строке (margin-left:auto). Фон/цвет берёт .badge.red. */
@@ -152,7 +154,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 
 .badge { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; }
 .badge.green { background: rgba(48,211,154,.15); color: var(--green); }
-.badge.amber { background: rgba(200,169,59,.15); color: var(--accent); }
+.badge.amber { background: rgba(200,169,59,.15); color: var(--amber); }
 .badge.red { background: rgba(239,102,116,.15); color: var(--red); }
 .badge.blue { background: rgba(107,200,255,.15); color: var(--blue); }
 
@@ -161,7 +163,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding: 3px 10px;
   border-radius: 999px;
   background: rgba(200,169,59,.15);
-  color: #e0c45a;
+  color: var(--amber-hover);
   border: 1px solid rgba(200,169,59,.4);
   font-size: 11px;
   font-weight: 700;
@@ -549,7 +551,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   cursor: pointer;
 }
 .drawer-row-button:hover {
-  border-color: rgba(200,169,59,.45);
+  border-color: rgba(63,174,122,.45);
 }
 .drawer-feed .feed-item:last-child {
   border-bottom: 0;
@@ -704,7 +706,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: var(--muted);
 }
 .status-dot.green { background: var(--green); }
-.status-dot.amber { background: var(--accent); }
+.status-dot.amber { background: var(--amber); }
 .status-dot.red { background: var(--red); }
 .status-dot.blue { background: var(--blue); }
 
@@ -808,7 +810,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .app-back-btn:hover {
   background: var(--elevated);
-  border-color: var(--amber-hover);
+  border-color: var(--accent-hover);
   box-shadow: 0 6px 18px rgba(0,0,0,.28);
 }
 .app-back-btn:active { transform: translateY(1px); }
@@ -984,9 +986,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   gap: 6px;
   min-height: 128px;
   padding: 18px;
-  border: 1px dashed rgba(200,169,59,.55);
+  border: 1px dashed rgba(63,174,122,.55);
   border-radius: var(--radius);
-  background: rgba(200,169,59,.09);
+  background: rgba(63,174,122,.09);
   color: var(--text);
   font-size: 17px;
   font-weight: 800;
@@ -1024,10 +1026,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .profit-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .profit-badge.green { color: var(--green); }
-.profit-badge.amber { color: var(--accent); }
+.profit-badge.amber { color: var(--amber); }
 .profit-badge.red { color: var(--red); }
 .profit-badge.green .profit-dot { background: var(--green); }
-.profit-badge.amber .profit-dot { background: var(--accent); }
+.profit-badge.amber .profit-dot { background: var(--amber); }
 .profit-badge.red .profit-dot { background: var(--red); }
 
 .more-link { margin-bottom: 12px; text-decoration: none; }
@@ -1064,7 +1066,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   cursor: pointer;
 }
 .client-list-row:hover {
-  border-color: rgba(200,169,59,.42);
+  border-color: rgba(63,174,122,.42);
   background: var(--panel2);
 }
 .client-list-main {
@@ -1119,7 +1121,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   cursor: pointer;
 }
 .drawer-icon-action:hover {
-  border-color: rgba(200,169,59,.45);
+  border-color: rgba(63,174,122,.45);
   color: var(--accent);
 }
 .client-drawer-tags {
@@ -1309,7 +1311,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .documents-table tbody tr:hover,
 .documents-table tbody tr.selected {
-  background: rgba(200,169,59,.08);
+  background: rgba(63,174,122,.08);
 }
 .documents-table tr:last-child td { border-bottom: 0; }
 .document-form h2,
@@ -1846,7 +1848,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .message-bubble.mine {
   margin-left: auto;
-  background: rgba(200,169,59,.14);
+  background: rgba(63,174,122,.14);
 }
 .message-bubble p {
   margin: 10px 0;
@@ -1944,7 +1946,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-size: 12px;
   font-weight: 700;
   background: rgba(200, 169, 59, .15);
-  color: var(--accent);
+  color: var(--amber);
 }
 .transfer-gap-chip.transfer-gap-critical {
   background: rgba(239, 102, 116, .15);
@@ -2141,7 +2143,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     width: 38px;
     height: 38px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #e0c45a, #9f842d);
+    background: linear-gradient(135deg, var(--accent-hover), var(--accent-active));
     color: #070b12;
     font-size: 13px;
     font-weight: 800;
@@ -3057,7 +3059,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: var(--green);
   transition: width .3s ease;
 }
-.schedule-progress-fill.amber { background: var(--accent); }
+.schedule-progress-fill.amber { background: var(--amber); }
 .schedule-progress-fill.red { background: var(--red); }
 .schedule-countdown { margin-top: 4px; }
 .schedule-countdown-badge {
@@ -3068,7 +3070,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border: 1px solid currentColor;
   opacity: .85;
 }
-.schedule-countdown-badge.amber { color: var(--accent); }
+.schedule-countdown-badge.amber { color: var(--amber); }
 .schedule-countdown-badge.red { color: var(--red); }
 .hub-note-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .hub-note-form {
@@ -3205,7 +3207,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   flex: none;
 }
 .hub-client-dot-green { background: #22c55e; }
-.hub-client-dot-amber { background: #f59e0b; }
+.hub-client-dot-amber { background: var(--amber); }
 .hub-client-dot-red { background: #ef4444; }
 .hub-client-rating-note {
   margin: 0;
@@ -3393,7 +3395,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .project-status-badge { flex: 0 0 auto; }
 .project-status-health { font-size: 13px; font-weight: 700; }
 .project-status-line.red .project-status-health { color: var(--red); }
-.project-status-line.amber .project-status-health { color: var(--accent); }
+.project-status-line.amber .project-status-health { color: var(--amber); }
 .project-status-dates { font-size: 12px; }
 
 /* PROJ-2: битый диапазон дат (end<start) — красный хайлайт + бейдж на карточке. */
@@ -4677,7 +4679,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   transition: background .12s, color .12s, border-color .12s, transform .06s, opacity .12s;
 }
 .hub-sketch-round-btn:hover:not(:disabled) {
-  border-color: rgba(200,169,59,.58);
+  border-color: rgba(63,174,122,.58);
   background: rgba(29,41,64,.96);
   color: var(--accent);
 }
@@ -4768,7 +4770,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   cursor: pointer;
 }
 .hub-sketch-photo-reference-remove:hover {
-  border-color: rgba(200,169,59,.5);
+  border-color: rgba(63,174,122,.5);
   color: var(--accent);
 }
 .hub-sketch-photo-reference-menu {
@@ -4829,8 +4831,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-photo-reference-file:hover:not(:disabled),
 .hub-sketch-photo-reference-file.active {
-  border-color: rgba(200,169,59,.62);
-  background: rgba(200,169,59,.16);
+  border-color: rgba(63,174,122,.62);
+  background: rgba(63,174,122,.16);
 }
 .hub-sketch-photo-reference-file:disabled {
   opacity: .46;
@@ -5069,8 +5071,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-grid {
   pointer-events: none;
 }
-.hub-sketch-subgrid line { stroke: rgba(126, 160, 190, .08); stroke-width: 1; }
-.hub-sketch-grid line { stroke: rgba(126, 160, 190, .18); stroke-width: 1; }
+.hub-sketch-subgrid line { stroke: rgba(120, 170, 140, .08); stroke-width: 1; }
+.hub-sketch-grid line { stroke: rgba(120, 170, 140, .18); stroke-width: 1; }
 .hub-sketch-wall { stroke: var(--text); stroke-width: 3; fill: rgba(237, 246, 251, .05); stroke-linejoin: round; stroke-linecap: round; }
 .hub-sketch-room-selected {
   stroke: #2563eb;
@@ -5211,7 +5213,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-node-selected,
 .hub-sketch-node-dragging {
-  fill: #f59e0b;
+  fill: var(--amber);
   stroke: #ffffff;
   stroke-width: 2.5;
 }
@@ -5241,12 +5243,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   pointer-events: none;
 }
 .hub-sketch-opening-snap-guide line {
-  stroke: #f59e0b;
+  stroke: var(--amber);
   stroke-width: 2.3;
   stroke-linecap: round;
 }
 .hub-sketch-opening-snap-guide circle {
-  fill: #f59e0b;
+  fill: var(--amber);
   stroke: #ffffff;
   stroke-width: 2;
 }
@@ -5262,7 +5264,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   pointer-events: none;
 }
 .hub-sketch-smart-guide line {
-  stroke: #f59e0b;
+  stroke: var(--amber);
   stroke-width: 1.7;
   stroke-dasharray: 6 5;
   stroke-linecap: round;
@@ -5274,7 +5276,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke-width: 2.4;
 }
 .hub-sketch-smart-guide-corner-marker {
-  stroke: #f59e0b;
+  stroke: var(--amber);
   stroke-width: 2.4;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -6214,11 +6216,11 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   min-width: 0;
 }
 .hub-sketch-3d-panel {
-  --panel: #0d1522;
-  --panel2: #151d2d;
-  --elevated: #1d2940;
-  --line: rgba(126, 160, 190, .2);
-  --border: rgba(126, 160, 190, .24);
+  --panel: #0e1a14;
+  --panel2: #16261d;
+  --elevated: #1f3527;
+  --line: rgba(120, 170, 140, .2);
+  --border: rgba(120, 170, 140, .24);
   --text: #edf6fb;
   --muted: #a9b7c8;
   --muted2: #748296;
@@ -6847,13 +6849,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-elevation-finish-toggle-open {
   right: calc(clamp(300px, 30vw, 430px) + 28px + env(safe-area-inset-right, 0px));
-  background: rgba(200, 169, 59, .96);
+  background: rgba(63, 174, 122, .96);
   color: #070b12;
 }
 .hub-sketch-elevation-finish-panel {
-  --panel: #0d1522;
-  --panel2: #151d2d;
-  --line: rgba(126, 160, 190, .2);
+  --panel: #0e1a14;
+  --panel2: #16261d;
+  --line: rgba(120, 170, 140, .2);
   --text: #edf6fb;
   --muted: #a9b7c8;
   position: absolute;
@@ -8557,17 +8559,17 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .voice-mic.listening {
   color: var(--accent);
   border-color: var(--accent);
-  background: rgba(200, 169, 59, .16);
+  background: rgba(63, 174, 122, .16);
   animation: voice-mic-pulse 1.5s ease-in-out infinite;
 }
 @keyframes voice-mic-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(200, 169, 59, .45); }
-  70% { box-shadow: 0 0 0 8px rgba(200, 169, 59, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(200, 169, 59, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(63, 174, 122, .45); }
+  70% { box-shadow: 0 0 0 8px rgba(63, 174, 122, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(63, 174, 122, 0); }
 }
 @media (prefers-reduced-motion: reduce) {
   .voice-mic { transition: none; }
-  .voice-mic.listening { animation: none; box-shadow: 0 0 0 3px rgba(200, 169, 59, .3); }
+  .voice-mic.listening { animation: none; box-shadow: 0 0 0 3px rgba(63, 174, 122, .3); }
 }
 .material-remove-draft { flex: 0 0 auto; margin-top: 0; }
 .material-form-actions { justify-content: flex-end; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
@@ -8736,7 +8738,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 /* UI-NAV-2 (b): вся карточка задачи кликабельна (раскрывает детали); .card.tap покрывает
    project-card/team-row, а cc-task-card — не .card, поэтому даём ей курсор/ховер отдельно. */
 .cc-task-card.tap { cursor: pointer; }
-.cc-task-card.tap:hover { border-color: rgba(200,169,59,.42); }
+.cc-task-card.tap:hover { border-color: rgba(63,174,122,.42); }
 
 @media (min-width: 720px) {
   .cc-dispatch-grid, .cc-ops-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -9415,7 +9417,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-answer-empty { margin: 0; font-size: 14px; }
 .ai-caret {
   display: inline-block; width: 2px; height: 1.05em; margin-left: 2px;
-  vertical-align: text-bottom; background: var(--accent, #c8a93b);
+  vertical-align: text-bottom; background: var(--accent, #3fae7a);
   animation: ai-caret-blink 1s step-end infinite;
 }
 @keyframes ai-caret-blink { 50% { opacity: 0; } }
@@ -9432,7 +9434,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   flex: 0 0 auto; min-width: 66px; font-weight: 600;
   color: var(--muted); text-transform: uppercase; font-size: 11px; padding-top: 1px;
 }
-.ai-hist-you .ai-hist-role { color: var(--accent, #c8a93b); }
+.ai-hist-you .ai-hist-role { color: var(--accent, #3fae7a); }
 .ai-hist-ai .ai-hist-role { color: var(--cyan, #69e7ff); }
 .ai-hist-text { flex: 1 1 auto; overflow-wrap: anywhere; white-space: pre-wrap; }
 
@@ -9595,7 +9597,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ai-overlay-proposal-head { display: flex; flex-direction: column; gap: 3px; }
 .ai-overlay-proposal-badge {
   align-self: flex-start; font-size: 10px; font-weight: 700; letter-spacing: 0;
-  text-transform: uppercase; color: var(--accent, #c8a93b);
+  text-transform: uppercase; color: var(--accent, #3fae7a);
 }
 .ai-overlay-proposal-title { font-size: 13px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 .ai-overlay-proposal-actions { gap: 8px; }
@@ -9700,7 +9702,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: none;
   cursor: pointer;
 }
-.client-file-row:hover { border-color: rgba(200,169,59,.42); background: var(--panel2); }
+.client-file-row:hover { border-color: rgba(63,174,122,.42); background: var(--panel2); }
 .client-file-upload { cursor: pointer; }
 .client-file-upload.busy { opacity: .6; cursor: default; }
 .manager-alert-reminder {
@@ -9854,8 +9856,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 
 /* ═══ ORB-SIMPLE-2: страница ассистента /ask — токены приложения (тёмный, радиус 14, амбер-акцент). ═══
    Никаких белых «ляпух»: фон/границы через --panel/--line, амбер ТОЛЬКО на активном пункте сайдбара. */
-.side-ask.active { border-color: var(--amber); background: linear-gradient(180deg, rgba(200,169,59,.18), rgba(200,169,59,.06)); }
-.side-ask.active .side-ask-ico { color: var(--amber); }
+.side-ask.active { border-color: var(--accent); background: linear-gradient(180deg, rgba(63,174,122,.18), rgba(63,174,122,.06)); }
+.side-ask.active .side-ask-ico { color: var(--accent); }
 
 .ask-page {
   display: flex; flex-direction: column; gap: 12px;
