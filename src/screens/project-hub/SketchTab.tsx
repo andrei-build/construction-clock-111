@@ -6265,65 +6265,58 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
       {wallElevationFullscreen && selectedWall && selectedWallSurface && (
         <div
-          className={wallElevationFinishPanelOpen ? 'hub-sketch-elevation-lightbox hub-sketch-elevation-lightbox-finish-open' : 'hub-sketch-elevation-lightbox'}
+          className="hub-sketch-elevation-lightbox"
           role="dialog"
           aria-modal="true"
           aria-label={t('hub_sketch_3d_wall_elevation')}
         >
-          <div className="hub-sketch-elevation-lightbox-bar">
-            <button type="button" className="hub-sketch-elevation-back" onClick={closeWallElevationFullscreen}>
-              <span aria-hidden="true">←</span>
-              <span>{t('hub_sketch_elevation_back')}</span>
-            </button>
-            <div className="hub-sketch-elevation-lightbox-title">
-              <strong>{`${t('hub_sketch_wall_panel_title')} ${selectedWall.index + 1}`}</strong>
-              <span className="muted">{`${t('hub_sketch_dim_length_short')}: ${fmtFt(selectedWall.lengthFt)}`}</span>
-            </div>
-            {renderViewModeToggle(true)}
-            <button
-              type="button"
-              className="hub-sketch-elevation-lightbox-close"
-              aria-label={t('lightbox_close')}
-              onClick={closeWallElevationFullscreen}
-            >
-              ×
-            </button>
-          </div>
-          <div className="hub-sketch-elevation-lightbox-stage">
-            <WallElevation
-              model={model}
-              wall={selectedWall.seg}
-              heightFt={heightFt}
-              finish={selectedWallSurface}
-              canEdit={canEdit}
-              snapStepFt={activeSnapFt}
-              codeCheckEnabled={codeCheckEnabled}
-              onMeasurementsChange={updateWallElevationMeasurements}
-              onModelChange={updateWallElevationModel}
-            />
-          </div>
-          {canEdit && (
-            <button
-              type="button"
-              className={wallElevationFinishPanelOpen ? 'btn small hub-sketch-elevation-finish-toggle hub-sketch-elevation-finish-toggle-open' : 'btn ghost small hub-sketch-elevation-finish-toggle'}
-              aria-controls="hub-sketch-elevation-finish-panel"
-              aria-expanded={wallElevationFinishPanelOpen}
-              onClick={() => setWallElevationFinishPanelOpen((open) => !open)}
-            >
-              {t(wallElevationFinishPanelOpen ? 'hub_sketch_elevation_finish_hide' : 'hub_sketch_elevation_finish_show')}
-            </button>
-          )}
-          {canEdit && wallElevationFinishPanelOpen && (
-            <aside id="hub-sketch-elevation-finish-panel" className="hub-sketch-elevation-finish-panel" aria-label={t('hub_sketch_elevation_finish_show')}>
-              <div className="hub-sketch-elevation-finish-panel-head">
-                <h2>{t('hub_sketch_elevation_finish_show')}</h2>
-                <button type="button" className="btn ghost small" onClick={() => setWallElevationFinishPanelOpen(false)}>
-                  {t('hub_sketch_elevation_finish_hide')}
+          <WallElevation
+            model={model}
+            wall={selectedWall.seg}
+            heightFt={heightFt}
+            finish={selectedWallSurface}
+            canEdit={canEdit}
+            snapStepFt={activeSnapFt}
+            codeCheckEnabled={codeCheckEnabled}
+            onMeasurementsChange={updateWallElevationMeasurements}
+            onModelChange={updateWallElevationModel}
+            onBack={closeWallElevationFullscreen}
+            toolbarExtras={
+              <>
+                {canEdit && (
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    onClick={() => {
+                      closeWallElevationFullscreen()
+                      setTool('door')
+                    }}
+                  >
+                    <span aria-hidden="true">🚪</span>
+                    <span>{t('hub_sketch_elevation_opening')}</span>
+                  </button>
+                )}
+                <div className="hub-sketch-elevation-toolbar-title">
+                  <strong>{`${t('hub_sketch_wall_panel_title')} ${selectedWall.index + 1}`}</strong>
+                  <span className="muted">{`${t('hub_sketch_dim_length_short')}: ${fmtFt(selectedWall.lengthFt)}`}</span>
+                </div>
+              </>
+            }
+            toolbarEnd={
+              <>
+                {renderViewModeToggle(true)}
+                <button
+                  type="button"
+                  className="hub-sketch-elevation-lightbox-close"
+                  aria-label={t('lightbox_close')}
+                  onClick={closeWallElevationFullscreen}
+                >
+                  ×
                 </button>
-              </div>
-              {renderWallElevationFinishControls(true)}
-            </aside>
-          )}
+              </>
+            }
+            sidePanel={canEdit ? renderWallElevationFinishControls(true) : null}
+          />
         </div>
       )}
 
