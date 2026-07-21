@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useI18n } from '../../lib/i18n'
 import {
   DEFAULT_DOOR_HEIGHT_FT,
@@ -69,6 +69,10 @@ interface WallElevationProps {
   codeCheckEnabled?: boolean
   onMeasurementsChange?: (measurements: SketchMeasurement[]) => void
   onModelChange?: (model: Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }) => void
+  onBack?: () => void
+  toolbarExtras?: ReactNode
+  toolbarEnd?: ReactNode
+  sidePanel?: ReactNode
 }
 
 type ElevationPoint = { x: number; y: number }
@@ -332,16 +336,13 @@ function elevationMeasurementLine(measurement: SketchMeasurement, height: number
   const dy = y2 - y1
   const len = Math.hypot(dx, dy)
   if (len <= 0.001) return null
-  const nx = -dy / len
-  const ny = dx / len
-  const labelGap = 0.22
   return {
     x1,
     y1,
     x2,
     y2,
-    labelX: (x1 + x2) / 2 + nx * labelGap,
-    labelY: (y1 + y2) / 2 + ny * labelGap,
+    labelX: (x1 + x2) / 2,
+    labelY: (y1 + y2) / 2,
     angle: readableSvgAngle(dx, dy),
     text: formatLength(len),
   }
@@ -398,10 +399,12 @@ function elevationOpeningDims(
   return dims
 }
 
-export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, compact = false, snapStepFt = 1 / 96, codeCheckEnabled = true, onMeasurementsChange, onModelChange }: WallElevationProps) {
+export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, compact = false, snapStepFt = 1 / 96, codeCheckEnabled = true, onMeasurementsChange, onModelChange, onBack, toolbarExtras, toolbarEnd, sidePanel }: WallElevationProps) {
   const { t } = useI18n()
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [measureTool, setMeasureTool] = useState(false)
+  const [zoneTool, setZoneTool] = useState(false)
+  const [zoom, setZoom] = useState(1)
   const [showMeasurements, setShowMeasurements] = useState(true)
   const [draft, setDraft] = useState<ElevationPoint | null>(null)
   const [hover, setHover] = useState<ElevationPoint | null>(null)
@@ -420,7 +423,10 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     [model.openings, wall.c, wall.s],
   )
   const pad = Math.max(0.5, Math.min(1.2, Math.max(lengthFt, height) * 0.08))
-  const viewBox = `${-pad} ${-pad} ${lengthFt + pad * 2} ${height + pad * 2}`
+  const zoomLevel = Math.max(1, Math.min(6, zoom))
+  const viewBoxW = (lengthFt + pad * 2) / zoomLevel
+  const viewBoxH = (height + pad * 2) / zoomLevel
+  const viewBox = `${lengthFt / 2 - viewBoxW / 2} ${height / 2 - viewBoxH / 2} ${viewBoxW} ${viewBoxH}`
   const isTile = finish.kind === 'tile'
   const tile = isTile ? normalizeTileSurface(finish) : null
   const patternId = `wall-elevation-tile-${wall.c}-${wall.s}`
@@ -438,7 +444,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     ? normalizeFinishRegions(finish.coverage.regions, lengthFt, height)
     : null
   const editableFinishRegions = explicitFinishRegions ?? []
-  const regionEditingEnabled = canEdit && !compact && !measureTool && finish.coverage?.mode === 'partial'
+  const regionEditingEnabled = canEdit && !compact && !measureTool && zoneTool && finish.coverage?.mode === 'partial'
   const dragPreviewRegions = useMemo(() => {
     if (!regionDrag) return editableFinishRegions
     if (regionDrag.type === 'draw') {
@@ -597,6 +603,47 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     updateFinishRegions(editableFinishRegions.filter((_, index) => index !== selectedRegionIndex), null)
   }
 
+  const ensurePartialCoverage = () => {
+    if (finish.coverage?.mode === 'partial') return
+    updateFinishRegions(editableFinishRegions)
+  }
+
+  const toggleMeasureTool = () => {
+    const next = !measureTool
+    setMeasureTool(next)
+    if (next) {
+      setZoneTool(false)
+      setRegionDrag(null)
+      setSelectedRegionIndex(null)
+    } else {
+      setDraft(null)
+    }
+  }
+
+  const toggleZoneTool = () => {
+    const next = !zoneTool
+    setZoneTool(next)
+    if (next) {
+      setMeasureTool(false)
+      setDraft(null)
+      ensurePartialCoverage()
+    } else {
+      setRegionDrag(null)
+    }
+  }
+
+  const clearWallMeasurements = () => {
+    const measurements = model.measurements ?? []
+    setDraft(null)
+    setSelectedMeasurementIndex(null)
+    if (!measurements.some((measurement) => measurement.scope === 'wall' && measurement.wallKey === currentWallKey)) return
+    updateMeasurements(measurements.filter((measurement) => !(measurement.scope === 'wall' && measurement.wallKey === currentWallKey)))
+  }
+
+  const zoomIn = () => setZoom((current) => Math.min(6, Math.round(current * 125) / 100))
+  const zoomOut = () => setZoom((current) => Math.max(1, Math.round((current / 1.25) * 100) / 100))
+  const zoomFit = () => setZoom(1)
+
   const regionDraftValue = (field: FinishRegionDraftField, fallbackFt: number): string => regionDrafts[field] ?? formatLength(fallbackFt)
 
   const commitRegionDraft = (field: FinishRegionDraftField) => {
@@ -699,6 +746,8 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     setRegionDrag(null)
     setWallLengthDraft(null)
     setWallLengthConflict(null)
+    setZoneTool(false)
+    setZoom(1)
   }, [currentWallKey])
 
   useEffect(() => {
@@ -720,11 +769,20 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return
-      if (event.key === 'Escape' && measureTool) {
-        setMeasureTool(false)
-        setDraft(null)
-        event.preventDefault()
-        return
+      if (event.key === 'Escape') {
+        if (measureTool) {
+          if (draft) setDraft(null)
+          else setMeasureTool(false)
+          event.preventDefault()
+          return
+        }
+        if (zoneTool) {
+          setZoneTool(false)
+          setRegionDrag(null)
+          setSelectedRegionIndex(null)
+          event.preventDefault()
+          return
+        }
       }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedRegionIndex !== null) {
         removeSelectedRegion()
@@ -738,7 +796,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, measureTool, selectedMeasurementIndex, selectedRegionIndex, model, onMeasurementsChange, editableFinishRegions])
+  }, [canEdit, measureTool, zoneTool, draft, selectedMeasurementIndex, selectedRegionIndex, model, onMeasurementsChange, editableFinishRegions])
 
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (!regionEditingEnabled || !onModelChange) return
@@ -837,129 +895,103 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   return (
     <div className={compact ? 'hub-sketch-elevation hub-sketch-elevation-compact' : 'hub-sketch-elevation'}>
       {!compact && (
-        <div className="hub-sketch-elevation-meta">
-        <button
-          type="button"
-          className={wallLengthConflictActive ? 'hub-sketch-elevation-meta-button hub-sketch-elevation-meta-button-conflict' : 'hub-sketch-elevation-meta-button'}
-          disabled={!canEdit || !onModelChange}
-          onClick={beginWallLengthEdit}
-        >
-          {`${t('hub_sketch_dim_length_short')}: ${wallLengthText}`}
-        </button>
-        <span>{`${t('hub_sketch_dim_height_short')}: ${formatLength(height)}`}</span>
-        <span>{`${t('hub_sketch_3d_openings')}: ${openings.length}`}</span>
-        {!finishCoverage.full && <span>{`${t('hub_sketch_finish_coverage')}: ${formatLength(finishCoverage.topFt - finishCoverage.bottomFt)}`}</span>}
-        {finishRegions.length > 0 && <span>{`${t('hub_sketch_finish_region_area')}: ${finishRegionSqft.toFixed(1)} ft²`}</span>}
-        {wallCabinetCount > 0 && <span>{`${t('hub_sketch_tool_cabinet')}: ${wallCabinetCount}`}</span>}
-      </div>
-      )}
-      {!compact && (
-      <div className="hub-sketch-elevation-tools">
-        {canEdit && (
-          <button
-            type="button"
-            className={measureTool ? 'btn small' : 'btn ghost small'}
-            aria-pressed={measureTool}
-            onClick={() => setMeasureTool((current) => !current)}
-          >
-            <span aria-hidden="true">📏</span>
-            <span>{t('hub_sketch_tool_measure')}</span>
-          </button>
-        )}
-        <label className="hub-sketch-layer-toggle">
-          <input
-            type="checkbox"
-            checked={showMeasurements}
-            onChange={(event) => {
-              setShowMeasurements(event.target.checked)
-              if (!event.target.checked) setSelectedMeasurementIndex(null)
-            }}
-          />
-          <span>{t('hub_sketch_measurements')}</span>
-        </label>
-      </div>
-      )}
-      {!compact && selectedRegion && (
-        <div className="hub-sketch-elevation-region-controls" aria-label={t('hub_sketch_finish_region_controls')}>
-          <span className="hub-sketch-elevation-region-title">{t('hub_sketch_finish_region_controls')}</span>
-          <label className="hub-sketch-field">
-            <span className="muted">{t('hub_sketch_drywall_x')}</span>
+        <div className="hub-sketch-elevation-toolbar" role="toolbar" aria-label={t('hub_sketch_elevation_toolbar')}>
+          {onBack && (
+            <button type="button" className="hub-sketch-elevation-toolbar-back" onClick={onBack}>
+              <span aria-hidden="true">←</span>
+              <span>{t('hub_sketch_elevation_back')}</span>
+            </button>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              className={measureTool ? 'btn small' : 'btn ghost small'}
+              aria-pressed={measureTool}
+              onClick={toggleMeasureTool}
+            >
+              <span aria-hidden="true">📏</span>
+              <span>{t('hub_sketch_tool_measure')}</span>
+            </button>
+          )}
+          {canEdit && onModelChange && (
+            <button
+              type="button"
+              className={zoneTool ? 'btn small' : 'btn ghost small'}
+              aria-pressed={zoneTool}
+              onClick={toggleZoneTool}
+            >
+              <span aria-hidden="true">▭</span>
+              <span>{t('hub_sketch_tool_zone')}</span>
+            </button>
+          )}
+          {toolbarExtras}
+          {canEdit && measureTool && (
+            <button type="button" className="btn ghost small" onClick={clearWallMeasurements}>
+              {t('hub_sketch_measure_clear')}
+            </button>
+          )}
+          <label className="hub-sketch-layer-toggle hub-sketch-elevation-toolbar-toggle">
             <input
-              type="text"
-              inputMode="text"
-              value={regionDraftValue('left', selectedRegion.x0Ft)}
-              onChange={(event) => setRegionDrafts((current) => ({ ...current, left: event.target.value }))}
-              onBlur={() => commitRegionDraft('left')}
-              onKeyDown={regionDraftKeyDown('left')}
+              type="checkbox"
+              checked={showMeasurements}
+              onChange={(event) => {
+                setShowMeasurements(event.target.checked)
+                if (!event.target.checked) setSelectedMeasurementIndex(null)
+              }}
             />
+            <span>{t('hub_sketch_measurements')}</span>
           </label>
-          <label className="hub-sketch-field">
-            <span className="muted">{t('hub_sketch_finish_from_floor')}</span>
-            <input
-              type="text"
-              inputMode="text"
-              value={regionDraftValue('bottom', selectedRegion.y0Ft)}
-              onChange={(event) => setRegionDrafts((current) => ({ ...current, bottom: event.target.value }))}
-              onBlur={() => commitRegionDraft('bottom')}
-              onKeyDown={regionDraftKeyDown('bottom')}
-            />
-          </label>
-          <label className="hub-sketch-field">
-            <span className="muted">{t('hub_sketch_width')}</span>
-            <input
-              type="text"
-              inputMode="text"
-              value={regionDraftValue('width', selectedRegion.x1Ft - selectedRegion.x0Ft)}
-              onChange={(event) => setRegionDrafts((current) => ({ ...current, width: event.target.value }))}
-              onBlur={() => commitRegionDraft('width')}
-              onKeyDown={regionDraftKeyDown('width')}
-            />
-          </label>
-          <label className="hub-sketch-field">
-            <span className="muted">{t('hub_sketch_height')}</span>
-            <input
-              type="text"
-              inputMode="text"
-              value={regionDraftValue('height', selectedRegion.y1Ft - selectedRegion.y0Ft)}
-              onChange={(event) => setRegionDrafts((current) => ({ ...current, height: event.target.value }))}
-              onBlur={() => commitRegionDraft('height')}
-              onKeyDown={regionDraftKeyDown('height')}
-            />
-          </label>
-          <button type="button" className="btn ghost small" onClick={removeSelectedRegion}>
-            {t('hub_sketch_finish_region_delete')}
-          </button>
+          <span className="hub-sketch-elevation-toolbar-spacer" />
+          <div className="hub-sketch-elevation-zoom" role="group" aria-label={t('hub_sketch_elevation_zoom_fit')}>
+            <button type="button" className="hub-sketch-elevation-zoom-btn" aria-label={t('hub_sketch_elevation_zoom_out')} onClick={zoomOut} disabled={zoom <= 1}>−</button>
+            <button type="button" className="hub-sketch-elevation-zoom-btn" aria-label={t('hub_sketch_elevation_zoom_in')} onClick={zoomIn} disabled={zoom >= 6}>+</button>
+            <button type="button" className="btn ghost small hub-sketch-elevation-zoom-fit" onClick={zoomFit} disabled={zoom <= 1}>{t('hub_sketch_elevation_zoom_fit')}</button>
+          </div>
+          {toolbarEnd}
         </div>
       )}
-      {!compact && wallLengthConflict && wallLengthDraft !== null && (
-        <div className="hub-sketch-elevation-conflict" role="alertdialog" aria-live="polite">
-          <span>{t('hub_sketch_dimension_conflict_prompt')}</span>
-          <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applyWallLengthDraft('end')}>
-            {t('hub_sketch_dimension_move_start')}
-          </button>
-          <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applyWallLengthDraft('start')}>
-            {t('hub_sketch_dimension_move_end')}
-          </button>
-          <button type="button" className="btn ghost small" onMouseDown={(event) => event.preventDefault()} onClick={cancelWallLengthEdit}>
-            {t('cancel')}
-          </button>
-        </div>
-      )}
-      {!compact && codeCheckEnabled && wallCodeViolations.length > 0 && (
-        <div className="hub-sketch-elevation-code-list" role="status" aria-live="polite">
-          {wallCodeViolations.slice(0, 3).map((check) => (
-            <span key={check.id} className="hub-sketch-code-chip">
-              {formatCodeClearanceMessage(check, t)}
-            </span>
-          ))}
-        </div>
-      )}
+      <div className={compact ? 'hub-sketch-elevation-body hub-sketch-elevation-body-compact' : 'hub-sketch-elevation-body'}>
+        <div className="hub-sketch-elevation-canvas">
+          {!compact && measureTool && (
+            <div className="hub-sketch-elevation-hint" role="status">
+              {t(draft ? 'hub_sketch_measure_hint_end' : 'hub_sketch_measure_hint_start')}
+            </div>
+          )}
+          {!compact && !measureTool && zoneTool && regionEditingEnabled && editableFinishRegions.length === 0 && !regionDrag && (
+            <div className="hub-sketch-elevation-hint" role="status">
+              {t('hub_sketch_zone_hint')}
+            </div>
+          )}
+          {!compact && wallLengthConflict && wallLengthDraft !== null && (
+            <div className="hub-sketch-elevation-conflict" role="alertdialog" aria-live="polite">
+              <span>{t('hub_sketch_dimension_conflict_prompt')}</span>
+              <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applyWallLengthDraft('end')}>
+                {t('hub_sketch_dimension_move_start')}
+              </button>
+              <button type="button" className="btn small" onMouseDown={(event) => event.preventDefault()} onClick={() => applyWallLengthDraft('start')}>
+                {t('hub_sketch_dimension_move_end')}
+              </button>
+              <button type="button" className="btn ghost small" onMouseDown={(event) => event.preventDefault()} onClick={cancelWallLengthEdit}>
+                {t('cancel')}
+              </button>
+            </div>
+          )}
+          {!compact && codeCheckEnabled && wallCodeViolations.length > 0 && (
+            <div className="hub-sketch-elevation-code-list" role="status" aria-live="polite">
+              {wallCodeViolations.slice(0, 3).map((check) => (
+                <span key={check.id} className="hub-sketch-code-chip">
+                  {formatCodeClearanceMessage(check, t)}
+                </span>
+              ))}
+            </div>
+          )}
       <svg
         ref={svgRef}
         className={[
           'hub-sketch-elevation-svg',
           compact ? 'hub-sketch-elevation-svg-compact' : '',
           regionEditingEnabled ? 'hub-sketch-elevation-svg-region-draw' : '',
+          canEdit && measureTool ? 'hub-sketch-elevation-svg-measure' : '',
         ].filter(Boolean).join(' ')}
         viewBox={viewBox}
         role="img"
@@ -1244,9 +1276,10 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
         })}
         {showMeasurements && measurementLines.map(({ index, line }) => {
           const selected = selectedMeasurementIndex === index
+          const chipH = 0.42
+          const chipW = Math.max(0.62, line.text.length * 0.17 + 0.22)
           const deleteSize = 0.34
-          const deleteX = line.labelX + 0.58
-          const deleteY = line.labelY
+          const deleteX = line.labelX + chipW / 2 + deleteSize / 2 + 0.04
           return (
             <g
               key={`em${index}`}
@@ -1269,25 +1302,35 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
                 markerEnd={`url(#hub-sketch-elevation-measure-arrow-${wall.c}-${wall.s})`}
               />
               <line className="hub-sketch-elevation-measurement-hit" x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} />
-              <text x={line.labelX} y={line.labelY} textAnchor="middle" dominantBaseline="central" transform={`rotate(${line.angle} ${line.labelX} ${line.labelY})`}>
-                {line.text}
-              </text>
-              {selected && (
-                <g
-                  className="hub-sketch-elevation-measurement-delete"
-                  role="button"
-                  tabIndex={0}
-                  aria-label={t('hub_sketch_measurement_delete')}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    removeMeasurement(index)
-                  }}
-                  onKeyDown={deleteButtonKeyDown(index)}
-                >
-                  <rect x={deleteX - deleteSize / 2} y={deleteY - deleteSize / 2} width={deleteSize} height={deleteSize} rx={0.06} />
-                  <text x={deleteX} y={deleteY} textAnchor="middle" dominantBaseline="central">×</text>
-                </g>
-              )}
+              <g transform={`rotate(${line.angle} ${line.labelX} ${line.labelY})`}>
+                <rect
+                  className="hub-sketch-elevation-measurement-chip"
+                  x={line.labelX - chipW / 2}
+                  y={line.labelY - chipH / 2}
+                  width={chipW}
+                  height={chipH}
+                  rx={0.1}
+                />
+                <text x={line.labelX} y={line.labelY} textAnchor="middle" dominantBaseline="central">
+                  {line.text}
+                </text>
+                {selected && (
+                  <g
+                    className="hub-sketch-elevation-measurement-delete"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={t('hub_sketch_measurement_delete')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      removeMeasurement(index)
+                    }}
+                    onKeyDown={deleteButtonKeyDown(index)}
+                  >
+                    <rect x={deleteX - deleteSize / 2} y={line.labelY - deleteSize / 2} width={deleteSize} height={deleteSize} rx={0.06} />
+                    <text x={deleteX} y={line.labelY} textAnchor="middle" dominantBaseline="central">×</text>
+                  </g>
+                )}
+              </g>
             </g>
           )
         })}
@@ -1302,12 +1345,96 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
               markerStart={`url(#hub-sketch-elevation-measure-arrow-${wall.c}-${wall.s})`}
               markerEnd={`url(#hub-sketch-elevation-measure-arrow-${wall.c}-${wall.s})`}
             />
-            <text x={previewLine.labelX} y={previewLine.labelY} textAnchor="middle" dominantBaseline="central" transform={`rotate(${previewLine.angle} ${previewLine.labelX} ${previewLine.labelY})`}>
-              {previewLine.text}
-            </text>
+            <g transform={`rotate(${previewLine.angle} ${previewLine.labelX} ${previewLine.labelY})`}>
+              <rect
+                className="hub-sketch-elevation-measurement-chip"
+                x={previewLine.labelX - Math.max(0.62, previewLine.text.length * 0.17 + 0.22) / 2}
+                y={previewLine.labelY - 0.21}
+                width={Math.max(0.62, previewLine.text.length * 0.17 + 0.22)}
+                height={0.42}
+                rx={0.1}
+              />
+              <text x={previewLine.labelX} y={previewLine.labelY} textAnchor="middle" dominantBaseline="central">
+                {previewLine.text}
+              </text>
+            </g>
           </g>
         )}
       </svg>
+        </div>
+        {!compact && (
+          <aside className="hub-sketch-elevation-side" aria-label={t('hub_sketch_elevation_properties')}>
+            <div className="hub-sketch-elevation-meta">
+              <button
+                type="button"
+                className={wallLengthConflictActive ? 'hub-sketch-elevation-meta-button hub-sketch-elevation-meta-button-conflict' : 'hub-sketch-elevation-meta-button'}
+                disabled={!canEdit || !onModelChange}
+                onClick={beginWallLengthEdit}
+              >
+                {`${t('hub_sketch_dim_length_short')}: ${wallLengthText}`}
+              </button>
+              <span>{`${t('hub_sketch_dim_height_short')}: ${formatLength(height)}`}</span>
+              <span>{`${t('hub_sketch_3d_openings')}: ${openings.length}`}</span>
+              {!finishCoverage.full && <span>{`${t('hub_sketch_finish_coverage')}: ${formatLength(finishCoverage.topFt - finishCoverage.bottomFt)}`}</span>}
+              {finishRegions.length > 0 && <span>{`${t('hub_sketch_finish_region_area')}: ${finishRegionSqft.toFixed(1)} ft²`}</span>}
+              {wallCabinetCount > 0 && <span>{`${t('hub_sketch_tool_cabinet')}: ${wallCabinetCount}`}</span>}
+            </div>
+            {selectedRegion && (
+              <div className="hub-sketch-elevation-region-controls" aria-label={t('hub_sketch_finish_region_controls')}>
+                <span className="hub-sketch-elevation-region-title">{t('hub_sketch_finish_region_controls')}</span>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_drywall_x')}</span>
+                  <input
+                    type="text"
+                    inputMode="text"
+                    value={regionDraftValue('left', selectedRegion.x0Ft)}
+                    onChange={(event) => setRegionDrafts((current) => ({ ...current, left: event.target.value }))}
+                    onBlur={() => commitRegionDraft('left')}
+                    onKeyDown={regionDraftKeyDown('left')}
+                  />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_finish_from_floor')}</span>
+                  <input
+                    type="text"
+                    inputMode="text"
+                    value={regionDraftValue('bottom', selectedRegion.y0Ft)}
+                    onChange={(event) => setRegionDrafts((current) => ({ ...current, bottom: event.target.value }))}
+                    onBlur={() => commitRegionDraft('bottom')}
+                    onKeyDown={regionDraftKeyDown('bottom')}
+                  />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_width')}</span>
+                  <input
+                    type="text"
+                    inputMode="text"
+                    value={regionDraftValue('width', selectedRegion.x1Ft - selectedRegion.x0Ft)}
+                    onChange={(event) => setRegionDrafts((current) => ({ ...current, width: event.target.value }))}
+                    onBlur={() => commitRegionDraft('width')}
+                    onKeyDown={regionDraftKeyDown('width')}
+                  />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_height')}</span>
+                  <input
+                    type="text"
+                    inputMode="text"
+                    value={regionDraftValue('height', selectedRegion.y1Ft - selectedRegion.y0Ft)}
+                    onChange={(event) => setRegionDrafts((current) => ({ ...current, height: event.target.value }))}
+                    onBlur={() => commitRegionDraft('height')}
+                    onKeyDown={regionDraftKeyDown('height')}
+                  />
+                </label>
+                <button type="button" className="btn ghost small" onClick={removeSelectedRegion}>
+                  {t('hub_sketch_finish_region_delete')}
+                </button>
+              </div>
+            )}
+            {sidePanel}
+          </aside>
+        )}
+      </div>
     </div>
   )
 }
