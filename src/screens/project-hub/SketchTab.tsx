@@ -5457,19 +5457,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const renderModeRail = (fullscreen = false) => (
     <nav className={fullscreen ? 'hub-sketch-mode-rail hub-sketch-mode-rail-fullscreen' : 'hub-sketch-mode-rail'} aria-label={t('hub_sketch_mode_rail')}>
-      {!use3DContextPanel && (
-        <button
-          type="button"
-          className="hub-sketch-mode-btn hub-sketch-panel-toggle-btn"
-          aria-pressed={!contextPanelCollapsed}
-          aria-label={t(contextPanelCollapsed ? 'hub_sketch_panel_expand' : 'hub_sketch_panel_collapse')}
-          title={t(contextPanelCollapsed ? 'hub_sketch_panel_expand' : 'hub_sketch_panel_collapse')}
-          onClick={() => setContextPanelCollapsed((value) => !value)}
-        >
-          <span className="hub-sketch-mode-icon" aria-hidden="true">{contextPanelCollapsed ? '☰' : '‹'}</span>
-          <span className="hub-sketch-mode-label">{t(contextPanelCollapsed ? 'hub_sketch_panel_expand' : 'hub_sketch_panel_collapse')}</span>
-        </button>
-      )}
+      {/* SKETCH-RAIL-FIX-19: кнопка-тоггл всегда в DOM — при use3DContextPanel слот
+          РЕЗЕРВИРУЕТСЯ (visibility:hidden + pointer-events:none, НЕ display:none),
+          чтобы кнопки режимов стояли на одних и тех же Y в 2D и 3D и рейл не съезжал
+          (иначе нативный title показывал соседний режим под курсором). */}
+      <button
+        type="button"
+        className={use3DContextPanel ? 'hub-sketch-mode-btn hub-sketch-panel-toggle-btn hub-sketch-panel-toggle-btn-reserved' : 'hub-sketch-mode-btn hub-sketch-panel-toggle-btn'}
+        aria-pressed={!contextPanelCollapsed}
+        aria-hidden={use3DContextPanel || undefined}
+        tabIndex={use3DContextPanel ? -1 : undefined}
+        aria-label={t(contextPanelCollapsed ? 'hub_sketch_panel_expand' : 'hub_sketch_panel_collapse')}
+        title={use3DContextPanel ? undefined : t(contextPanelCollapsed ? 'hub_sketch_panel_expand' : 'hub_sketch_panel_collapse')}
+        onClick={() => {
+          if (use3DContextPanel) return
+          setContextPanelCollapsed((value) => !value)
+        }}
+      >
+        <span className="hub-sketch-mode-icon" aria-hidden="true">{contextPanelCollapsed ? '☰' : '‹'}</span>
+        <span className="hub-sketch-mode-label">{t(contextPanelCollapsed ? 'hub_sketch_panel_expand' : 'hub_sketch_panel_collapse')}</span>
+      </button>
       {SKETCH_MODE_OPTIONS.map((option) => (
         <button
           key={option.mode}
