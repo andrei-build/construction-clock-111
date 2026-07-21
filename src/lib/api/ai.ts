@@ -1,5 +1,6 @@
 import { supabase, SUPABASE_KEY, SUPABASE_URL } from '../supabase'
 import { warnReadError } from './_shared'
+import { classifyTtsResponse, isSupportedPcmFormat, parseStreamSampleRate } from '../aiTtsStream'
 
 // AI-1-UI: «строка-командир» — фронт к развёрнутому бэкенду AI-ассистента владельца (edge
 // `ai-assistant`, таблицы ai_messages / ai_proposals, миграция 0057). Бэкенд НЕ трогаем.
@@ -256,6 +257,60 @@ export async function synthesizeAiSpeech({ text, voice, style, signal }: AiTtsRe
   const mime = typeof data?.mime === 'string' && data.mime.trim() ? data.mime : 'audio/wav'
   if (!audioB64) throw new Error('tts_empty_audio')
   return { blob: base64ToBlob(audioB64, mime), mime }
+}
+
+// VOICE-FRONT-STREAM: результат `streamAiSpeech`. Либо прогрессивный PCM-стрим (играем встык по
+// мере прихода — первые слова звучат почти сразу), либо целый WAV-фолбэк (edge отдал X-Fallback:full).
+export type AiTtsStreamResult =
+  | { kind: 'stream'; sampleRate: number; format: string | null; body: ReadableStream<Uint8Array> }
+  | { kind: 'fallback'; blob: Blob; mime: string }
+
+// POST на edge `ai-tts-stream` (verify_jwt=true) — тот же Bearer JWT + apikey, что и ai-tts. Различаем
+// путь СТРОГО по Content-Type ответа: audio/wav → целый WAV-фолбэк; иначе application/octet-stream →
+// сырой PCM16LE mono-стрим (X-Sample-Rate/ X-Audio-Format в заголовках). При non-2xx / неизвестном
+// формате / отсутствии тела бросаем ошибку — вызывающий откатится на synthesizeAiSpeech→ai-tts, не
+// ломая текущее поведение. Само проигрывание (AudioContext, нарезка/встык) — в AiCommandBar.
+export async function streamAiSpeech({ text, voice, style, signal }: AiTtsRequest): Promise<AiTtsStreamResult> {
+  const cleanText = text.trim()
+  if (!cleanText) throw new Error('empty_text')
+  const { data: { session } } = await supabase.auth.getSession()
+  const token = session?.access_token
+  if (!token) throw new Error('no_session')
+
+  const body: Record<string, string> = { text: cleanText }
+  if (voice?.trim()) body.voice = voice.trim()
+  if (style?.trim()) body.style = style.trim()
+
+  const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-tts-stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      apikey: SUPABASE_KEY,
+    },
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '')
+    throw new Error(errText.trim() ? errText.trim().slice(0, 200) : `tts_stream_http_${resp.status}`)
+  }
+
+  const contentType = resp.headers.get('Content-Type')
+  if (classifyTtsResponse(contentType) === 'fallback') {
+    const blob = await resp.blob()
+    return { kind: 'fallback', blob, mime: contentType ?? 'audio/wav' }
+  }
+
+  const format = resp.headers.get('X-Audio-Format')
+  if (!isSupportedPcmFormat(format)) throw new Error(`tts_stream_bad_format_${format ?? 'none'}`)
+  if (!resp.body) throw new Error('tts_stream_no_body')
+  return {
+    kind: 'stream',
+    sampleRate: parseStreamSampleRate(resp.headers.get('X-Sample-Rate')),
+    format,
+    body: resp.body,
+  }
 }
 
 // UPDATE статуса предложения (executed/rejected) + resolved_by=auth.uid() + resolved_at=now() +

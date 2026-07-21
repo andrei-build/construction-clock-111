@@ -78,6 +78,14 @@ export function shouldAcceptAssistantVoiceResult(state: AssistantVoiceGateSnapsh
   )
 }
 
+// VOICE-FRONT-STREAM: barge-in (перебивание) вооружаем ТОЛЬКО пока в голосовом режиме идёт загрузка
+// (thinking/streaming) или озвучка (pending speech) ответа — вне этого окна VAD выключен, чтобы не
+// хватать чужие голоса и не тратить ресурсы. Гейт микрофона (тумблер wake + открытая панель) — снаружи.
+export function shouldArmBargeIn(state: AssistantVoiceGateSnapshot): boolean {
+  if (!state.wakeOn || !state.open) return false
+  return Boolean(state.thinking || state.streaming || hasPendingAssistantSpeech(state))
+}
+
 export function isTtsPlaybackBlockedError(err: unknown): boolean {
   const name = (err as { name?: string } | null)?.name
   const message = (err as { message?: string } | null)?.message?.toLowerCase() ?? ''
