@@ -201,7 +201,7 @@ export default function Nav({ manager }: { manager: boolean }) {
               className={({ isActive }) => `side-ask${isActive ? ' active' : ''}`}
               title={`${t('ai_ask')} (Ctrl+K)`}
             >
-              <span className="side-ask-ico" aria-hidden="true">✦</span>
+              <span className="side-ask-ico" aria-hidden="true">◉</span>
               <span>{t('ai_ask')}</span>
               <kbd className="side-ask-kbd">⌘K</kbd>
             </NavLink>

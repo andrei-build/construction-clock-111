@@ -2402,10 +2402,16 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_retry: { ru: 'Повторить', en: 'Retry', es: 'Reintentar' },
   mail_body_loading: { ru: 'Загружаем письмо…', en: 'Loading message…', es: 'Cargando mensaje…' },
   // AI-1-UI: «строка-командир» — AI-ассистент владельца (кнопка «Спроси» + Ctrl+K → оверлей).
-  ai_ask: { ru: 'Спроси', en: 'Ask', es: 'Pregunta' },
+  ai_ask: { ru: 'Ассистент', en: 'Assistant', es: 'Asistente' },
   // ORB-SIMPLE-2: подпись блока настроек и «голоса» на странице /ask.
   ai_settings: { ru: 'Настройки чата', en: 'Chat settings', es: 'Ajustes del chat' },
   ai_voice_label: { ru: 'Голос', en: 'Voice', es: 'Voz' },
+  // ASSISTANT-PAGE-3 (п.4): лёгкая клиентская диагностика последнего голосового прогона (из памяти сессии,
+  // БЕЗ запросов в БД). Полная история/расход токенов/память/инструменты — отложены (бэкенд Беты-6).
+  ai_diag_title: { ru: '🔬 Диагностика', en: '🔬 Diagnostics', es: '🔬 Diagnóstico' },
+  ai_diag_heard: { ru: 'Услышано', en: 'Heard', es: 'Escuchado' },
+  ai_diag_stages: { ru: 'Этапы и тайминги', en: 'Stages & timing', es: 'Etapas y tiempos' },
+  ai_diag_empty: { ru: 'Нет данных за сессию', en: 'No data this session', es: 'Sin datos en esta sesión' },
   ai_title: { ru: 'Ассистент владельца', en: 'Owner assistant', es: 'Asistente del dueño' },
   ai_subtitle: { ru: 'Спросите или поручите — ИИ предложит действия', en: 'Ask or delegate — the AI proposes actions', es: 'Pregunte o delegue — la IA propone acciones' },
   ai_placeholder: { ru: 'Спросите ассистента…', en: 'Ask the assistant…', es: 'Pregunte al asistente…' },
