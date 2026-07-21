@@ -1517,6 +1517,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [tool, setTool] = useState<Tool>('wall')
   const [activeMode, setActiveMode] = useState<SketchMode>('wall')
   const [contextSheetOpen, setContextSheetOpen] = useState(false)
+  // SKETCH-CANVAS-12: контекст-панель по умолчанию свёрнута — канвасу сразу максимум ширины.
+  const [contextPanelCollapsed, setContextPanelCollapsed] = useState(true)
   const [snapMode, setSnapMode] = useState<SnapMode>('1ft')
   const [showMeasurements, setShowMeasurements] = useState(true)
   const [codeCheckEnabled, setCodeCheckEnabled] = useState(true)
@@ -5349,6 +5351,19 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const renderModeRail = (fullscreen = false) => (
     <nav className={fullscreen ? 'hub-sketch-mode-rail hub-sketch-mode-rail-fullscreen' : 'hub-sketch-mode-rail'} aria-label={t('hub_sketch_mode_rail')}>
+      {!use3DContextPanel && (
+        <button
+          type="button"
+          className="hub-sketch-mode-btn hub-sketch-panel-toggle-btn"
+          aria-pressed={!contextPanelCollapsed}
+          aria-label={t(contextPanelCollapsed ? 'hub_sketch_panel_expand' : 'hub_sketch_panel_collapse')}
+          title={t(contextPanelCollapsed ? 'hub_sketch_panel_expand' : 'hub_sketch_panel_collapse')}
+          onClick={() => setContextPanelCollapsed((value) => !value)}
+        >
+          <span className="hub-sketch-mode-icon" aria-hidden="true">{contextPanelCollapsed ? '☰' : '‹'}</span>
+          <span className="hub-sketch-mode-label">{t(contextPanelCollapsed ? 'hub_sketch_panel_expand' : 'hub_sketch_panel_collapse')}</span>
+        </button>
+      )}
       {SKETCH_MODE_OPTIONS.map((option) => (
         <button
           key={option.mode}
@@ -5559,9 +5574,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setContextSheetOpen(false)
     setClearConfirmOpen(false)
   }, [hasPropertiesPanel])
+  // SKETCH-CANVAS-12: колонка контекст-панели свёрнута (нет 3D-панели и стоит флаг) —
+  // сетка переходит в двухколоночный режим (как -no-context), панель прячется на ≥721px.
+  const contextColumnCollapsed = !use3DContextPanel && contextPanelCollapsed
   const workspaceClass = [
     'hub-sketch-workspace',
-    use3DContextPanel ? 'hub-sketch-workspace-no-context' : '',
+    (use3DContextPanel || contextColumnCollapsed) ? 'hub-sketch-workspace-no-context' : '',
+    contextColumnCollapsed ? 'hub-sketch-workspace-context-collapsed' : '',
     hasPropertiesPanel ? 'hub-sketch-workspace-has-properties' : '',
   ].filter(Boolean).join(' ')
 
@@ -5583,9 +5602,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             >
               {canvasFullscreenActive && renderSketchTopbar(true)}
               {canEdit && canvasFullscreenActive && (
-                <div className="hub-sketch-fullscreen-context-row">
+                <div className={contextPanelCollapsed ? 'hub-sketch-fullscreen-context-row hub-sketch-fullscreen-context-row-collapsed' : 'hub-sketch-fullscreen-context-row'}>
                   {renderModeRail(true)}
-                  {renderSketchContextPanel(true)}
+                  {!contextPanelCollapsed && renderSketchContextPanel(true)}
                 </div>
               )}
               <div className="hub-sketch-svg-stage">

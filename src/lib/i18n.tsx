@@ -1157,6 +1157,8 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_tool_switch: { ru: 'Выключатель', en: 'Switch', es: 'Interruptor' },
   hub_sketch_mode_rail: { ru: 'Режимы эскиза', en: 'Sketch modes', es: 'Modos de boceto' },
   hub_sketch_context_panel: { ru: 'Контекст режима', en: 'Mode context', es: 'Contexto del modo' },
+  hub_sketch_panel_expand: { ru: 'Развернуть панель', en: 'Expand panel', es: 'Expandir panel' },
+  hub_sketch_panel_collapse: { ru: 'Свернуть панель', en: 'Collapse panel', es: 'Contraer panel' },
   hub_sketch_properties_panel: { ru: 'Свойства объекта', en: 'Object properties', es: 'Propiedades del objeto' },
   hub_sketch_stats: { ru: 'Статистика эскиза', en: 'Sketch stats', es: 'Estadísticas del boceto' },
   hub_sketch_mode_wall: { ru: 'Стена', en: 'Wall', es: 'Pared' },
