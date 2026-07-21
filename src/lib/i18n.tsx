@@ -2379,6 +2379,9 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_body_loading: { ru: 'Загружаем письмо…', en: 'Loading message…', es: 'Cargando mensaje…' },
   // AI-1-UI: «строка-командир» — AI-ассистент владельца (кнопка «Спроси» + Ctrl+K → оверлей).
   ai_ask: { ru: 'Спроси', en: 'Ask', es: 'Pregunta' },
+  // ORB-SIMPLE-2: подпись блока настроек и «голоса» на странице /ask.
+  ai_settings: { ru: 'Настройки чата', en: 'Chat settings', es: 'Ajustes del chat' },
+  ai_voice_label: { ru: 'Голос', en: 'Voice', es: 'Voz' },
   ai_title: { ru: 'Ассистент владельца', en: 'Owner assistant', es: 'Asistente del dueño' },
   ai_subtitle: { ru: 'Спросите или поручите — ИИ предложит действия', en: 'Ask or delegate — the AI proposes actions', es: 'Pregunte o delegue — la IA propone acciones' },
   ai_placeholder: { ru: 'Спросите ассистента…', en: 'Ask the assistant…', es: 'Pregunte al asistente…' },

@@ -163,9 +163,12 @@ describe('shouldArmBargeIn', () => {
     expect(shouldArmBargeIn({ ...base, queuedTtsSegments: 2 })).toBe(true)
   })
 
-  it('stays disarmed when idle, or when voice mode / overlay is off', () => {
+  // ORB-SIMPLE-2: barge-in завязан на активный СЕАНС рации (open) + идущий ответ; wakeOn больше не
+  // требуется (сеанс можно открыть кликом орба без голосовой активации).
+  it('stays disarmed when idle, or when there is no active session', () => {
     expect(shouldArmBargeIn({ ...base })).toBe(false)
-    expect(shouldArmBargeIn({ wakeOn: false, open: true, ttsBusy: true })).toBe(false)
+    expect(shouldArmBargeIn({ wakeOn: false, open: true, ttsBusy: true })).toBe(true)
     expect(shouldArmBargeIn({ wakeOn: true, open: false, thinking: true })).toBe(false)
+    expect(shouldArmBargeIn({ wakeOn: false, open: false, ttsBusy: true })).toBe(false)
   })
 })

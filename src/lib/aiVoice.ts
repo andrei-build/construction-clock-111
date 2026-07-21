@@ -19,23 +19,32 @@ export type AiOrbToggleNextState = {
   speakOn: boolean
 }
 
-const ACTIVE_ORB_VOICE_STATES = new Set(['wake', 'listening', 'thinking', 'speaking'])
+// ORB-SIMPLE-2: голосовые состояния ЖИВОГО сеанса рации (НЕ фоновое ожидание wake-фразы). Именно
+// они делают клик по орбу «стоп». Фоновая голосовая активация (wake) сюда НЕ входит: при включённом
+// wake клик по орбу должен НАЧАТЬ разговор, а не глушить фон.
+const SESSION_ORB_VOICE_STATES = new Set(['listening', 'thinking', 'speaking'])
 
 export function isAiInfoProposalAction(actionType: string): boolean {
   return actionType === 'report_bug'
 }
 
+// ORB-SIMPLE-2: орб = кнопка рации. Клик ВЫКЛЮЧАЕТ, только если сейчас идёт живой сеанс (сессия
+// открыта / ассистент думает / стримит / озвучивает / слушает). Иначе клик ВКЛЮЧАЕТ сеанс — даже
+// если включена фоновая голосовая активация (wakeOn сам по себе «стоп» не делает).
 export function getAiOrbToggleIntent(state: AiOrbToggleSnapshot): AiOrbToggleIntent {
-  const activeVoice = state.voiceStatus ? ACTIVE_ORB_VOICE_STATES.has(state.voiceStatus) : false
-  return state.wakeOn || state.thinking || state.streaming || state.ttsBusy || activeVoice
+  const sessionVoice = state.voiceStatus ? SESSION_ORB_VOICE_STATES.has(state.voiceStatus) : false
+  return state.open || state.thinking || state.streaming || state.ttsBusy || sessionVoice
     ? 'deactivate'
     : 'activate'
 }
 
+// ORB-SIMPLE-2: настройки (озвучка / голосовая активация) НЕЗАВИСИМЫ от сеанса рации. Активация лишь
+// открывает сеанс и гарантирует speakOn (жест клика разблокирует автоплей TTS), НЕ трогая wakeOn —
+// пользовательский выбор голосовой активации сохраняется. Деактивация только закрывает сеанс.
 export function getNextAiOrbToggleState(state: AiOrbToggleSnapshot): AiOrbToggleNextState {
   const intent = getAiOrbToggleIntent(state)
-  if (intent === 'activate') return { intent, open: true, wakeOn: true, speakOn: true }
-  return { intent, open: false, wakeOn: false, speakOn: state.speakOn }
+  if (intent === 'activate') return { intent, open: true, wakeOn: state.wakeOn, speakOn: true }
+  return { intent, open: false, wakeOn: state.wakeOn, speakOn: state.speakOn }
 }
 
 export type AssistantVoiceGateSnapshot = {
@@ -67,9 +76,10 @@ export function shouldAcceptWakePhraseResult(state: AssistantVoiceGateSnapshot):
   )
 }
 
+// ORB-SIMPLE-2: принимаем распознанную фразу вопроса, пока идёт активный сеанс рации (open) и мы
+// именно СЛУШАЕМ. wakeOn больше НЕ требуется: сеанс можно открыть кликом орба без голосовой активации.
 export function shouldAcceptAssistantVoiceResult(state: AssistantVoiceGateSnapshot): boolean {
   return Boolean(
-    state.wakeOn &&
     state.open &&
     state.voiceStatus === 'listening' &&
     !state.thinking &&
@@ -82,7 +92,7 @@ export function shouldAcceptAssistantVoiceResult(state: AssistantVoiceGateSnapsh
 // (thinking/streaming) или озвучка (pending speech) ответа — вне этого окна VAD выключен, чтобы не
 // хватать чужие голоса и не тратить ресурсы. Гейт микрофона (тумблер wake + открытая панель) — снаружи.
 export function shouldArmBargeIn(state: AssistantVoiceGateSnapshot): boolean {
-  if (!state.wakeOn || !state.open) return false
+  if (!state.open) return false
   return Boolean(state.thinking || state.streaming || hasPendingAssistantSpeech(state))
 }
 

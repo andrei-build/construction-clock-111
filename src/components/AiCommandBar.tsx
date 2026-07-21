@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useI18n } from '../lib/i18n'
 import { useScreenContext, type ScreenContext } from '../lib/useScreenContext'
-import VoiceMic from './VoiceMic'
-import { IconInfo, IconStop, IconText } from './icons'
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from '../lib/supabase'
 import {
   getTeam,
@@ -43,22 +42,19 @@ import { logVoiceClientEvent } from '../lib/clientErrors'
 import { loadBargeInVad, type BargeInVad } from '../lib/vadBargeIn'
 import type { Profile, Project } from '../lib/types'
 
-// AI-1-UI: «строка-командир» — оверлей-диалог AI-ассистента ВЛАДЕЛЬЦА. Монтируется в App ТОЛЬКО
-// для owner (см. App.tsx: {isOwner && <AiCommandBar/>}) — RLS ai_messages/ai_proposals гейтятся
-// app.is_owner(), у admin история пуста, а update молча затрагивает 0 строк, поэтому в v1 экран
-// строго owner-only. Открывается кнопкой «Спроси» (шапка/сайдбар, Nav.tsx) через AI_OPEN_EVENT и
-// глобальным Ctrl+K / Cmd+K (слушатель ниже). Закрытие по Esc / клику по фону.
+// ORB-SIMPLE-2: единый ДВИЖОК ассистента владельца (чат + голос + озвучка + настройки). Монтируется в
+// App ТОЛЬКО для owner как <AiAssistantProvider> — RLS ai_messages/ai_proposals гейтятся app.is_owner(),
+// у admin история пуста, а update молча затрагивает 0 строк, поэтому экран строго owner-only.
+//
+// Один инстанс движка отдаёт контекст (useAiAssistant) ДВУМ потребителям без дублирования и гонок:
+//   1) угловой ОРБ-РАЦИЯ (рендерит сам провайдер) — клик = сразу слушает/отвечает голосом, БЕЗ панелей;
+//   2) полноэкранная страница /ask (src/screens/Ask.tsx) — история диалога, ввод, микрофон, настройки.
+// Прежний попап-оверлей/drawer чата удалён: орб больше НИКОГДА не показывает панель. Кнопка «Спроси»
+// в сайдбаре и Ctrl+K ведут на маршрут /ask (см. Nav.tsx / глобальный слушатель ниже).
 //
 // Контракт с бэкендом: user/assistant-сообщения в ai_messages и pending-предложения в ai_proposals
 // пишет ТОЛЬКО edge (service-role) при POST /ai-assistant. С фронта мы историю читаем, предложения
 // читаем и помечаем executed/rejected (update). Ничего не вставляем — см. src/lib/api/ai.ts.
-
-// Событие открытия оверлея из шапки (кнопка «Спроси» в Nav диспатчит его) — так кнопка в сайдбаре
-// и смонтированный в App оверлей общаются без общего провайдера (паттерн MAIL_UNREAD_EVENT).
-export const AI_OPEN_EVENT = 'ai:open'
-export function emitAiOpen(): void {
-  if (typeof window !== 'undefined') window.dispatchEvent(new Event(AI_OPEN_EVENT))
-}
 
 const TASK_TYPES = ['work', 'material', 'delivery'] as const
 const TASK_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const
@@ -66,8 +62,7 @@ const MSG_PRIORITIES = ['urgent', 'info', 'good', 'task'] as const
 const EVENT_TYPES = ['meeting', 'inspection', 'measure', 'delivery', 'other'] as const
 const LOCAL_ACTIONS = new Set(['create_task', 'send_message', 'send_mail', 'create_event'])
 const DISPATCH_ACTIONS = new Set(['assign_worker', 'unassign_worker', 'send_plan'])
-const KNOWN_ACTIONS = new Set([...LOCAL_ACTIONS, ...DISPATCH_ACTIONS])
-const OVERLAY_PROPOSAL_LIMIT = 4
+export const KNOWN_ACTIONS = new Set([...LOCAL_ACTIONS, ...DISPATCH_ACTIONS])
 
 // VOICE-CLIENT-DEBUG-1: окно тишины перед отправкой распознанной фразы. Раньше ждали 1800мс ВСЕГДА —
 // голос «думал» лишние ~2с ещё до сети. Теперь после ФИНАЛА распознавания (isFinal) шлём почти сразу
@@ -76,7 +71,7 @@ const OVERLAY_PROPOSAL_LIMIT = 4
 const STT_SILENCE_AFTER_FINAL_MS = 350
 const STT_SILENCE_AFTER_INTERIM_MS = 900
 
-type ProposalIssue = {
+export type ProposalIssue = {
   error: AiExecuteProposalErrorCode | 'failed'
   message?: string
   candidates?: AiExecuteCandidate[]
@@ -126,7 +121,7 @@ function resolveName(list: Array<{ id: string; name: string | null }>, name: str
 
 // Человекочитаемый разбор payload: пары ключ→значение (пустые/служебные значения отсеиваем,
 // объекты сериализуем). БЕЗ dangerouslySetInnerHTML — всё plain text.
-function summarizePayload(payload: Record<string, unknown>): Array<[string, string]> {
+export function summarizePayload(payload: Record<string, unknown>): Array<[string, string]> {
   return Object.entries(payload)
     .filter(([, v]) => v !== null && v !== undefined && v !== '')
     .map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)] as [string, string])
@@ -152,7 +147,7 @@ function pStrArray(payload: Record<string, unknown>, ...keys: string[]): string[
   return []
 }
 
-function candidateText(candidate: AiExecuteCandidate): string {
+export function candidateText(candidate: AiExecuteCandidate): string {
   const name = pStr(candidate, 'name', 'title', 'worker_name', 'project_name')
   const detail = pStr(candidate, 'role', 'type', 'address', 'email')
   const id = pStr(candidate, 'id')
@@ -164,7 +159,7 @@ function candidateText(candidate: AiExecuteCandidate): string {
 
 // AI-UX-1: на всякий случай убираем markdown при показе (edge v8 уже отдаёт живой текст без разметки,
 // но старые записи в истории или сбой промпта могут содержать ** / ## — рендерим plain-текст «как речь»).
-function stripMarkdown(s: string): string {
+export function stripMarkdown(s: string): string {
   return s
     .replace(/\*\*(.*?)\*\*/g, '$1')
     .replace(/\*\*/g, '')
@@ -255,7 +250,52 @@ function normalizeWake(s: string): string {
   return s.toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim()
 }
 
-export default function AiCommandBar({ profile }: { profile: Profile }) {
+// ORB-SIMPLE-2: контекст движка ассистента. Один инстанс (провайдер) — два потребителя (орб + /ask),
+// чтобы список/отправка/TTS/STT/настройки были ОБЩИМИ, без дублирования логики и без гонок микрофона.
+export type AiAssistantContextValue = {
+  messages: AiMessage[]
+  proposals: AiProposal[]
+  proposalIssues: Record<string, ProposalIssue>
+  loading: boolean
+  thinking: boolean
+  streaming: boolean
+  streamText: string
+  noKey: boolean
+  busyId: string | null
+  input: string
+  setInput: (value: string) => void
+  submit: (e: React.FormEvent) => void
+  handleVoiceInput: (text: string) => void
+  executeProposal: (pr: AiProposal) => Promise<boolean>
+  rejectProposal: (pr: AiProposal) => Promise<boolean>
+  dismissInfoProposal: (id: string) => void
+  proposalSummary: (pr: AiProposal) => string
+  proposalIssueTitle: (issue: ProposalIssue) => string
+  speakOn: boolean
+  wakeOn: boolean
+  speakSupported: boolean
+  wakeSupported: boolean
+  setSpeakEnabled: (checked: boolean) => void
+  setWakeEnabled: (checked: boolean) => void
+  orbState: 'idle' | 'listening' | 'thinking' | 'speaking'
+  orbLabel: string
+  voiceStatus: VoiceStatus
+  micLevel: number
+  ttsLevel: number
+  micDenied: boolean
+  lang: 'ru' | 'en' | 'es'
+}
+
+const AiAssistantContext = createContext<AiAssistantContextValue | null>(null)
+
+export function useAiAssistant(): AiAssistantContextValue {
+  const ctx = useContext(AiAssistantContext)
+  if (!ctx) throw new Error('useAiAssistant must be used within AiAssistantProvider')
+  return ctx
+}
+
+export default function AiAssistantProvider({ profile, children }: { profile: Profile; children: ReactNode }) {
+  const navigate = useNavigate()
   const { t, lang } = useI18n()
   // AI-UX-2 (п.5): контекст текущего экрана (route/screen/details) — БЕЗ запросов к БД, только из
   // pathname. Кладём в ref, чтобы голосовые/стрим-колбэки читали свежее значение без ребилда замыканий.
@@ -275,15 +315,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   // AI-UX-2: стрим/история/proposals-список уезжают в ОТДЕЛЬНУЮ выдвижную панель (drawer), не на оверлей.
   const [streamText, setStreamText] = useState('')
   const [streaming, setStreaming] = useState(false)
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [contextOpen, setContextOpen] = useState(false)
   const [proposalIssues, setProposalIssues] = useState<Record<string, ProposalIssue>>({})
   const streamingRef = useRef(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<number | null>(null)
-  const inputRef = useRef<HTMLInputElement | null>(null)
-  const historyEndRef = useRef<HTMLDivElement | null>(null)
 
   // AI-2-front: тумблеры (состояние в localStorage). Мягкая деградация — см. флаги support.
   // AI-UX-2: озвучка ответов первична — по умолчанию ВКЛ (если пользователь ранее не выключил).
@@ -1346,76 +1382,50 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     if (!thinkingRef.current) await sendQuestion(text)
   }, [assistantSpeechGateSnapshot, handleVoiceProposalIntent, sendQuestion])
 
-  // Глобальные слушатели: Ctrl+K / Cmd+K и AI_OPEN_EVENT (кнопка «Спроси») открывают оверлей.
+  // ORB-SIMPLE-2: Ctrl+K / Cmd+K ведёт на страницу ассистента /ask (прежний попап-оверлей удалён).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault()
-        setOpen(true)
+        navigate('/ask')
       }
     }
-    const onOpen = () => setOpen(true)
     window.addEventListener('keydown', onKey)
-    window.addEventListener(AI_OPEN_EVENT, onOpen)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      window.removeEventListener(AI_OPEN_EVENT, onOpen)
-    }
-  }, [])
+    return () => window.removeEventListener('keydown', onKey)
+  }, [navigate])
 
-  // Esc: сначала закрывает выдвижную панель текста (drawer), затем — сам оверлей.
+  // ORB-SIMPLE-2: движок смонтирован постоянно (owner-only) — грузим историю/предложения/справочники
+  // ОДИН раз при монтировании, чтобы и орб-рация, и страница /ask сразу видели диалог. Дальше историю
+  // рефетчит sendQuestion/reload после каждого хода.
   useEffect(() => {
-    if (!open) return
-    const onEsc = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      if (drawerOpen) setDrawerOpen(false)
-      else setOpen(false)
-    }
-    window.addEventListener('keydown', onEsc)
-    return () => window.removeEventListener('keydown', onEsc)
-  }, [open, drawerOpen])
-
-  // При открытии — грузим данные и фокусируем поле ввода.
-  useEffect(() => {
-    if (!open) return
-    setNoKey(false)
-    setDrawerOpen(false)
     setLoading(true)
     void load().finally(() => setLoading(false))
-    const id = window.setTimeout(() => inputRef.current?.focus(), 40)
-    return () => window.clearTimeout(id)
-  }, [open, load])
+  }, [load])
 
-  // Автоскролл ленты вниз при изменении истории (пока открыт И раскрыта панель текста).
-  // AI-UX-2: стрим тоже уезжает в drawer — скроллим и при печати живого ответа.
-  useEffect(() => {
-    if (open && drawerOpen) historyEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [messages, streamText, open, drawerOpen])
-
-  // При закрытии оверлея останавливаем всё активное: SSE, TTS-fetch, Audio и очередь.
+  // ORB-SIMPLE-2: конец голосового сеанса рации (open→false) — гасим всё активное (SSE, TTS-fetch,
+  // Audio, очередь). Настройки озвучки/голосовой активации НЕ трогаем (независимы от сеанса).
   useEffect(() => {
     if (open) { ttsPrimedRef.current = false; return }
-    wakeOnRef.current = false
-    setWakeOn(false)
-    setContextOpen(false)
     cancelActiveAssistant()
   }, [open, cancelActiveAssistant])
 
   // Историю вслух не читаем: речь идёт только из текущего SSE/POST turn, где текст сегментируется.
   useEffect(() => {
-    if (!open) return
     const last = messages[messages.length - 1]
     if (!last || last.role !== 'assistant') return
-    if (!ttsPrimedRef.current) { lastSpokenIdRef.current = last.id; ttsPrimedRef.current = true; return }
     lastSpokenIdRef.current = last.id
-  }, [messages, open])
+    ttsPrimedRef.current = true
+  }, [messages])
 
   // AI-VOICE-FIX-1 (1): микрофон запрашиваем ЯВНО при включении тумблера голоса — браузер сразу
   // показывает промпт разрешения. Отказ → статус «микрофон запрещён ❌». Выключение → освобождаем поток.
+  // ORB-SIMPLE-2: микрофон нужен либо для фоновой голосовой активации (wakeOn), либо для активного
+  // сеанса рации (open, открыт кликом орба). Иначе освобождаем поток и гасим статус.
   useEffect(() => {
-    if (!wakeOn || !wakeOnRef.current || !SpeechRecognitionImpl) {
+    const wantMic = (wakeOn || open) && !!SpeechRecognitionImpl
+    if (!wantMic) {
       releaseMic()
-      setVoiceStatusLive('off')
+      if (!open) setVoiceStatusLive('off')
       return
     }
     let cancelled = false
@@ -1425,7 +1435,7 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       if (!ok) setVoiceStatusLive('denied')
     })()
     return () => { cancelled = true }
-  }, [wakeOn, ensureMic, releaseMic, setVoiceStatusLive])
+  }, [wakeOn, open, ensureMic, releaseMic, setVoiceStatusLive])
 
   // AI-VOICE-FIX-1 (2,3): непрерывное распознавание wake-фразы «окей, Клок». Активно пока тумблер включён
   // И панель закрыта (открытая панель → разговорный цикл, микрофон один). onend/onerror перезапускают
@@ -1495,7 +1505,9 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   // Слушаем один вопрос, затем во время thinking/speaking recognition не работает; после ответа mic выключается.
   // Один инстанс распознавания за раз; всё останавливается при закрытии панели/выключении тумблера.
   useEffect(() => {
-    if (!wakeOn || !SpeechRecognitionImpl || !open) { convoActiveRef.current = false; return }
+    // ORB-SIMPLE-2: разговорный цикл питается активным СЕАНСОМ рации (open), а не тумблером wakeOn —
+    // клик орба открывает сеанс и мы сразу слушаем вопрос, даже если голосовая активация выключена.
+    if (!SpeechRecognitionImpl || !open) { convoActiveRef.current = false; return }
     let active = true
     convoActiveRef.current = true
     let rec: SpeechRecInstance | null = null
@@ -1515,9 +1527,11 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
 
     const finishVoiceCapture = () => {
       if (!active) return
-      wakeOnRef.current = false
-      setWakeOn(false)
-      setVoiceStatusLive('off')
+      // ORB-SIMPLE-2: ход рации завершён — закрываем СЕАНС (open→false). Настройку голосовой активации
+      // не трогаем: если wakeOn включён, возвращаемся к фоновому ожиданию «окей, Клок».
+      openRef.current = false
+      setOpen(false)
+      setVoiceStatusLive(wakeOnRef.current ? 'wake' : 'off')
       stopMeter()
     }
 
@@ -1625,7 +1639,6 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
       stopRec()
     }
   }, [
-    wakeOn,
     open,
     lang,
     ensureMic,
@@ -1724,16 +1737,12 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
     return t('ai_execute_failed')
   }
 
-  const visibleOverlayProposals = proposals.slice(0, OVERLAY_PROPOSAL_LIMIT)
-  const hiddenOverlayProposalCount = Math.max(0, proposals.length - visibleOverlayProposals.length)
-
   const wakeSupported = !!SpeechRecognitionImpl
 
   // AI-UX-1: состояние «сущности»-орба. Отражает то, ЧТО делает ассистент — и зеркалит меня в «слушаю»
   // (орб пульсирует в ритм моего голоса, micLevel из AI-VOICE-FIX-1). idle — покой (медленный пульс);
   // listening — слушаю; thinking — думаю (идёт стрим/ответ); speaking — говорю (волны).
-  const micDenied = wakeOn && wakeSupported && voiceStatus === 'denied'
-  const assistantActive = thinking || streaming || ttsBusy
+  const micDenied = (wakeOn || open) && wakeSupported && voiceStatus === 'denied'
   const orbToggleIntent = getAiOrbToggleIntent({ open, wakeOn, speakOn, thinking, streaming, ttsBusy, voiceStatus })
   const orbToggleActive = orbToggleIntent === 'deactivate'
   const orbState: 'idle' | 'listening' | 'thinking' | 'speaking' =
@@ -1757,9 +1766,10 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
             ? t('ai_status_speaking')
             : t('ai_orb_idle')
 
-  // Бейдж при закрытой панели (оставляем прежним — статус голоса без правки App/Nav).
+  // Короткая строка-статус у орба (рация без панели): показываем, пока идёт сеанс (open) ИЛИ включена
+  // фоновая голосовая активация (wakeOn). Никакой панели — только строка рядом с орбом.
   const badgeView: { label: string } | null =
-    !wakeOn || !wakeSupported
+    (!wakeOn && !open) || !wakeSupported
       ? null
       : voiceStatus === 'wake'
         ? { label: t('ai_wake_listening') }
@@ -1776,433 +1786,116 @@ export default function AiCommandBar({ profile }: { profile: Profile }) {
   const launcherStatus = badgeView?.label ?? (orbToggleActive ? t('ai_orb_active') : t('ai_orb_idle'))
   const orbToggleLabel = orbToggleActive ? t('ai_orb_deactivate') : t('ai_orb_activate')
 
+  // ORB-SIMPLE-2: орб = кнопка рации. Клик по покоящемуся орбу СРАЗУ открывает голосовой сеанс (жест
+  // разблокирует автоплей TTS): разговорный цикл начинает слушать → пауза шлёт вопрос → звучит ответ.
+  // Никаких панелей/оверлеев. Повторный клик во время сеанса — стоп. Настройку голосовой активации
+  // (wakeOn) клик НЕ трогает — это независимый выбор со страницы /ask.
   const handleOrbToggle = useCallback(() => {
     const next = getNextAiOrbToggleState({ open, wakeOn, speakOn, thinking, streaming, ttsBusy, voiceStatus })
     if (next.intent === 'activate') {
       void unlockTtsAudio().then(() => playTtsQueue())
       speakOnRef.current = true
-      wakeOnRef.current = true
       openRef.current = true
-      setSpeakOn(next.speakOn)
-      setWakeOn(next.wakeOn)
-      setOpen(next.open)
+      setSpeakOn(true)
+      setOpen(true)
       return
     }
 
-    wakeOnRef.current = false
     openRef.current = false
-    setWakeOn(false)
     setOpen(false)
-    setDrawerOpen(false)
-    setContextOpen(false)
     cancelActiveAssistant()
-    releaseMic()
-    setVoiceStatusLive('off')
+    // Держим микрофон только если оставлена фоновая голосовая активация; иначе освобождаем и гасим.
+    if (!wakeOnRef.current) { releaseMic(); setVoiceStatusLive('off') }
+    else setVoiceStatusLive('wake')
   }, [cancelActiveAssistant, open, playTtsQueue, releaseMic, setVoiceStatusLive, speakOn, streaming, thinking, ttsBusy, unlockTtsAudio, voiceStatus, wakeOn])
 
+  // ORB-SIMPLE-2: настройки со страницы /ask (те же localStorage-ключи ai_speak / ai_wake). Озвучка:
+  // включение разблокирует автоплей и доигрывает очередь, выключение — обрывает. Голосовая активация:
+  // включение разблокирует автоплей (чтобы ответ после wake-фразы звучал); эффекты выше поднимут mic.
+  const setSpeakEnabled = useCallback((checked: boolean) => {
+    speakOnRef.current = checked
+    setSpeakOn(checked)
+    if (checked) void unlockTtsAudio().then(() => playTtsQueue())
+    else cancelTtsQueue()
+  }, [cancelTtsQueue, playTtsQueue, unlockTtsAudio])
+
+  const setWakeEnabled = useCallback((checked: boolean) => {
+    wakeOnRef.current = checked
+    setWakeOn(checked)
+    if (checked) void unlockTtsAudio()
+  }, [unlockTtsAudio])
+
+  const assistant: AiAssistantContextValue = {
+    messages,
+    proposals,
+    proposalIssues,
+    loading,
+    thinking,
+    streaming,
+    streamText,
+    noKey,
+    busyId,
+    input,
+    setInput,
+    submit,
+    handleVoiceInput,
+    executeProposal,
+    rejectProposal,
+    dismissInfoProposal,
+    proposalSummary,
+    proposalIssueTitle,
+    speakOn,
+    wakeOn,
+    speakSupported: AUDIO_TTS_SUPPORTED,
+    wakeSupported,
+    setSpeakEnabled,
+    setWakeEnabled,
+    orbState,
+    orbLabel,
+    voiceStatus,
+    micLevel,
+    ttsLevel,
+    micDenied,
+    lang,
+  }
+
   return (
-    <>
-      {/* Collapsed global orb: fixed by default, opens the assistant without taking over the screen. */}
-      {!open && (
-        <button
-          type="button"
-          className={`ai-orb-launcher ai-voice-${voiceStatus}${launcherPulsing ? ' ai-orb-launcher-pulse' : ''}${orbToggleActive ? ' ai-orb-launcher-active' : ''}`}
-          onClick={handleOrbToggle}
-          aria-label={orbToggleLabel}
-          aria-pressed={orbToggleActive}
-          title={orbToggleLabel}
+    <AiAssistantContext.Provider value={assistant}>
+      {children}
+
+      {/* ORB-SIMPLE-2: угловой ОРБ-РАЦИЯ. Всегда виден (провайдер смонтирован owner-only). Клик =
+          СРАЗУ слушать → пауза шлёт вопрос → звучит голосовой ответ. НИКАКИХ панелей/оверлеев/чекбоксов
+          при клике — только орб + короткая строка-статус. Все настройки чата — на странице /ask. */}
+      <button
+        type="button"
+        className={`ai-orb-launcher ai-voice-${voiceStatus}${launcherPulsing ? ' ai-orb-launcher-pulse' : ''}${orbToggleActive ? ' ai-orb-launcher-active' : ''}`}
+        onClick={handleOrbToggle}
+        aria-label={orbToggleLabel}
+        aria-pressed={orbToggleActive}
+        title={orbToggleLabel}
+      >
+        <span
+          className={`ai-orb ai-orb-xs ai-orb-${orbState}${micDenied ? ' ai-orb-denied' : ''}`}
+          style={{
+            '--mic': orbState === 'listening' ? micLevel : 0,
+            '--tts': orbState === 'speaking' ? ttsLevel : 0,
+          } as React.CSSProperties}
+          aria-hidden="true"
         >
-          <span
-            className={`ai-orb ai-orb-xs ai-orb-${orbState}${micDenied ? ' ai-orb-denied' : ''}`}
-            style={{
-              '--mic': orbState === 'listening' ? micLevel : 0,
-              '--tts': orbState === 'speaking' ? ttsLevel : 0,
-            } as React.CSSProperties}
-            aria-hidden="true"
-          >
-            <span className="ai-orb-ring" />
-            <span className="ai-orb-ring ai-orb-ring2" />
-            <span className="ai-orb-ring ai-orb-ring3" />
-            <span className="ai-orb-ring ai-orb-ring4" />
-            <span className="ai-orb-core" />
-          </span>
-          <span className="ai-launcher-status">{launcherStatus}</span>
-        </button>
-      )}
-
-      {/* AI-UX-2: КОМПАКТНЫЙ ПЛАВАЮЩИЙ ОВЕРЛЕЙ на фоне приложения. Не блокирует экран (нет backdrop,
-          pointer-events только на самой карточке) — приложение под ним видно и работает. На оверлее
-          ТОЛЬКО орб + короткая строка состояния + контекст экрана + компактные органы. Текст ответа
-          НЕ показываем (голос первичен) — он в выдвижной панели «Показать текст». */}
-      {open && (
-        <div className="ai-overlay" role="dialog" aria-modal="false" aria-label={t('ai_title')}>
-          {/* Маленький аккуратный крестик — просто закрыть. */}
-          <button type="button" className="ai-overlay-close" onClick={() => setOpen(false)} aria-label={t('close')}>
-            ✕
-          </button>
-
-          {/* СУЩНОСТЬ: пульсирующий орб (компактный) + короткая строка состояния + видимый контекст экрана. */}
-          <div className="ai-overlay-main">
-            <button
-              type="button"
-              className="ai-orb-toggle"
-              onClick={handleOrbToggle}
-              aria-label={orbToggleLabel}
-              aria-pressed={orbToggleActive}
-              title={orbToggleLabel}
-            >
-              <span
-                className={`ai-orb ai-orb-sm ai-orb-${orbState}${micDenied ? ' ai-orb-denied' : ''}`}
-                style={{
-                  '--mic': orbState === 'listening' ? micLevel : 0,
-                  '--tts': orbState === 'speaking' ? ttsLevel : 0,
-                } as React.CSSProperties}
-                aria-hidden="true"
-              >
-                <span className="ai-orb-ring" />
-                <span className="ai-orb-ring ai-orb-ring2" />
-                <span className="ai-orb-ring ai-orb-ring3" />
-                <span className="ai-orb-ring ai-orb-ring4" />
-                <span className="ai-orb-core" />
-              </span>
-            </button>
-            <div className="ai-overlay-meta">
-              <div className="ai-overlay-status-row">
-                <p className="ai-orb-label" role="status" aria-live="polite">{orbLabel}</p>
-                <button
-                  type="button"
-                  className="ai-icon-btn ai-context-btn"
-                  onClick={() => setContextOpen((v) => !v)}
-                  aria-label={t('ai_context_info')}
-                  aria-expanded={contextOpen}
-                  title={`${t('ai_ctx_seeing')}: ${screenContext.screen}${screenContext.details ? ` · ${screenContext.details}` : ''}`}
-                >
-                  <IconInfo />
-                </button>
-                {assistantActive && (
-                  <button
-                    type="button"
-                    className="ai-icon-btn ai-stop-btn"
-                    onClick={() => cancelActiveAssistant()}
-                    aria-label={t('ai_stop_all')}
-                    title={t('ai_stop_all')}
-                  >
-                    <IconStop />
-                  </button>
-                )}
-              </div>
-              {contextOpen && (
-                <p className="ai-overlay-ctx muted">
-                  {t('ai_ctx_seeing')}: {screenContext.screen}
-                  {screenContext.details ? ` · ${screenContext.details}` : ''}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {micDenied && <p className="muted small ai-overlay-hint">{t('ai_mic_denied_hint')}</p>}
-
-          {noKey && (
-            <div className="ai-nokey ai-overlay-nokey" role="alert">
-              <strong>{t('ai_no_key_title')}</strong>
-              <span className="muted small">{t('ai_no_key_desc')}</span>
-            </div>
-          )}
-
-          {/* PROPOSALS ПО ГОЛОСУ: до 4 свежих pending-карточек; голосовое «да/нет» действует на первую. */}
-          {visibleOverlayProposals.length > 0 && (
-            <div className="ai-overlay-proposals">
-              {visibleOverlayProposals.map((pr) => {
-                const issue = proposalIssues[pr.id]
-                const candidates = issue?.candidates?.slice(0, 2) ?? []
-                if (isAiInfoProposalAction(pr.action_type)) {
-                  return (
-                    <div key={pr.id} className="ai-overlay-proposal ai-overlay-proposal-info" role="status">
-                      <div className="ai-overlay-proposal-head">
-                        <span className="ai-overlay-proposal-title">{t('ai_bug_recorded')}</span>
-                      </div>
-                      <div className="row ai-overlay-proposal-actions">
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          onClick={() => dismissInfoProposal(pr.id)}
-                        >
-                          {t('got_it')}
-                        </button>
-                      </div>
-                    </div>
-                  )
-                }
-                return (
-                  <div key={pr.id} className="ai-overlay-proposal">
-                    <div className="ai-overlay-proposal-head">
-                      <span className="ai-overlay-proposal-badge">{t('ai_proposal_badge')}</span>
-                      <span className="ai-overlay-proposal-title">{proposalSummary(pr)}</span>
-                    </div>
-                    {issue && (
-                      <div className="ai-proposal-issue" role="alert">
-                        <p>{proposalIssueTitle(issue)}</p>
-                        {issue.message && <p className="muted small">{issue.message}</p>}
-                        {candidates.length > 0 && (
-                          <p className="muted small">
-                            {t('ai_execute_candidates')}: {candidates.map(candidateText).join(', ')}
-                          </p>
-                        )}
-                        <p className="muted small">{t('ai_execute_still_pending')}</p>
-                      </div>
-                    )}
-                    <div className="row ai-overlay-proposal-actions">
-                      {KNOWN_ACTIONS.has(pr.action_type) && (
-                        <button
-                          type="button"
-                          className="btn primary"
-                          disabled={busyId === pr.id}
-                          onClick={() => void executeProposal(pr)}
-                        >
-                          {t('ai_execute')}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="btn ghost"
-                        disabled={busyId === pr.id}
-                        onClick={() => void rejectProposal(pr)}
-                      >
-                        {t('ai_reject')}
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-              {hiddenOverlayProposalCount > 0 && (
-                <button
-                  type="button"
-                  className="btn ghost ai-overlay-more"
-                  onClick={() => setDrawerOpen(true)}
-                >
-                  {t('ai_more_proposals').replace('{n}', String(hiddenOverlayProposalCount))}
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* КОМПАКТНЫЕ ОРГАНЫ: push-to-talk микрофон (сразу шлёт вопрос) + «Показать текст» (drawer). */}
-          <div className="ai-overlay-controls">
-            <VoiceMic
-              lang={lang}
-              title={t('ai_voice_hint')}
-              onResult={(text) => { void handleVoiceInput(text) }}
-            />
-            <button
-              type="button"
-              className="btn ghost ai-overlay-text-btn"
-              onClick={() => setDrawerOpen(true)}
-            >
-              <IconText />
-              <span>{t('ai_show_text')}{messages.length > 0 ? ` (${messages.length})` : ''}</span>
-            </button>
-          </div>
-
-          {(AUDIO_TTS_SUPPORTED || wakeSupported) && (
-            <div className="ai-toggles ai-overlay-toggles">
-              {AUDIO_TTS_SUPPORTED && (
-                <label className="ai-toggle">
-                  <input
-                    type="checkbox"
-                    checked={speakOn}
-                    onChange={(e) => {
-                      const checked = e.target.checked
-                      speakOnRef.current = checked
-                      setSpeakOn(checked)
-                      if (checked) void unlockTtsAudio().then(() => playTtsQueue())
-                      else cancelTtsQueue()
-                    }}
-                  />
-                  <span>{t('ai_speak_toggle')}</span>
-                </label>
-              )}
-              {wakeSupported && (
-                <label className="ai-toggle" title={t('ai_wake_hint')}>
-                  <input
-                    type="checkbox"
-                    checked={wakeOn}
-                    onChange={(e) => {
-                      const checked = e.target.checked
-                      wakeOnRef.current = checked
-                      setWakeOn(checked)
-                      if (checked) void unlockTtsAudio()
-                    }}
-                  />
-                  <span>{t('ai_wake_toggle')}</span>
-                </label>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ОТДЕЛЬНАЯ ВЫДВИЖНАЯ ПАНЕЛЬ (drawer): расшифровка диалога (со стримом печати) + полный список
-          proposals + вторичный ввод текста. Открывается кнопкой «Показать текст». */}
-      {open && drawerOpen && (
-        <div
-          className="ai-drawer-backdrop"
-          onClick={(e) => { if (e.target === e.currentTarget) setDrawerOpen(false) }}
-        >
-          <aside className="card ai-drawer" role="dialog" aria-modal="true" aria-label={t('ai_drawer_title')}>
-            <header className="ai-drawer-head">
-              <h2 className="ai-drawer-title">{t('ai_drawer_title')}</h2>
-              <button type="button" className="ai-overlay-close" onClick={() => setDrawerOpen(false)} aria-label={t('close')}>
-                ✕
-              </button>
-            </header>
-
-            {/* Лента диалога + живой стрим печати внизу (стрим идёт ЗДЕСЬ, а не на оверлее). */}
-            <div className="ai-drawer-scroll">
-              {loading && messages.length === 0 ? (
-                <p className="muted small">…</p>
-              ) : null}
-              {messages.map((m) => (
-                <div key={m.id} className={`ai-hist-row ai-hist-${m.role}`}>
-                  <span className="ai-hist-role">{m.role === 'user' ? t('ai_hist_you') : t('ai_hist_ai')}</span>
-                  <span className="ai-hist-text">
-                    {m.role === 'assistant' ? stripMarkdown(m.content) : m.content}
-                  </span>
-                </div>
-              ))}
-              {streaming && streamText && (
-                <div className="ai-hist-row ai-hist-assistant">
-                  <span className="ai-hist-role">{t('ai_hist_ai')}</span>
-                  <span className="ai-hist-text">{streamText}<span className="ai-caret" aria-hidden="true" /></span>
-                </div>
-              )}
-              {(thinking || streaming) && !streamText && (
-                <p className="muted small ai-answer-thinking">{t('ai_thinking')}</p>
-              )}
-              {messages.length === 0 && !loading && !thinking && !streaming && (
-                <p className="ai-answer-empty muted">{t('ai_empty')}</p>
-              )}
-              <div ref={historyEndRef} />
-            </div>
-
-            {proposals.length > 0 && (
-              <div className="ai-proposals">
-                <h3 className="ai-proposals-title">{t('ai_proposals_title')}</h3>
-                {proposals.map((pr) => {
-                  const known = KNOWN_ACTIONS.has(pr.action_type)
-                  const rows = summarizePayload(pr.payload)
-                  const issue = proposalIssues[pr.id]
-                  const candidates = issue?.candidates?.slice(0, 6) ?? []
-                  if (isAiInfoProposalAction(pr.action_type)) {
-                    return (
-                      <div key={pr.id} className="ai-proposal ai-proposal-info card" role="status">
-                        <div className="ai-proposal-title">{t('ai_bug_recorded')}</div>
-                        <div className="row ai-proposal-actions">
-                          <button
-                            type="button"
-                            className="btn ghost"
-                            onClick={() => dismissInfoProposal(pr.id)}
-                          >
-                            {t('got_it')}
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  }
-                  return (
-                    <div key={pr.id} className="ai-proposal card">
-                      <div className="ai-proposal-title">
-                        {t('ai_proposal_prefix')} {proposalSummary(pr)}
-                      </div>
-                      {rows.length > 0 && (
-                        <dl className="ai-proposal-payload">
-                          {rows.map(([k, v]) => (
-                            <div key={k} className="ai-payload-row">
-                              <dt>{k}</dt>
-                              <dd>{v}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      )}
-                      {issue && (
-                        <div className="ai-proposal-issue" role="alert">
-                          <p>{proposalIssueTitle(issue)}</p>
-                          {issue.message && <p className="muted small">{issue.message}</p>}
-                          {candidates.length > 0 && (
-                            <>
-                              <p className="muted small">{t('ai_execute_candidates')}:</p>
-                              <ul>
-                                {candidates.map((candidate, idx) => (
-                                  <li key={`${pr.id}-candidate-${idx}`}>{candidateText(candidate)}</li>
-                                ))}
-                              </ul>
-                            </>
-                          )}
-                          <p className="muted small">{t('ai_execute_still_pending')}</p>
-                        </div>
-                      )}
-                      {!known && <p className="muted small ai-unsupported">{t('ai_unsupported')}</p>}
-                      <div className="row ai-proposal-actions">
-                        {known && (
-                          <button
-                            type="button"
-                            className="btn primary"
-                            disabled={busyId === pr.id}
-                            onClick={() => void executeProposal(pr)}
-                          >
-                            {t('ai_execute')}
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          disabled={busyId === pr.id}
-                          onClick={() => void rejectProposal(pr)}
-                        >
-                          {t('ai_reject')}
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-
-            {/* Вторичный ввод текста (голос первичен). */}
-            <form className="ai-input-row ai-drawer-input" onSubmit={submit}>
-              <input
-                ref={inputRef}
-                className="ai-input"
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={t('ai_placeholder')}
-                disabled={thinking}
-              />
-              <VoiceMic
-                lang={lang}
-                title={t('ai_voice_hint')}
-                onResult={(text) => {
-                  void (async () => {
-                    const snapshot = assistantSpeechGateSnapshot()
-                    if (snapshot.thinking || snapshot.streaming || hasPendingAssistantSpeech(snapshot)) return
-                    if (await handleVoiceProposalIntent(text)) return
-                    setInput((v) => (v ? `${v} ${text}` : text))
-                  })()
-                }}
-              />
-              <button type="submit" className="btn primary ai-send-btn" disabled={thinking || !input.trim()}>
-                {thinking ? t('ai_thinking') : t('ai_send')}
-              </button>
-            </form>
-          </aside>
-        </div>
-      )}
+          <span className="ai-orb-ring" />
+          <span className="ai-orb-ring ai-orb-ring2" />
+          <span className="ai-orb-ring ai-orb-ring3" />
+          <span className="ai-orb-ring ai-orb-ring4" />
+          <span className="ai-orb-core" />
+        </span>
+        <span className="ai-launcher-status">{launcherStatus}</span>
+      </button>
 
       {toast && (
         <div className="travel-toast ai-toast" role="status" aria-live="polite">
           {toast}
         </div>
       )}
-    </>
+    </AiAssistantContext.Provider>
   )
 }

@@ -60,6 +60,8 @@ describe('ai voice helpers', () => {
     expect(buffer).toBe('')
   })
 
+  // ORB-SIMPLE-2: приём фразы вопроса завязан на активный сеанс (open) + статус listening; wakeOn
+  // больше не требуется (сеанс можно открыть кликом орба без голосовой активации).
   it('accepts assistant mic results only in the active listening orb window', () => {
     expect(shouldAcceptAssistantVoiceResult({
       wakeOn: true,
@@ -69,6 +71,11 @@ describe('ai voice helpers', () => {
     expect(shouldAcceptAssistantVoiceResult({
       wakeOn: false,
       open: true,
+      voiceStatus: 'listening',
+    })).toBe(true)
+    expect(shouldAcceptAssistantVoiceResult({
+      wakeOn: false,
+      open: false,
       voiceStatus: 'listening',
     })).toBe(false)
     expect(shouldAcceptAssistantVoiceResult({
