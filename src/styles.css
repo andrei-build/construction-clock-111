@@ -4635,8 +4635,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-2d-control-stack {
   position: absolute;
+  /* SKETCH-ORB-ISLANDS-18: острова управления — в верхне-ПРАВЫЙ угол канваса. Так они (1) не под
+     ассистент-орбом (.ai-orb-launcher fixed right:18/bottom:18, нижне-правый) и (2) не уходят «за
+     нижнюю кромку»: высокий 88vh-канвас уводил нижне-якорные острова ниже сгиба viewport. Fullscreen-
+     ветка ниже возвращает их вниз-вправо (там канвас ровно во весь экран, а орб скрыт за шеллом z1000). */
+  top: 10px;
   right: 10px;
-  bottom: 10px;
+  left: auto;
+  bottom: auto;
   z-index: 5;
   display: flex;
   flex-direction: column;
@@ -4644,6 +4650,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   gap: 6px;
   max-width: calc(100% - 20px);
   pointer-events: none;
+}
+.hub-sketch-svg-shell-fullscreen .hub-sketch-2d-control-stack {
+  top: auto;
+  bottom: 10px;
+  right: 10px;
+  align-items: flex-end;
 }
 .hub-sketch-2d-control-group,
 .hub-sketch-2d-tools,
@@ -8277,8 +8289,10 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     grid-template-columns: 1fr;
   }
   .hub-sketch-2d-control-stack {
+    top: 10px;
     right: calc(10px + env(safe-area-inset-right, 0px));
-    bottom: 10px;
+    left: auto;
+    bottom: auto;
   }
   .hub-sketch-2d-control-group,
   .hub-sketch-2d-tools,
