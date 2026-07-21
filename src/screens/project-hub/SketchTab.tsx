@@ -143,22 +143,25 @@ import {
   type SketchExistingSnapResult,
   type SketchSmartGuide,
 } from './sketchGuides'
+import {
+  CELL_FT,
+  CELL_PX,
+  VIEW_W,
+  VIEW_H,
+  canvasGridLines,
+  fitCanvasView,
+  normalizeCanvasView,
+  sketchBounds,
+  type CanvasSize,
+  type CanvasView,
+} from './sketchViewport'
 
 interface SketchTabProps {
   project: Project
   profile: Profile | null
 }
 
-// Геометрия хранится в клетках сетки. Масштаб: 1 клетка = 1 фут.
-const CELL_FT = 1
-const CELL_PX = 32
-const DEFAULT_GRID_COLS = 24
-const DEFAULT_GRID_ROWS = 18
-const VIEW_W = DEFAULT_GRID_COLS * CELL_PX
-const VIEW_H = DEFAULT_GRID_ROWS * CELL_PX
-const MIN_VIEW_CELLS = 4
-const MAX_VIEW_CELLS = 4096
-const MIN_MINOR_GRID_SCREEN_PX = 8
+// Геометрия/масштаб вьюпорта (CELL_FT, CELL_PX, VIEW_W, VIEW_H и пр.) — в ./sketchViewport.
 const CLOSE_SNAP = 0.45 // клетки — попадание в стартовую точку замыкает контур
 const SEG_HIT = 0.7 // клетки — попадание в сегмент при установке двери/окна
 const ROOM_SNAP = 0.6 // клетки — радиус прилипания новой комнаты к существующим вершинам/стенам
@@ -205,8 +208,6 @@ type SketchModel = {
 }
 type ViewMode = '2d' | '3d'
 type SketchCameraPreset = 'fit' | 'top' | 'angle' | 'inside'
-type CanvasSize = { width: number; height: number }
-type CanvasView = { x: number; y: number; width: number; height: number }
 type SnapMode = '1ft' | '6in' | '1in' | '1_8in'
 type SketchMode = 'wall' | 'opening' | 'finish' | 'cabinet' | 'plumbing' | 'light' | 'measure' | 'markup'
 type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill'
@@ -764,126 +765,6 @@ function nearestSegment(model: SketchModel, p: Pt): { c: number; s: number; t: n
     if (!best || d < best.d) best = { c: seg.c, s: seg.s, t, d }
   }
   return best
-}
-
-function sketchBounds(model: SketchModel): { minX: number; maxX: number; minY: number; maxY: number; width: number; height: number; hasPoints: boolean } {
-  const points = model.contours.flatMap((contour) => contour.points)
-  if (points.length === 0) {
-    return {
-      minX: 0,
-      maxX: DEFAULT_GRID_COLS,
-      minY: 0,
-      maxY: DEFAULT_GRID_ROWS,
-      width: DEFAULT_GRID_COLS,
-      height: DEFAULT_GRID_ROWS,
-      hasPoints: false,
-    }
-  }
-  const xs = points.map((p) => p.x)
-  const ys = points.map((p) => p.y)
-  const minX = Math.min(...xs)
-  const maxX = Math.max(...xs)
-  const minY = Math.min(...ys)
-  const maxY = Math.max(...ys)
-  return {
-    minX,
-    maxX,
-    minY,
-    maxY,
-    width: Math.max(maxX - minX, 0),
-    height: Math.max(maxY - minY, 0),
-    hasPoints: true,
-  }
-}
-
-function canvasAspect(size: CanvasSize): number {
-  return size.width > 0 && size.height > 0 ? size.width / size.height : VIEW_W / VIEW_H
-}
-
-function normalizeCanvasView(size: CanvasSize, view: CanvasView): CanvasView {
-  const aspect = canvasAspect(size)
-  const minWidth = MIN_VIEW_CELLS * CELL_PX
-  const maxWidth = MAX_VIEW_CELLS * CELL_PX
-  const width = Math.max(minWidth, Math.min(maxWidth, Number.isFinite(view.width) ? view.width : VIEW_W))
-  const height = width / aspect
-  const cx = Number.isFinite(view.x) && Number.isFinite(view.width) ? view.x + view.width / 2 : 0
-  const cy = Number.isFinite(view.y) && Number.isFinite(view.height) ? view.y + view.height / 2 : 0
-  return {
-    x: cx - width / 2,
-    y: cy - height / 2,
-    width,
-    height,
-  }
-}
-
-function fitCanvasView(model: SketchModel, size: CanvasSize): CanvasView {
-  const bounds = sketchBounds(model)
-  const aspect = canvasAspect(size)
-  if (!bounds.hasPoints) {
-    const width = VIEW_W
-    const height = width / aspect
-    return normalizeCanvasView(size, {
-      x: -width / 2,
-      y: -height / 2,
-      width,
-      height,
-    })
-  }
-  const span = Math.max(bounds.width, bounds.height)
-  const padCells = bounds.hasPoints ? Math.max(2, Math.min(8, span * 0.08)) : 0
-  const minX = bounds.hasPoints ? bounds.minX - padCells : 0
-  const maxX = bounds.hasPoints ? bounds.maxX + padCells : DEFAULT_GRID_COLS
-  const minY = bounds.hasPoints ? bounds.minY - padCells : 0
-  const maxY = bounds.hasPoints ? bounds.maxY + padCells : DEFAULT_GRID_ROWS
-  const boxWidth = Math.max((maxX - minX) * CELL_PX, MIN_VIEW_CELLS * CELL_PX)
-  const boxHeight = Math.max((maxY - minY) * CELL_PX, MIN_VIEW_CELLS * CELL_PX)
-  const boxAspect = boxWidth / boxHeight
-  const width = boxAspect > aspect ? boxWidth : boxHeight * aspect
-  const height = width / aspect
-  const cx = ((minX + maxX) / 2) * CELL_PX
-  const cy = ((minY + maxY) / 2) * CELL_PX
-  return normalizeCanvasView(size, {
-    x: cx - width / 2,
-    y: cy - height / 2,
-    width,
-    height,
-  })
-}
-
-function canvasViewContainsModel(model: SketchModel, view: CanvasView): boolean {
-  const bounds = sketchBounds(model)
-  if (!bounds.hasPoints) return true
-  const left = view.x / CELL_PX
-  const right = (view.x + view.width) / CELL_PX
-  const top = view.y / CELL_PX
-  const bottom = (view.y + view.height) / CELL_PX
-  return bounds.minX >= left && bounds.maxX <= right && bounds.minY >= top && bounds.maxY <= bottom
-}
-
-function gridLinePositions(startPx: number, endPx: number, stepPx: number): number[] {
-  const start = Math.floor(startPx / stepPx) - 1
-  const end = Math.ceil(endPx / stepPx) + 1
-  const count = Math.max(0, end - start + 1)
-  return Array.from({ length: count }, (_, i) => (start + i) * stepPx)
-}
-
-function isMajorGridLine(valuePx: number): boolean {
-  return Math.abs(valuePx / CELL_PX - Math.round(valuePx / CELL_PX)) < 0.0001
-}
-
-function canvasGridLines(view: CanvasView, snapStepFt: number, pxPerFt: number) {
-  const left = view.x
-  const right = view.x + view.width
-  const top = view.y
-  const bottom = view.y + view.height
-  const minorStepPx = Math.max(0.0001, snapStepFt * CELL_PX)
-  const includeMinor = snapStepFt < CELL_FT && pxPerFt * snapStepFt >= MIN_MINOR_GRID_SCREEN_PX
-  return {
-    subX: includeMinor ? gridLinePositions(left, right, minorStepPx).filter((x) => !isMajorGridLine(x)) : [],
-    subY: includeMinor ? gridLinePositions(top, bottom, minorStepPx).filter((y) => !isMajorGridLine(y)) : [],
-    majorX: gridLinePositions(left, right, CELL_PX),
-    majorY: gridLinePositions(top, bottom, CELL_PX),
-  }
 }
 
 const EMPTY_MODEL: SketchModel = { version: 1, cellFt: CELL_FT, contours: [], openings: [] }
