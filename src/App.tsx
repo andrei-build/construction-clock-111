@@ -40,6 +40,8 @@ const Settings = lazy(() => import('./screens/Settings'))
 const Broadcast = lazy(() => import('./screens/Broadcast'))
 const Mail = lazy(() => import('./screens/Mail'))
 const Catalog = lazy(() => import('./screens/Catalog'))
+// ORB-SIMPLE-2: «Спроси» — отдельный маршрут-страница ассистента владельца (owner-only, как /projects).
+const Ask = lazy(() => import('./screens/Ask'))
 import ScreenFallback from './components/ScreenFallback'
 import Nav from './components/Nav'
 import BackButton from './components/BackButton'
@@ -50,7 +52,7 @@ import LiveLocationPinger from './components/LiveLocationPinger'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
 import OfflineCacheBanner from './components/OfflineCacheBanner'
 import OfflineFieldSync from './components/OfflineFieldSync'
-import AiCommandBar from './components/AiCommandBar'
+import AiAssistantProvider from './components/AiCommandBar'
 
 export default function App() {
   const { loading, profile } = useAuth()
@@ -79,12 +81,8 @@ export default function App() {
   // A2: доступ к финансам = owner/admin ИЛИ гранта finance_access. Supervisor — manager-роль,
   // но зарплату видеть НЕ должен, поэтому /payroll гейтим финансовым предикатом, а не isManagerRole.
   const financeAccess = hasFinanceAccess(profile)
-  return (
-    <LocationConsentGate profile={profile}>
-    <EntityDrawerProvider>
-    <NotificationsProvider>
-      <div className={`app ${manager ? 'manager-app' : ''}`}>
-        <LiveLocationPinger profile={profile} />
+  const shell = (
+    <>
         <main className="app-content">
           <OfflineStatusBanner />
           <OfflineCacheBanner />
@@ -135,6 +133,9 @@ export default function App() {
             {/* MAIL-1-UI: «Почта» — owner/admin (RLS дополнительно ограничивает чтение владельцем). */}
             <Route path="/mail" element={adminOrOwner ? <Mail /> : <Navigate to="/" />} />
             <Route path="/settings" element={settingsAccess ? <Settings /> : <Navigate to="/" />} />
+            {/* ORB-SIMPLE-2: страница ассистента владельца (чат + голос + настройки). Owner-only, как и
+                сам движок (RLS ai_messages/ai_proposals гейтятся app.is_owner()). */}
+            <Route path="/ask" element={isOwner ? <Ask /> : <Navigate to="/" replace />} />
             {/* CATALOG-UI-1: «Каталог» — позиции для 3D-визуализации, manager+. */}
             <Route path="/catalog" element={manager ? <Catalog /> : <Navigate to="/" />} />
             {/* SET-2 (ЗАКОН-6): «Настройки владельца» merged into «Настройки». Old /owner-settings
@@ -150,9 +151,19 @@ export default function App() {
           </Suspense>
         </main>
         <Nav manager={manager} />
-        {/* AI-1-UI: оверлей-диалог ассистента + глобальный Ctrl+K. Монтируется ТОЛЬКО владельцу;
-            не автозапускается (open=false), поэтому не влияет на прочие экраны/e2e. */}
-        {isOwner && <AiCommandBar profile={profile} />}
+    </>
+  )
+  return (
+    <LocationConsentGate profile={profile}>
+    <EntityDrawerProvider>
+    <NotificationsProvider>
+      <div className={`app ${manager ? 'manager-app' : ''}`}>
+        <LiveLocationPinger profile={profile} />
+        {/* ORB-SIMPLE-2: движок ассистента (угловой орб-рация + провайдер контекста для страницы /ask)
+            монтируется ТОЛЬКО владельцу и оборачивает оболочку, чтобы /ask потребляла общий инстанс. */}
+        {isOwner ? (
+          <AiAssistantProvider profile={profile}>{shell}</AiAssistantProvider>
+        ) : shell}
       </div>
     </NotificationsProvider>
     </EntityDrawerProvider>
