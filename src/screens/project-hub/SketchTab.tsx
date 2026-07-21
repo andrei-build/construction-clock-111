@@ -232,7 +232,7 @@ type SketchModel = {
 type ViewMode = '2d' | '3d'
 type SketchCameraPreset = 'fit' | 'top' | 'angle' | 'inside'
 type SnapMode = '1ft' | '6in' | '1in' | '1_8in'
-type SketchMode = 'wall' | 'opening' | 'finish' | 'cabinet' | 'plumbing' | 'light' | 'measure' | 'markup'
+type SketchMode = 'wall' | 'opening' | 'finish' | 'cabinet' | 'light' | 'measure' | 'markup'
 type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill'
 type SegmentLengthEdit = { ref: SketchSegmentRef; value: string }
 type OpeningOffsetEdit = { index: number; side: OpeningOffsetSide; value: string }
@@ -264,13 +264,12 @@ const SKETCH_MODE_OPTIONS: Array<{ mode: SketchMode; labelKey: string; icon: str
   { mode: 'opening', labelKey: 'hub_sketch_mode_opening', icon: '▯' },
   { mode: 'finish', labelKey: 'hub_sketch_mode_finish', icon: '◧' },
   { mode: 'cabinet', labelKey: 'hub_sketch_mode_cabinet', icon: '▣' },
-  { mode: 'plumbing', labelKey: 'hub_sketch_mode_plumbing', icon: '⌁' },
   { mode: 'light', labelKey: 'hub_sketch_mode_light', icon: '✦' },
   { mode: 'measure', labelKey: 'hub_sketch_mode_measure', icon: '⌖' },
   { mode: 'markup', labelKey: 'hub_sketch_mode_markup', icon: '✎' },
 ]
 
-const MODES_WITH_3D_CONTEXT = new Set<SketchMode>(['opening', 'finish', 'plumbing', 'light', 'measure'])
+const MODES_WITH_3D_CONTEXT = new Set<SketchMode>(['opening', 'finish', 'light', 'measure'])
 
 // Ширина проёма в футах с учётом дефолта по типу.
 function openingWidthFt(o: Opening): number {
@@ -2321,7 +2320,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setMeasurementDraft(null)
       return
     }
-    if (mode === 'finish' || mode === 'plumbing' || mode === 'light') {
+    if (mode === 'finish' || mode === 'light') {
       setViewMode('3d')
       setTool('wall')
       setMeasurementDraft(null)
@@ -3506,7 +3505,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedOpeningIndex(null)
     setSelectedMeasurementIndex(null)
     setMeasurementDraft(null)
-    setActiveMode(isCabinetPlacedItem(item) ? 'cabinet' : item.category === 'light' || item.category === 'fan' ? 'light' : 'plumbing')
+    setActiveMode(isCabinetPlacedItem(item) ? 'cabinet' : 'light')
     edgeAutoPanPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
     updateEdgeAutoPan(e.clientX, e.clientY)
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
@@ -5191,15 +5190,17 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           </div>
         )}
 
-        {(activeMode === 'finish' || activeMode === 'plumbing') && (
+        {activeMode === 'finish' && (
           <div className="hub-sketch-context-section">
             <button type="button" className="btn small" onClick={() => setViewMode('3d')}>
               {t('hub_sketch_view_3d')}
             </button>
-            {activeMode === 'finish' && selectedWall && (
+            {selectedWall ? (
               <button type="button" className="btn ghost small" onClick={openWallFinish}>
                 {t('hub_sketch_wall_panel_finish_action')}
               </button>
+            ) : (
+              <p className="muted hub-sketch-context-hint">{t('hub_sketch_finish_pick_wall_hint')}</p>
             )}
           </div>
         )}
