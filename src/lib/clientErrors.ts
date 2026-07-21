@@ -11,6 +11,7 @@
 // context that auth.tsx sets when the profile loads and clears on logout/session-loss.
 
 import { supabase } from './supabase'
+import { voiceEventMessage } from './aiVoice'
 
 // The current authenticated context, or null when nobody is logged in. auth.tsx keeps this
 // in sync alongside its setFinanceCacheAllowed(...) calls.
@@ -35,6 +36,20 @@ function hashStack(input: string): string {
 const THROTTLE_MS = 60_000
 const lastSent = new Map<string, number>()
 
+// Shared owner-scoped insert into client_errors. RLS pins org_id/profile_id to the loaded profile,
+// so we only ever write when a profile is present. Never raises (telemetry must not loop).
+async function insertClientError(message: string, stack_hash: string): Promise<void> {
+  if (!ctx) return
+  await supabase.from('client_errors').insert({
+    org_id: ctx.org_id,
+    profile_id: ctx.id,
+    message: String(message).slice(0, 500),
+    stack_hash,
+    url: location.href,
+    user_agent: navigator.userAgent,
+  })
+}
+
 async function report(message: string, stack: string): Promise<void> {
   try {
     // No logged-in profile → the insert would fail RLS. Skip silently.
@@ -46,18 +61,37 @@ async function report(message: string, stack: string): Promise<void> {
     if (prev !== undefined && now - prev < THROTTLE_MS) return
     lastSent.set(stack_hash, now)
 
-    await supabase.from('client_errors').insert({
-      org_id: ctx.org_id,
-      profile_id: ctx.id,
-      message: String(message).slice(0, 500),
-      stack_hash,
-      url: location.href,
-      user_agent: navigator.userAgent,
-    })
+    await insertClientError(message, stack_hash)
   } catch {
     // Telemetry must never raise or loop: swallow everything, and don't console.error here
     // (that could re-enter the error listener).
   }
+}
+
+// VOICE-CLIENT-DEBUG-1: голосовая клиент-телеметрия (просьба Андрея — НЕ глотать ошибки
+// воспроизведения TTS/STT). Пишем этапы и тайминги в ТУ ЖЕ таблицу client_errors через тот же
+// owner-контекст; этап закодирован в message как `voice:<stage>` (колонок category/stage в схеме
+// нет). Лёгкий троттл по паре stage+detail (5с), чтобы barge-in-петля не флудила одинаковыми
+// строками, но редкие voice-события и уникальные info-тайминги (в detail — миллисекунды) проходят.
+// Fire-and-forget: не возвращает промис и никогда не роняет голосовой путь.
+const VOICE_THROTTLE_MS = 5_000
+const lastVoiceSent = new Map<string, number>()
+
+export function logVoiceClientEvent(stage: string, detail?: string): void {
+  void (async () => {
+    try {
+      if (!ctx) return
+      const key = `${stage}|${detail ?? ''}`
+      const now = Date.now()
+      const prev = lastVoiceSent.get(key)
+      if (prev !== undefined && now - prev < VOICE_THROTTLE_MS) return
+      lastVoiceSent.set(key, now)
+      const message = voiceEventMessage(stage, detail)
+      await insertClientError(message, hashStack(message))
+    } catch {
+      // Телеметрия не должна ронять голос: глотаем всё.
+    }
+  })()
 }
 
 let initialized = false

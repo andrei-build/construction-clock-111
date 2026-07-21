@@ -8,7 +8,23 @@ import {
   normalizeVoiceText,
   splitCompletedSpeechSegments,
   stripMarkdownForSpeech,
+  voiceEventMessage,
 } from '../src/lib/aiVoice'
+
+describe('voiceEventMessage', () => {
+  it('encodes stage into a voice: message (no category/stage columns in client_errors)', () => {
+    expect(voiceEventMessage('fetch-ok')).toBe('voice:fetch-ok')
+    expect(voiceEventMessage('play-fail', 'NotAllowedError')).toBe('voice:play-fail NotAllowedError')
+    expect(voiceEventMessage('timing', 'speechEnd2req=420ms')).toBe('voice:timing speechEnd2req=420ms')
+  })
+
+  it('omits empty/whitespace detail and trims it', () => {
+    expect(voiceEventMessage('autoplay-block', '')).toBe('voice:autoplay-block')
+    expect(voiceEventMessage('autoplay-block', '   ')).toBe('voice:autoplay-block')
+    expect(voiceEventMessage('decode-fail', '  no_audio_context  ')).toBe('voice:decode-fail no_audio_context')
+    expect(voiceEventMessage('fetch-ok', undefined)).toBe('voice:fetch-ok')
+  })
+})
 
 describe('ai voice helpers', () => {
   it('splits completed sentence segments and keeps the unfinished tail', () => {

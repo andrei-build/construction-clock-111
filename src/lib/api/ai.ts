@@ -1,6 +1,6 @@
 import { supabase, SUPABASE_KEY, SUPABASE_URL } from '../supabase'
 import { warnReadError } from './_shared'
-import { classifyTtsResponse, isSupportedPcmFormat, parseStreamSampleRate } from '../aiTtsStream'
+import { classifyTtsResponse, isSupportedPcmFormat, parseFallbackHeader, parseStreamSampleRate } from '../aiTtsStream'
 
 // AI-1-UI: «строка-командир» — фронт к развёрнутому бэкенду AI-ассистента владельца (edge
 // `ai-assistant`, таблицы ai_messages / ai_proposals, миграция 0057). Бэкенд НЕ трогаем.
@@ -261,9 +261,11 @@ export async function synthesizeAiSpeech({ text, voice, style, signal }: AiTtsRe
 
 // VOICE-FRONT-STREAM: результат `streamAiSpeech`. Либо прогрессивный PCM-стрим (играем встык по
 // мере прихода — первые слова звучат почти сразу), либо целый WAV-фолбэк (edge отдал X-Fallback:full).
+// VOICE-CLIENT-DEBUG-1: пробрасываем сырое значение заголовка X-Fallback (какой путь взял edge) —
+// клиент кладёт его в телеметрию voice:fetch-ok/voice:timing, чтобы Бета-6 видела реальную ветку.
 export type AiTtsStreamResult =
-  | { kind: 'stream'; sampleRate: number; format: string | null; body: ReadableStream<Uint8Array> }
-  | { kind: 'fallback'; blob: Blob; mime: string }
+  | { kind: 'stream'; sampleRate: number; format: string | null; fallback: string | null; body: ReadableStream<Uint8Array> }
+  | { kind: 'fallback'; blob: Blob; mime: string; fallback: string | null }
 
 // POST на edge `ai-tts-stream` (verify_jwt=true) — тот же Bearer JWT + apikey, что и ai-tts. Различаем
 // путь СТРОГО по Content-Type ответа: audio/wav → целый WAV-фолбэк; иначе application/octet-stream →
@@ -297,9 +299,10 @@ export async function streamAiSpeech({ text, voice, style, signal }: AiTtsReques
   }
 
   const contentType = resp.headers.get('Content-Type')
+  const fallback = parseFallbackHeader(resp.headers.get('X-Fallback'))
   if (classifyTtsResponse(contentType) === 'fallback') {
     const blob = await resp.blob()
-    return { kind: 'fallback', blob, mime: contentType ?? 'audio/wav' }
+    return { kind: 'fallback', blob, mime: contentType ?? 'audio/wav', fallback }
   }
 
   const format = resp.headers.get('X-Audio-Format')
@@ -309,6 +312,7 @@ export async function streamAiSpeech({ text, voice, style, signal }: AiTtsReques
     kind: 'stream',
     sampleRate: parseStreamSampleRate(resp.headers.get('X-Sample-Rate')),
     format,
+    fallback,
     body: resp.body,
   }
 }

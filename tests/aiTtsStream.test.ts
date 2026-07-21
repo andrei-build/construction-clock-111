@@ -5,6 +5,7 @@ import {
   concatBytes,
   framesForSeconds,
   isSupportedPcmFormat,
+  parseFallbackHeader,
   parseStreamSampleRate,
   pcm16ToFloat32,
   splitEvenPcmBytes,
@@ -59,6 +60,24 @@ describe('isSupportedPcmFormat', () => {
     expect(isSupportedPcmFormat('mp3')).toBe(false)
     expect(isSupportedPcmFormat('pcm24le-mono')).toBe(false)
     expect(isSupportedPcmFormat('opus')).toBe(false)
+  })
+})
+
+describe('parseFallbackHeader', () => {
+  it('returns the trimmed X-Fallback value (edge branch) for telemetry', () => {
+    expect(parseFallbackHeader('full')).toBe('full')
+    expect(parseFallbackHeader('  full  ')).toBe('full')
+  })
+
+  it('returns null for a missing/empty header (normal progressive stream)', () => {
+    expect(parseFallbackHeader(null)).toBeNull()
+    expect(parseFallbackHeader(undefined)).toBeNull()
+    expect(parseFallbackHeader('')).toBeNull()
+    expect(parseFallbackHeader('   ')).toBeNull()
+  })
+
+  it('caps an absurdly long header so telemetry rows stay small', () => {
+    expect(parseFallbackHeader('x'.repeat(200))).toHaveLength(40)
   })
 })
 
