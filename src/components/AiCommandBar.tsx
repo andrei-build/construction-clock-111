@@ -41,7 +41,7 @@ import {
   VOICE_MAX_ATTEMPTS,
 } from '../lib/aiVoice'
 import { concatBytes, framesForSeconds, pcm16ToFloat32, splitEvenPcmBytes } from '../lib/aiTtsStream'
-import { logVoiceClientEvent } from '../lib/clientErrors'
+import { logVoiceClientEvent as emitVoiceTelemetry } from '../lib/clientErrors'
 import { loadBargeInVad, type BargeInVad } from '../lib/vadBargeIn'
 import type { Profile, Project } from '../lib/types'
 
@@ -260,6 +260,14 @@ function normalizeWake(s: string): string {
 
 // ORB-SIMPLE-2: контекст движка ассистента. Один инстанс (провайдер) — два потребителя (орб + /ask),
 // чтобы список/отправка/TTS/STT/настройки были ОБЩИМИ, без дублирования логики и без гонок микрофона.
+// ASSISTANT-PAGE-3 (п.2): порог отличия перетаскивания орба от одиночного тапа. Локальная константа —
+// НЕ импортируем NODE_DRAG_THRESHOLD_PX из эскиза (SketchTab), чтобы не тянуть зависимость эскиза сюда.
+const ORB_DRAG_THRESHOLD_PX = 6
+
+// ASSISTANT-PAGE-3 (п.4): одна запись клиентской голосовой телеметрии (voice:<stage> [+ деталь с мс]),
+// накопленная В ПАМЯТИ сессии для блока «Диагностика» на /ask. Без обращений к БД.
+export type VoiceDiagEvent = { stage: string; detail?: string }
+
 export type AiAssistantContextValue = {
   messages: AiMessage[]
   proposals: AiProposal[]
@@ -292,6 +300,9 @@ export type AiAssistantContextValue = {
   ttsLevel: number
   micDenied: boolean
   lang: 'ru' | 'en' | 'es'
+  // ASSISTANT-PAGE-3 (п.4): голосовая клиент-телеметрия текущей сессии (в памяти, без запросов в БД).
+  voiceDiag: VoiceDiagEvent[]
+  voiceHeard: string | null
 }
 
 const AiAssistantContext = createContext<AiAssistantContextValue | null>(null)
@@ -342,6 +353,12 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
   const [micLevel, setMicLevel] = useState(0)
   const [ttsLevel, setTtsLevel] = useState(0)
   const [ttsBusy, setTtsBusy] = useState(false)
+  // ASSISTANT-PAGE-3 (п.4): голосовая клиент-телеметрия ЭТОЙ сессии в памяти (для блока «Диагностика»
+  // на /ask). voiceDiag — «хвост» последних этапов/таймингов voice:*, voiceHeard — последний распознанный
+  // текст. Пишется ЛОКАЛЬНО (никаких запросов в БД); существующая отправка voice:* в client_errors не
+  // меняется — logVoice лишь дублирует её в память.
+  const [voiceDiag, setVoiceDiag] = useState<VoiceDiagEvent[]>([])
+  const [voiceHeard, setVoiceHeard] = useState<string | null>(null)
   const lastSpokenIdRef = useRef<string | null>(null)
   const ttsPrimedRef = useRef(false)
   const mountedRef = useRef(true)
@@ -411,6 +428,20 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
   const setVoiceStatusLive = useCallback((status: VoiceStatus) => {
     voiceStatusRef.current = status
     setVoiceStatus(status)
+  }, [])
+
+  // ASSISTANT-PAGE-3 (п.4): единая обёртка над голосовой телеметрией. Форвардит в logVoiceClientEvent
+  // (та же отправка voice:* в client_errors, что и раньше — БЕЗ новых запросов) И одновременно копит
+  // событие В ПАМЯТИ сессии для блока «Диагностика» на /ask (хвост последних MAX_VOICE_DIAG). Диагностика
+  // читает только этот буфер — никаких select-ов из client_errors.
+  const MAX_VOICE_DIAG = 24
+  const logVoice = useCallback((stage: string, detail?: string) => {
+    emitVoiceTelemetry(stage, detail)
+    setVoiceDiag((prev) => {
+      const next = prev.length >= MAX_VOICE_DIAG ? prev.slice(prev.length - MAX_VOICE_DIAG + 1) : prev.slice()
+      next.push({ stage, ...(detail ? { detail } : {}) })
+      return next
+    })
   }, [])
 
   const assistantSpeechGateSnapshot = useCallback(() => ({
@@ -492,9 +523,9 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
     const okDetail: string[] = [`path=${path}`]
     const respAt = voiceTtsResponseAtRef.current
     if (respAt !== null) okDetail.push(`resp2sound=${now - respAt}ms`)
-    logVoiceClientEvent('fetch-ok', okDetail.join(' '))
+    logVoice('fetch-ok', okDetail.join(' '))
     const speechEnd = voiceSpeechEndAtRef.current
-    if (speechEnd !== null) logVoiceClientEvent('timing', `path=${path} speechEnd2sound=${now - speechEnd}ms`)
+    if (speechEnd !== null) logVoice('timing', `path=${path} speechEnd2sound=${now - speechEnd}ms`)
   }, [])
 
   const stopTtsMeter = useCallback(() => {
@@ -611,7 +642,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
           const blocked = isTtsPlaybackBlockedError(err)
           // VOICE-CLIENT-DEBUG-1: не глотаем — фиксируем причину. autoplay-block логируем ДАЖЕ если
           // ретрай ниже спасёт (Андрею важно знать, что политика autoplay мешает без жеста).
-          logVoiceClientEvent(blocked ? 'autoplay-block' : 'play-fail', voiceErrDetail(err))
+          logVoice(blocked ? 'autoplay-block' : 'play-fail', voiceErrDetail(err))
           if (blocked) {
             const ctx = await resumeTtsAudioContext()
             if (ctx?.state === 'running') {
@@ -621,7 +652,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
                 return
               } catch (retryErr) {
                 console.warn('AI TTS audio.play() retry rejected', retryErr)
-                logVoiceClientEvent('play-fail', `retry ${voiceErrDetail(retryErr)}`)
+                logVoice('play-fail', `retry ${voiceErrDetail(retryErr)}`)
                 fail(retryErr)
                 return
               }
@@ -670,7 +701,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
     const ctx = await resumeTtsAudioContext()
     // VOICE-CLIENT-DEBUG-1: нет живого AudioContext (autoplay/PWA не разблокирован) — не молчим,
     // фиксируем decode-fail и бросаем: внешний цикл откатится на WAV, а телеметрия покажет причину.
-    if (!ctx || ctx.state !== 'running') { logVoiceClientEvent('decode-fail', 'no_audio_context'); throw new Error('tts_no_audio_context') }
+    if (!ctx || ctx.state !== 'running') { logVoice('decode-fail', 'no_audio_context'); throw new Error('tts_no_audio_context') }
 
     stopTtsMeter()
     stopPcmPlayback()
@@ -728,7 +759,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       const name = (err as { name?: string } | null)?.name
       if (name === 'AbortError' || aborted() || !scheduledAny) {
         // VOICE-CLIENT-DEBUG-1: обрыв ДО первого звука (не barge-in/abort) — фиксируем decode-fail.
-        if (name !== 'AbortError' && !aborted() && !scheduledAny) logVoiceClientEvent('decode-fail', voiceErrDetail(err))
+        if (name !== 'AbortError' && !aborted() && !scheduledAny) logVoice('decode-fail', voiceErrDetail(err))
         stopPcmPlayback(); throw err
       }
       // частичное воспроизведение уже идёт — доигрываем запланированное, сетевой обрыв не роняем наружу
@@ -927,7 +958,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
             } catch (err) {
               clearTtsWatchdog()
               if (watchdogTimedOut && serial === ttsSerialRef.current) {
-                logVoiceClientEvent('timeout', 'stage=tts')
+                logVoice('timeout', 'stage=tts')
                 if (ttsAttempt < VOICE_MAX_ATTEMPTS) continue // ОДИН авто-ретрай того же сегмента
                 ttsTimedOut = true
                 break
@@ -958,7 +989,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
         const name = (err as { name?: string } | null)?.name
         if (serial === ttsSerialRef.current && name !== 'AbortError') {
           // VOICE-CLIENT-DEBUG-1: не глотаем сбой озвучки — фиксируем ДО показа тоста.
-          logVoiceClientEvent(isTtsPlaybackBlockedError(err) ? 'autoplay-block' : 'play-fail', voiceErrDetail(err))
+          logVoice(isTtsPlaybackBlockedError(err) ? 'autoplay-block' : 'play-fail', voiceErrDetail(err))
           if (!isTtsPlaybackBlockedError(err)) ttsQueueRef.current = []
           if (!ttsErrorShownRef.current) {
             ttsErrorShownRef.current = true
@@ -1130,7 +1161,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
           if (attempt === 1) {
             // VOICE-CLIENT-DEBUG-1: конец речи → отправка запроса (только голосовой ход, где speechEnd задан).
             const speechEndAt = voiceSpeechEndAtRef.current
-            if (speechEndAt !== null) logVoiceClientEvent('timing', `speechEnd2req=${Date.now() - speechEndAt}ms`)
+            if (speechEndAt !== null) logVoice('timing', `speechEnd2req=${Date.now() - speechEndAt}ms`)
           }
           const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-assistant`, {
             method: 'POST',
@@ -1226,7 +1257,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
         } catch (err) {
           clearAssistantWatchdog()
           if (watchdogTimedOut && turnId === assistantTurnRef.current) {
-            logVoiceClientEvent('timeout', 'stage=assistant')
+            logVoice('timeout', 'stage=assistant')
             if (attempt < VOICE_MAX_ATTEMPTS) continue // ОДИН авто-ретрай того же вопроса
             assistantTimedOut = true
             break
@@ -1488,6 +1519,9 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
   }, [announce, dismissInfoProposal, executeProposal, proposals, rejectProposal, t])
 
   const handleVoiceInput = useCallback(async (text: string) => {
+    // ASSISTANT-PAGE-3 (п.4): запоминаем последний распознанный текст ЛОКАЛЬНО для блока «Диагностика».
+    const heard = text.trim()
+    if (heard) setVoiceHeard(heard)
     const snapshot = assistantSpeechGateSnapshot()
     if (snapshot.thinking || snapshot.streaming || hasPendingAssistantSpeech(snapshot)) return
     if (await handleVoiceProposalIntent(text)) return
@@ -1723,7 +1757,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       // VOICE-TIMEOUT-RETRY-8: лаг Web Speech при КАЖДОМ финале — от акустического конца речи (мик-уровень)
       // до финала распознавания. Докажет/опровергнет, что Web Speech тянет секунды (обоснование Deepgram).
       const sttLag = sttFinalLagMs(micLastVoiceAtRef.current, sttFinalAtRef.current)
-      if (sttLag !== null) logVoiceClientEvent('timing', `sttFinal2speechEnd=${sttLag}ms`)
+      if (sttLag !== null) logVoice('timing', `sttFinal2speechEnd=${sttLag}ms`)
       if (!canAccept) return
       const q = text.trim()
       if (!q) { listen(); return } // ничего не сказали — продолжаем слушать
@@ -1933,6 +1967,91 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
     else setVoiceStatusLive('wake')
   }, [cancelActiveAssistant, open, playTtsQueue, releaseMic, setVoiceStatusLive, speakOn, streaming, thinking, ttsBusy, unlockTtsAudio, voiceStatus, wakeOn])
 
+  // ASSISTANT-PAGE-3 (п.2): орб ПЕРЕТАСКИВАЕМЫЙ по всему окну, позиция запоминается. Орб уже ГЛОБАЛЬНЫЙ —
+  // провайдер смонтирован owner-only в App.tsx и оборачивает всю оболочку, поэтому кнопка видна на всех
+  // экранах; отдельно ничего не монтируем. Тащим по pointermove, кламп во вьюпорт (чтобы не улетала за
+  // край), позиция в localStorage (ai_orb_pos = {x,y} — left/top). Клик-тумблер не ломаем: сдвиг ≥
+  // ORB_DRAG_THRESHOLD_PX = drag (последующий click гасим), меньше — обычный клик → handleOrbToggle.
+  const orbRef = useRef<HTMLButtonElement | null>(null)
+  const [orbPos, setOrbPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const raw = localStorage.getItem('ai_orb_pos')
+      if (!raw) return null
+      const p = JSON.parse(raw) as { x?: unknown; y?: unknown }
+      if (typeof p.x === 'number' && typeof p.y === 'number') return { x: p.x, y: p.y }
+    } catch { /* ignore */ }
+    return null
+  })
+  const orbPosRef = useRef<{ x: number; y: number } | null>(orbPos)
+  const orbDragRef = useRef({ active: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0, w: 0, h: 0, pointerId: -1 })
+  const orbSuppressClickRef = useRef(false)
+
+  const clampOrbPos = useCallback((x: number, y: number, w: number, h: number) => {
+    const maxX = Math.max(0, window.innerWidth - w)
+    const maxY = Math.max(0, window.innerHeight - h)
+    return { x: Math.min(Math.max(0, x), maxX), y: Math.min(Math.max(0, y), maxY) }
+  }, [])
+
+  const applyOrbPos = useCallback((pos: { x: number; y: number } | null) => {
+    orbPosRef.current = pos
+    setOrbPos(pos)
+  }, [])
+
+  const onOrbPointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    const el = orbRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const d = orbDragRef.current
+    d.active = true; d.moved = false
+    d.startX = e.clientX; d.startY = e.clientY
+    d.origX = rect.left; d.origY = rect.top
+    d.w = rect.width; d.h = rect.height
+    d.pointerId = e.pointerId
+    try { el.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+  }, [])
+
+  const onOrbPointerMove = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const d = orbDragRef.current
+    if (!d.active) return
+    const dx = e.clientX - d.startX
+    const dy = e.clientY - d.startY
+    if (!d.moved && Math.hypot(dx, dy) >= ORB_DRAG_THRESHOLD_PX) d.moved = true
+    if (!d.moved) return
+    applyOrbPos(clampOrbPos(d.origX + dx, d.origY + dy, d.w, d.h))
+  }, [applyOrbPos, clampOrbPos])
+
+  const endOrbDrag = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const d = orbDragRef.current
+    if (!d.active) return
+    d.active = false
+    try { orbRef.current?.releasePointerCapture(e.pointerId) } catch { /* ignore */ }
+    if (d.moved) {
+      orbSuppressClickRef.current = true
+      const pos = orbPosRef.current
+      if (pos) { try { localStorage.setItem('ai_orb_pos', JSON.stringify(pos)) } catch { /* ignore */ } }
+    }
+  }, [])
+
+  const onOrbClick = useCallback(() => {
+    // Гасим клик, синтезированный сразу после перетаскивания; иначе — обычный тумблер рации.
+    if (orbSuppressClickRef.current) { orbSuppressClickRef.current = false; return }
+    handleOrbToggle()
+  }, [handleOrbToggle])
+
+  // Кламп сохранённой позиции при ресайзе окна, чтобы орб не оставался за краем после смены размера.
+  useEffect(() => {
+    const onResize = () => {
+      const el = orbRef.current
+      const prev = orbPosRef.current
+      if (!el || !prev) return
+      const rect = el.getBoundingClientRect()
+      applyOrbPos(clampOrbPos(prev.x, prev.y, rect.width, rect.height))
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [applyOrbPos, clampOrbPos])
+
   // ORB-SIMPLE-2: настройки со страницы /ask (те же localStorage-ключи ai_speak / ai_wake). Озвучка:
   // включение разблокирует автоплей и доигрывает очередь, выключение — обрывает. Голосовая активация:
   // включение разблокирует автоплей (чтобы ответ после wake-фразы звучал); эффекты выше поднимут mic.
@@ -1981,6 +2100,8 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
     ttsLevel,
     micDenied,
     lang,
+    voiceDiag,
+    voiceHeard,
   }
 
   return (
@@ -1991,9 +2112,15 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
           СРАЗУ слушать → пауза шлёт вопрос → звучит голосовой ответ. НИКАКИХ панелей/оверлеев/чекбоксов
           при клике — только орб + короткая строка-статус. Все настройки чата — на странице /ask. */}
       <button
+        ref={orbRef}
         type="button"
         className={`ai-orb-launcher ai-voice-${voiceStatus}${launcherPulsing ? ' ai-orb-launcher-pulse' : ''}${orbToggleActive ? ' ai-orb-launcher-active' : ''}`}
-        onClick={handleOrbToggle}
+        style={orbPos ? { left: orbPos.x, top: orbPos.y, right: 'auto', bottom: 'auto' } : undefined}
+        onPointerDown={onOrbPointerDown}
+        onPointerMove={onOrbPointerMove}
+        onPointerUp={endOrbDrag}
+        onPointerCancel={endOrbDrag}
+        onClick={onOrbClick}
         aria-label={orbToggleLabel}
         aria-pressed={orbToggleActive}
         title={orbToggleLabel}

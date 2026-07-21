@@ -35,6 +35,19 @@ export default function Ask() {
     '--tts': a.orbState === 'speaking' ? a.ttsLevel : 0,
   } as React.CSSProperties
 
+  // ASSISTANT-PAGE-3 (п.3): ВИЗУАЛЬНЫЙ дедуп карточек-предложений перед рендером (баг: «Записано,
+  // передам строителям» ×4). Схлопываем по сигнатуре (kind + summary/payload), оставляя первую.
+  // Движок/вставку proposals в AiCommandBar НЕ трогаем — корневой баг дублирования лечит бэкенд Беты-6.
+  const seenProposalSig = new Set<string>()
+  const uniqueProposals = a.proposals.filter((pr) => {
+    const sig = isAiInfoProposalAction(pr.action_type)
+      ? `info:${pr.action_type}`
+      : `${pr.action_type}|${a.proposalSummary(pr)}|${JSON.stringify(pr.payload)}`
+    if (seenProposalSig.has(sig)) return false
+    seenProposalSig.add(sig)
+    return true
+  })
+
   return (
     <div className="ask-page">
       {/* Шапка страницы: эмблема орба + заголовок + короткий статус голоса. */}
@@ -113,10 +126,10 @@ export default function Ask() {
       </div>
 
       {/* Предложения ИИ (pending): выполнить / отклонить — та же логика, что у голосового «да/нет». */}
-      {a.proposals.length > 0 && (
+      {uniqueProposals.length > 0 && (
         <div className="ai-proposals ask-proposals">
           <h2 className="ai-proposals-title">{t('ai_proposals_title')}</h2>
-          {a.proposals.map((pr) => {
+          {uniqueProposals.map((pr) => {
             const known = KNOWN_ACTIONS.has(pr.action_type)
             const rows = summarizePayload(pr.payload)
             const issue = a.proposalIssues[pr.id]
@@ -186,6 +199,37 @@ export default function Ask() {
           })}
         </div>
       )}
+
+      {/* ASSISTANT-PAGE-3 (п.4): лёгкая диагностика последнего голосового прогона — ТОЛЬКО из памяти
+          сессии (телеметрия voice:*, что уже собирает клиент). Никаких запросов в БД. Полная история /
+          💰расход токенов / 🧠память / 🛠инструменты — отложены (бэкенд Беты-6), здесь их нет. */}
+      <details className="card ask-diag">
+        <summary className="ask-diag-summary">{t('ai_diag_title')}</summary>
+        {a.voiceHeard || a.voiceDiag.length > 0 ? (
+          <div className="ask-diag-body">
+            {a.voiceHeard && (
+              <p className="ask-diag-heard">
+                <span className="muted small">{t('ai_diag_heard')}:</span> {a.voiceHeard}
+              </p>
+            )}
+            {a.voiceDiag.length > 0 && (
+              <>
+                <p className="muted small ask-diag-stages-title">{t('ai_diag_stages')}</p>
+                <ul className="ask-diag-list">
+                  {a.voiceDiag.map((ev, idx) => (
+                    <li key={`${idx}-${ev.stage}`}>
+                      <code>{ev.stage}</code>
+                      {ev.detail ? <span className="muted small"> {ev.detail}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        ) : (
+          <p className="muted small ask-diag-empty">{t('ai_diag_empty')}</p>
+        )}
+      </details>
 
       {/* Ввод: текст + микрофон (push-to-talk) + отправка. */}
       <form className="ai-input-row ask-input-row" onSubmit={a.submit}>

@@ -9295,6 +9295,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   box-shadow: 0 12px 34px rgba(0, 0, 0, .38);
   cursor: pointer; backdrop-filter: blur(12px);
   transition: transform .12s ease, border-color .12s ease, background .12s ease;
+  /* ASSISTANT-PAGE-3 (п.2): орб перетаскиваемый — гасим прокрутку/выделение под жестом, позицию left/top
+     задаёт inline-style из localStorage (переопределяя right/bottom по умолчанию). */
+  touch-action: none; user-select: none; -webkit-user-select: none;
 }
 .ai-orb-launcher:hover { transform: translateY(-1px); border-color: rgba(61, 214, 255, .52); background: rgba(11, 24, 38, .96); }
 .ai-orb-launcher:active { transform: scale(.97); }
@@ -9700,6 +9703,17 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   min-height: 200px; max-height: 52vh; overflow-y: auto; padding: 14px 16px;
 }
 .ask-proposals { max-height: none; }
+/* ASSISTANT-PAGE-3 (п.4): лёгкий блок «Диагностика» — сворачиваемый, компактный, из памяти сессии. */
+.ask-diag { padding: 10px 14px; }
+.ask-diag-summary { cursor: pointer; font-weight: 600; font-size: 13px; list-style: none; }
+.ask-diag-summary::-webkit-details-marker { display: none; }
+.ask-diag-body { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.ask-diag-heard { margin: 0; font-size: 13px; word-break: break-word; }
+.ask-diag-stages-title { margin: 2px 0 0; text-transform: uppercase; letter-spacing: .04em; }
+.ask-diag-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
+.ask-diag-list li { font-size: 12px; }
+.ask-diag-list code { font-size: 11px; color: var(--text); }
+.ask-diag-empty { margin: 8px 0 0; }
 .ask-input-row { position: sticky; bottom: 0; gap: 8px; padding-top: 4px; }
 
 @media (max-width: 760px) {
