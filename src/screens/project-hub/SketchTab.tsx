@@ -163,6 +163,12 @@ import {
   pointInContour,
   projectT,
 } from './sketchPlanGeometry'
+import {
+  eachSegment,
+  nearestSegment,
+  openingEnds,
+  openingGeom,
+} from './sketchOpeningGeometry'
 
 interface SketchTabProps {
   project: Project
@@ -661,33 +667,6 @@ function makeId(prefix: string): string {
   return `${prefix}-${uuid}`
 }
 
-// Концы сегмента, на котором сидит проём.
-function openingEnds(model: SketchModel, o: Opening): { a: Pt; b: Pt } | null {
-  const c = model.contours[o.c]
-  if (!c) return null
-  const a = c.points[o.s]
-  const b = o.s + 1 < c.points.length ? c.points[o.s + 1] : (c.closed ? c.points[0] : null)
-  if (!a || !b) return null
-  return { a, b }
-}
-
-// Мировая точка проёма на сегменте.
-function openingPoint(model: SketchModel, o: Opening): Pt | null {
-  const e = openingEnds(model, o)
-  if (!e) return null
-  return { x: e.a.x + (e.b.x - e.a.x) * o.t, y: e.a.y + (e.b.y - e.a.y) * o.t }
-}
-
-// Геометрия проёма: центр, единичный вектор вдоль стены, концы сегмента.
-function openingGeom(model: SketchModel, o: Opening): { p: Pt; ux: number; uy: number; a: Pt; b: Pt } | null {
-  const e = openingEnds(model, o)
-  if (!e) return null
-  const len = dist(e.a, e.b) || 1
-  const ux = (e.b.x - e.a.x) / len
-  const uy = (e.b.y - e.a.y) / len
-  return { p: { x: e.a.x + (e.b.x - e.a.x) * o.t, y: e.a.y + (e.b.y - e.a.y) * o.t }, ux, uy, a: e.a, b: e.b }
-}
-
 function roomDisplayName(contour: Contour | undefined, index: number, roomWord: string): string {
   const label = contour?.label?.trim()
   return label || `${roomWord} ${index + 1}`
@@ -695,37 +674,6 @@ function roomDisplayName(contour: Contour | undefined, index: number, roomWord: 
 
 function shortRoomLabel(label: string): string {
   return label.length > 24 ? `${label.slice(0, 23)}...` : label
-}
-
-// Список сегментов (с индексами контура/сегмента и концами) для поиска ближайшего.
-function eachSegment(model: SketchModel): { c: number; s: number; a: Pt; b: Pt }[] {
-  const out: { c: number; s: number; a: Pt; b: Pt }[] = []
-  model.contours.forEach((cont, c) => {
-    for (let s = 0; s < cont.points.length - 1; s++) {
-      out.push({ c, s, a: cont.points[s], b: cont.points[s + 1] })
-    }
-    if (cont.closed && cont.points.length >= 3) {
-      out.push({ c, s: cont.points.length - 1, a: cont.points[cont.points.length - 1], b: cont.points[0] })
-    }
-  })
-  return out
-}
-
-// Ближайший сегмент к точке p, с параметром t вдоль него.
-function nearestSegment(model: SketchModel, p: Pt): { c: number; s: number; t: number; d: number } | null {
-  let best: { c: number; s: number; t: number; d: number } | null = null
-  for (const seg of eachSegment(model)) {
-    const dx = seg.b.x - seg.a.x
-    const dy = seg.b.y - seg.a.y
-    const len2 = dx * dx + dy * dy
-    if (len2 === 0) continue
-    let t = ((p.x - seg.a.x) * dx + (p.y - seg.a.y) * dy) / len2
-    t = Math.max(0, Math.min(1, t))
-    const proj = { x: seg.a.x + dx * t, y: seg.a.y + dy * t }
-    const d = dist(p, proj)
-    if (!best || d < best.d) best = { c: seg.c, s: seg.s, t, d }
-  }
-  return best
 }
 
 const EMPTY_MODEL: SketchModel = { version: 1, cellFt: CELL_FT, contours: [], openings: [] }
