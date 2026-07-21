@@ -48,6 +48,10 @@ import {
   cabinetDisplayCode,
   isCabinetPlacedItem,
 } from './cabinetCodes'
+import {
+  CABINET_CATALOG_STANDARD_WIDTHS_IN,
+  CABINET_CATALOG_WALL_HEIGHTS_IN,
+} from './cabinetCatalog'
 
 const CELL_FT = 1
 
@@ -69,6 +73,8 @@ interface WallElevationProps {
   codeCheckEnabled?: boolean
   onMeasurementsChange?: (measurements: SketchMeasurement[]) => void
   onModelChange?: (model: Sketch3DModel & { placedItems?: SketchPlacedCatalogItem[] }) => void
+  onCabinetResize?: (item: SketchPlacedCatalogItem, widthIn: number, wallHeightIn?: number) => void
+  onCabinetRemove?: (item: SketchPlacedCatalogItem) => void
   onBack?: () => void
   toolbarExtras?: ReactNode
   toolbarEnd?: ReactNode
@@ -399,11 +405,12 @@ function elevationOpeningDims(
   return dims
 }
 
-export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, compact = false, snapStepFt = 1 / 96, codeCheckEnabled = true, onMeasurementsChange, onModelChange, onBack, toolbarExtras, toolbarEnd, sidePanel }: WallElevationProps) {
+export default function WallElevation({ model, wall, heightFt, finish, canEdit = false, compact = false, snapStepFt = 1 / 96, codeCheckEnabled = true, onMeasurementsChange, onModelChange, onCabinetResize, onCabinetRemove, onBack, toolbarExtras, toolbarEnd, sidePanel }: WallElevationProps) {
   const { t } = useI18n()
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [measureTool, setMeasureTool] = useState(false)
   const [zoneTool, setZoneTool] = useState(false)
+  const [selectedCabinetId, setSelectedCabinetId] = useState<string | null>(null)
   const [zoom, setZoom] = useState(1)
   const [showMeasurements, setShowMeasurements] = useState(true)
   const [draft, setDraft] = useState<ElevationPoint | null>(null)
@@ -482,6 +489,10 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     [model, wall, lengthFt, height, codeWarningItemIds],
   )
   const wallCabinetCount = wallPlacedItems.filter((entry) => entry.cabinet).length
+  const cabinetEditEnabled = canEdit && !compact && !measureTool && !zoneTool && (!!onCabinetResize || !!onCabinetRemove)
+  const selectedCabinet = selectedCabinetId
+    ? wallPlacedItems.find((entry) => entry.cabinet && !entry.filler && entry.item.id === selectedCabinetId) ?? null
+    : null
   const wallCodeViolations = useMemo(
     () => codeClearanceViolations.filter((check) => {
       const onWall = (entity: CodeClearanceCheck['subject']) => entity.wall && `${entity.wall.c}:${entity.wall.s}` === currentWallKey
@@ -765,11 +776,24 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }, [editableFinishRegions, selectedRegionIndex])
 
   useEffect(() => {
+    if (selectedCabinetId && !selectedCabinet) setSelectedCabinetId(null)
+  }, [selectedCabinet, selectedCabinetId])
+
+  useEffect(() => {
+    if (!cabinetEditEnabled && selectedCabinetId) setSelectedCabinetId(null)
+  }, [cabinetEditEnabled, selectedCabinetId])
+
+  useEffect(() => {
     if (!canEdit) return
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return
       if (event.key === 'Escape') {
+        if (selectedCabinet) {
+          setSelectedCabinetId(null)
+          event.preventDefault()
+          return
+        }
         if (measureTool) {
           if (draft) setDraft(null)
           else setMeasureTool(false)
@@ -784,6 +808,12 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           return
         }
       }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedCabinet && onCabinetRemove) {
+        onCabinetRemove(selectedCabinet.item)
+        setSelectedCabinetId(null)
+        event.preventDefault()
+        return
+      }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedRegionIndex !== null) {
         removeSelectedRegion()
         event.preventDefault()
@@ -796,7 +826,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, measureTool, zoneTool, draft, selectedMeasurementIndex, selectedRegionIndex, model, onMeasurementsChange, editableFinishRegions])
+  }, [canEdit, measureTool, zoneTool, draft, selectedMeasurementIndex, selectedRegionIndex, selectedCabinet, onCabinetRemove, model, onMeasurementsChange, editableFinishRegions])
 
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (!regionEditingEnabled || !onModelChange) return
@@ -1151,9 +1181,18 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           )
         })}
         {wallPlacedItems.map((entry) => {
-          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.showerPan ? ' hub-sketch-elevation-shower' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}`
+          const editableCabinet = cabinetEditEnabled && entry.cabinet && !entry.filler
+          const selectedCab = editableCabinet && selectedCabinetId === entry.item.id
+          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.showerPan ? ' hub-sketch-elevation-shower' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}${editableCabinet ? ' hub-sketch-elevation-cabinet-editable' : ''}${selectedCab ? ' hub-sketch-elevation-cabinet-selected' : ''}`
           return (
-            <g key={`ei-${entry.item.id}`} className={cls}>
+            <g
+              key={`ei-${entry.item.id}`}
+              className={cls}
+              onClick={editableCabinet ? (event) => {
+                event.stopPropagation()
+                setSelectedCabinetId((current) => current === entry.item.id ? null : entry.item.id)
+              } : undefined}
+            >
               <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
               {entry.toilet ? (
                 <>
@@ -1361,6 +1400,71 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           </g>
         )}
       </svg>
+        {selectedCabinet && (
+          <div className="hub-sketch-elevation-cabinet-editor" role="group" aria-label={t('hub_sketch_cabinet_edit')}>
+            <div className="hub-sketch-elevation-cabinet-editor-head">
+              <strong>{cabinetDisplayCode(selectedCabinet.item) || t('hub_sketch_tool_cabinet')}</strong>
+              <button
+                type="button"
+                className="hub-sketch-elevation-cabinet-editor-close"
+                aria-label={t('lightbox_close')}
+                onClick={() => setSelectedCabinetId(null)}
+              >
+                ×
+              </button>
+            </div>
+            {onCabinetResize && (
+              <div className="hub-sketch-elevation-cabinet-editor-row" role="group" aria-label={t('hub_sketch_width')}>
+                <span className="muted">{t('hub_sketch_width')}</span>
+                {CABINET_CATALOG_STANDARD_WIDTHS_IN.map((w) => {
+                  const current = Math.round(selectedCabinet.item.widthIn ?? 0) === w
+                  return (
+                    <button
+                      key={w}
+                      type="button"
+                      className={current ? 'btn small' : 'btn ghost small'}
+                      aria-pressed={current}
+                      onClick={() => onCabinetResize(selectedCabinet.item, w)}
+                    >
+                      {`${w}"`}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {onCabinetResize && selectedCabinet.layer === 'wall' && (
+              <div className="hub-sketch-elevation-cabinet-editor-row" role="group" aria-label={t('hub_sketch_cabinet_wall_height')}>
+                <span className="muted">{t('hub_sketch_cabinet_wall_height')}</span>
+                {CABINET_CATALOG_WALL_HEIGHTS_IN.map((h) => {
+                  const current = Math.round(selectedCabinet.item.heightIn ?? 0) === h
+                  return (
+                    <button
+                      key={h}
+                      type="button"
+                      className={current ? 'btn small' : 'btn ghost small'}
+                      aria-pressed={current}
+                      onClick={() => onCabinetResize(selectedCabinet.item, Math.round(selectedCabinet.item.widthIn ?? 0), h)}
+                    >
+                      {`${h}"`}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {onCabinetRemove && (
+              <button
+                type="button"
+                className="btn ghost small hub-sketch-elevation-cabinet-editor-delete"
+                onClick={() => {
+                  onCabinetRemove(selectedCabinet.item)
+                  setSelectedCabinetId(null)
+                }}
+              >
+                {t('hub_sketch_cabinet_remove')}
+              </button>
+            )}
+          </div>
+        )}
         </div>
         {!compact && (
           <aside className="hub-sketch-elevation-side" aria-label={t('hub_sketch_elevation_properties')}>
