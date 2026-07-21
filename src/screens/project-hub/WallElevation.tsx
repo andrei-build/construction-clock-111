@@ -489,6 +489,18 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     [model, wall, lengthFt, height, codeWarningItemIds],
   )
   const wallCabinetCount = wallPlacedItems.filter((entry) => entry.cabinet).length
+  // CABINETS-PLACE-13: живая размерная цепочка над рядом — посегментно + общий габарит.
+  // Презентация поверх уже посчитанных ширин (item.widthIn); модель не меняется.
+  const cabinetDimChains = useMemo(() => (
+    (['base', 'wall'] as const)
+      .map((layer) => ({
+        layer,
+        segs: wallPlacedItems
+          .filter((entry) => entry.cabinet && entry.layer === layer)
+          .sort((a, b) => a.x - b.x),
+      }))
+      .filter((group) => group.segs.length > 0)
+  ), [wallPlacedItems])
   const cabinetEditEnabled = canEdit && !compact && !measureTool && !zoneTool && (!!onCabinetResize || !!onCabinetRemove)
   const selectedCabinet = selectedCabinetId
     ? wallPlacedItems.find((entry) => entry.cabinet && !entry.filler && entry.item.id === selectedCabinetId) ?? null
@@ -1238,6 +1250,46 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
                 </>
               ) : (
                 <rect x={entry.x} y={entry.y} width={entry.width} height={entry.height} rx={0.05} />
+              )}
+            </g>
+          )
+        })}
+        {/* CABINETS-PLACE-13: живая размерная цепочка над рядом (посегментно + общий габарит). */}
+        {!measureTool && !zoneTool && cabinetDimChains.map(({ layer, segs }) => {
+          const topY = Math.min(...segs.map((seg) => seg.y))
+          const startX = segs[0].x
+          const endX = segs[segs.length - 1].x + segs[segs.length - 1].width
+          const segLineY = Math.max(0.16, topY - 0.18)
+          const totalLineY = Math.max(0.06, segLineY - 0.26)
+          const tick = 0.07
+          const totalIn = segs.reduce((sum, seg) => sum + (Number(seg.item.widthIn) || 0), 0)
+          return (
+            <g key={`cabinet-dim-${layer}`} className="hub-sketch-elevation-cabinet-dim" pointerEvents="none">
+              <line x1={startX} y1={segLineY} x2={endX} y2={segLineY} />
+              {segs.map((seg, index) => {
+                const x1 = seg.x
+                const x2 = seg.x + seg.width
+                return (
+                  <g key={`cabinet-dim-seg-${index}`}>
+                    <line className="hub-sketch-elevation-cabinet-dim-tick" x1={x1} y1={segLineY - tick} x2={x1} y2={segLineY + tick} />
+                    {index === segs.length - 1 && (
+                      <line className="hub-sketch-elevation-cabinet-dim-tick" x1={x2} y1={segLineY - tick} x2={x2} y2={segLineY + tick} />
+                    )}
+                    <text x={(x1 + x2) / 2} y={segLineY - 0.07} textAnchor="middle">
+                      {formatInches(Number(seg.item.widthIn) || 0)}
+                    </text>
+                  </g>
+                )
+              })}
+              {segs.length > 1 && (
+                <g className="hub-sketch-elevation-cabinet-dim-total">
+                  <line x1={startX} y1={totalLineY} x2={endX} y2={totalLineY} />
+                  <line className="hub-sketch-elevation-cabinet-dim-tick" x1={startX} y1={totalLineY - tick} x2={startX} y2={totalLineY + tick} />
+                  <line className="hub-sketch-elevation-cabinet-dim-tick" x1={endX} y1={totalLineY - tick} x2={endX} y2={totalLineY + tick} />
+                  <text x={(startX + endX) / 2} y={totalLineY - 0.07} textAnchor="middle">
+                    {formatInches(totalIn)}
+                  </text>
+                </g>
               )}
             </g>
           )

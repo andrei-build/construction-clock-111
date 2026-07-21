@@ -1248,6 +1248,8 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_cabinet_small_filler: { ru: 'Филлер меньше 3 in', en: 'Filler is under 3 in', es: 'El relleno es menor de 3 pulg' },
   hub_sketch_cabinet_base: { ru: 'Низ', en: 'Base', es: 'Base' },
   hub_sketch_cabinet_wall_layer: { ru: 'Верх', en: 'Wall', es: 'Superior' },
+  hub_sketch_cabinet_wall_used: { ru: 'занято', en: 'used', es: 'ocupado' },
+  hub_sketch_cabinet_wall_remainder: { ru: 'остаток', en: 'remaining', es: 'restante' },
   hub_sketch_cabinet_filler: { ru: 'Филлер', en: 'Filler', es: 'Relleno' },
   hub_sketch_cabinet_hinge: { ru: 'Петли', en: 'Hinge', es: 'Bisagra' },
   hub_sketch_cabinet_toe_guide: { ru: 'toe 4"', en: 'toe 4"', es: 'zócalo 4"' },

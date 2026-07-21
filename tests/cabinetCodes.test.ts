@@ -127,14 +127,17 @@ describe('cabinet catalog', () => {
 })
 
 describe('cabinet wall layout', () => {
-  it('lays out base cabinets end-to-end and fills the remaining wall width', () => {
+  it('lays out base cabinets end-to-end and reports the remaining wall width as a number', () => {
+    // CABINETS-PLACE-13: большой зазор (>3") больше НЕ закрывается синтетическим филлером —
+    // остаток стены отдаётся цифрой через summaries.remainderIn.
     const layout = layoutCabinetRunOnWall(sixFootWallModel, firstWall, 'B30 2DB27', 'test-run')
 
     expect(layout.overflow).toBe(false)
-    expect(layout.items.map((item) => item.code)).toEqual(['B30', '2DB27', 'BF15'])
-    expect(layout.items[2]).toMatchObject({ filler: true, widthIn: 15 })
-    expect(layout.items[2].layoutWarning).toBeUndefined()
-    expect(layout.items.map((item) => Math.round((item.t ?? 0) * 72))).toEqual([15, 44, 65])
+    expect(layout.items.map((item) => item.code)).toEqual(['B30', '2DB27'])
+    expect(layout.items.some((item) => item.filler)).toBe(false)
+    expect(layout.items.map((item) => Math.round((item.t ?? 0) * 72))).toEqual([15, 44])
+    const baseSummary = layout.summaries.find((summary) => summary.layer === 'base')
+    expect(baseSummary).toMatchObject({ remainderIn: 15, fillerWidthIn: 0 })
   })
 
   it('keeps base and wall layers in separate runs on the same wall', () => {
@@ -142,9 +145,11 @@ describe('cabinet wall layout', () => {
     const base = layout.items.filter((item) => item.layer === 'base')
     const wall = layout.items.filter((item) => item.layer === 'wall')
 
-    expect(base.map((item) => item.code)).toEqual(['B30', 'BF42'])
-    expect(wall.map((item) => item.code)).toEqual(['W3030', 'F42'])
+    // >3" зазор с обеих сторон → без авто-филлеров, остаток числом.
+    expect(base.map((item) => item.code)).toEqual(['B30'])
+    expect(wall.map((item) => item.code)).toEqual(['W3030'])
     expect(wall[0]).toMatchObject({ surface: 'wall', yFt: 5.75, depthIn: 12 })
+    expect(layout.summaries.map((summary) => summary.remainderIn)).toEqual([42, 42])
   })
 
   it('marks overflow and does not generate fillers when a layer exceeds the wall', () => {

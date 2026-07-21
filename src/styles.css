@@ -5465,6 +5465,26 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-cabinet-summary-warn {
   color: #b45309;
 }
+/* CABINETS-PLACE-13: незакрытый остаток стены — заметная строка-цифра, не мелочь */
+.hub-sketch-cabinet-remainder {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hub-sketch-cabinet-remainder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid rgba(180, 83, 9, .35);
+  border-radius: 999px;
+  background: rgba(251, 191, 36, .16);
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
 .hub-sketch-cabinet-warning {
   grid-column: 1 / -1;
   margin: 0;
@@ -7296,6 +7316,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-elevation-svg .hub-sketch-elevation-opening-dim-gap line {
   stroke-dasharray: .08 .06;
 }
+/* CABINETS-PLACE-13: размерная цепочка над рядом кабинетов */
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim line {
+  stroke: #1d4ed8;
+  stroke-width: .02;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim text {
+  fill: #1e3a8a;
+  stroke: rgba(255, 255, 255, .94);
+  stroke-width: .08;
+  paint-order: stroke;
+  font-size: .2px;
+  font-weight: 900;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim-total line {
+  stroke: #0f172a;
+  stroke-width: .026;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim-total text {
+  fill: #0f172a;
+  font-size: .22px;
+}
 .hub-sketch-elevation-item rect,
 .hub-sketch-elevation-item path,
 .hub-sketch-elevation-item ellipse {
@@ -7422,6 +7464,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   align-self: flex-start;
   color: #b91c1c;
   border-color: rgba(220, 38, 38, .4);
+}
+/* CABINETS-PLACE-13: тот же поповер на плане — фикс-позиция у точки клика (left/top — инлайн). */
+.hub-sketch-plan-cabinet-editor {
+  position: fixed;
+  bottom: auto;
+  transform: none;
+  max-width: 256px;
+  z-index: 40;
 }
 .hub-sketch-elevation-region-hit {
   fill: transparent;

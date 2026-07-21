@@ -44,6 +44,7 @@ export type CabinetLayoutLayerSummary = {
   totalWidthIn: number
   fillerWidthIn: number
   overflowIn: number
+  remainderIn: number
 }
 
 export type CabinetLayoutResult = {
@@ -506,26 +507,33 @@ export function layoutCabinetRunOnWall(
     const cabinetWidth = snapInchesToPrecision(layerCabinets.reduce((sum, cabinet) => sum + cabinet.widthIn, 0))
     const overflowIn = Math.max(0, snapInchesToPrecision(cabinetWidth - wallLengthIn))
     let fillerWidthIn = 0
+    let remainderIn = 0
     let runCabinets = layerCabinets
     if (overflowIn <= 0) {
       const gap = snapInchesToPrecision(wallLengthIn - cabinetWidth)
       if (gap > 0) {
-        fillerWidthIn = gap
-        if (gap < CABINET_MIN_FILLER_IN) smallFiller = true
-        runCabinets = [
-          ...layerCabinets,
-          {
-            raw: fillerCode(layer, gap),
-            code: fillerCode(layer, gap),
-            prefix: layer === 'base' ? 'BF' : 'F',
-            widthIn: gap,
-            heightIn: layer === 'base' ? DEFAULT_BASE_HEIGHT_IN : DEFAULT_WALL_HEIGHT_IN,
-            depthIn: layer === 'base' ? DEFAULT_BASE_DEPTH_IN : DEFAULT_WALL_DEPTH_IN,
-            layer,
-            filler: true,
-            panel: false,
-          },
-        ]
+        // CABINETS-PLACE-13: авто-филлер только для мелкого зазора (≤3"); большой остаток
+        // НЕ закрываем синтетическим шкафом — показываем цифрой (remainderIn) как у лидеров.
+        if (gap <= CABINET_MIN_FILLER_IN) {
+          fillerWidthIn = gap
+          if (gap < CABINET_MIN_FILLER_IN) smallFiller = true
+          runCabinets = [
+            ...layerCabinets,
+            {
+              raw: fillerCode(layer, gap),
+              code: fillerCode(layer, gap),
+              prefix: layer === 'base' ? 'BF' : 'F',
+              widthIn: gap,
+              heightIn: layer === 'base' ? DEFAULT_BASE_HEIGHT_IN : DEFAULT_WALL_HEIGHT_IN,
+              depthIn: layer === 'base' ? DEFAULT_BASE_DEPTH_IN : DEFAULT_WALL_DEPTH_IN,
+              layer,
+              filler: true,
+              panel: false,
+            },
+          ]
+        } else {
+          remainderIn = gap
+        }
       }
     } else {
       overflow = true
@@ -548,6 +556,7 @@ export function layoutCabinetRunOnWall(
       totalWidthIn: cabinetWidth,
       fillerWidthIn,
       overflowIn,
+      remainderIn,
     })
   })
 
