@@ -2554,7 +2554,9 @@ export default function Sketch3DView({
   const show3DPanel = canEdit && (show3DFinishes || show3DOpenings || show3DPlumbing || show3DLighting || show3DMeasure)
 
   useEffect(() => {
-    if (fullscreenActive || !show3DPanel) setPanelOverlayOpen(false)
+    // SKETCH-DISCOVER-FIX-17: вход в 3D-режим с панелью (отделка/свет) сразу раскрывает её —
+    // палитра/светильники видны без второго клика «Показать панель отделки».
+    setPanelOverlayOpen(!fullscreenActive && show3DPanel)
   }, [fullscreenActive, show3DPanel])
 
   useEffect(() => {

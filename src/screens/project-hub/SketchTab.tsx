@@ -2326,6 +2326,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setWallElevationFullscreen(false)
     setOpeningOffsetEdit(null)
     setOpeningSnapGuide(null)
+    // SKETCH-DISCOVER-FIX-17: сбрасываем залипший инспектор проёма — «Дверь» не переживает уход из opening.
+    setSelectedOpeningIndex(null)
+    selectedOpeningIndexRef.current = null
+    // SKETCH-DISCOVER-FIX-17: режимы с инструментами сразу раскрывают контекст-панель (иначе прячется за ☰).
+    if (mode === 'cabinet' || mode === 'finish' || mode === 'light' || mode === 'opening') {
+      setContextPanelCollapsed(false)
+    }
     if (mode !== 'wall') setNewRoomPending(false)
 
     if (mode === 'wall') {
