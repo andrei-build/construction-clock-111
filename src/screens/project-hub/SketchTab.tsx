@@ -4671,20 +4671,36 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
         {activeMode === 'wall' && (
           <div className="hub-sketch-context-section">
-            <button type="button" className="btn small" disabled={!canClose} onClick={finishShape}>
-              {t('hub_sketch_finish')}
-            </button>
-            <button
-              type="button"
-              className={newRoomDraftPending ? 'btn small' : 'btn ghost small'}
-              aria-pressed={newRoomDraftPending}
-              onClick={startNewRoom}
-            >
-              {`+ ${t('hub_sketch_room_add')}`}
-            </button>
-            <button type="button" className="btn ghost small" disabled={!canClearSketch} onClick={requestClearAll}>
-              {t('hub_sketch_clear')}
-            </button>
+            <div className="hub-sketch-context-primary">
+              <button type="button" className="btn hub-sketch-context-primary-btn" disabled={!canClose} onClick={finishShape}>
+                {t('hub_sketch_finish')}
+              </button>
+              <button
+                type="button"
+                className={newRoomDraftPending ? 'btn small' : 'btn ghost small'}
+                aria-pressed={newRoomDraftPending}
+                onClick={startNewRoom}
+              >
+                {`+ ${t('hub_sketch_room_add')}`}
+              </button>
+            </div>
+            <div className="hub-sketch-context-actions-row">
+              <button type="button" className="btn ghost small" onClick={() => setTemplatePickerOpen((value) => !value)}>
+                {t('hub_sketch_template_new')}
+              </button>
+              <button type="button" className="btn ghost small" disabled={!copySelection} onClick={duplicateSelectedSketch}>
+                {t('hub_sketch_duplicate')}
+              </button>
+              <button type="button" className="btn ghost small" disabled={!copySelection} onClick={mirrorSelectedSketch}>
+                {t('hub_sketch_mirror')}
+              </button>
+              <button type="button" className="btn ghost small" disabled={!canSaveRoomTemplate} onClick={saveCurrentAsTemplate}>
+                {t('hub_sketch_template_save')}
+              </button>
+              <button type="button" className="btn ghost small hub-sketch-context-danger" disabled={!canClearSketch} onClick={requestClearAll}>
+                {t('hub_sketch_clear')}
+              </button>
+            </div>
             {clearConfirmOpen && (
               <div className="hub-sketch-clear-confirm" role="group" aria-label={t('hub_sketch_clear_confirm')}>
                 <span>{t('hub_sketch_clear_confirm')}</span>
@@ -4696,9 +4712,6 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 </button>
               </div>
             )}
-            <button type="button" className="btn ghost small" onClick={() => setTemplatePickerOpen((value) => !value)}>
-              {t('hub_sketch_template_new')}
-            </button>
             {templatePickerOpen && (
               <div className="hub-sketch-template-list" role="list" aria-label={t('hub_sketch_templates')}>
                 {roomTemplates.map((template) => (
@@ -4714,18 +4727,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 ))}
               </div>
             )}
-            <div className="hub-sketch-actions">
-              <button type="button" className="btn ghost small" disabled={!copySelection} onClick={duplicateSelectedSketch}>
-                {t('hub_sketch_duplicate')}
-              </button>
-              <button type="button" className="btn ghost small" disabled={!copySelection} onClick={mirrorSelectedSketch}>
-                {t('hub_sketch_mirror')}
-              </button>
-              <button type="button" className="btn ghost small" disabled={!canSaveRoomTemplate} onClick={saveCurrentAsTemplate}>
-                {t('hub_sketch_template_save')}
-              </button>
-            </div>
-            <div className="hub-sketch-context-stats" aria-label={t('hub_sketch_stats')}>
+            <div className="hub-sketch-context-stats hub-sketch-context-stats-inline" aria-label={t('hub_sketch_stats')}>
               <div>
                 <span className="muted">{t('hub_sketch_area')}</span>
                 <strong>{stats.totalArea.toFixed(1)} ft²</strong>
@@ -5160,9 +5162,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       <div className="hub-sketch-topbar-group hub-sketch-topbar-left">
         {renderViewModeToggle(fullscreen)}
         <div className="hub-sketch-view-preset-group" role="group" aria-label={t('hub_sketch_view_controls')}>
-          <button type="button" className="btn ghost small" onClick={() => runViewPreset('fit', fullscreen)}>
-            {t('hub_sketch_camera_fit')}
-          </button>
+          {!fullscreen && (
+            <button type="button" className="btn ghost small" onClick={() => runViewPreset('fit', fullscreen)}>
+              {t('hub_sketch_camera_fit')}
+            </button>
+          )}
           <button type="button" className="btn ghost small" onClick={() => runViewPreset('top', fullscreen)}>
             {t('hub_sketch_camera_top')}
           </button>
@@ -5213,7 +5217,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         <button type="button" className="btn ghost small" onClick={() => selectSketchMode('markup')}>
           {t('hub_sketch_mode_markup')}
         </button>
-        {viewMode === '2d' && (
+        {viewMode === '2d' && !fullscreen && (
           <button type="button" className="btn ghost small" aria-pressed={canvasFullscreenActive} onClick={toggleCanvasFullscreen}>
             {t(canvasFullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
           </button>
