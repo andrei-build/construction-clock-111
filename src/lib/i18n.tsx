@@ -2439,6 +2439,8 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_status_speaking: { ru: 'Говорю…', en: 'Speaking…', es: 'Hablando…' },
   ai_stop_all: { ru: 'Остановить ассистента', en: 'Stop assistant', es: 'Detener asistente' },
   ai_tts_error: { ru: 'Озвучка временно недоступна', en: 'Voice playback is temporarily unavailable', es: 'La voz no está disponible temporalmente' },
+  // VOICE-TIMEOUT-RETRY-8: внятная ошибка после таймаута+ретрая голосового запроса (вместо молчаливого зависания).
+  ai_voice_retry: { ru: 'Не расслышал, повтори, пожалуйста', en: 'I didn’t catch that, please repeat', es: 'No te entendí, repite por favor' },
   ai_mic_denied_title: { ru: 'Микрофон запрещён', en: 'Microphone blocked', es: 'Micrófono bloqueado' },
   ai_mic_denied_hint: { ru: 'Разрешите доступ к микрофону в настройках сайта (значок 🔒 в адресной строке), чтобы говорить с ассистентом.', en: 'Allow microphone access in your site settings (the 🔒 icon in the address bar) to talk to the assistant.', es: 'Permita el acceso al micrófono en la configuración del sitio (el icono 🔒 en la barra de direcciones) para hablar con el asistente.' },
   // AI-UX-1: орб-сущность (подпись покоя), свёрнутая история, роли в истории.
