@@ -2367,6 +2367,7 @@ export default function Sketch3DView({
   const [browserFullscreen, setBrowserFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
   const [panelOverlayOpen, setPanelOverlayOpen] = useState(false)
+  const [openingSizeOpen, setOpeningSizeOpen] = useState(false)
   const [joystickKnob, setJoystickKnob] = useState<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false })
   const [photoRenderBusy, setPhotoRenderBusy] = useState(false)
   const [photoModal, setPhotoModal] = useState<PhotoRenderModalState | null>(null)
@@ -4863,29 +4864,77 @@ export default function Sketch3DView({
     <div ref={fullscreenRootRef} className={sketch3DLayoutClassName}>
       <div className={fullscreenActive ? 'hub-sketch-3d-shell hub-sketch-3d-shell-fullscreen' : 'hub-sketch-3d-shell'} role="img" aria-label={label}>
         <div ref={hostRef} className="hub-sketch-3d-canvas" />
-        {show3DPanel && (
-          <button
-            type="button"
-            className={panelOverlayOpen ? 'btn small hub-sketch-3d-panel-toggle hub-sketch-3d-panel-toggle-open' : 'btn ghost small hub-sketch-3d-panel-toggle'}
-            aria-controls={sketch3DPanelId}
-            aria-expanded={panelOverlayOpen}
-            aria-label={panelToggleLabel}
-            onClick={() => setPanelOverlayOpen((open) => !open)}
-          >
-            {panelToggleLabel}
-          </button>
-        )}
-        <label className="hub-sketch-3d-dim-toggle">
-          <input
-            type="checkbox"
-            checked={showDimensions}
-            onChange={(e) => setShowDimensions(e.target.checked)}
-            aria-label={t('hub_sketch_3d_dimensions')}
-          />
-          <span>{t('hub_sketch_3d_dimensions')}</span>
-        </label>
         <div className="hub-sketch-3d-camera-tools" role="toolbar" aria-label={t('hub_sketch_3d_camera')}>
           {fullscreenActive && viewModeControl}
+          {show3DPanel && !fullscreenActive && (
+            <button
+              type="button"
+              className={panelOverlayOpen ? 'btn small' : 'btn ghost small'}
+              aria-controls={sketch3DPanelId}
+              aria-expanded={panelOverlayOpen}
+              onClick={() => setPanelOverlayOpen((open) => !open)}
+            >
+              {panelToggleLabel}
+            </button>
+          )}
+          {canEdit && show3DOpenings && onOpeningDefaultsChange && (
+            <div className="hub-sketch-3d-opening-tools" role="group" aria-label={t('hub_sketch_3d_place_opening')}>
+              {(['door', 'window'] as OpeningPlacementKind[]).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className={placement === kind ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={placement === kind}
+                  onClick={() => {
+                    setMeasure3DActive(false)
+                    measure3DDraftRef.current = null
+                    setCatalogPlacementId(null)
+                    setPlacement((current) => (current === kind ? null : kind))
+                    setSelectedId(null)
+                  }}
+                >
+                  {t(kind === 'door' ? 'hub_sketch_3d_add_door' : 'hub_sketch_3d_add_window')}
+                </button>
+              ))}
+              <div className="hub-sketch-3d-opening-size">
+                <button
+                  type="button"
+                  className={openingSizeOpen ? 'btn small' : 'btn ghost small'}
+                  aria-expanded={openingSizeOpen}
+                  onClick={() => setOpeningSizeOpen((open) => !open)}
+                >
+                  {t('hub_sketch_3d_opening_size')}
+                </button>
+                {openingSizeOpen && (
+                  <div className="hub-sketch-3d-opening-size-menu" role="dialog" aria-label={t('hub_sketch_3d_opening_size')}>
+                    <div className="hub-sketch-3d-opening-size-row">
+                      <span className="hub-sketch-3d-toolbar-label">{t('hub_sketch_tool_door')}</span>
+                      {renderOpeningDefaultControl('doorW', 'hub_sketch_width', openingDefaultsForControls.doorW, 0.5, 20)}
+                      {renderOpeningDefaultControl('doorH', 'hub_sketch_height', openingDefaultsForControls.doorH, 0.5, 20)}
+                    </div>
+                    <div className="hub-sketch-3d-opening-size-row">
+                      <span className="hub-sketch-3d-toolbar-label">{t('hub_sketch_tool_window')}</span>
+                      {renderOpeningDefaultControl('winW', 'hub_sketch_width', openingDefaultsForControls.winW, 0.5, 20)}
+                      {renderOpeningDefaultControl('winH', 'hub_sketch_height', openingDefaultsForControls.winH, 0.5, 20)}
+                      {renderOpeningDefaultControl('winSill', 'hub_sketch_sill', openingDefaultsForControls.winSill, 0, 20)}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {(placement === 'door' || placement === 'window') && (
+                <span className="hub-sketch-3d-opening-hint">{t('hub_sketch_3d_opening_click_hint')}</span>
+              )}
+            </div>
+          )}
+          <label className="hub-sketch-3d-toolbar-toggle">
+            <input
+              type="checkbox"
+              checked={showDimensions}
+              onChange={(e) => setShowDimensions(e.target.checked)}
+              aria-label={t('hub_sketch_3d_dimensions')}
+            />
+            <span>{t('hub_sketch_3d_dimensions')}</span>
+          </label>
           <button type="button" className={cameraButtonClass('fit')} onClick={() => setCameraPreset('fit')}>
             {t('hub_sketch_camera_fit')}
           </button>
@@ -4965,17 +5014,6 @@ export default function Sketch3DView({
                   {control.label}
                 </button>
               ))}
-            </div>
-          )}
-          {fullscreenActive && canEdit && onOpeningDefaultsChange && (
-            <div className="hub-sketch-3d-toolbar-group" role="group" aria-label={t('hub_sketch_3d_place_opening')}>
-              <span className="hub-sketch-3d-toolbar-label">{t('hub_sketch_tool_door')}</span>
-              {renderOpeningDefaultControl('doorW', 'hub_sketch_width', openingDefaultsForControls.doorW, 0.5, 20)}
-              {renderOpeningDefaultControl('doorH', 'hub_sketch_height', openingDefaultsForControls.doorH, 0.5, 20)}
-              <span className="hub-sketch-3d-toolbar-label">{t('hub_sketch_tool_window')}</span>
-              {renderOpeningDefaultControl('winW', 'hub_sketch_width', openingDefaultsForControls.winW, 0.5, 20)}
-              {renderOpeningDefaultControl('winH', 'hub_sketch_height', openingDefaultsForControls.winH, 0.5, 20)}
-              {renderOpeningDefaultControl('winSill', 'hub_sketch_sill', openingDefaultsForControls.winSill, 0, 20)}
             </div>
           )}
           <button type="button" className="btn ghost small hub-sketch-photo-render-btn" disabled={state !== 'ready'} onClick={takeSnapshot} title={t('hub_sketch_snapshot_hint')}>

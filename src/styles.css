@@ -5825,33 +5825,48 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-elevation-conflict .btn {
   width: auto;
 }
-.hub-sketch-3d-dim-toggle {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 3;
+/* UX-3D-5: размещение проёма прямо в 3D — компактные кнопки-режимы +Дверь/+Окно на тулбаре,
+   размеры проёма спрятаны в поповер (никакой свалки из 5 полей в шапке). */
+.hub-sketch-3d-opening-tools {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
-  max-width: calc(50% - 14px);
-  padding: 8px 10px;
-  border: 1px solid rgba(126,160,190,.28);
+  gap: 6px;
+  padding: 4px 6px;
+  border-left: 1px solid rgba(255,255,255,.2);
+}
+.hub-sketch-3d-opening-size {
+  position: relative;
+  display: inline-flex;
+}
+.hub-sketch-3d-opening-size-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 12;
+  width: max-content;
+  max-width: min(340px, calc(100vw - 28px));
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(126,160,190,.34);
   border-radius: 8px;
-  background: rgba(13, 21, 34, .78);
-  color: #ffffff;
-  font-size: 12px;
+  background: rgba(13, 21, 34, .96);
+  box-shadow: 0 14px 36px rgba(8,13,22,.32);
+  backdrop-filter: blur(10px);
+}
+.hub-sketch-3d-opening-size-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.hub-sketch-3d-opening-hint {
+  flex: 1 1 100%;
+  color: rgba(255,255,255,.82);
+  font-size: 11px;
   font-weight: 800;
-  line-height: 1.1;
-  backdrop-filter: blur(8px);
-}
-.hub-sketch-3d-dim-toggle input {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-}
-.hub-sketch-3d-dim-toggle span {
-  min-width: 0;
-  overflow-wrap: anywhere;
+  line-height: 1.15;
 }
 .hub-sketch-3d-toolbar-toggle {
   display: inline-flex;
@@ -5902,7 +5917,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 /* SKETCH-3D-2: отделка, плиточная раскладка, свет и выключатели */
 .hub-sketch-3d-layout {
-  --hub-sketch-3d-panel-w: clamp(300px, 28vw, 420px);
+  --hub-sketch-3d-panel-w: clamp(248px, 22vw, 300px);
   position: relative;
   display: block;
   min-width: 0;
@@ -5964,37 +5979,6 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   width: fit-content;
   color: var(--text);
 }
-.hub-sketch-3d-panel-toggle {
-  position: absolute;
-  top: 50%;
-  right: 10px;
-  z-index: 9;
-  min-height: 44px;
-  max-width: min(230px, calc(100% - 20px));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 11px 14px;
-  border: 1px solid rgba(237,246,251,.24);
-  border-radius: 999px;
-  background: rgba(13, 21, 34, .88);
-  color: #ffffff;
-  box-shadow: 0 12px 30px rgba(8, 13, 22, .24);
-  transform: translateY(-50%);
-  backdrop-filter: blur(10px);
-}
-.hub-sketch-3d-panel-toggle:hover:not(:disabled) {
-  background: rgba(29, 41, 64, .94);
-  color: #ffffff;
-}
-.hub-sketch-3d-panel-toggle:active:not(:disabled) {
-  transform: translateY(-50%) scale(.98);
-}
-.hub-sketch-3d-panel-toggle-open {
-  background: rgba(200, 169, 59, .96);
-  color: #070b12;
-}
 .hub-sketch-3d-section {
   display: grid;
   gap: 10px;
@@ -6032,15 +6016,6 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   right: calc(10px + env(safe-area-inset-right, 0px));
   bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   max-height: none;
-}
-.hub-sketch-3d-layout-fullscreen .hub-sketch-3d-panel-toggle {
-  right: calc(10px + env(safe-area-inset-right, 0px));
-}
-.hub-sketch-3d-layout-panel-open .hub-sketch-3d-panel-toggle {
-  right: calc(var(--hub-sketch-3d-panel-w) + 22px);
-}
-.hub-sketch-3d-layout-fullscreen.hub-sketch-3d-layout-panel-open .hub-sketch-3d-panel-toggle {
-  right: calc(var(--hub-sketch-3d-panel-w) + 22px + env(safe-area-inset-right, 0px));
 }
 @media (min-width: 721px) {
   .hub-sketch-3d-layout-panel-open .hub-sketch-3d-camera-tools,
@@ -7606,13 +7581,6 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     right: calc(8px + env(safe-area-inset-right, 0px));
     bottom: calc(8px + env(safe-area-inset-bottom, 0px));
     max-height: var(--hub-sketch-3d-sheet-max-h);
-  }
-  .hub-sketch-3d-panel-toggle {
-    right: calc(10px + env(safe-area-inset-right, 0px));
-  }
-  .hub-sketch-3d-layout-panel-open .hub-sketch-3d-panel-toggle,
-  .hub-sketch-3d-layout-fullscreen.hub-sketch-3d-layout-panel-open .hub-sketch-3d-panel-toggle {
-    display: none;
   }
   .hub-sketch-3d-layout-panel-open .hub-sketch-inside-controls {
     bottom: calc(var(--hub-sketch-3d-sheet-max-h) + 16px + env(safe-area-inset-bottom, 0px));
