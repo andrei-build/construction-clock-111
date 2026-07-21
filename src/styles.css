@@ -3897,8 +3897,67 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin: 0;
+  padding: 5px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+/* SKETCH-HEADER-MINI-9: миниатюрная шапка — прямоугольные компактные кнопки
+   (radius 7px, высота 30px). Скоуп строго под .hub-sketch-topbar, чтобы
+   глобальные .btn/.btn.small (пилюли radius-pill) в остальном приложении
+   не менялись. */
+/* Leading .hub-sketch bumps specificity above the generic
+   .hub-sketch .btn.small / .hub-sketch input {min-height:44px} rules below,
+   which otherwise win on equal specificity + later source order. */
+.hub-sketch .hub-sketch-topbar .btn,
+.hub-sketch .hub-sketch-topbar .btn.small {
+  min-height: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: none;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+.hub-sketch .hub-sketch-topbar input:not([type="checkbox"]),
+.hub-sketch .hub-sketch-topbar select {
+  min-height: 30px;
+  height: 30px;
+}
+.hub-sketch .hub-sketch-topbar input[type="checkbox"] {
+  min-height: 14px;
+  height: 14px;
+  width: 14px;
+}
+/* SKETCH-HEADER-MINI-9: держим ВСЕ группы в один ряд (embedded и fullscreen),
+   компактим вложенные контролы. Скоуп строго под .hub-sketch-topbar. */
+.hub-sketch-topbar .hub-sketch-view-toggle,
+.hub-sketch-topbar .hub-sketch-view-preset-group {
+  flex-wrap: nowrap;
+}
+.hub-sketch-topbar .hub-sketch-snap {
+  width: auto;
+  flex-wrap: nowrap;
+}
+.hub-sketch-topbar .hub-sketch-height-field input {
+  width: 100px;
+  padding: 0 8px;
+}
+.hub-sketch-topbar .hub-sketch-layer-toggle,
+.hub-sketch-topbar .hub-sketch-code-toggle {
+  min-height: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 0 9px;
 }
 .hub-sketch .btn.small {
   min-height: 44px;
@@ -3917,15 +3976,15 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   align-items: center;
   justify-content: flex-start;
   gap: 6px;
-  min-height: 56px;
+  min-height: 0;
   border-radius: 0;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   box-shadow: 0 10px 26px rgba(0, 0, 0, .38);
-  padding-top: calc(6px + env(safe-area-inset-top, 0px));
+  padding-top: calc(4px + env(safe-area-inset-top, 0px));
   padding-left: calc(10px + env(safe-area-inset-left, 0px));
   padding-right: calc(10px + env(safe-area-inset-right, 0px));
-  padding-bottom: 6px;
+  padding-bottom: 4px;
   overflow-x: auto;
   overflow-y: hidden;
   z-index: 8;
@@ -3938,25 +3997,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-topbar-fullscreen .hub-sketch-view-preset-group {
   flex-wrap: nowrap;
 }
+.hub-sketch-topbar-fullscreen .btn,
 .hub-sketch-topbar-fullscreen .btn.small {
-  min-height: 44px;
-  padding: 6px 10px;
+  min-height: 30px;
+  height: 30px;
+  padding: 0 10px;
 }
 .hub-sketch-topbar-fullscreen .hub-sketch-height-field input {
-  width: 92px;
-  padding: 8px 10px;
+  width: 84px;
+  padding: 0 8px;
 }
 .hub-sketch-topbar-fullscreen .hub-sketch-snap { width: auto; }
 .hub-sketch-topbar-fullscreen .hub-sketch-code-toggle {
-  min-height: 40px;
-  padding: 5px 9px;
+  min-height: 30px;
+  height: 30px;
+  padding: 0 9px;
 }
 .hub-sketch-topbar-group {
   min-width: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .hub-sketch-topbar-center {
   justify-content: center;
@@ -4302,7 +4364,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-view-toggle-fullscreen {
   flex: 0 0 auto;
-  padding: 3px;
+  padding: 1px;
   border: 1px solid rgba(126,160,190,.28);
   border-radius: 8px;
   background: var(--panel2);
@@ -7722,11 +7784,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-weight: 850;
 }
 @media (max-width: 860px) {
+  /* SKETCH-HEADER-MINI-9: не стекуем шапку в столбец — одна строка со
+     скроллом по горизонтали. */
   .hub-sketch-topbar {
-    align-items: stretch;
+    align-items: center;
   }
   .hub-sketch-topbar-group {
-    width: 100%;
+    flex: 0 0 auto;
     justify-content: flex-start;
   }
   .hub-sketch-workspace,
@@ -7921,16 +7985,18 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .hub-sketch-3d-shell {
     height: clamp(500px, calc(100dvh - 180px), 880px);
   }
+  /* SKETCH-HEADER-MINI-9: планшет — шапка остаётся одной строкой (nowrap +
+     overflow-x из базового правила), без переноса групп во второй ряд. */
   .hub-sketch-topbar {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
   }
   .hub-sketch-topbar-center {
-    flex: 1 1 420px;
+    flex: 0 0 auto;
   }
   .hub-sketch-topbar-left,
   .hub-sketch-topbar-right {
-    flex: 0 1 auto;
+    flex: 0 0 auto;
   }
 }
 
