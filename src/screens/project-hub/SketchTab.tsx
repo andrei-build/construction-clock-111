@@ -434,6 +434,37 @@ type CabinetAppliancePrefix = 'DW' | 'RANGE' | 'REF' | 'HOOD'
 
 const CABINET_STANDARD_WIDTHS_IN = CABINET_CATALOG_STANDARD_WIDTHS_IN
 const CABINET_WALL_HEIGHTS_IN = CABINET_CATALOG_WALL_HEIGHTS_IN
+
+// CABINETS-PLACE-13: при перетаскивании кабинета вдоль стены ограничиваем его центр (доля t)
+// так, чтобы он не заходил внутрь соседа того же слоя/стены и не выходил за концы стены (угол).
+// Скольжение с bump-упором — как у Chief Architect / 2020, без свободного «сквозь соседа».
+function clampCabinetTAlongWall(
+  placedItems: SketchPlacedCatalogItem[],
+  dragged: SketchPlacedCatalogItem,
+  wallLengthIn: number,
+  targetWallId: string,
+  desiredT: number,
+): number {
+  const clamped01 = Math.max(0, Math.min(1, desiredT))
+  if (!(wallLengthIn > 0)) return clamped01
+  const halfFrac = ((dragged.widthIn ?? 0) / 2) / wallLengthIn
+  if (halfFrac * 2 >= 1) return 0.5
+  let minT = halfFrac
+  let maxT = 1 - halfFrac
+  // сторону соседа определяем по прежнему положению (dragged.t) — так слот стабилен между кадрами
+  const currentCenter = dragged.wallId === targetWallId && typeof dragged.t === 'number' ? dragged.t : clamped01
+  placedItems.forEach((neighbor) => {
+    if (neighbor.id === dragged.id) return
+    if (neighbor.wallId !== targetWallId || neighbor.layer !== dragged.layer) return
+    if (!isCabinetPlacedItem(neighbor)) return
+    const neighborCenter = typeof neighbor.t === 'number' ? neighbor.t : 0
+    const neighborHalf = ((neighbor.widthIn ?? 0) / 2) / wallLengthIn
+    if (neighborCenter <= currentCenter) minT = Math.max(minT, neighborCenter + neighborHalf + halfFrac)
+    else maxT = Math.min(maxT, neighborCenter - neighborHalf - halfFrac)
+  })
+  if (minT > maxT) return Math.max(halfFrac, Math.min(1 - halfFrac, currentCenter))
+  return Math.max(minT, Math.min(maxT, clamped01))
+}
 const CABINET_BUILDER_KINDS: CabinetBuilderKind[] = ['base', 'sink', 'drawers', 'wall', 'vanity', 'filler', 'appliance']
 const CABINET_APPLIANCE_PREFIXES: CabinetAppliancePrefix[] = ['DW', 'RANGE', 'REF', 'HOOD']
 const CABINET_HELP_ITEMS = [
@@ -1584,6 +1615,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const svgShellRef = useRef<HTMLDivElement | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
+  // CABINETS-PLACE-13: клик (не drag) по шкафу на плане открывает тот же поповер, что на развёртке.
+  const [planCabinetEditor, setPlanCabinetEditor] = useState<{ id: string; x: number; y: number } | null>(null)
   const canvasAutoFitRef = useRef(true)
   const canvasSuppressClickRef = useRef(false)
   const canvasPointersRef = useRef<Map<number, CanvasPointer>>(new Map())
@@ -2817,7 +2850,18 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           if (keepWallBound && near && near.d <= SEG_HIT) {
             const seg = eachSegment(m).find((candidate) => candidate.c === near.c && candidate.s === near.s)
             if (seg) {
-              const tValue = Math.max(0, Math.min(1, near.t))
+              const rawT = Math.max(0, Math.min(1, near.t))
+              const targetWallId = sketchWallKey(near.c, near.s)
+              // CABINETS-PLACE-13: кабинет скользит вдоль стены с bump-упором в соседа/угол.
+              const tValue = isCabinetPlacedItem(placed)
+                ? clampCabinetTAlongWall(
+                    placedItems,
+                    placed,
+                    Math.hypot(seg.b.x - seg.a.x, seg.b.y - seg.a.y) * cellFt * 12,
+                    targetWallId,
+                    rawT,
+                  )
+                : rawT
               const xFt = (seg.a.x + (seg.b.x - seg.a.x) * tValue) * cellFt
               const zFt = (seg.a.y + (seg.b.y - seg.a.y) * tValue) * cellFt
               return {
@@ -2827,7 +2871,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 c: near.c,
                 s: near.s,
                 t: tValue,
-                wallId: sketchWallKey(near.c, near.s),
+                wallId: targetWallId,
                 rotationY: -Math.atan2(seg.b.y - seg.a.y, seg.b.x - seg.a.x),
               }
             }
@@ -3499,7 +3543,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
     e.stopPropagation()
     recordHistoryStep()
-    dragMovedRef.current = true
+    // dragMovedRef ставится в true только при реальном движении (pointer-move) — чтобы отличить
+    // клик по шкафу (открыть поповер) от перетаскивания. CABINETS-PLACE-13.
+    dragMovedRef.current = false
+    setPlanCabinetEditor(null)
     dragPlacedIdRef.current = item.id
     setDragPlacedId(item.id)
     setSelectedContourIndex(null)
@@ -3511,6 +3558,23 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     edgeAutoPanPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
     updateEdgeAutoPan(e.clientX, e.clientY)
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
+  }
+
+  // CABINETS-PLACE-13: клик (не перетаскивание) по элементу плана. stopPropagation не даёт
+  // канвасу поставить новый предмет; для шкафа открываем тот же поповер, что на развёртке.
+  const handlePlanItemClick = (item: SketchPlacedCatalogItem) => (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false
+      return
+    }
+    if (!canEdit) return
+    if (isCabinetPlacedItem(item) && !item.filler) {
+      setActiveMode('cabinet')
+      setPlanCabinetEditor({ id: item.id, x: e.clientX, y: e.clientY })
+    } else {
+      setPlanCabinetEditor(null)
+    }
   }
 
   // Отпускание проёма: сохраняем свободную позицию; storage-normalize отдельно округляет до 1/8".
@@ -3557,6 +3621,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       dragMovedRef.current = false
       return false
     }
+    // CABINETS-PLACE-13: клик по пустому месту закрывает поповер шкафа.
+    if (planCabinetEditor) setPlanCabinetEditor(null)
     // NAV-FIX-2: клик по пустому месту снимает выделение стены (клик по самой стене обрабатывает хит-таргет со stopPropagation).
     if (wallSelectEnabled && selectedWallKey !== null) setSelectedWallKey(null)
     if (wallSelectEnabled && selectedContourIndex !== null) setSelectedContourIndex(null)
@@ -4031,6 +4097,29 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [cabinetRunItemsForWall, cabinetWallOptions, rebuildCabinetWall])
 
   const cabinetRunItems = effectiveCabinetWallKey ? cabinetRunItemsForWall(effectiveCabinetWallKey) : []
+
+  // CABINETS-PLACE-13: Esc/Delete для поповера шкафа на плане (как на развёртке).
+  useEffect(() => {
+    if (!planCabinetEditor) return
+    const onKey = (event: KeyboardEvent) => {
+      if (isEditableKeyTarget(event.target)) return
+      if (event.key === 'Escape') {
+        setPlanCabinetEditor(null)
+        event.preventDefault()
+        return
+      }
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        const target = sanitizePlacedCatalogItems(model.placedItems).find((it) => it.id === planCabinetEditor.id)
+        if (target) {
+          handleCabinetRemove(target)
+          setPlanCabinetEditor(null)
+          event.preventDefault()
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [planCabinetEditor, model, handleCabinetRemove])
 
   const updateModelFrom3D = useCallback((next: SketchModel) => {
     commit(normalizeSketchModelForStorage(next))
@@ -5106,6 +5195,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                   </span>
                 )}
               </div>
+              {/* CABINETS-PLACE-13: незакрытый остаток стены показываем цифрой, а не гигантским авто-филлером */}
+              {cabinetLayoutPreview && cabinetLayoutPreview.summaries.some((summary) => summary.remainderIn > 0) && (
+                <div className="hub-sketch-cabinet-remainder">
+                  {cabinetLayoutPreview.summaries.filter((summary) => summary.remainderIn > 0).map((summary) => (
+                    <span className="hub-sketch-cabinet-remainder-chip" key={summary.layer}>
+                      {`${t(summary.layer === 'base' ? 'hub_sketch_cabinet_base' : 'hub_sketch_cabinet_wall_layer')} · ${t('hub_sketch_cabinet_wall_used')} ${formatInches(summary.totalWidthIn)} · ${t('hub_sketch_cabinet_wall_remainder')} ${formatInches(summary.remainderIn)}`}
+                    </span>
+                  ))}
+                </div>
+              )}
               {cabinetLayoutPreview && cabinetLayoutPreview.invalidCodes.length > 0 && (
                 <div className="hub-sketch-cabinet-help">
                   {cabinetLayoutPreview.invalidCodes.map((invalidCode, invalidIndex) => {
@@ -6050,6 +6149,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 className={className}
                 transform={`translate(${entry.x} ${entry.y}) rotate(${entry.angle})`}
                 onPointerDown={canEdit ? startDragPlanItem(entry.item) : undefined}
+                onClick={canEdit ? handlePlanItemClick(entry.item) : undefined}
               >
                 <title>{entry.item.name ?? (entry.electrical === 'outlet' ? t('hub_sketch_outlet') : entry.electrical === 'switch' ? t('hub_sketch_switch') : entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
                 <rect
@@ -6349,6 +6449,82 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                   </div>
                 )}
                 {renderCanvasControls()}
+                {/* CABINETS-PLACE-13: поповер шкафа на плане — те же контролы, что на развёртке (ширина/высота навесных/удалить). */}
+                {planCabinetEditor && (() => {
+                  const editorItem = planItems.find((entry) => entry.item.id === planCabinetEditor.id)?.item
+                  if (!editorItem) return null
+                  const widthIn = Math.round(editorItem.widthIn ?? 0)
+                  const left = Math.min(Math.max(12, planCabinetEditor.x), Math.max(12, window.innerWidth - 268))
+                  const top = Math.min(Math.max(12, planCabinetEditor.y + 14), Math.max(12, window.innerHeight - 200))
+                  return (
+                    <div
+                      className="hub-sketch-plan-cabinet-editor hub-sketch-elevation-cabinet-editor"
+                      role="group"
+                      aria-label={t('hub_sketch_cabinet_edit')}
+                      style={{ left, top }}
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => event.stopPropagation()}
+                    >
+                      <div className="hub-sketch-elevation-cabinet-editor-head">
+                        <strong>{cabinetDisplayCode(editorItem) || t('hub_sketch_tool_cabinet')}</strong>
+                        <button
+                          type="button"
+                          className="hub-sketch-elevation-cabinet-editor-close"
+                          aria-label={t('lightbox_close')}
+                          onClick={() => setPlanCabinetEditor(null)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <div className="hub-sketch-elevation-cabinet-editor-row" role="group" aria-label={t('hub_sketch_width')}>
+                        <span className="muted">{t('hub_sketch_width')}</span>
+                        {CABINET_STANDARD_WIDTHS_IN.map((w) => {
+                          const current = widthIn === w
+                          return (
+                            <button
+                              key={w}
+                              type="button"
+                              className={current ? 'btn small' : 'btn ghost small'}
+                              aria-pressed={current}
+                              onClick={() => handleCabinetResize(editorItem, w)}
+                            >
+                              {`${w}"`}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {editorItem.layer === 'wall' && (
+                        <div className="hub-sketch-elevation-cabinet-editor-row" role="group" aria-label={t('hub_sketch_cabinet_wall_height')}>
+                          <span className="muted">{t('hub_sketch_cabinet_wall_height')}</span>
+                          {CABINET_WALL_HEIGHTS_IN.map((h) => {
+                            const current = Math.round(editorItem.heightIn ?? 0) === h
+                            return (
+                              <button
+                                key={h}
+                                type="button"
+                                className={current ? 'btn small' : 'btn ghost small'}
+                                aria-pressed={current}
+                                onClick={() => handleCabinetResize(editorItem, widthIn, h)}
+                              >
+                                {`${h}"`}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        className="btn ghost small hub-sketch-elevation-cabinet-editor-delete"
+                        onClick={() => {
+                          handleCabinetRemove(editorItem)
+                          setPlanCabinetEditor(null)
+                        }}
+                      >
+                        {t('hub_sketch_cabinet_remove')}
+                      </button>
+                    </div>
+                  )
+                })()}
               </div>
             </div>
             <p className="muted hub-sketch-scale">{t('hub_sketch_scale_note')}</p>
