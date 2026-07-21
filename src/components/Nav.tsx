@@ -171,7 +171,7 @@ export default function Nav({ manager }: { manager: boolean }) {
       {manager && (
         <aside className="sidebar-nav" aria-label={t('desktop_nav')}>
           <div className="side-brand">
-            <div className="side-mark">CC</div>
+            <div className="side-mark">MC</div>
             <div>
               <div className="side-title">{t('appName')}</div>
               <div className="side-subtitle">{t('desktop_workspace')}</div>

@@ -9,7 +9,7 @@ test.describe('Scenario 1 · PIN login', () => {
   test('app boots to the PIN login screen', async ({ page }) => {
     await page.goto('/')
     // Brand heading (language-independent) + the PIN prompt + a full numeric keypad.
-    await expect(page.getByRole('heading', { name: /Construction Clock/i })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /Marvel Construction/i })).toBeVisible()
     await expect(page.getByText(RX.enterPin)).toBeVisible()
     for (const digit of ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']) {
       await expect(page.getByRole('button', { name: digit, exact: true })).toBeVisible()

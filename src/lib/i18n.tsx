@@ -3,7 +3,7 @@ import { createContext, useContext, useState, type ReactNode } from 'react'
 type Lang = 'ru' | 'en' | 'es'
 
 const dict: Record<string, Record<Lang, string>> = {
-  appName: { ru: 'Construction Clock', en: 'Construction Clock', es: 'Construction Clock' },
+  appName: { ru: 'Marvel Construction', en: 'Marvel Construction', es: 'Marvel Construction' },
   desktop_nav: { ru: 'Навигация офиса', en: 'Office navigation', es: 'Navegación de oficina' },
   desktop_workspace: { ru: 'Офис', en: 'Office', es: 'Oficina' },
   manager_alerts_label: { ru: 'Оповещения', en: 'Alerts', es: 'Alertas' },
@@ -2406,7 +2406,7 @@ const dict: Record<string, Record<Lang, string>> = {
   mail_retry: { ru: 'Повторить', en: 'Retry', es: 'Reintentar' },
   mail_body_loading: { ru: 'Загружаем письмо…', en: 'Loading message…', es: 'Cargando mensaje…' },
   // AI-1-UI: «строка-командир» — AI-ассистент владельца (кнопка «Спроси» + Ctrl+K → оверлей).
-  ai_ask: { ru: 'Ассистент', en: 'Assistant', es: 'Asistente' },
+  ai_ask: { ru: 'Marvel', en: 'Marvel', es: 'Marvel' },
   // ORB-SIMPLE-2: подпись блока настроек и «голоса» на странице /ask.
   ai_settings: { ru: 'Настройки чата', en: 'Chat settings', es: 'Ajustes del chat' },
   ai_voice_label: { ru: 'Голос', en: 'Voice', es: 'Voz' },
@@ -2468,13 +2468,13 @@ const dict: Record<string, Record<Lang, string>> = {
   ai_mic_denied_hint: { ru: 'Разрешите доступ к микрофону в настройках сайта (значок 🔒 в адресной строке), чтобы говорить с ассистентом.', en: 'Allow microphone access in your site settings (the 🔒 icon in the address bar) to talk to the assistant.', es: 'Permita el acceso al micrófono en la configuración del sitio (el icono 🔒 en la barra de direcciones) para hablar con el asistente.' },
   // AI-UX-1: орб-сущность (подпись покоя), свёрнутая история, роли в истории.
   ai_orb_idle: { ru: 'Готов помочь', en: 'Ready to help', es: 'Listo para ayudar' },
-  ai_orb_active: { ru: 'Ассистент активен', en: 'Assistant active', es: 'Asistente activo' },
-  ai_orb_activate: { ru: 'Включить ассистента', en: 'Turn assistant on', es: 'Activar asistente' },
-  ai_orb_deactivate: { ru: 'Выключить ассистента', en: 'Turn assistant off', es: 'Desactivar asistente' },
+  ai_orb_active: { ru: 'Marvel активен', en: 'Marvel active', es: 'Marvel activo' },
+  ai_orb_activate: { ru: 'Включить Marvel', en: 'Turn Marvel on', es: 'Activar Marvel' },
+  ai_orb_deactivate: { ru: 'Выключить Marvel', en: 'Turn Marvel off', es: 'Desactivar Marvel' },
   ai_history: { ru: 'История', en: 'History', es: 'Historial' },
   ai_history_hide: { ru: 'Скрыть историю', en: 'Hide history', es: 'Ocultar historial' },
   ai_hist_you: { ru: 'Вы', en: 'You', es: 'Usted' },
-  ai_hist_ai: { ru: 'Ассистент', en: 'Assistant', es: 'Asistente' },
+  ai_hist_ai: { ru: 'Marvel', en: 'Marvel', es: 'Marvel' },
   // AI-UX-2: компактный оверлей на фоне приложения — голос первичен, текст скрыт в выдвижной панели.
   ai_show_text: { ru: 'Показать текст', en: 'Show text', es: 'Ver texto' },
   ai_drawer_title: { ru: 'Диалог с ассистентом', en: 'Assistant dialog', es: 'Diálogo con el asistente' },

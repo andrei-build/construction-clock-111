@@ -77,7 +77,7 @@ self.addEventListener('fetch', (e) => {
 self.addEventListener('push', (e) => {
   const d = e.data?.json() ?? {}
   e.waitUntil(
-    self.registration.showNotification(d.title || 'Construction Clock', {
+    self.registration.showNotification(d.title || 'Marvel Construction', {
       body: d.body || '',
       data: { url: d.url || '/' },
       icon: '/icon.svg',
