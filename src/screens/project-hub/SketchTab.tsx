@@ -195,6 +195,13 @@ const SMART_GUIDE_SCREEN_PX = 7
 const SMART_GUIDE_MAX_CELLS = 0.55
 const DUPLICATE_OFFSET_CELLS = 2
 const CUSTOM_TEMPLATE_LIMIT = 24
+// Ф3 адаптив (планшет): грубый указатель (палец/стилус). Определяем один раз на маунт модуля —
+// без подписки на смену; для шага1 этого достаточно. Визуальный размер элементов НЕ меняется.
+const COARSE_POINTER =
+  typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches
+// Мин. экранный радиус невидимого хит-круга узла контура: 24px (диаметр 48) на точном указателе,
+// 28px (диаметр 56) на грубом — тач-цель ≥44px, при этом видимый узел (nodeRadius) не трогаем.
+const NODE_HIT_MIN_SCREEN_PX = COARSE_POINTER ? 28 : 24
 
 type Pt = { x: number; y: number }
 type Contour = { points: Pt[]; closed: boolean; label?: string }
@@ -5694,7 +5701,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               const selected = selectedNode?.c === ci && selectedNode.p === pi
               const dragging = dragNode?.c === ci && dragNode.p === pi
               const activeEnd = activeContourOpen && ci === model.contours.length - 1 && pi === c.points.length - 1
-              const nodeHitRadius = Math.max(nodeRadius + 4 * screenWorldPx, 24 * screenWorldPx)
+              const nodeHitRadius = Math.max(nodeRadius + 4 * screenWorldPx, NODE_HIT_MIN_SCREEN_PX * screenWorldPx)
               return (
                 <g key={`n${ci}-${pi}`} className="hub-sketch-node-group" onClick={canEdit ? handleNodeClick(ci, pi) : undefined}>
                   <circle

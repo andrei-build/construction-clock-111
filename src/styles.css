@@ -7451,6 +7451,15 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     width: 48px;
     height: 48px;
   }
+  /* Ф3 адаптив: главная кнопка контекста ("Завершить") без класса .small —
+     поднимаем тач-цель до 48px на грубом указателе (визуал на fine не трогаем). */
+  .hub-sketch-context-primary-btn {
+    min-height: 48px;
+  }
+  /* Ручка bottom-sheet: расширяем область тапа до ≥44px, видимая полоска (::before) не меняется. */
+  .hub-sketch-sheet-grip {
+    min-height: 44px;
+  }
 }
 
 @media (min-width: 721px) and (max-width: 1180px) {
