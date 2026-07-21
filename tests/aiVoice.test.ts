@@ -7,9 +7,36 @@ import {
   looksLikeTtsEcho,
   normalizeVoiceText,
   splitCompletedSpeechSegments,
+  sttFinalLagMs,
   stripMarkdownForSpeech,
   voiceEventMessage,
+  VOICE_FIRST_BYTE_TIMEOUT_MS,
+  VOICE_MAX_ATTEMPTS,
 } from '../src/lib/aiVoice'
+
+describe('sttFinalLagMs (VOICE-TIMEOUT-RETRY-8)', () => {
+  it('returns null when either stamp is missing', () => {
+    expect(sttFinalLagMs(null, 100)).toBeNull()
+    expect(sttFinalLagMs(100, null)).toBeNull()
+    expect(sttFinalLagMs(null, null)).toBeNull()
+  })
+
+  it('returns the positive lag from acoustic speech end to STT final', () => {
+    expect(sttFinalLagMs(1000, 2500)).toBe(1500)
+    expect(sttFinalLagMs(0, 0)).toBe(0)
+  })
+
+  it('clamps a negative difference to 0 (final never precedes speech end)', () => {
+    expect(sttFinalLagMs(2000, 1500)).toBe(0)
+  })
+})
+
+describe('voice timeout constants (VOICE-TIMEOUT-RETRY-8)', () => {
+  it('uses an 8s no-first-byte window and exactly one auto-retry (2 attempts total)', () => {
+    expect(VOICE_FIRST_BYTE_TIMEOUT_MS).toBe(8_000)
+    expect(VOICE_MAX_ATTEMPTS).toBe(2)
+  })
+})
 
 describe('voiceEventMessage', () => {
   it('encodes stage into a voice: message (no category/stage columns in client_errors)', () => {

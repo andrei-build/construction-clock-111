@@ -35,7 +35,10 @@ import {
   shouldAcceptWakePhraseResult,
   shouldArmBargeIn,
   splitCompletedSpeechSegments,
+  sttFinalLagMs,
   stripMarkdownForSpeech,
+  VOICE_FIRST_BYTE_TIMEOUT_MS,
+  VOICE_MAX_ATTEMPTS,
 } from '../lib/aiVoice'
 import { concatBytes, framesForSeconds, pcm16ToFloat32, splitEvenPcmBytes } from '../lib/aiTtsStream'
 import { logVoiceClientEvent } from '../lib/clientErrors'
@@ -70,6 +73,11 @@ export const KNOWN_ACTIONS = new Set([...LOCAL_ACTIONS, ...DISPATCH_ACTIONS])
 // оборвать копящуюся фразу. Итог: конец речи → отправка сокращается, целевой firstSound ≤5с достижим.
 const STT_SILENCE_AFTER_FINAL_MS = 350
 const STT_SILENCE_AFTER_INTERIM_MS = 900
+
+// VOICE-TIMEOUT-RETRY-8: порог RMS мик-уровня, выше которого считаем, что человек ГОВОРИТ. Нужен для
+// замера АКУСТИЧЕСКОГО конца речи (последний кадр выше порога) → лаг Web Speech до финала распознавания.
+// Подобран под метр startMeter (сырой rms, ДО множителя *3 визуального индикатора micLevel).
+const MIC_SPEECH_RMS_THRESHOLD = 0.05
 
 export type ProposalIssue = {
   error: AiExecuteProposalErrorCode | 'failed'
@@ -385,6 +393,11 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
   const voiceSpeechEndAtRef = useRef<number | null>(null)
   const voiceTtsResponseAtRef = useRef<number | null>(null)
   const voiceFirstSoundLoggedRef = useRef(false)
+  // VOICE-TIMEOUT-RETRY-8: штампы для замера лага Web Speech STT (voice:timing sttFinal2speechEnd).
+  // micLastVoiceAt — последний момент, когда мик-уровень был выше порога речи (АКУСТИЧЕСКИЙ конец речи);
+  // sttFinalAt — момент, когда onresult ПЕРВЫЙ раз отдал isFinal (финал распознавания). Разница = лаг движка.
+  const micLastVoiceAtRef = useRef<number | null>(null)
+  const sttFinalAtRef = useRef<number | null>(null)
 
   useEffect(() => { try { localStorage.setItem('ai_speak', speakOn ? '1' : '0') } catch { /* ignore */ } }, [speakOn])
   useEffect(() => { try { localStorage.setItem('ai_wake', wakeOn ? '1' : '0') } catch { /* ignore */ } }, [wakeOn])
@@ -652,6 +665,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
     serial: number,
     signal: AbortSignal,
     path: string,
+    onFirstSound?: () => void, // VOICE-TIMEOUT-RETRY-8: снять «нет-первого-байта» таймаут озвучки
   ): Promise<void> => {
     const ctx = await resumeTtsAudioContext()
     // VOICE-CLIENT-DEBUG-1: нет живого AudioContext (autoplay/PWA не разблокирован) — не молчим,
@@ -689,7 +703,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       sources.add(src)
       src.onended = () => { sources.delete(src); try { src.disconnect() } catch { /* ignore */ } }
       // VOICE-CLIENT-DEBUG-1: первый реально запланированный буфер = первый звук ответа.
-      if (!scheduledAny) markFirstVoiceSound(path)
+      if (!scheduledAny) { markFirstVoiceSound(path); onFirstSound?.() }
       scheduledAny = true
     }
 
@@ -735,7 +749,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
 
   // VOICE-FRONT-STREAM: проигрывание целого аудио-Blob (WAV) — общий путь для фолбэка ai-tts-stream
   // (X-Fallback: full) и старого ai-tts. Метр — через MediaElementSource (startTtsMeter), как раньше.
-  const playTtsBlob = useCallback(async (blob: Blob, serial: number, signal: AbortSignal, path: string): Promise<void> => {
+  const playTtsBlob = useCallback(async (blob: Blob, serial: number, signal: AbortSignal, path: string, onFirstSound?: () => void): Promise<void> => {
     revokeTtsUrl()
     const url = URL.createObjectURL(blob)
     ttsUrlRef.current = url
@@ -743,7 +757,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
     ttsAudioRef.current = audio
     await startTtsMeter(audio)
     if (serial !== ttsSerialRef.current || signal.aborted) return
-    await playTtsAudioElement(audio, () => markFirstVoiceSound(path))
+    await playTtsAudioElement(audio, () => { markFirstVoiceSound(path); onFirstSound?.() })
     if (ttsAudioRef.current === audio) ttsAudioRef.current = null
     stopTtsMeter()
     revokeTtsUrl()
@@ -765,6 +779,8 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       let sum = 0
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v }
       const rms = Math.sqrt(sum / buf.length)
+      // VOICE-TIMEOUT-RETRY-8: запоминаем последний «громкий» кадр = акустический конец речи (для sttFinal2speechEnd).
+      if (rms > MIC_SPEECH_RMS_THRESHOLD) micLastVoiceAtRef.current = Date.now()
       setMicLevel(Math.min(1, rms * 3))
       rafRef.current = requestAnimationFrame(tick)
     }
@@ -858,35 +874,79 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
             ttsQueueRef.current.shift()
             continue
           }
-          const aborter = new AbortController()
-          ttsAbortRef.current = aborter
-          // VOICE-FRONT-STREAM: сначала прогрессивный стрим ai-tts-stream (звук идёт по мере генерации);
-          // при любой ошибке ДО первого звука — тихий откат на целый WAV ai-tts (прежнее поведение цело).
-          let played = false
-          try {
-            const streamed = await streamAiSpeech({ text, style: 'jarvis', signal: aborter.signal })
-            if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
-            // VOICE-CLIENT-DEBUG-1: получен TTS-ответ — засекаем для response→firstSound; path несёт
-            // реальную ветку edge (X-Fallback) в телеметрию voice:fetch-ok/voice:timing.
-            voiceTtsResponseAtRef.current = Date.now()
-            if (streamed.kind === 'stream') {
-              await playPcmStream(streamed, serial, aborter.signal, streamed.fallback ? `stream:${streamed.fallback}` : 'stream')
-            } else {
-              await playTtsBlob(streamed.blob, serial, aborter.signal, streamed.fallback ? `wav:${streamed.fallback}` : 'wav')
+          // VOICE-TIMEOUT-RETRY-8: озвучка сегмента с «нет-первого-байта» таймаутом + ОДНИМ авто-ретраем.
+          // Если ни stream, ни fallback не дали ПЕРВОГО звука за 8с → abort, voice:timeout stage=tts,
+          // повтор того же сегмента; 2-й таймаут → внятная ошибка (не зависаем беззвучно). Ретрай запускается
+          // ТОЛЬКО когда звука ещё не было — задваивания TTS нет (первый звук снимает watchdog).
+          let segmentPlayed = false
+          let ttsTimedOut = false
+          let ttsUserAborted = false
+          for (let ttsAttempt = 1; ttsAttempt <= VOICE_MAX_ATTEMPTS; ttsAttempt++) {
+            if (serial !== ttsSerialRef.current || !speakOnRef.current) { ttsUserAborted = true; break }
+            const aborter = new AbortController()
+            ttsAbortRef.current = aborter
+            let firstSound = false
+            let watchdogTimedOut = false
+            let watchdog: number | null = window.setTimeout(() => {
+              if (!firstSound) { watchdogTimedOut = true; try { aborter.abort() } catch { /* ignore */ } }
+            }, VOICE_FIRST_BYTE_TIMEOUT_MS)
+            const clearTtsWatchdog = () => { if (watchdog !== null) { window.clearTimeout(watchdog); watchdog = null } }
+            const onFirstSound = () => { firstSound = true; clearTtsWatchdog() }
+            // VOICE-FRONT-STREAM: сначала прогрессивный стрим ai-tts-stream (звук идёт по мере генерации);
+            // при любой ошибке ДО первого звука — тихий откат на целый WAV ai-tts (прежнее поведение цело).
+            try {
+              let played = false
+              try {
+                const streamed = await streamAiSpeech({ text, style: 'jarvis', signal: aborter.signal })
+                if (serial !== ttsSerialRef.current || aborter.signal.aborted) { clearTtsWatchdog(); ttsUserAborted = true; break }
+                // VOICE-CLIENT-DEBUG-1: получен TTS-ответ — засекаем для response→firstSound; path несёт
+                // реальную ветку edge (X-Fallback) в телеметрию voice:fetch-ok/voice:timing.
+                voiceTtsResponseAtRef.current = Date.now()
+                if (streamed.kind === 'stream') {
+                  await playPcmStream(streamed, serial, aborter.signal, streamed.fallback ? `stream:${streamed.fallback}` : 'stream', onFirstSound)
+                } else {
+                  await playTtsBlob(streamed.blob, serial, aborter.signal, streamed.fallback ? `wav:${streamed.fallback}` : 'wav', onFirstSound)
+                }
+                played = true
+              } catch (streamErr) {
+                const sname = (streamErr as { name?: string } | null)?.name
+                if (watchdogTimedOut) throw streamErr // таймаут «нет первого байта» → внешний catch (ретрай/ошибка)
+                if (sname === 'AbortError' || serial !== ttsSerialRef.current || aborter.signal.aborted) { clearTtsWatchdog(); ttsUserAborted = true; break }
+                console.warn('AI TTS stream failed — fallback to ai-tts', streamErr)
+              }
+              if (!played) {
+                const { blob } = await synthesizeAiSpeech({ text, style: 'jarvis', signal: aborter.signal })
+                if (serial !== ttsSerialRef.current || aborter.signal.aborted) { clearTtsWatchdog(); ttsUserAborted = true; break }
+                voiceTtsResponseAtRef.current = Date.now()
+                await playTtsBlob(blob, serial, aborter.signal, 'legacy', onFirstSound)
+              }
+              clearTtsWatchdog()
+              if (serial !== ttsSerialRef.current || aborter.signal.aborted) { ttsUserAborted = true; break }
+              segmentPlayed = true
+              break
+            } catch (err) {
+              clearTtsWatchdog()
+              if (watchdogTimedOut && serial === ttsSerialRef.current) {
+                logVoiceClientEvent('timeout', 'stage=tts')
+                if (ttsAttempt < VOICE_MAX_ATTEMPTS) continue // ОДИН авто-ретрай того же сегмента
+                ttsTimedOut = true
+                break
+              }
+              const name = (err as { name?: string } | null)?.name
+              if (name === 'AbortError' || serial !== ttsSerialRef.current || aborter.signal.aborted) { ttsUserAborted = true; break }
+              throw err // прочая ошибка озвучки → внешний catch (тост ai_tts_error)
             }
-            played = true
-          } catch (streamErr) {
-            const sname = (streamErr as { name?: string } | null)?.name
-            if (sname === 'AbortError' || serial !== ttsSerialRef.current || aborter.signal.aborted) break
-            console.warn('AI TTS stream failed — fallback to ai-tts', streamErr)
           }
-          if (!played) {
-            const { blob } = await synthesizeAiSpeech({ text, style: 'jarvis', signal: aborter.signal })
-            if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
-            voiceTtsResponseAtRef.current = Date.now()
-            await playTtsBlob(blob, serial, aborter.signal, 'legacy')
+
+          if (ttsUserAborted) break
+          if (ttsTimedOut) {
+            // 2-й таймаут озвучки → не зависаем беззвучно: снимаем сегмент, чистим очередь, внятная ошибка.
+            if (ttsQueueRef.current[0] === text) ttsQueueRef.current.shift()
+            ttsQueueRef.current = []
+            if (!ttsErrorShownRef.current) { ttsErrorShownRef.current = true; flashToast(t('ai_voice_retry')) }
+            break
           }
-          if (serial !== ttsSerialRef.current || aborter.signal.aborted) break
+          if (!segmentPlayed) break
 
           if (ttsQueueRef.current[0] === text) ttsQueueRef.current.shift()
 
@@ -967,6 +1027,10 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
     async (msg: string, turnId?: number): Promise<{ kind: 'ok' | 'error' | 'nokey'; reply?: string }> => {
       const isCurrentTurn = () => turnId === undefined || turnId === assistantTurnRef.current
       let errText: string | undefined
+      // VOICE-TIMEOUT-RETRY-8: нестрим-фолбэк тоже не должен молчаливо зависнуть — abort по «нет-ответа» за 8с
+      // (ошибку покажет тост ниже). Ретрая здесь нет: POST — уже фолбэк после сорвавшегося стрима.
+      const postAbort = new AbortController()
+      const postTimer = window.setTimeout(() => { try { postAbort.abort() } catch { /* ignore */ } }, VOICE_FIRST_BYTE_TIMEOUT_MS)
       try {
         const { data: { session } } = await supabase.auth.getSession()
         const token = session?.access_token
@@ -978,6 +1042,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SUPABASE_KEY },
           body: JSON.stringify({ message: msg, context: contextRef.current }),
+          signal: postAbort.signal,
         })
         const body = (await resp.json().catch(() => null)) as { reply?: unknown; error?: unknown } | null
         const bodyErr = typeof body?.error === 'string' && body.error.trim() ? body.error : undefined
@@ -998,6 +1063,8 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
         errText = bodyErr ?? `HTTP ${resp.status}`
       } catch {
         errText = undefined
+      } finally {
+        window.clearTimeout(postTimer)
       }
       if (looksLikeNoKey(errText)) {
         if (isCurrentTurn()) { setNoKey(true); thinkingRef.current = false; setThinking(false) }
@@ -1038,37 +1105,55 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
 
       let streamedReply: string | null = null
       let streamFailed = false
-      let speechBuffer = ''
-      const assistantAbort = new AbortController()
-      assistantAbortRef.current = assistantAbort
-      try {
-        const { data: { session } } = await supabase.auth.getSession()
-        const token = session?.access_token
-        if (!token) throw new Error('no_session')
-        // VOICE-CLIENT-DEBUG-1: конец речи → отправка запроса (только голосовой ход, где speechEnd задан).
-        const speechEndAt = voiceSpeechEndAtRef.current
-        if (speechEndAt !== null) logVoiceClientEvent('timing', `speechEnd2req=${Date.now() - speechEndAt}ms`)
-        const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-assistant`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-            apikey: SUPABASE_KEY,
-          },
-          // AI-UX-2 (п.5): прикладываем контекст экрана — edge v8 подкладывает его ассистенту.
-          body: JSON.stringify({ message: msg, stream: true, context: contextRef.current }),
-          signal: assistantAbort.signal,
-        })
-        if (!resp.ok || !resp.body) {
-          streamFailed = true // не-2xx (в т.ч. no_key) или нет тела → фолбэк на POST
-        } else {
+      let assistantTimedOut = false // обе попытки без ПЕРВОГО байта → «не расслышал, повтори»
+      let userAborted = false       // barge-in / новый вопрос / размонтирование прервали текущий ход
+      // VOICE-TIMEOUT-RETRY-8: стрим ai-assistant с «нет-первого-байта» таймаутом + ОДНИМ авто-ретраем.
+      // Наблюдаемый баг: запрос повис БЕЗ ответа И БЕЗ fail-строки («молчит 15 секунд»). Если ПЕРВЫЙ байт не
+      // пришёл за 8с → abort, voice:timeout stage=assistant, повтор того же вопроса; 2-й таймаут → внятная
+      // ошибка (не молчим). Ретрай идемпотентен: без первого байта ни одна фраза не озвучена и история не
+      // тронута — задваивания сообщений/озвучки нет.
+      for (let attempt = 1; attempt <= VOICE_MAX_ATTEMPTS; attempt++) {
+        let speechBuffer = ''
+        let speechTailFlushed = false
+        const assistantAbort = new AbortController()
+        assistantAbortRef.current = assistantAbort
+        let firstByteSeen = false
+        let watchdogTimedOut = false
+        let watchdog: number | null = window.setTimeout(() => {
+          if (!firstByteSeen) { watchdogTimedOut = true; try { assistantAbort.abort() } catch { /* ignore */ } }
+        }, VOICE_FIRST_BYTE_TIMEOUT_MS)
+        const clearAssistantWatchdog = () => { if (watchdog !== null) { window.clearTimeout(watchdog); watchdog = null } }
+        try {
+          const { data: { session } } = await supabase.auth.getSession()
+          const token = session?.access_token
+          if (!token) throw new Error('no_session')
+          if (attempt === 1) {
+            // VOICE-CLIENT-DEBUG-1: конец речи → отправка запроса (только голосовой ход, где speechEnd задан).
+            const speechEndAt = voiceSpeechEndAtRef.current
+            if (speechEndAt !== null) logVoiceClientEvent('timing', `speechEnd2req=${Date.now() - speechEndAt}ms`)
+          }
+          const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-assistant`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+              apikey: SUPABASE_KEY,
+            },
+            // AI-UX-2 (п.5): прикладываем контекст экрана — edge v8 подкладывает его ассистенту.
+            body: JSON.stringify({ message: msg, stream: true, context: contextRef.current }),
+            signal: assistantAbort.signal,
+          })
+          if (!resp.ok || !resp.body) {
+            clearAssistantWatchdog()
+            streamFailed = true // не-2xx (в т.ч. no_key) или нет тела → фолбэк на POST
+            break
+          }
           const reader = resp.body.getReader()
           const decoder = new TextDecoder()
           let buf = ''
           let acc = ''
           let errored = false
           let stop = false
-          let speechTailFlushed = false
           const flushSpeechBuffer = (force = false) => {
             if (force && speechTailFlushed) return
             if (speakOnRef.current && AUDIO_TTS_SUPPORTED && turnId === assistantTurnRef.current) {
@@ -1117,9 +1202,12 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
               if (tail) buf = (buf + tail).replace(/\r\n/g, '\n')
               break
             }
+            // VOICE-TIMEOUT-RETRY-8: пришёл ПЕРВЫЙ байт — снимаем «нет-первого-байта» таймаут.
+            if (!firstByteSeen) { firstByteSeen = true; clearAssistantWatchdog() }
             buf = (buf + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
             drainCompleteSseBlocks()
           }
+          clearAssistantWatchdog()
           if (!stop) {
             drainCompleteSseBlocks()
             if (!stop && buf.trim()) handleStreamEvent(parseSseEvent(buf))
@@ -1134,24 +1222,48 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
               streamFailed = true
             }
           }
-        }
-      } catch (err) {
-        const name = (err as { name?: string } | null)?.name
-        if (name === 'AbortError' || turnId !== assistantTurnRef.current) {
-          if (mountedRef.current && turnId === assistantTurnRef.current) {
-            streamingRef.current = false
-            thinkingRef.current = false
-            setThinking(false); setStreaming(false); setStreamText('')
+          break // попытка дала окончательный исход (ответ / streamFailed → POST)
+        } catch (err) {
+          clearAssistantWatchdog()
+          if (watchdogTimedOut && turnId === assistantTurnRef.current) {
+            logVoiceClientEvent('timeout', 'stage=assistant')
+            if (attempt < VOICE_MAX_ATTEMPTS) continue // ОДИН авто-ретрай того же вопроса
+            assistantTimedOut = true
+            break
           }
-          return { kind: 'error' }
+          const name = (err as { name?: string } | null)?.name
+          if (name === 'AbortError' || turnId !== assistantTurnRef.current) {
+            userAborted = true
+            break
+          }
+          streamFailed = true
+          break
+        } finally {
+          if (assistantAbortRef.current === assistantAbort) assistantAbortRef.current = null
         }
-        streamFailed = true
-      } finally {
-        if (assistantAbortRef.current === assistantAbort) assistantAbortRef.current = null
+      }
+
+      if (userAborted) {
+        if (mountedRef.current && turnId === assistantTurnRef.current) {
+          streamingRef.current = false
+          thinkingRef.current = false
+          setThinking(false); setStreaming(false); setStreamText('')
+        }
+        return { kind: 'error' }
       }
 
       // ФОЛБЭК: поток недоступен/упал до первых слов → обычный POST (текущий путь). UX цел.
       if (turnId !== assistantTurnRef.current) return { kind: 'error' }
+
+      if (assistantTimedOut) {
+        // VOICE-TIMEOUT-RETRY-8: обе попытки без первого байта → не молчим: внятная голос/текст ошибка.
+        streamingRef.current = false
+        thinkingRef.current = false
+        if (mountedRef.current) { setThinking(false); setStreaming(false); setStreamText('') }
+        flashToast(t('ai_voice_retry'))
+        enqueueTtsText(t('ai_voice_retry'))
+        return { kind: 'error' }
+      }
       if (streamFailed && streamedReply === null) {
         streamingRef.current = false
         if (mountedRef.current) { setStreaming(false); setStreamText('') }
@@ -1173,7 +1285,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       }
       return { kind: 'ok', reply: streamedReply ?? undefined }
     },
-    [cancelActiveAssistant, enqueueTtsSegments, enqueueTtsText, sendViaPost, setVoiceStatusLive],
+    [cancelActiveAssistant, enqueueTtsSegments, enqueueTtsText, flashToast, sendViaPost, setVoiceStatusLive, t],
   )
 
   const announce = useCallback((text: string) => {
@@ -1556,6 +1668,10 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
         return
       }
       setVoiceStatusLive('listening')
+      // VOICE-TIMEOUT-RETRY-8: новый заход прослушивания — сбрасываем штампы лага STT (акустический конец
+      // речи и момент первого финала распознавания), чтобы замер sttFinal2speechEnd был по этой фразе.
+      micLastVoiceAtRef.current = null
+      sttFinalAtRef.current = null
       const r = new SpeechRecognitionImpl!()
       r.lang = SPEECH_LOCALE[lang]
       r.continuous = true
@@ -1578,7 +1694,11 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
         for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
           const res = e.results[i]
           const transcript = res?.[0]?.transcript ?? ''
-          if (res?.isFinal) { finalText += transcript; gotFinal = true }
+          if (res?.isFinal) {
+            finalText += transcript; gotFinal = true
+            // VOICE-TIMEOUT-RETRY-8: момент ПЕРВОГО финала распознавания (для лага sttFinal2speechEnd).
+            if (sttFinalAtRef.current === null) sttFinalAtRef.current = Date.now()
+          }
           else interim += transcript
         }
         const combined = (finalText + interim).trim()
@@ -1600,6 +1720,10 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       if (!active) return
       const canAccept = shouldAcceptAssistantVoiceResult(assistantSpeechGateSnapshot())
       stopRec()
+      // VOICE-TIMEOUT-RETRY-8: лаг Web Speech при КАЖДОМ финале — от акустического конца речи (мик-уровень)
+      // до финала распознавания. Докажет/опровергнет, что Web Speech тянет секунды (обоснование Deepgram).
+      const sttLag = sttFinalLagMs(micLastVoiceAtRef.current, sttFinalAtRef.current)
+      if (sttLag !== null) logVoiceClientEvent('timing', `sttFinal2speechEnd=${sttLag}ms`)
       if (!canAccept) return
       const q = text.trim()
       if (!q) { listen(); return } // ничего не сказали — продолжаем слушать

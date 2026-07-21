@@ -106,6 +106,24 @@ export function voiceEventMessage(stage: string, detail?: string): string {
   return trimmed ? `${base} ${trimmed}` : base
 }
 
+// VOICE-TIMEOUT-RETRY-8: сколько ждём ПЕРВЫЙ байт ответа голосового конвейера (ai-assistant / ai-tts-stream)
+// прежде чем счесть запрос «повисшим». Наблюдаемый баг: один запрос повис БЕЗ ответа И БЕЗ fail-строки
+// («молчит 15 секунд»). При превышении — abort + ОДИН авто-ретрай; 8с заметно короче порога восприятия «завис».
+export const VOICE_FIRST_BYTE_TIMEOUT_MS = 8_000
+
+// VOICE-TIMEOUT-RETRY-8: попыток на голосовой запрос — исходная + ОДИН авто-ретрай (итого 2). Больше не
+// пробуем: 2-й фейл → внятная голос/текст ошибка «не расслышал, повтори» (не молчим и не крутим впустую).
+export const VOICE_MAX_ATTEMPTS = 2
+
+// VOICE-TIMEOUT-RETRY-8: лаг Web Speech STT — от РЕАЛЬНОГО (акустического) конца речи (последний кадр
+// мик-уровня выше порога) до финала распознавания (первый isFinal). Оба штампа снимаются снаружи (мик-метр
+// и onresult); здесь — чистый расчёт: null, если хоть один штамп неизвестен; отрицательную разницу клампим
+// в 0 (финал не может предшествовать концу речи). Докажет/опровергнет секундный лаг Web Speech (→ Deepgram).
+export function sttFinalLagMs(speechEndAt: number | null, sttFinalAt: number | null): number | null {
+  if (speechEndAt === null || sttFinalAt === null) return null
+  return Math.max(0, sttFinalAt - speechEndAt)
+}
+
 export function isTtsPlaybackBlockedError(err: unknown): boolean {
   const name = (err as { name?: string } | null)?.name
   const message = (err as { message?: string } | null)?.message?.toLowerCase() ?? ''
