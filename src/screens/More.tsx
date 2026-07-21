@@ -176,7 +176,7 @@ export default function More() {
       {isOwner && <AboutPanel />}
 
       <p className="muted center" style={{ marginTop: 24 }}>
-        Construction Clock v0.1 · Foundation
+        Marvel Construction v0.1 · Foundation
       </p>
     </div>
   )

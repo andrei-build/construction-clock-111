@@ -1,6 +1,6 @@
 {
-  "name": "Construction Clock",
-  "short_name": "CClock",
+  "name": "Marvel Construction",
+  "short_name": "Marvel",
   "description": "Операционная система строительной компании",
   "start_url": "/",
   "display": "standalone",
