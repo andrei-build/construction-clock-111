@@ -4033,7 +4033,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-workspace {
   display: grid;
-  grid-template-columns: 60px minmax(212px, 264px) minmax(0, 1fr);
+  grid-template-columns: 60px minmax(200px, 240px) minmax(0, 1fr);
   gap: 10px;
   align-items: stretch;
 }
@@ -4041,10 +4041,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   grid-template-columns: 60px minmax(0, 1fr);
 }
 .hub-sketch-workspace-has-properties {
-  grid-template-columns: 60px minmax(212px, 264px) minmax(0, 1fr) minmax(236px, 300px);
+  grid-template-columns: 60px minmax(200px, 240px) minmax(0, 1fr) minmax(236px, 300px);
 }
 .hub-sketch-workspace-no-context.hub-sketch-workspace-has-properties {
   grid-template-columns: 60px minmax(0, 1fr) minmax(236px, 300px);
+}
+/* SKETCH-CANVAS-12: свёрнутая колонка контекст-панели скрыта на сеточных
+   раскладках (≥721px) — канвас занимает всю доступную ширину. На телефоне
+   (≤720px) панель остаётся нижним листом и правилом ниже не затрагивается. */
+@media (min-width: 721px) {
+  .hub-sketch-workspace-context-collapsed > .hub-sketch-context-panel {
+    display: none;
+  }
+}
+.hub-sketch-panel-toggle-btn {
+  margin-bottom: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+.hub-sketch-panel-toggle-btn[aria-pressed="true"] {
+  border-color: rgba(47, 122, 94, .35);
+  background: rgba(47, 122, 94, .1);
 }
 .hub-sketch-main {
   min-width: 0;
@@ -4350,6 +4368,51 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-context-panel-fullscreen {
   max-height: 28dvh;
 }
+/* SKETCH-CANVAS-12: в 2D-fullscreen рейл и контекст-панель больше не отжимают
+   канвас вниз — строка становится оверлеем у ЛЕВОГО края (position:absolute),
+   канвас-стейдж занимает всю высоту минус одна строка шапки. Рейл — тонкая
+   колонка, панель (когда развёрнута) — полупрозрачный оверлей с backdrop-blur. */
+.hub-sketch-svg-shell-fullscreen .hub-sketch-fullscreen-context-row {
+  position: absolute;
+  top: 56px;
+  left: calc(10px + env(safe-area-inset-left, 0px));
+  bottom: 10px;
+  z-index: 8;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  width: auto;
+  max-height: none;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  border: 0;
+  pointer-events: none;
+}
+.hub-sketch-svg-shell-fullscreen .hub-sketch-fullscreen-context-row > * {
+  pointer-events: auto;
+}
+.hub-sketch-svg-shell-fullscreen .hub-sketch-mode-rail-fullscreen {
+  max-height: calc(100dvh - 72px);
+  overflow: auto;
+  border-color: rgba(126, 160, 190, .32);
+  background: rgba(13, 21, 34, .88);
+  box-shadow: 0 18px 48px rgba(8, 13, 22, .32);
+  backdrop-filter: blur(14px);
+}
+.hub-sketch-svg-shell-fullscreen .hub-sketch-context-panel-fullscreen {
+  width: min(240px, 74vw);
+  max-height: calc(100dvh - 72px);
+  overflow: auto;
+  border: 1px solid rgba(126, 160, 190, .32);
+  border-width: 1px;
+  border-radius: 10px;
+  background: rgba(13, 21, 34, .88);
+  box-shadow: 0 18px 48px rgba(8, 13, 22, .34);
+  backdrop-filter: blur(14px);
+  color: var(--text);
+}
 .hub-sketch-viewbar {
   display: flex;
   flex-wrap: wrap;
@@ -4465,7 +4528,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-svg {
   width: 100%;
-  height: clamp(440px, 70vh, 840px);
+  /* SKETCH-CANVAS-12: снят потолок 70vh — канвас занимает ≥85% высоты окна в обычном виде. */
+  height: clamp(440px, 88vh, 1120px);
   display: block;
   background: var(--panel);
   touch-action: none;
@@ -7923,7 +7987,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .hub-sketch-workspace-has-properties,
   .hub-sketch-workspace-no-context.hub-sketch-workspace-has-properties {
     display: grid;
-    grid-template-columns: 78px minmax(208px, 260px) minmax(0, 1fr);
+    grid-template-columns: 78px minmax(200px, 240px) minmax(0, 1fr);
     gap: 8px;
     padding-bottom: 0;
   }
@@ -7931,7 +7995,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     grid-template-columns: 78px minmax(0, 1fr);
   }
   .hub-sketch-workspace-has-properties {
-    grid-template-columns: 78px minmax(200px, 248px) minmax(0, 1fr) minmax(220px, 280px);
+    grid-template-columns: 78px minmax(196px, 236px) minmax(0, 1fr) minmax(220px, 280px);
   }
   .hub-sketch-workspace-no-context.hub-sketch-workspace-has-properties {
     grid-template-columns: 78px minmax(0, 1fr) minmax(220px, 280px);
