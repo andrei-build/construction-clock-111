@@ -5107,6 +5107,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke-width: 4;
   fill: rgba(37, 99, 235, .08);
 }
+/* ROOM-MOVE-23: выбранную комнату можно тащить целиком за заливку. */
+.hub-sketch-room-draggable { cursor: grab; }
+.hub-sketch-room-dragging {
+  cursor: grabbing;
+  fill: rgba(37, 99, 235, .16);
+}
 .hub-sketch-room-just-closed {
   stroke: #16a34a;
   stroke-width: 5;

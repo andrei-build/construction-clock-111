@@ -150,6 +150,7 @@ import {
   shouldCloseOpenContourFromPoint,
   shouldResetWallDraftAfterContourFinish,
   shouldTrackWallDraftPointer,
+  snapContourTranslation,
   snapCornerSquare,
   snapToExistingGeometry,
   snapPointWithSmartGuides,
@@ -252,6 +253,16 @@ type SegmentLengthEdit = { ref: SketchSegmentRef; value: string }
 type OpeningOffsetEdit = { index: number; side: OpeningOffsetSide; value: string }
 type DragNode = { c: number; p: number }
 type NodeDragCandidate = DragNode & { pointerId: number; pointerType: string; origin: { clientX: number; clientY: number } }
+// ROOM-MOVE-23: перетаскивание ЦЕЛОЙ комнаты за заливку. startCell/startPoints — снимок для сдвига без дрейфа.
+type ContourDragCandidate = {
+  c: number
+  pointerId: number
+  pointerType: string
+  origin: { clientX: number; clientY: number }
+  startCell: Pt
+  startPoints: Pt[]
+}
+type ContourDragActive = { c: number; startCell: Pt; startPoints: Pt[] }
 type WallClickAppend = { contourIndex: number; pointIndex: number; point: Pt; clientX: number; clientY: number; time: number }
 type CanvasPointer = { clientX: number; clientY: number; pointerType: string }
 type CanvasTapGesture = {
@@ -1620,6 +1631,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [customRoomTemplates, setCustomRoomTemplates] = useState<SketchRoomTemplate[]>([])
   const dragMovedRef = useRef(false)
   const armedDragNodeRef = useRef<NodeDragCandidate | null>(null)
+  // ROOM-MOVE-23: состояние перетаскивания всей комнаты (только React-state/refs, в модель эскиза не пишется).
+  const [dragContour, setDragContour] = useState<number | null>(null)
+  const armedDragContourRef = useRef<ContourDragCandidate | null>(null)
+  const dragContourRef = useRef<ContourDragActive | null>(null)
   const nodeTapClickHandledRef = useRef<DragNode | null>(null)
   const lastWallClickAppendRef = useRef<WallClickAppend | null>(null)
   const [name, setName] = useState('room-1')
@@ -2772,6 +2787,70 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       edgeAutoPanPointerRef.current = currentScreenPoint
       updateEdgeAutoPan(clientX, clientY)
     }
+    // ROOM-MOVE-23: армированное перетаскивание комнаты «прорастает» в drag после порога сдвига (как у узла).
+    const armedDragContour = armedDragContourRef.current
+    if (
+      armedDragContour &&
+      dragContourRef.current === null &&
+      (pointerId === undefined || armedDragContour.pointerId === pointerId)
+    ) {
+      const currentScreenPoint = { clientX, clientY }
+      if (!screenPointerMovedBeyondThreshold(armedDragContour.origin, currentScreenPoint, NODE_DRAG_THRESHOLD_PX)) return
+      if (!raw) {
+        setSmartGuides([])
+        setHoverSnapGuide(null)
+        return
+      }
+      armedDragContourRef.current = null
+      recordHistoryStep()
+      dragMovedRef.current = true
+      dragContourRef.current = { c: armedDragContour.c, startCell: armedDragContour.startCell, startPoints: armedDragContour.startPoints }
+      setDragContour(armedDragContour.c)
+      setSelectedContourIndex(armedDragContour.c)
+      edgeAutoPanPointerRef.current = currentScreenPoint
+      updateEdgeAutoPan(clientX, clientY)
+    }
+    const currentDragContour = dragContourRef.current
+    if (currentDragContour) {
+      if (!raw) {
+        setSmartGuides([])
+        setHoverSnapGuide(null)
+        return
+      }
+      dragMovedRef.current = true
+      setModel((m) => {
+        const contour = m.contours[currentDragContour.c]
+        if (!contour) {
+          setSmartGuides([])
+          setHoverSnapGuide(null)
+          return m
+        }
+        // Сдвиг всех узлов на один вектор (сдвиг, НЕ деформация). Дельту прижимаем к сетке,
+        // затем магнит стена-к-стене (snapContourTranslation) точно совмещает общую стену с соседом.
+        const rawDelta = { x: raw.x - currentDragContour.startCell.x, y: raw.y - currentDragContour.startCell.y }
+        const snappedDelta = snapForModel(m, rawDelta, activeSnapFtRef.current)
+        let movedPoints = currentDragContour.startPoints.map((point) => ({ x: point.x + snappedDelta.x, y: point.y + snappedDelta.y }))
+        const wallSnap = snapContourTranslation(m, currentDragContour.c, movedPoints, { radiusCells: ROOM_SNAP })
+        if (wallSnap.snapped) {
+          movedPoints = movedPoints.map((point) => ({ x: point.x + wallSnap.offset.x, y: point.y + wallSnap.offset.y }))
+        }
+        setSmartGuides([])
+        setHoverSnapGuide(null)
+        const nextContours = m.contours.map((item, contourIndex) => (
+          contourIndex === currentDragContour.c ? { ...item, points: movedPoints } : item
+        ))
+        const nextBaseModel: SketchModel = { ...m, contours: nextContours }
+        // Жёсткий перенос: длины стен не меняются, но привязанные к стенам предметы едут вместе с комнатой.
+        const placedItems = repositionWallBoundTemplateItems(m.placedItems, m, nextBaseModel)
+        const nextModel = {
+          ...nextBaseModel,
+          ...(placedItems ? { placedItems } : {}),
+        }
+        modelRef.current = nextModel
+        return nextModel
+      })
+      return
+    }
     const currentDragNode = dragNodeRef.current
     if (currentDragNode) {
       if (!raw) {
@@ -2971,6 +3050,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const currentTool = toolRef.current
     if (dragIdxRef.current !== null) return true
     if (dragNodeRef.current !== null || dragPlacedIdRef.current !== null) return true
+    if (dragContourRef.current !== null) return true
     if (currentTool === 'door' || currentTool === 'window') return true
     if (currentTool === 'measure') return !!measurementDraftRef.current
     if (currentTool !== 'wall') return false
@@ -3422,6 +3502,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     if (canvasPointersRef.current.size === 0) stopEdgeAutoPan()
     endDragOpening()
     endDragNode()
+    endDragContour()
     endDragPlaced()
 
     if (endingDragNode && (e.pointerType === 'touch' || e.pointerType === 'pen')) {
@@ -3464,6 +3545,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     stopEdgeAutoPan()
     endDragOpening()
     endDragNode()
+    endDragContour()
     endDragPlaced()
     setHover(null)
     setHoverSnapped(false)
@@ -3576,6 +3658,35 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   }
 
+  // ROOM-MOVE-23: захват ВЫБРАННОЙ комнаты за заливку. Двигается только уже подсвеченный контур —
+  // для невыбранной комнаты возвращаемся молча (событие уходит канвасу: пан/выбор работают как раньше).
+  const startDragContour = (ci: number) => (e: React.PointerEvent) => {
+    if (!canEdit) return
+    if (selectedContourIndex !== ci) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (shouldIgnoreTouchForActivePen(e)) return
+    const contour = modelRef.current.contours[ci]
+    if (!contour || !contour.closed || contour.points.length < 3) return
+    const startCell = pointerCell(e)
+    if (!startCell) return
+    if (e.pointerType === 'pen') {
+      penActiveRef.current = true
+      activePenPointerIdRef.current = e.pointerId
+    }
+    e.stopPropagation()
+    armedDragContourRef.current = {
+      c: ci,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      origin: { clientX: e.clientX, clientY: e.clientY },
+      startCell,
+      startPoints: contour.points.map((point) => ({ x: point.x, y: point.y })),
+    }
+    dragContourRef.current = null
+    setDragContour(null)
+    ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
+  }
+
   const startDragPlanItem = (item: SketchPlacedCatalogItem) => (e: React.PointerEvent) => {
     if (!canEdit || tool === 'measure') return
     if (e.pointerType === 'mouse' && e.button !== 0) return
@@ -3638,6 +3749,20 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     stopEdgeAutoPan()
     setDragNode(null)
     setSmartGuides([])
+    setSketchMaterials(null)
+    setSketchMaterialsAdded(null)
+  }
+
+  // ROOM-MOVE-23: отпустил (или ушёл мимо) — комната встаёт на новом месте (модель уже обновлена во время drag,
+  // recordHistoryStep снят при старте → Undo вернёт как для узла; отдельного Esc-возврата нет, как у drag узла).
+  const endDragContour = () => {
+    armedDragContourRef.current = null
+    if (dragContourRef.current === null) return
+    dragContourRef.current = null
+    stopEdgeAutoPan()
+    setDragContour(null)
+    setSmartGuides([])
+    setHoverSnapGuide(null)
     setSketchMaterials(null)
     setSketchMaterialsAdded(null)
   }
@@ -5867,11 +5992,19 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 className={[
                   'hub-sketch-wall',
                   selected ? 'hub-sketch-room-selected' : '',
+                  selected && canEdit && wallSelectEnabled ? 'hub-sketch-room-draggable' : '',
+                  dragContour === ci ? 'hub-sketch-room-dragging' : '',
                   justClosed ? 'hub-sketch-room-just-closed' : '',
                 ].filter(Boolean).join(' ')}
                 points={pts}
+                onPointerDown={canEdit && wallSelectEnabled ? startDragContour(ci) : undefined}
                 onClick={wallSelectEnabled ? (event) => {
                   event.stopPropagation()
+                  // ROOM-MOVE-23: клик после перетаскивания комнаты не должен переключать выбор.
+                  if (dragMovedRef.current) {
+                    dragMovedRef.current = false
+                    return
+                  }
                   setSelectedContourIndex((current) => (current === ci ? null : ci))
                   setSelectedWallKey(null)
                   setSelectedNode(null)

@@ -293,6 +293,43 @@ export function smartGuideLabelKey(kind: SketchSmartGuideKind): string {
   return 'hub_sketch_guide_equal'
 }
 
+export type SketchContourTranslationSnap = {
+  offset: SketchGuidePoint
+  snapped: boolean
+  target: SketchExistingSnapTarget | null
+}
+
+// ROOM-MOVE-23: магнит «стена-к-стене» при перетаскивании ЦЕЛОЙ комнаты.
+// На вход — уже сдвинутые точки контура; ищем вершину, ближайшую к геометрии ДРУГИХ контуров
+// (переиспользуя snapToExistingGeometry, тот же снап, что при «+Добавить комнату»/drag узла),
+// и возвращаем доп.смещение, которое ставит эту вершину точно на цель — так общая стена совмещается.
+// Чистая функция сдвига координат (без мутаций модели): комнату двигают на offset, индексы/структура целы.
+export function snapContourTranslation(
+  model: Pick<SketchGuideModel, 'contours'>,
+  contourIndex: number,
+  translatedPoints: SketchGuidePoint[],
+  options: { radiusCells: number },
+): SketchContourTranslationSnap {
+  const radius = Number.isFinite(options.radiusCells) && options.radiusCells > 0 ? options.radiusCells : 0
+  const noSnap: SketchContourTranslationSnap = { offset: { x: 0, y: 0 }, snapped: false, target: null }
+  if (radius <= 0) return noSnap
+  let best: { offset: SketchGuidePoint; distance: number; target: SketchExistingSnapTarget } | null = null
+  translatedPoints.forEach((vertex) => {
+    const snap = snapToExistingGeometry(model, vertex, { radiusCells: radius, excludeContourIndex: contourIndex })
+    if (!snap) return
+    if (!best || snap.distance < best.distance) {
+      best = {
+        offset: { x: snap.point.x - vertex.x, y: snap.point.y - vertex.y },
+        distance: snap.distance,
+        target: snap.target,
+      }
+    }
+  })
+  if (!best) return noSnap
+  const resolved = best as { offset: SketchGuidePoint; distance: number; target: SketchExistingSnapTarget }
+  return { offset: resolved.offset, snapped: true, target: resolved.target }
+}
+
 export function snapToExistingGeometry(
   model: Pick<SketchGuideModel, 'contours'>,
   rawPoint: SketchGuidePoint,
