@@ -9731,6 +9731,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   box-shadow: 0 1px 4px rgba(0, 0, 0, .55); cursor: pointer; pointer-events: auto;
 }
 .plan-pin.open { outline: 2px solid #fff; outline-offset: 2px; }
+/* ESTIMATE-REVIEW-39: пин, открытый из строки сметы — пульсирующее кольцо-подсветка. */
+.plan-pin.highlight { outline: 3px solid #fff; outline-offset: 3px; animation: plan-pin-pulse 1.4s ease-in-out infinite; }
+@keyframes plan-pin-pulse {
+  0%, 100% { box-shadow: 0 1px 4px rgba(0, 0, 0, .55), 0 0 0 0 rgba(255, 255, 255, .55); }
+  50% { box-shadow: 0 1px 4px rgba(0, 0, 0, .55), 0 0 0 8px rgba(255, 255, 255, 0); }
+}
 .plan-pin-marker {
   position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px;
   border-radius: 50%; border: 2px solid rgba(255, 255, 255, .92);
@@ -9755,6 +9761,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   text-transform: uppercase; letter-spacing: .04em;
 }
 .plan-pin-card-note { margin-top: 8px; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+/* ESTIMATE-REVIEW-39: лёгкая пометка связи пина со строкой сметы в карточке. */
+.plan-pin-card-link { margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--blue); }
 .plan-pin-form-row { display: flex; align-items: center; gap: 8px; }
 .plan-pin-sev { justify-content: center; margin-bottom: 8px; }
 .plan-pin-sev-btn {
@@ -10949,3 +10957,60 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   line-height: 0;
 }
 .team-invite-qr svg { width: 100%; height: 100%; display: block; }
+
+/* ESTIMATE-REVIEW-39: экран «Смета (черновик)» в Финансах — тёмная тема, читаемая таблица строк. */
+.estimate-card .estimate-drafts { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.estimate-draft {
+  border: 1px solid var(--border, rgba(255, 255, 255, .08));
+  border-radius: 12px; background: var(--panel2); overflow: hidden;
+}
+.estimate-draft.open { border-color: var(--blue); }
+.estimate-draft-head {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 12px 14px; background: none; border: none; cursor: pointer; text-align: left; color: var(--text);
+}
+.estimate-draft-caret { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+.estimate-draft-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.estimate-status-badge { flex: 0 0 auto; }
+.estimate-draft-total { flex: 0 0 auto; font-weight: 700; }
+.estimate-detail { padding: 0 14px 14px; }
+
+.estimate-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 10px 0; border-top: 1px solid var(--border, rgba(255, 255, 255, .06)); margin-bottom: 10px;
+}
+.estimate-actions-label { font-size: 13px; }
+.estimate-status-error { font-size: 13px; }
+
+.estimate-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 10px; }
+.estimate-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 520px; }
+.estimate-table thead th {
+  position: sticky; top: 0; text-align: left; padding: 8px 10px;
+  color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em;
+  background: var(--panel); border-bottom: 1px solid var(--border, rgba(255, 255, 255, .1));
+}
+.estimate-table th.num, .estimate-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.estimate-table tbody td {
+  padding: 9px 10px; border-bottom: 1px solid var(--border, rgba(255, 255, 255, .05));
+  vertical-align: top; color: var(--text);
+}
+.estimate-cell-section { color: var(--muted); white-space: nowrap; }
+.estimate-desc-text { display: block; }
+.estimate-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
+.estimate-flag { font-size: 13px; line-height: 1; }
+.estimate-source-badge { font-weight: 600; }
+.estimate-measure { font-weight: 600; }
+.estimate-open-hint { font-size: 12px; color: var(--blue); font-weight: 600; }
+.estimate-row.clickable { cursor: pointer; }
+.estimate-row.clickable:hover td { background: rgba(107, 200, 255, .07); }
+.estimate-row.busy { opacity: .55; }
+
+.estimate-totals {
+  margin-top: 12px; margin-left: auto; width: min(320px, 100%);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.estimate-total-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
+.estimate-total-grand {
+  padding-top: 8px; border-top: 1px solid var(--border, rgba(255, 255, 255, .12));
+  font-weight: 700; font-size: 16px;
+}
