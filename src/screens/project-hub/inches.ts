@@ -35,6 +35,10 @@ function stripInchUnit(value: string): string {
     .trim()
 }
 
+function hasInchUnit(value: string): boolean {
+  return /(?:"|in\.?|inch|inches)\s*$/i.test(normalizeUnits(value).trim())
+}
+
 function parseFraction(value: string): number {
   const match = value.match(/^(\d+)\s*\/\s*(\d+)$/)
   if (!match) return Number.NaN
@@ -94,7 +98,17 @@ export function formatInches(value: number): string {
   return whole > 0 ? `${sign}${whole} ${fraction}"` : `${sign}${fraction}"`
 }
 
-export function parseFeetInches(value: string): number {
+export type BareLengthUnit = 'inches' | 'feet'
+
+export interface ParseFeetInchesOptions {
+  // How to interpret a bare number with no explicit unit marker.
+  // 'inches' (default) keeps legacy behavior; 'feet' is for length fields
+  // where a naked "20" means twenty feet, not twenty inches (SWEEP-FIX-32).
+  bareUnit?: BareLengthUnit
+}
+
+export function parseFeetInches(value: string, options?: ParseFeetInchesOptions): number {
+  const bareUnit = options?.bareUnit ?? 'inches'
   const body = normalizeUnits(value).trim()
   if (!body) return Number.NaN
 
@@ -111,6 +125,14 @@ export function parseFeetInches(value: string): number {
     const inches = parseInches(rest)
     if (!Number.isFinite(inches)) return Number.NaN
     return snapInchesToPrecision(sign * (feet * 12 + Math.abs(inches)))
+  }
+
+  // No foot marker. A bare number in a length field means feet; an explicit
+  // inch marker ("20\"", "20 in") always stays inches. parseInches already
+  // carries the sign, so we do not reapply it here.
+  if (bareUnit === 'feet' && !hasInchUnit(body)) {
+    const feet = parseInches(body)
+    return Number.isFinite(feet) ? snapInchesToPrecision(feet * 12) : Number.NaN
   }
 
   return parseInches(body)

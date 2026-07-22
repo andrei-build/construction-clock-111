@@ -111,6 +111,7 @@ import {
   isRoundFurnitureType,
 } from './appliances'
 import { formatFeetInches, formatInches, parseFeetInches, snapFeetToPrecision, snapOpeningFeetToPrecision } from './inches'
+import type { BareLengthUnit } from './inches'
 import {
   centerOpeningT,
   openingEdgeOffsetsFt,
@@ -426,8 +427,11 @@ function formatOpeningFt(valueFt: number): string {
   return formatInches((Number.isFinite(valueFt) ? valueFt : 0) * 12)
 }
 
-function parseLengthFt(value: string): number {
-  const parsedInches = parseFeetInches(value)
+// SWEEP-FIX-32: длина семантически в футах, поэтому голое число без единиц
+// («20») трактуем как ФУТЫ. Дюймо-нативные поля (смещение проёма, габариты
+// проёмов) явно передают bareUnit 'inches', чтобы там «20» осталось дюймами.
+function parseLengthFt(value: string, bareUnit: BareLengthUnit = 'feet'): number {
+  const parsedInches = parseFeetInches(value, { bareUnit })
   return Number.isFinite(parsedInches) ? parsedInches / 12 : Number.NaN
 }
 
@@ -2290,7 +2294,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const applyOpeningOffsetEdit = () => {
     if (!openingOffsetEdit) return
-    const parsed = parseLengthFt(openingOffsetEdit.value)
+    const parsed = parseLengthFt(openingOffsetEdit.value, 'inches')
     if (!Number.isFinite(parsed)) {
       setError('hub_sketch_dimension_invalid')
       return
@@ -2592,7 +2596,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const commitFeetDraft = (field: FeetDraftField, fallbackFt: number, minFt: number, maxFt: number, apply: (valueFt: number) => void) => {
     const raw = feetDrafts[field] ?? formatLengthFt(fallbackFt)
     clearFeetDraft(field)
-    const parsed = parseLengthFt(raw)
+    // wallHeight — поле длины (голое число = футы); прочие поля здесь —
+    // габариты проёмов, дюймо-нативные (голое число = дюймы).
+    const parsed = parseLengthFt(raw, field === 'wallHeight' ? 'feet' : 'inches')
     if (!Number.isFinite(parsed)) return
     const clamped = clampNumber(parsed, minFt, maxFt)
     apply(field === 'wallHeight' ? snapFeetToPrecision(clamped) : snapOpeningFeetToPrecision(clamped))
@@ -2623,6 +2629,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     maxFt: number,
     apply: (valueFt: number) => void,
     className = 'hub-sketch-dim-field',
+    unitKey?: string,
   ) => (
     <label className={className}>
       <span className="muted">{t(labelKey)}</span>
@@ -2635,6 +2642,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         onBlur={() => commitFeetDraft(field, valueFt, minFt, maxFt, apply)}
         onKeyDown={(e) => handleFeetKeyDown(e, field, valueFt, minFt, maxFt, apply)}
       />
+      {unitKey ? <span className="hub-sketch-dim-unit" aria-hidden="true">{t(unitKey)}</span> : null}
     </label>
   )
 
@@ -6375,7 +6383,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         </div>
       </div>
       <div className="hub-sketch-topbar-group hub-sketch-topbar-center">
-        {lengthInput('wallHeight', 'hub_sketch_wall_height', heightFt, 1, 30, updateWallHeight, 'hub-sketch-height-field')}
+        {lengthInput('wallHeight', 'hub_sketch_wall_height', heightFt, 1, 30, updateWallHeight, 'hub-sketch-height-field', 'hub_sketch_unit_ft')}
         <div className="hub-sketch-snap hub-sketch-snap-compact" role="group" aria-label={t('hub_sketch_snap')}>
           <span className="muted">{t('hub_sketch_snap')}</span>
           {SNAP_OPTIONS.map((option) => (
@@ -6898,7 +6906,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             const key = sketchWallKey(dim.c, dim.s)
             const editing = segmentLengthEdit?.ref.c === dim.c && segmentLengthEdit.ref.s === dim.s
             const conflict = segmentResizeConflictKeys.has(key)
-            const inputW = Math.max(92, Math.min(150, segmentLengthEdit?.value.length ? segmentLengthEdit.value.length * 8 + 34 : 110)) * screenWorldPx
+            const inputW = (Math.max(96, Math.min(150, segmentLengthEdit?.value.length ? segmentLengthEdit.value.length * 8 + 34 : 110)) + 22) * screenWorldPx
             const inputH = 32 * screenWorldPx
             return (
               <g key={`l${i}`} className={`hub-sketch-dim-line hub-sketch-dim-line-editable${conflict ? ' hub-sketch-dim-line-conflict' : ''}`}>
@@ -6915,26 +6923,29 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     height={inputH}
                     transform={`rotate(${dim.angle} ${dim.labelX} ${dim.labelY})`}
                   >
-                    <input
-                      className="hub-sketch-dim-edit-input"
-                      value={segmentLengthEdit.value}
-                      inputMode="text"
-                      autoFocus
-                      aria-label={t('hub_sketch_dimension_edit_label')}
-                      onChange={(event) => setSegmentLengthEditValue(event.target.value)}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={(event) => event.stopPropagation()}
-                      onBlur={() => applySegmentLengthEdit()}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          applySegmentLengthEdit()
-                        } else if (event.key === 'Escape') {
-                          event.preventDefault()
-                          cancelSegmentLengthEdit()
-                        }
-                      }}
-                    />
+                    <div className="hub-sketch-dim-edit-wrap">
+                      <input
+                        className="hub-sketch-dim-edit-input"
+                        value={segmentLengthEdit.value}
+                        inputMode="text"
+                        autoFocus
+                        aria-label={t('hub_sketch_dimension_edit_label')}
+                        onChange={(event) => setSegmentLengthEditValue(event.target.value)}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => event.stopPropagation()}
+                        onBlur={() => applySegmentLengthEdit()}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            applySegmentLengthEdit()
+                          } else if (event.key === 'Escape') {
+                            event.preventDefault()
+                            cancelSegmentLengthEdit()
+                          }
+                        }}
+                      />
+                      <span className="hub-sketch-dim-edit-unit" aria-hidden="true">{t('hub_sketch_unit_ft')}</span>
+                    </div>
                   </foreignObject>
                 ) : (
                   <text

@@ -77,3 +77,61 @@ describe('project hub inch formatting', () => {
     expect(snapOpeningFeetToPrecision(6.666)).toBe(80 / 12)
   })
 })
+
+// SWEEP-FIX-32: в поле длины голое число без единиц = ФУТЫ.
+// parseLengthFt — обёртка SketchTab над parseFeetInches({ bareUnit: 'feet' }),
+// возвращающая футы; воспроизводим её ровно здесь для регресс-контроля.
+function parseLengthFt(value: string, bareUnit: 'feet' | 'inches' = 'feet'): number {
+  const parsedInches = parseFeetInches(value, { bareUnit })
+  return Number.isFinite(parsedInches) ? parsedInches / 12 : Number.NaN
+}
+
+describe('length field bare-number-as-feet (SWEEP-FIX-32)', () => {
+  it('treats a bare number as feet in a length field', () => {
+    expect(parseLengthFt('20')).toBe(20)
+    expect(parseLengthFt('6')).toBe(6)
+    expect(parseLengthFt('12')).toBe(12)
+    expect(parseLengthFt('6 1/2')).toBe(6.5)
+  })
+
+  it('keeps explicit inch markers as inches', () => {
+    expect(parseLengthFt('20"')).toBe(20 / 12)
+    expect(parseLengthFt('20 in')).toBe(20 / 12)
+    expect(parseLengthFt('20 inches')).toBe(20 / 12)
+  })
+
+  it('keeps explicit feet and feet-inch input working', () => {
+    expect(parseLengthFt("6'")).toBe(6)
+    expect(parseLengthFt('6 ft')).toBe(6)
+    expect(parseLengthFt("6' 2\"")).toBe(6 + 2 / 12)
+    expect(parseLengthFt('6 ft 2 in')).toBe(6 + 2 / 12)
+  })
+
+  it('handles a fractional inch after explicit feet', () => {
+    expect(parseLengthFt("6' 2 1/2\"")).toBe(6 + 2.5 / 12)
+  })
+
+  it('does not disturb explicit units when bare-feet is enabled', () => {
+    // Явные единицы имеют приоритет над режимом bareUnit.
+    expect(parseLengthFt('3 ft')).toBe(3)
+    expect(parseLengthFt('3"')).toBe(3 / 12)
+    expect(Number.isNaN(parseLengthFt(''))).toBe(true)
+    expect(Number.isNaN(parseLengthFt('abc'))).toBe(true)
+  })
+
+  it('keeps inch-native length callers on inches (opening offset / opening dims)', () => {
+    // Смещение проёма и габариты проёмов дюймо-нативны: голое число = дюймы.
+    expect(parseLengthFt('20', 'inches')).toBe(20 / 12)
+    expect(parseLengthFt('18', 'inches')).toBe(18 / 12)
+    expect(parseLengthFt('20"', 'inches')).toBe(20 / 12)
+    expect(parseLengthFt("2'", 'inches')).toBe(2)
+  })
+
+  it('leaves parseFeetInches default (inches) untouched for other callers', () => {
+    expect(parseFeetInches('20')).toBe(20)
+    expect(parseFeetInches('6 in')).toBe(6)
+    expect(parseFeetInches('20 ft')).toBe(240)
+    expect(parseFeetInches('20', { bareUnit: 'feet' })).toBe(240)
+    expect(parseFeetInches('20"', { bareUnit: 'feet' })).toBe(20)
+  })
+})

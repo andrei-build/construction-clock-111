@@ -1509,6 +1509,7 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_dim_length_short: { ru: 'Длина', en: 'Length', es: 'Largo' },
   hub_sketch_dim_height_short: { ru: 'Высота', en: 'Height', es: 'Alto' },
   hub_sketch_dimension_edit_label: { ru: 'Изменить размер', en: 'Edit dimension', es: 'Editar dimensión' },
+  hub_sketch_unit_ft: { ru: 'ft', en: 'ft', es: 'ft' },
   hub_sketch_dimension_invalid: { ru: 'Введите размер в футах/дюймах', en: 'Enter a feet/inches dimension', es: 'Ingrese una dimensión en pies/pulgadas' },
   hub_sketch_dimension_conflict: { ru: 'Размер конфликтует с геометрией', en: 'Dimension conflicts with the geometry', es: 'La dimensión entra en conflicto con la geometría' },
   hub_sketch_dimension_conflict_prompt: { ru: 'Размер не сходится. Что двигать?', en: 'The dimension does not resolve. What should move?', es: 'La dimensión no cierra. ¿Qué se debe mover?' },
