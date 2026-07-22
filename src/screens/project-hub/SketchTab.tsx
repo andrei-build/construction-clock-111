@@ -54,19 +54,42 @@ import {
   type SketchSwitch,
 } from './sketchFinishes'
 import {
+  BUILTIN_BOX_CATALOG_ID,
+  BUILTIN_COLUMN_CATALOG_ID,
   BUILTIN_OUTLET_CATALOG_ID,
+  BUILTIN_PIPE_CATALOG_ID,
   BUILTIN_SWITCH_CATALOG_ID,
+  SKETCH_CATALOG_KIND_BOX,
+  SKETCH_CATALOG_KIND_COLUMN,
   SKETCH_CATALOG_KIND_OUTLET,
+  SKETCH_CATALOG_KIND_PIPE,
   SKETCH_CATALOG_KIND_SWITCH,
+  isBoxPlacedCatalogItem,
+  isColumnPlacedCatalogItem,
+  isObstaclePlacedCatalogItem,
   isOutletPlacedCatalogItem,
+  isPipePlacedCatalogItem,
   isShowerPanPlacedCatalogItem,
   isSwitchPlacedCatalogItem,
   isToiletPlacedCatalogItem,
   sanitizePlacedCatalogItems,
   showerPanShapeFromPlacedItem,
+  type SketchColumnShape,
+  type SketchElectricalVariant,
+  type SketchPipeKind,
   type SketchPlacedCatalogItem,
   type SketchShowerPanShape,
 } from './sketchCatalog'
+import {
+  columnDims,
+  columnObstacleIntervalOnWall,
+  electricalDefaultCenterIn,
+  electricalDims,
+  floorObjectCenterIn,
+  pipeDefaultCenterIn,
+  pipeDims,
+  type InfraObstacleInterval,
+} from './elements'
 import { formatFeetInches, formatInches, parseFeetInches, snapFeetToPrecision, snapOpeningFeetToPrecision } from './inches'
 import {
   centerOpeningT,
@@ -290,7 +313,7 @@ const SKETCH_MODE_OPTIONS: Array<{ mode: SketchMode; labelKey: string; icon: str
   { mode: 'opening', labelKey: 'hub_sketch_mode_opening', icon: '▯' },
   { mode: 'finish', labelKey: 'hub_sketch_mode_finish', icon: '◧' },
   { mode: 'cabinet', labelKey: 'hub_sketch_mode_cabinet', icon: '▣' },
-  { mode: 'light', labelKey: 'hub_sketch_mode_light', icon: '✦' },
+  { mode: 'light', labelKey: 'hub_sketch_mode_electrical', icon: '✦' },
   { mode: 'measure', labelKey: 'hub_sketch_mode_measure', icon: '⌖' },
   { mode: 'markup', labelKey: 'hub_sketch_mode_markup', icon: '✎' },
 ]
@@ -453,8 +476,24 @@ function sanitizeRoomTemplates(value: unknown): SketchRoomTemplate[] {
     .slice(0, CUSTOM_TEMPLATE_LIMIT)
 }
 
-type Tool = 'wall' | 'door' | 'window' | 'measure' | 'cabinet' | 'outlet' | 'switch'
+// ELEMENTS-INFRA-26: инструменты режима «Электрика» расширены подводками (сантех) и колоннами/коробами.
+type Tool =
+  | 'wall'
+  | 'door'
+  | 'window'
+  | 'measure'
+  | 'cabinet'
+  | 'outlet'
+  | 'switch'
+  | 'pipe-water-h'
+  | 'pipe-water-v'
+  | 'pipe-gas'
+  | 'column-round'
+  | 'column-square'
+  | 'box'
 type OpeningTool = Extract<Tool, 'door' | 'window'>
+type PipeTool = Extract<Tool, 'pipe-water-h' | 'pipe-water-v' | 'pipe-gas'>
+type ObstacleTool = Extract<Tool, 'column-round' | 'column-square' | 'box'>
 type CabinetBuilderKind = 'base' | 'sink' | 'drawers' | 'wall' | 'vanity' | 'filler' | 'appliance'
 type CabinetAppliancePrefix = 'DW' | 'RANGE' | 'REF' | 'HOOD'
 
@@ -725,6 +764,10 @@ type PlanPlacedItem = {
   filler: boolean
   layer?: 'base' | 'wall'
   electrical?: 'outlet' | 'switch'
+  // ELEMENTS-INFRA-26: инженерная разметка на плане.
+  pipe?: SketchPipeKind
+  columnShape?: 'round' | 'square' | 'box'
+  selected?: boolean
 }
 
 function readableSvgAngle(dx: number, dy: number): number {
@@ -1086,6 +1129,13 @@ function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlace
       if (!Number.isFinite(widthIn) || !Number.isFinite(depthIn) || widthIn <= 0 || depthIn <= 0) return null
       const axesAngle = Math.atan2(-Math.sin(item.rotationY), Math.cos(item.rotationY)) * 180 / Math.PI
       const cabinet = isCabinetPlacedItem(item)
+      // ELEMENTS-INFRA-26: подводки/колонны/короба получают отдельные плановые символы.
+      const pipe = isPipePlacedCatalogItem(item) ? item.pipe : undefined
+      const columnShape: 'round' | 'square' | 'box' | undefined = isColumnPlacedCatalogItem(item)
+        ? (item.column === 'round' ? 'round' : 'square')
+        : isBoxPlacedCatalogItem(item)
+          ? 'box'
+          : undefined
       return {
         item,
         x: (item.xFt / cellFt) * CELL_PX,
@@ -1101,9 +1151,33 @@ function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlace
         cabinetCode: cabinet ? cabinetDisplayCode(item) : '',
         filler: item.filler === true,
         layer: item.layer,
+        pipe,
+        columnShape,
       }
     })
     .filter((item): item is PlanPlacedItem => !!item)
+}
+
+// ELEMENTS-INFRA-26: заблокированные интервалы стены от напольных преград (колонны/короба) —
+// передаются в layoutCabinetRunOnWall, чтобы шкаф не проходил сквозь колонну. Единый источник:
+// elements.columnObstacleIntervalOnWall (чистая геометрия, покрыта юнит-тестами).
+function wallObstacleIntervalsFor(model: SketchModel, wall: { a: Pt; b: Pt }): InfraObstacleInterval[] {
+  const cellFt = modelCellFt(model)
+  const wallWorld = {
+    ax: wall.a.x * cellFt,
+    az: wall.a.y * cellFt,
+    bx: wall.b.x * cellFt,
+    bz: wall.b.y * cellFt,
+  }
+  const out: InfraObstacleInterval[] = []
+  sanitizePlacedCatalogItems(model.placedItems).forEach((item) => {
+    if (!isObstaclePlacedCatalogItem(item)) return
+    const widthFt = (Number(item.widthIn) || 12) / 12
+    const depthFt = (Number(item.depthIn) || 12) / 12
+    const interval = columnObstacleIntervalOnWall(wallWorld, { xFt: item.xFt, zFt: item.zFt, widthFt, depthFt, rotationY: item.rotationY })
+    if (interval) out.push(interval)
+  })
+  return out
 }
 
 function sanitizeName(name: string): string {
@@ -1390,6 +1464,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [history, setHistory] = useState<SketchHistory<SketchModel>>(() => emptySketchHistory())
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
   const [tool, setTool] = useState<Tool>('wall')
+  // ELEMENTS-INFRA-26: одинарная/двойная розетка/выключатель (общий переключатель варианта электрики).
+  const [electricalVariant, setElectricalVariant] = useState<SketchElectricalVariant>('single')
   const [activeMode, setActiveMode] = useState<SketchMode>('wall')
   const [contextSheetOpen, setContextSheetOpen] = useState(false)
   // SKETCH-CANVAS-12: контекст-панель по умолчанию свёрнута — канвасу сразу максимум ширины.
@@ -1439,6 +1515,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [dragNode, setDragNode] = useState<DragNode | null>(null)
   const [selectedNode, setSelectedNode] = useState<DragNode | null>(null)
   const [dragPlacedId, setDragPlacedId] = useState<string | null>(null)
+  // ELEMENTS-INFRA-26: выбранный напольный объект (колонна/короб) для ввода размеров числом.
+  const [selectedPlacedId, setSelectedPlacedId] = useState<string | null>(null)
   const [selectedOpeningIndex, setSelectedOpeningIndex] = useState<number | null>(null)
   const [openingOffsetEdit, setOpeningOffsetEdit] = useState<OpeningOffsetEdit | null>(null)
   const [openingSnapGuide, setOpeningSnapGuide] = useState<OpeningPlacementMagnet | null>(null)
@@ -1544,7 +1622,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     return groups
   }, [cabinetWallOptions, model, t])
   const cabinetLayoutPreview = useMemo<CabinetLayoutResult | null>(
-    () => selectedCabinetWall ? layoutCabinetRunOnWall(model, selectedCabinetWall, cabinetCodes) : null,
+    () => selectedCabinetWall ? layoutCabinetRunOnWall(model, selectedCabinetWall, cabinetCodes, undefined, wallObstacleIntervalsFor(model, selectedCabinetWall)) : null,
     [model, selectedCabinetWall, cabinetCodes],
   )
   const cabinetGalleryQuery = cabinetGallerySearch.trim().toLocaleLowerCase()
@@ -2452,7 +2530,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     return { ...draft, t: placement.t }
   }
 
-  const electricalPlacedAt = (kind: 'outlet' | 'switch', c: number, s: number, rawT: number): SketchPlacedCatalogItem | null => {
+  // ELEMENTS-INFRA-26: общий расчёт точки/поворота маркера на стене (электрика и подводки).
+  const wallMarkerBaseAt = (c: number, s: number, rawT: number) => {
     const seg = eachSegment(model).find((candidate) => candidate.c === c && candidate.s === s)
     if (!seg) return null
     const cellFt = modelCellFt(model)
@@ -2461,24 +2540,90 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const az = seg.a.y * cellFt
     const bx = seg.b.x * cellFt
     const bz = seg.b.y * cellFt
-    const xFt = ax + (bx - ax) * tValue
-    const zFt = az + (bz - az) * tValue
+    return {
+      xFt: ax + (bx - ax) * tValue,
+      zFt: az + (bz - az) * tValue,
+      rotationY: -Math.atan2(bz - az, bx - ax),
+      tValue,
+    }
+  }
+
+  const electricalPlacedAt = (kind: 'outlet' | 'switch', variant: SketchElectricalVariant, c: number, s: number, rawT: number): SketchPlacedCatalogItem | null => {
+    const base = wallMarkerBaseAt(c, s, rawT)
+    if (!base) return null
     const markerKind = kind === 'outlet' ? SKETCH_CATALOG_KIND_OUTLET : SKETCH_CATALOG_KIND_SWITCH
+    const dims = electricalDims(variant)
+    const label = t(kind === 'outlet' ? 'hub_sketch_outlet' : 'hub_sketch_switch')
     return {
       id: makeId(kind),
       catalogItemId: kind === 'outlet' ? BUILTIN_OUTLET_CATALOG_ID : BUILTIN_SWITCH_CATALOG_ID,
       category: 'other',
       kind: markerKind,
-      name: t(kind === 'outlet' ? 'hub_sketch_outlet' : 'hub_sketch_switch'),
+      name: variant === 'double' ? `${label} ×2` : label,
       model: markerKind,
-      xFt,
-      yFt: kind === 'outlet' ? 1.5 : 4,
-      zFt,
-      rotationY: -Math.atan2(bz - az, bx - ax),
+      variant,
+      xFt: base.xFt,
+      yFt: electricalDefaultCenterIn(kind) / 12,
+      zFt: base.zFt,
+      rotationY: base.rotationY,
       surface: 'wall',
       c,
       s,
-      t: tValue,
+      t: base.tValue,
+      widthIn: dims.widthIn,
+      depthIn: dims.depthIn,
+      heightIn: dims.heightIn,
+    }
+  }
+
+  // ELEMENTS-INFRA-26: сантех-подводка на стене (вода гориз./верт., газ) — та же механика, что электрика.
+  const pipePlacedAt = (pipe: SketchPipeKind, c: number, s: number, rawT: number): SketchPlacedCatalogItem | null => {
+    const base = wallMarkerBaseAt(c, s, rawT)
+    if (!base) return null
+    const dims = pipeDims(pipe)
+    return {
+      id: makeId('pipe'),
+      catalogItemId: BUILTIN_PIPE_CATALOG_ID,
+      category: 'other',
+      kind: SKETCH_CATALOG_KIND_PIPE,
+      name: t(pipe === 'gas' ? 'hub_sketch_pipe_gas' : pipe === 'water-v' ? 'hub_sketch_pipe_water_v' : 'hub_sketch_pipe_water_h'),
+      model: SKETCH_CATALOG_KIND_PIPE,
+      pipe,
+      xFt: base.xFt,
+      yFt: pipeDefaultCenterIn(pipe) / 12,
+      zFt: base.zFt,
+      rotationY: base.rotationY,
+      surface: 'wall',
+      c,
+      s,
+      t: base.tValue,
+      widthIn: dims.widthIn,
+      depthIn: dims.depthIn,
+      heightIn: dims.heightIn,
+    }
+  }
+
+  // ELEMENTS-INFRA-26: колонна (круг/квадрат) или короб на ПОЛУ (плане). Режет кабинетный ряд + виден в 3D.
+  const obstaclePlacedAt = (kind: ObstacleTool, point: { x: number; z: number }): SketchPlacedCatalogItem => {
+    const isBox = kind === 'box'
+    const shape: SketchColumnShape = kind === 'column-round' ? 'round' : 'square'
+    const dims = isBox ? { widthIn: 24, depthIn: 18, heightIn: 36 } : columnDims(shape)
+    return {
+      id: makeId(isBox ? 'box' : 'column'),
+      catalogItemId: isBox ? BUILTIN_BOX_CATALOG_ID : BUILTIN_COLUMN_CATALOG_ID,
+      category: 'other',
+      kind: isBox ? SKETCH_CATALOG_KIND_BOX : SKETCH_CATALOG_KIND_COLUMN,
+      name: t(isBox ? 'hub_sketch_box' : shape === 'round' ? 'hub_sketch_column_round' : 'hub_sketch_column_square'),
+      model: isBox ? SKETCH_CATALOG_KIND_BOX : SKETCH_CATALOG_KIND_COLUMN,
+      column: isBox ? undefined : shape,
+      xFt: point.x,
+      yFt: floorObjectCenterIn(dims.heightIn) / 12,
+      zFt: point.z,
+      rotationY: 0,
+      surface: 'floor',
+      widthIn: dims.widthIn,
+      depthIn: dims.depthIn,
+      heightIn: dims.heightIn,
     }
   }
 
@@ -3524,6 +3669,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedOpeningIndex(null)
     setSelectedMeasurementIndex(null)
     setMeasurementDraft(null)
+    // ELEMENTS-INFRA-26: выбор колонны/короба открывает панель размеров в режиме «Электрика».
+    setSelectedPlacedId(isObstaclePlacedCatalogItem(item) ? item.id : null)
     setActiveMode(isCabinetPlacedItem(item) ? 'cabinet' : 'light')
     edgeAutoPanPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
     updateEdgeAutoPan(e.clientX, e.clientY)
@@ -3587,12 +3734,19 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const endDragPlaced = () => {
     if (dragPlacedIdRef.current === null) return
+    const draggedId = dragPlacedIdRef.current
     stopEdgeAutoPan()
     dragPlacedIdRef.current = null
     setDragPlacedId(null)
     setSmartGuides([])
     setSketchMaterials(null)
     setSketchMaterialsAdded(null)
+    // ELEMENTS-INFRA-26: перенос колонны/короба заново раскраивает кабинетные ряды в обход преграды.
+    const dragged = sanitizePlacedCatalogItems(modelRef.current.placedItems).find((item) => item.id === draggedId)
+    if (dragged && isObstaclePlacedCatalogItem(dragged)) {
+      const recut = recutCabinetWalls(modelRef.current)
+      if (recut !== modelRef.current) commit(recut)
+    }
   }
 
   const applyCanvasActionAt = (clientX: number, clientY: number): boolean => {
@@ -3639,12 +3793,37 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         setError('hub_sketch_no_segment')
         return true
       }
-      const placed = electricalPlacedAt(tool, near.c, near.s, near.t)
+      const placed = electricalPlacedAt(tool, electricalVariant, near.c, near.s, near.t)
       if (!placed) {
         setError('hub_sketch_no_segment')
         return true
       }
       commit({ ...model, placedItems: [...sanitizePlacedCatalogItems(model.placedItems), placed] })
+      return true
+    }
+
+    // ELEMENTS-INFRA-26: подводки (вода/газ) — на стену, как электрика.
+    if (tool === 'pipe-water-h' || tool === 'pipe-water-v' || tool === 'pipe-gas') {
+      const near = nearestSegment(model, raw)
+      if (!near || near.d > SEG_HIT) {
+        setError('hub_sketch_no_segment')
+        return true
+      }
+      const pipeKind: SketchPipeKind = tool === 'pipe-gas' ? 'gas' : tool === 'pipe-water-v' ? 'water-v' : 'water-h'
+      const placed = pipePlacedAt(pipeKind, near.c, near.s, near.t)
+      if (!placed) {
+        setError('hub_sketch_no_segment')
+        return true
+      }
+      commit({ ...model, placedItems: [...sanitizePlacedCatalogItems(model.placedItems), placed] })
+      return true
+    }
+
+    // ELEMENTS-INFRA-26: колонна/короб — на пол (план), режут кабинетный ряд.
+    if (tool === 'column-round' || tool === 'column-square' || tool === 'box') {
+      const placed = obstaclePlacedAt(tool, { x: raw.x, z: raw.y })
+      commit(recutCabinetWalls({ ...model, placedItems: [...sanitizePlacedCatalogItems(model.placedItems), placed] }))
+      setSelectedPlacedId(placed.id)
       return true
     }
 
@@ -4002,7 +4181,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setError('hub_sketch_no_segment')
       return
     }
-    const layout = layoutCabinetRunOnWall(model, selectedCabinetWall, cabinetCodes)
+    const layout = layoutCabinetRunOnWall(model, selectedCabinetWall, cabinetCodes, undefined, wallObstacleIntervalsFor(model, selectedCabinetWall))
     if (layout.items.length === 0) {
       setError(layout.invalidCodes.length > 0 ? null : 'hub_sketch_cabinet_empty')
       setStatus(layout.invalidCodes.length > 0 ? 'hub_sketch_cabinet_invalid_help' : null)
@@ -4037,10 +4216,77 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setStatus(null)
       return
     }
-    const layout = layoutCabinetRunOnWall(model, wall, codes.join(' '))
+    const layout = layoutCabinetRunOnWall(model, wall, codes.join(' '), undefined, wallObstacleIntervalsFor(model, wall))
     commit({ ...model, placedItems: [...kept, ...layout.items] })
     setStatus(layout.overflow ? 'hub_sketch_cabinet_overflow' : layout.smallFiller ? 'hub_sketch_cabinet_small_filler' : 'hub_sketch_cabinet_placed')
   }, [commit, model])
+
+  // ELEMENTS-INFRA-26: пересобрать ВСЕ кабинетные ряды с учётом текущих преград (колонн/коробов).
+  // Вызывается после добавления/переноса/изменения колонны — ряд заново раскладывается в обход
+  // преграды (шкаф не проходит сквозь колонну). Коды рядов берутся из уже стоящих шкафов.
+  const recutCabinetWalls = useCallback((baseModel: SketchModel): SketchModel => {
+    let placed = sanitizePlacedCatalogItems(baseModel.placedItems)
+    const cabinetWallIds = Array.from(
+      new Set(placed.filter((item) => isCabinetPlacedItem(item)).map((item) => item.wallId).filter((id): id is string => !!id)),
+    )
+    if (cabinetWallIds.length === 0) return baseModel
+    cabinetWallIds.forEach((wallId) => {
+      const wall = cabinetWallOptions.find((seg) => sketchWallKey(seg.c, seg.s) === wallId)
+      if (!wall) return
+      const runItems = placed
+        .filter((item) => isCabinetPlacedItem(item) && item.wallId === wallId && (!item.filler || item.manualFiller === true))
+        .sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
+      const codes = runItems.map((item) => cabinetDisplayCode(item)).filter(Boolean)
+      if (codes.length === 0) return
+      const layout = layoutCabinetRunOnWall(baseModel, wall, codes.join(' '), undefined, wallObstacleIntervalsFor(baseModel, wall))
+      placed = [...placed.filter((item) => !(isCabinetPlacedItem(item) && item.wallId === wallId)), ...layout.items]
+    })
+    return { ...baseModel, placedItems: placed }
+  }, [cabinetWallOptions])
+
+  // ELEMENTS-INFRA-26: выбранная напольная преграда (колонна/короб) — для ввода размеров числом.
+  const selectedObstacle = useMemo(() => {
+    if (!selectedPlacedId) return null
+    const item = sanitizePlacedCatalogItems(model.placedItems).find((candidate) => candidate.id === selectedPlacedId)
+    return item && isObstaclePlacedCatalogItem(item) ? item : null
+  }, [model, selectedPlacedId])
+
+  const updateSelectedObstacleDims = useCallback((patch: { widthIn?: number; depthIn?: number; heightIn?: number }) => {
+    if (!selectedObstacle) return
+    const round = isColumnPlacedCatalogItem(selectedObstacle) && selectedObstacle.column === 'round'
+    const clampDim = (value: number | undefined, fallback: number) => {
+      const n = Number.isFinite(value) ? Number(value) : fallback
+      return Math.max(1, Math.min(600, Math.round(n)))
+    }
+    const items = sanitizePlacedCatalogItems(model.placedItems).map((item) => {
+      if (item.id !== selectedObstacle.id) return item
+      let widthIn = clampDim(patch.widthIn ?? item.widthIn, 12)
+      let depthIn = clampDim(patch.depthIn ?? item.depthIn, 12)
+      if (round) {
+        // круглая колонна — диаметр: ширина = глубина.
+        if (patch.widthIn !== undefined) depthIn = widthIn
+        else if (patch.depthIn !== undefined) widthIn = depthIn
+      }
+      const heightIn = clampDim(patch.heightIn ?? item.heightIn, 96)
+      return { ...item, widthIn, depthIn, heightIn, yFt: floorObjectCenterIn(heightIn) / 12 }
+    })
+    commit(recutCabinetWalls({ ...model, placedItems: items }))
+  }, [commit, model, recutCabinetWalls, selectedObstacle])
+
+  const removeSelectedObstacle = useCallback(() => {
+    if (!selectedObstacle) return
+    const items = sanitizePlacedCatalogItems(model.placedItems).filter((item) => item.id !== selectedObstacle.id)
+    setSelectedPlacedId(null)
+    commit(recutCabinetWalls({ ...model, placedItems: items }))
+  }, [commit, model, recutCabinetWalls, selectedObstacle])
+
+  // ELEMENTS-INFRA-26: выбрать инструмент режима «Электрика» (электрика/подводки/колонны) на 2D-плане.
+  const selectInfraTool = useCallback((next: Tool) => {
+    setViewMode('2d')
+    setTool(next)
+    setMeasurementDraft(null)
+    setSelectedMeasurementIndex(null)
+  }, [])
 
   const placeCabinetEntry = useCallback((entry: CabinetCatalogEntry, widthIn?: number) => {
     if (!selectedCabinetWall) {
@@ -4113,7 +4359,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     if (!selectedCabinetWall) return null
     const codes = cabinetRunItems.map((item) => cabinetDisplayCode(item)).filter(Boolean)
     if (codes.length === 0) return null
-    return layoutCabinetRunOnWall(model, selectedCabinetWall, codes.join(' '))
+    return layoutCabinetRunOnWall(model, selectedCabinetWall, codes.join(' '), undefined, wallObstacleIntervalsFor(model, selectedCabinetWall))
   }, [model, selectedCabinetWall, cabinetRunItems])
 
   // CABINETS-PLACE-13: Esc/Delete для поповера шкафа на плане (как на развёртке).
@@ -5373,10 +5619,23 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         )}
 
         {activeMode === 'light' && (
-          <div className="hub-sketch-context-section">
-            <button type="button" className="btn small" onClick={() => setViewMode('3d')}>
-              {t('hub_sketch_view_3d')}
-            </button>
+          <div className="hub-sketch-context-section hub-sketch-electrical-panel">
+            {/* ELEMENTS-INFRA-26: объединённый режим «Электрика» — электрика + сантех-подводки + колонны/короба.
+                Прежние типы света остаются доступны в 3D-виде (кнопка ниже + подсказка). */}
+            <div className="hub-sketch-context-subhead">{t('hub_sketch_material_section_electrical')}</div>
+            <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_electrical_variant')}>
+              {(['single', 'double'] as const).map((variant) => (
+                <button
+                  key={variant}
+                  type="button"
+                  className={electricalVariant === variant ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={electricalVariant === variant}
+                  onClick={() => setElectricalVariant(variant)}
+                >
+                  {t(variant === 'single' ? 'hub_sketch_variant_single' : 'hub_sketch_variant_double')}
+                </button>
+              ))}
+            </div>
             <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_material_section_electrical')}>
               {(['outlet', 'switch'] as const).map((kind) => (
                 <button
@@ -5384,17 +5643,104 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                   type="button"
                   className={tool === kind ? 'btn small' : 'btn ghost small'}
                   aria-pressed={tool === kind}
-                  onClick={() => {
-                    setViewMode('2d')
-                    setTool(kind)
-                    setMeasurementDraft(null)
-                    setSelectedMeasurementIndex(null)
-                  }}
+                  onClick={() => selectInfraTool(kind)}
                 >
                   {t(kind === 'outlet' ? 'hub_sketch_outlet' : 'hub_sketch_switch')}
                 </button>
               ))}
             </div>
+
+            <div className="hub-sketch-context-subhead">{t('hub_sketch_plumbing_group')}</div>
+            <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_plumbing_group')}>
+              {([
+                ['pipe-water-h', 'hub_sketch_pipe_water_h'],
+                ['pipe-water-v', 'hub_sketch_pipe_water_v'],
+                ['pipe-gas', 'hub_sketch_pipe_gas'],
+              ] as const).map(([toolKind, key]) => (
+                <button
+                  key={toolKind}
+                  type="button"
+                  className={tool === toolKind ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={tool === toolKind}
+                  onClick={() => selectInfraTool(toolKind)}
+                >
+                  {t(key)}
+                </button>
+              ))}
+            </div>
+
+            <div className="hub-sketch-context-subhead">{t('hub_sketch_columns_group')}</div>
+            <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_columns_group')}>
+              {([
+                ['column-round', 'hub_sketch_column_round'],
+                ['column-square', 'hub_sketch_column_square'],
+                ['box', 'hub_sketch_box'],
+              ] as const).map(([toolKind, key]) => (
+                <button
+                  key={toolKind}
+                  type="button"
+                  className={tool === toolKind ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={tool === toolKind}
+                  onClick={() => selectInfraTool(toolKind)}
+                >
+                  {t(key)}
+                </button>
+              ))}
+            </div>
+
+            {selectedObstacle && (
+              <div className="hub-sketch-obstacle-dims">
+                <div className="hub-sketch-context-subhead">{t('hub_sketch_object_size')}</div>
+                <div className="hub-sketch-obstacle-dims-row">
+                  <label>
+                    {t('hub_sketch_object_width')}
+                    <input
+                      key={`${selectedObstacle.id}-w`}
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      defaultValue={Math.round(Number(selectedObstacle.widthIn) || 12)}
+                      onKeyDown={(event) => { if (event.key === 'Enter') (event.target as HTMLInputElement).blur() }}
+                      onBlur={(event) => updateSelectedObstacleDims({ widthIn: Number(event.target.value) })}
+                    />
+                  </label>
+                  {!(isColumnPlacedCatalogItem(selectedObstacle) && selectedObstacle.column === 'round') && (
+                    <label>
+                      {t('hub_sketch_object_depth')}
+                      <input
+                        key={`${selectedObstacle.id}-d`}
+                        type="number"
+                        min={1}
+                        inputMode="numeric"
+                        defaultValue={Math.round(Number(selectedObstacle.depthIn) || 12)}
+                        onKeyDown={(event) => { if (event.key === 'Enter') (event.target as HTMLInputElement).blur() }}
+                        onBlur={(event) => updateSelectedObstacleDims({ depthIn: Number(event.target.value) })}
+                      />
+                    </label>
+                  )}
+                  <label>
+                    {t('hub_sketch_object_height')}
+                    <input
+                      key={`${selectedObstacle.id}-h`}
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      defaultValue={Math.round(Number(selectedObstacle.heightIn) || 96)}
+                      onKeyDown={(event) => { if (event.key === 'Enter') (event.target as HTMLInputElement).blur() }}
+                      onBlur={(event) => updateSelectedObstacleDims({ heightIn: Number(event.target.value) })}
+                    />
+                  </label>
+                </div>
+                <button type="button" className="btn ghost small" onClick={removeSelectedObstacle}>
+                  {t('hub_sketch_object_remove')}
+                </button>
+              </div>
+            )}
+
+            <p className="hub-sketch-hint">{t('hub_sketch_electrical_lights_note')}</p>
+            <button type="button" className="btn small" onClick={() => setViewMode('3d')}>
+              {t('hub_sketch_view_3d')}
+            </button>
           </div>
         )}
 
@@ -6318,7 +6664,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           )}
 
           {planItems.map((entry) => {
-            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.electrical ? ` hub-sketch-plan-electrical hub-sketch-plan-${entry.electrical}` : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}${dragPlacedId === entry.item.id ? ' hub-sketch-plan-item-dragging' : ''}`
+            const infraSelected = selectedPlacedId === entry.item.id
+            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.electrical ? ` hub-sketch-plan-electrical hub-sketch-plan-${entry.electrical}` : ''}${entry.pipe ? ` hub-sketch-plan-pipe hub-sketch-plan-pipe-${entry.pipe}` : ''}${entry.columnShape ? ` hub-sketch-plan-obstacle hub-sketch-plan-obstacle-${entry.columnShape}` : ''}${infraSelected ? ' hub-sketch-plan-item-selected' : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}${dragPlacedId === entry.item.id ? ' hub-sketch-plan-item-dragging' : ''}`
             const labelFontSize = Math.max(5 * screenWorldPx, Math.min(11 * screenWorldPx, entry.width / Math.max(4, entry.cabinetCode.length * 0.6)))
             return (
               <g
@@ -6350,6 +6697,25 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                       <line className="hub-sketch-plan-electrical-mark" x1={0} y1={-entry.depth * 0.24} x2={entry.width * 0.12} y2={entry.depth * 0.22} />
                     )}
                   </>
+                ) : entry.pipe ? (
+                  // ELEMENTS-INFRA-26: подводка на плане — схематичный штуцер (кружок трубы + подпись G у газа).
+                  <>
+                    <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(3 * screenWorldPx, entry.width * 0.2)} />
+                    <circle className="hub-sketch-plan-pipe-mark" cx={0} cy={0} r={Math.max(1.4 * screenWorldPx, Math.min(entry.width, entry.depth) * 0.3)} />
+                    {entry.pipe === 'gas' && (
+                      <text className="hub-sketch-plan-pipe-label" x={0} y={0} textAnchor="middle" dominantBaseline="central" style={{ fontSize: Math.max(5 * screenWorldPx, entry.width * 0.5) }}>G</text>
+                    )}
+                  </>
+                ) : entry.columnShape ? (
+                  // ELEMENTS-INFRA-26: колонна круглая — круг; квадратная/короб — прямоугольник с диагоналями.
+                  entry.columnShape === 'round' ? (
+                    <ellipse cx={0} cy={0} rx={entry.width / 2} ry={entry.depth / 2} />
+                  ) : (
+                    <>
+                      <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(3 * screenWorldPx, entry.width * 0.06)} />
+                      <path className="hub-sketch-plan-obstacle-mark" d={`M ${-entry.width / 2} ${-entry.depth / 2} L ${entry.width / 2} ${entry.depth / 2} M ${entry.width / 2} ${-entry.depth / 2} L ${-entry.width / 2} ${entry.depth / 2}`} />
+                    </>
+                  )
                 ) : entry.toilet ? (
                   <>
                     <rect

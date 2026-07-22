@@ -3,7 +3,11 @@ import { normalizeTileSurface, type Contour, type SketchTileFinish } from './ske
 import { formatInches } from './inches'
 
 export type CatalogPlacementSurface = 'floor' | 'wall' | 'ceiling'
-export type SketchPlacedCatalogKind = 'TOILET' | 'SHOWER_PAN' | 'OUTLET' | 'SWITCH'
+// ELEMENTS-INFRA-26: инженерка-разметка — новые классы placed-объектов (подводки/колонны/короба).
+export type SketchPlacedCatalogKind = 'TOILET' | 'SHOWER_PAN' | 'OUTLET' | 'SWITCH' | 'PIPE' | 'COLUMN' | 'BOX'
+export type SketchElectricalVariant = 'single' | 'double'
+export type SketchPipeKind = 'water-h' | 'water-v' | 'gas'
+export type SketchColumnShape = 'round' | 'square'
 export type SketchPlacedCabinetLayer = 'base' | 'wall'
 export type SketchShowerPanShape = 'rect' | 'neo-angle'
 
@@ -33,6 +37,12 @@ export type SketchPlacedCatalogItem = {
   // авто-филлера (≤3" зазор, добавляется расчётом): ручной сохраняется в код-строке ряда и
   // не срезается при пересборке. Опционально; старый эскиз без поля грузится штатно.
   manualFiller?: boolean
+  // ELEMENTS-INFRA-26: инженерка-разметка. variant — одинарная/двойная (розетка/выключатель);
+  // pipe — тип подводки (вода гориз./верт., газ); column — форма колонны (круг/квадрат).
+  // Все опциональны и проходят через sanitizePlacedCatalogItems (allowlist), version:1 цел.
+  variant?: SketchElectricalVariant
+  pipe?: SketchPipeKind
+  column?: SketchColumnShape
   panel?: boolean
   showerPanShape?: SketchShowerPanShape
   panFinish?: SketchTileFinish
@@ -103,11 +113,18 @@ export const SKETCH_CATALOG_KIND_TOILET: SketchPlacedCatalogKind = 'TOILET'
 export const SKETCH_CATALOG_KIND_SHOWER_PAN: SketchPlacedCatalogKind = 'SHOWER_PAN'
 export const SKETCH_CATALOG_KIND_OUTLET: SketchPlacedCatalogKind = 'OUTLET'
 export const SKETCH_CATALOG_KIND_SWITCH: SketchPlacedCatalogKind = 'SWITCH'
+export const SKETCH_CATALOG_KIND_PIPE: SketchPlacedCatalogKind = 'PIPE'
+export const SKETCH_CATALOG_KIND_COLUMN: SketchPlacedCatalogKind = 'COLUMN'
+export const SKETCH_CATALOG_KIND_BOX: SketchPlacedCatalogKind = 'BOX'
 export const BUILTIN_TOILET_CATALOG_ID = 'builtin-toilet'
 export const BUILTIN_SHOWER_PAN_RECT_CATALOG_ID = 'builtin-shower-pan-60x32'
 export const BUILTIN_SHOWER_PAN_NEO_CATALOG_ID = 'builtin-shower-pan-neo-36'
 export const BUILTIN_OUTLET_CATALOG_ID = 'builtin-outlet'
 export const BUILTIN_SWITCH_CATALOG_ID = 'builtin-switch'
+// ELEMENTS-INFRA-26: builtin-каталог для новых инженерных классов (снимок размеров, не в смете).
+export const BUILTIN_PIPE_CATALOG_ID = 'builtin-pipe'
+export const BUILTIN_COLUMN_CATALOG_ID = 'builtin-column'
+export const BUILTIN_BOX_CATALOG_ID = 'builtin-box'
 export const BUILTIN_TOILET_CATALOG_ITEM: CatalogItem = {
   id: BUILTIN_TOILET_CATALOG_ID,
   org_id: '',
@@ -342,7 +359,23 @@ function cleanPlacedKind(value: unknown): SketchPlacedCatalogKind | undefined {
   if (value === SKETCH_CATALOG_KIND_SHOWER_PAN) return SKETCH_CATALOG_KIND_SHOWER_PAN
   if (value === SKETCH_CATALOG_KIND_OUTLET) return SKETCH_CATALOG_KIND_OUTLET
   if (value === SKETCH_CATALOG_KIND_SWITCH) return SKETCH_CATALOG_KIND_SWITCH
+  if (value === SKETCH_CATALOG_KIND_PIPE) return SKETCH_CATALOG_KIND_PIPE
+  if (value === SKETCH_CATALOG_KIND_COLUMN) return SKETCH_CATALOG_KIND_COLUMN
+  if (value === SKETCH_CATALOG_KIND_BOX) return SKETCH_CATALOG_KIND_BOX
   return undefined
+}
+
+// ELEMENTS-INFRA-26: узкие валидаторы новых инженерных полей (allowlist round-trip).
+function cleanElectricalVariant(value: unknown): SketchElectricalVariant | undefined {
+  return value === 'single' || value === 'double' ? value : undefined
+}
+
+function cleanPipeKind(value: unknown): SketchPipeKind | undefined {
+  return value === 'water-h' || value === 'water-v' || value === 'gas' ? value : undefined
+}
+
+function cleanColumnShape(value: unknown): SketchColumnShape | undefined {
+  return value === 'round' || value === 'square' ? value : undefined
 }
 
 function cleanPlacedCabinetLayer(value: unknown): SketchPlacedCabinetLayer | undefined {
@@ -428,6 +461,35 @@ export function isSwitchPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'k
 
 export function isElectricalPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
   return isOutletPlacedCatalogItem(item) || isSwitchPlacedCatalogItem(item)
+}
+
+// ELEMENTS-INFRA-26: предикаты новых инженерных классов.
+export function isPipePlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
+  return item.kind === SKETCH_CATALOG_KIND_PIPE
+    || item.catalogItemId === BUILTIN_PIPE_CATALOG_ID
+    || String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_PIPE
+}
+
+export function isColumnPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
+  return item.kind === SKETCH_CATALOG_KIND_COLUMN
+    || item.catalogItemId === BUILTIN_COLUMN_CATALOG_ID
+    || String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_COLUMN
+}
+
+export function isBoxPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
+  return item.kind === SKETCH_CATALOG_KIND_BOX
+    || item.catalogItemId === BUILTIN_BOX_CATALOG_ID
+    || String(item.model ?? '').toUpperCase() === SKETCH_CATALOG_KIND_BOX
+}
+
+// Напольная преграда (колонна/короб): режет кабинетный ряд, видна на плане и в 3D.
+export function isObstaclePlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
+  return isColumnPlacedCatalogItem(item) || isBoxPlacedCatalogItem(item)
+}
+
+// Настенный маркер разметки (электрика/подводка): в смету/материалы НЕ идёт, в развёртку — да.
+export function isInfraMarkerPlacedCatalogItem(item: Pick<SketchPlacedCatalogItem, 'kind' | 'model' | 'catalogItemId'>): boolean {
+  return isElectricalPlacedCatalogItem(item) || isPipePlacedCatalogItem(item)
 }
 
 export function showerPanShapeFromCatalogItem(item: Pick<CatalogItem, 'id' | 'model'>): SketchShowerPanShape {
@@ -522,6 +584,9 @@ function isBuiltinSnapshotPlacedItem(item: Pick<SketchPlacedCatalogItem, 'catalo
     || item.catalogItemId === BUILTIN_SHOWER_PAN_NEO_CATALOG_ID
     || item.catalogItemId === BUILTIN_OUTLET_CATALOG_ID
     || item.catalogItemId === BUILTIN_SWITCH_CATALOG_ID
+    || item.catalogItemId === BUILTIN_PIPE_CATALOG_ID
+    || item.catalogItemId === BUILTIN_COLUMN_CATALOG_ID
+    || item.catalogItemId === BUILTIN_BOX_CATALOG_ID
     || item.catalogItemId.startsWith('builtin-cabinet:')
 }
 
@@ -604,6 +669,10 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       const layer = cleanPlacedCabinetLayer(item.layer)
       const hinge = cleanHinge(item.hinge)
       const showerPanShape = cleanShowerPanShape(item.showerPanShape ?? item.shower_pan_shape)
+      // ELEMENTS-INFRA-26: инженерные подполя (allowlist — иначе срежутся при save/reload).
+      const variant = cleanElectricalVariant(item.variant)
+      const pipe = cleanPipeKind(item.pipe)
+      const column = cleanColumnShape(item.column)
       const layoutWarning = cleanLayoutWarning(item.layoutWarning)
       const photoPath = cleanString(item.photoPath, 600)
       const specs = cleanSpecs(item.specs)
@@ -617,6 +686,9 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       if (layer) placed.layer = layer
       if (hinge) placed.hinge = hinge
       if (showerPanShape) placed.showerPanShape = showerPanShape
+      if (variant) placed.variant = variant
+      if (pipe) placed.pipe = pipe
+      if (column) placed.column = column
       if (item.filler === true) placed.filler = true
       // CABINETS-CORNER-FILLERS-24: сохраняем маркер ручного филлера в allowlist, иначе он
       // срежется при save/reload и филлер потеряет позицию в ряду при следующей пересборке.
