@@ -5611,11 +5611,11 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-cabinet-gallery-pick {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) auto;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   width: 100%;
-  min-height: 72px;
+  min-height: 84px;
   padding: 8px;
   border: 0;
   background: transparent;
@@ -5682,6 +5682,71 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-size: 11px;
   font-weight: 900;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+/* CABINET-FRONTS-25: карточка галереи рисует тот же shaker-фронт, что и развёртка — крупно,
+   крашеный (рамка+филёнка+ручки+toe-kick/стекло). Один рендер: см. cabinetFront.tsx. */
+.hub-sketch-cabinet-front {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  background: #f4f6f9;
+}
+.hub-sketch-cabinet-front-group .hub-sketch-cabinet-front-door {
+  fill: #eef2f7;
+  stroke: #93a1b2;
+  stroke-width: 1.4;
+}
+.hub-sketch-cabinet-front-group .hub-sketch-cabinet-front-recess {
+  fill: #e2e8f0;
+  stroke: #aab6c4;
+  stroke-width: 1;
+}
+.hub-sketch-cabinet-front-group .hub-sketch-cabinet-front-pull {
+  fill: #37414f;
+  stroke: none;
+}
+.hub-sketch-cabinet-front-group .hub-sketch-cabinet-front-glass {
+  fill: rgba(148, 197, 224, .55);
+  stroke: #8aa7bd;
+  stroke-width: 1;
+}
+.hub-sketch-cabinet-front-group .hub-sketch-cabinet-front-toe {
+  fill: #64748b;
+  stroke: none;
+}
+.hub-sketch-cabinet-front-group .hub-sketch-cabinet-front-counter {
+  fill: none;
+  stroke: #94a3b8;
+  stroke-width: 1;
+}
+.hub-sketch-cabinet-front-group .hub-sketch-cabinet-front-hatch {
+  fill: none;
+  stroke: #b45309;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+.hub-sketch-cabinet-front-group .hub-sketch-cabinet-front-grain {
+  fill: none;
+  stroke: #aab6c4;
+  stroke-width: 1;
+}
+.hub-sketch-cabinet-front-group .hub-sketch-cabinet-front-appliance {
+  fill: #d7dee7;
+  stroke: #64748b;
+  stroke-width: 1.4;
+}
+.hub-sketch-cabinet-front-group .hub-sketch-cabinet-front-appliance-line {
+  fill: none;
+  stroke: #475569;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+/* Корпус фронта в галерее (первый rect) — рамка-короб цвета фасада. */
+.hub-sketch-cabinet-front > rect:first-of-type {
+  fill: #dbe1ea;
+  stroke: #7f8da0;
+  stroke-width: 1.6;
 }
 .hub-sketch-cabinet-gallery-sizes {
   display: flex;
@@ -7504,6 +7569,52 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-elevation-cabinet-selected > rect:first-of-type {
   stroke: #2563eb;
   stroke-width: .06;
+}
+/* CABINET-FRONTS-25: shaker-фронт поверх тонированного корпуса развёртки (обводочный стиль,
+   единицы = футы). Составные селекторы (0,2,0) перебивают базовое .hub-sketch-elevation-item rect. */
+.hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-door {
+  fill: rgba(255, 255, 255, .16);
+  stroke: rgba(38, 63, 49, .72);
+  stroke-width: .018;
+}
+.hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-recess {
+  fill: rgba(255, 255, 255, .18);
+  stroke: rgba(38, 63, 49, .5);
+  stroke-width: .012;
+}
+.hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-pull {
+  fill: rgba(23, 32, 46, .9);
+  stroke: none;
+}
+.hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-glass {
+  fill: rgba(148, 197, 224, .5);
+  stroke: rgba(38, 63, 49, .55);
+  stroke-width: .012;
+}
+.hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-grain {
+  fill: none;
+  stroke: rgba(38, 63, 49, .38);
+  stroke-width: .012;
+}
+.hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-appliance {
+  fill: rgba(203, 213, 225, .92);
+  stroke: #475569;
+  stroke-width: .022;
+}
+.hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-appliance-line {
+  fill: none;
+  stroke: #475569;
+  stroke-width: .02;
+  stroke-linecap: round;
+}
+.hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-label {
+  font-size: .2px;
+}
+/* Навесной ряд — синеватая обводка фасада под индиго-корпус. */
+.hub-sketch-elevation-cabinet-wall .hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-door,
+.hub-sketch-elevation-cabinet-wall .hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-recess,
+.hub-sketch-elevation-cabinet-wall .hub-sketch-elevation-cabinet-front .hub-sketch-elevation-cabinet-glass {
+  stroke: rgba(49, 46, 129, .62);
 }
 /* CABINETS-VERTICAL-22: вертикальный drag навесных + зазор числом. */
 .hub-sketch-elevation-cabinet-vdrag {

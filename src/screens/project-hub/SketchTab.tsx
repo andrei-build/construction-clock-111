@@ -107,8 +107,8 @@ import {
   cabinetCatalogDefaultWidth,
   cabinetCatalogEntryCode,
   type CabinetCatalogEntry,
-  type CabinetCatalogIcon,
 } from './cabinetCatalog'
+import { CabinetFrontThumb } from './cabinetFront'
 import {
   ELECTRICAL_MATERIAL_SECTION,
   SKETCH_MATERIAL_SECTIONS,
@@ -539,176 +539,6 @@ function cabinetTypeLabelKey(prefix: string): string {
   if (prefix === 'BEP' || prefix === 'REP') return 'hub_sketch_cabinet_type_panel_short'
   if (prefix === 'DW' || prefix === 'RANGE' || prefix === 'REF' || prefix === 'HOOD') return 'hub_sketch_cabinet_type_appliance_short'
   return 'hub_sketch_cabinet_type_base_short'
-}
-
-function CabinetGalleryIcon({ icon }: { icon: CabinetCatalogIcon }) {
-  const frame = (
-    <rect className="hub-sketch-cabinet-icon-face" x={22} y={10} width={52} height={48} rx={3} />
-  )
-  const toe = <line className="hub-sketch-cabinet-icon-line" x1={26} y1={53} x2={70} y2={53} />
-
-  return (
-    <svg className="hub-sketch-cabinet-icon" viewBox="0 0 96 72" aria-hidden="true" focusable="false">
-      {icon === 'base' && (
-        <>
-          {frame}
-          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={12} x2={48} y2={53} />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={44} cy={35} r={1.9} />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={52} cy={35} r={1.9} />
-          {toe}
-        </>
-      )}
-      {icon === 'sink' && (
-        <>
-          {frame}
-          <path className="hub-sketch-cabinet-icon-accent" d="M 32 22 Q 48 14 64 22 L 61 33 Q 48 39 35 33 Z" />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={48} cy={28} r={2.1} />
-          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={38} x2={48} y2={53} />
-          {toe}
-        </>
-      )}
-      {icon === 'drawer1' && (
-        <>
-          {frame}
-          <rect className="hub-sketch-cabinet-icon-panel" x={29} y={18} width={38} height={30} rx={2} />
-          <line className="hub-sketch-cabinet-icon-line" x1={38} y1={26} x2={58} y2={26} />
-          {toe}
-        </>
-      )}
-      {icon === 'drawer2' && (
-        <>
-          {frame}
-          <rect className="hub-sketch-cabinet-icon-panel" x={29} y={15} width={38} height={18} rx={2} />
-          <rect className="hub-sketch-cabinet-icon-panel" x={29} y={36} width={38} height={15} rx={2} />
-          <line className="hub-sketch-cabinet-icon-line" x1={38} y1={23} x2={58} y2={23} />
-          <line className="hub-sketch-cabinet-icon-line" x1={38} y1={43} x2={58} y2={43} />
-          {toe}
-        </>
-      )}
-      {icon === 'drawer3' && (
-        <>
-          {frame}
-          {[15, 29, 43].map((y) => (
-            <g key={y}>
-              <rect className="hub-sketch-cabinet-icon-panel" x={29} y={y} width={38} height={11} rx={1.8} />
-              <line className="hub-sketch-cabinet-icon-line" x1={39} y1={y + 5.5} x2={57} y2={y + 5.5} />
-            </g>
-          ))}
-          {toe}
-        </>
-      )}
-      {icon === 'lazySusan' && (
-        <>
-          <path className="hub-sketch-cabinet-icon-face" d="M 24 12 H 72 V 58 H 36 L 24 46 Z" />
-          <path className="hub-sketch-cabinet-icon-accent" d="M 37 23 A 17 17 0 0 1 61 47" />
-          <path className="hub-sketch-cabinet-icon-accent" d="M 61 23 A 17 17 0 0 1 37 47" />
-          <line className="hub-sketch-cabinet-icon-line" x1={36} y1={58} x2={70} y2={58} />
-        </>
-      )}
-      {icon === 'blindCorner' && (
-        <>
-          {frame}
-          <rect className="hub-sketch-cabinet-icon-panel" x={30} y={18} width={24} height={30} rx={2} />
-          <line className="hub-sketch-cabinet-icon-dash" x1={60} y1={15} x2={60} y2={51} />
-          <path className="hub-sketch-cabinet-icon-line" d="M 61 23 H 70 M 61 36 H 70 M 61 49 H 70" />
-          {toe}
-        </>
-      )}
-      {icon === 'wall' && (
-        <>
-          <rect className="hub-sketch-cabinet-icon-face" x={24} y={8} width={48} height={40} rx={3} />
-          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={10} x2={48} y2={48} />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={44} cy={30} r={1.7} />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={52} cy={30} r={1.7} />
-          <line className="hub-sketch-cabinet-icon-accent" x1={30} y1={58} x2={66} y2={58} />
-        </>
-      )}
-      {icon === 'tallPantry' && (
-        <>
-          <rect className="hub-sketch-cabinet-icon-face" x={30} y={6} width={36} height={58} rx={3} />
-          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={8} x2={48} y2={64} />
-          <line className="hub-sketch-cabinet-icon-line" x1={34} y1={36} x2={62} y2={36} />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={44} cy={28} r={1.8} />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={52} cy={44} r={1.8} />
-        </>
-      )}
-      {icon === 'ovenTower' && (
-        <>
-          <rect className="hub-sketch-cabinet-icon-face" x={30} y={6} width={36} height={58} rx={3} />
-          <rect className="hub-sketch-cabinet-icon-panel" x={36} y={25} width={24} height={20} rx={2} />
-          <line className="hub-sketch-cabinet-icon-line" x1={40} y1={30} x2={56} y2={30} />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={40} cy={38} r={1.5} />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={56} cy={38} r={1.5} />
-        </>
-      )}
-      {icon === 'vanity' && (
-        <>
-          {frame}
-          <path className="hub-sketch-cabinet-icon-accent" d="M 34 20 H 62 Q 60 33 48 33 Q 36 33 34 20 Z" />
-          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={36} x2={48} y2={53} />
-          <path className="hub-sketch-cabinet-icon-line" d="M 43 18 Q 48 13 53 18" />
-          {toe}
-        </>
-      )}
-      {icon === 'filler' && (
-        <>
-          <rect className="hub-sketch-cabinet-icon-face" x={40} y={10} width={16} height={48} rx={2} />
-          <path className="hub-sketch-cabinet-icon-line" d="M 44 16 L 52 24 M 44 28 L 52 36 M 44 40 L 52 48" />
-        </>
-      )}
-      {icon === 'baseEndPanel' && (
-        <>
-          <rect className="hub-sketch-cabinet-icon-face" x={36} y={12} width={24} height={46} rx={2} />
-          <path className="hub-sketch-cabinet-icon-line" d="M 42 18 V 52 M 48 18 V 52 M 54 18 V 52" />
-        </>
-      )}
-      {icon === 'refrigeratorEndPanel' && (
-        <>
-          <rect className="hub-sketch-cabinet-icon-face" x={36} y={6} width={24} height={58} rx={2} />
-          <path className="hub-sketch-cabinet-icon-line" d="M 42 12 V 58 M 48 12 V 58 M 54 12 V 58" />
-        </>
-      )}
-      {icon === 'dishwasher' && (
-        <>
-          <rect className="hub-sketch-cabinet-icon-appliance" x={26} y={12} width={44} height={46} rx={4} />
-          <line className="hub-sketch-cabinet-icon-line" x1={32} y1={22} x2={64} y2={22} />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={36} cy={17} r={1.6} />
-          <circle className="hub-sketch-cabinet-icon-dot" cx={42} cy={17} r={1.6} />
-        </>
-      )}
-      {icon === 'range' && (
-        <>
-          <rect className="hub-sketch-cabinet-icon-appliance" x={24} y={10} width={48} height={50} rx={4} />
-          <circle className="hub-sketch-cabinet-icon-line-fill" cx={39} cy={23} r={5} />
-          <circle className="hub-sketch-cabinet-icon-line-fill" cx={57} cy={23} r={5} />
-          <rect className="hub-sketch-cabinet-icon-panel" x={33} y={35} width={30} height={15} rx={2} />
-        </>
-      )}
-      {icon === 'refrigerator' && (
-        <>
-          <rect className="hub-sketch-cabinet-icon-appliance" x={28} y={6} width={40} height={58} rx={4} />
-          <line className="hub-sketch-cabinet-icon-line" x1={48} y1={8} x2={48} y2={64} />
-          <line className="hub-sketch-cabinet-icon-line" x1={34} y1={32} x2={62} y2={32} />
-          <line className="hub-sketch-cabinet-icon-line" x1={43} y1={20} x2={43} y2={29} />
-          <line className="hub-sketch-cabinet-icon-line" x1={53} y1={36} x2={53} y2={50} />
-        </>
-      )}
-      {icon === 'hood' && (
-        <>
-          <path className="hub-sketch-cabinet-icon-appliance" d="M 35 14 H 61 L 69 39 H 27 Z" />
-          <rect className="hub-sketch-cabinet-icon-panel" x={31} y={39} width={34} height={9} rx={2} />
-          <path className="hub-sketch-cabinet-icon-accent" d="M 39 57 Q 43 51 39 47 M 49 58 Q 53 51 49 47 M 59 57 Q 63 51 59 47" />
-        </>
-      )}
-      {icon === 'wine' && (
-        <>
-          {frame}
-          <path className="hub-sketch-cabinet-icon-line" d="M 31 18 L 65 50 M 65 18 L 31 50 M 48 14 V 54 M 29 34 H 67" />
-          {toe}
-        </>
-      )}
-    </svg>
-  )
 }
 
 function makeId(prefix: string): string {
@@ -5207,6 +5037,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                       {group.entries.map((entry) => {
                         const selected = selectedCabinetGalleryEntryId === entry.id
                         const defaultCode = cabinetCatalogEntryCode(entry, cabinetCatalogDefaultWidth(entry), cabinetGalleryWallHeight)
+                        // CABINET-FRONTS-25: карточка галереи рисуется тем же shaker-рендером, что и развёртка.
+                        // Панель-энд показываем лицом (глубина = ширина фронта), остальное — из парсинга кода.
+                        const parsedGalleryCode = parseCabinetCode(defaultCode)
+                        const galleryFrontWidthIn = entry.sizeKind === 'panelDepth'
+                          ? cabinetCatalogDefaultWidth(entry)
+                          : parsedGalleryCode?.widthIn ?? cabinetCatalogDefaultWidth(entry)
+                        const galleryFrontHeightIn = parsedGalleryCode?.heightIn
+                          ?? (entry.sizeKind === 'wall' ? cabinetGalleryWallHeight : 34.5)
                         return (
                           <div className={selected ? 'hub-sketch-cabinet-gallery-card hub-sketch-cabinet-gallery-card-active' : 'hub-sketch-cabinet-gallery-card'} key={entry.id}>
                             <button
@@ -5216,7 +5054,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                               title={t('hub_sketch_cabinet_gallery_add')}
                               onClick={() => placeCabinetEntry(entry)}
                             >
-                              <CabinetGalleryIcon icon={entry.icon} />
+                              <CabinetFrontThumb code={defaultCode} widthIn={galleryFrontWidthIn} heightIn={galleryFrontHeightIn} />
                               <span className="hub-sketch-cabinet-gallery-card-body">
                                 <span className="hub-sketch-cabinet-gallery-card-name">{t(entry.labelKey)}</span>
                                 <span className="hub-sketch-cabinet-gallery-card-code">{defaultCode}</span>
