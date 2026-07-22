@@ -6,6 +6,18 @@ import {
   pdfPageSrc,
   MIN_SCALE,
 } from './fileViewerCore'
+import {
+  PIN_KINDS,
+  PIN_SEVERITIES,
+  pinColor,
+  pinEmoji,
+  pinPercent,
+  pointToBbox,
+  type PinKind,
+  type PinSeverity,
+  type PlanPinBbox,
+} from '../lib/planPinCore'
+import type { PlanPin } from '../lib/api/estimate'
 
 // FILES-VIEWER-37: полноэкранный ВСТРОЕННЫЙ просмотрщик ЛЮБЫХ файлов проекта (Закон Андрея:
 // «файл на весь экран», изображения/файлы открываются ВСТРОЕННО в приложении, НИКОГДА через
@@ -21,13 +33,30 @@ import {
 // #page=1&view=FitH задаёт вписывание по ширине при открытии. Изображения — свой зум/пан/колесо/пинч.
 // Прочие типы (docx/xlsx/…) пытаемся показать в <iframe>; если браузер не умеет — есть «Скачать».
 //
-// Это ФУНДАМЕНТ серии PLAN-TO-ESTIMATE: на просмотрщик далее лягут слой пинов (#38) и переход из
-// строки сметы (#39). Сейчас — только базовый просмотр.
+// PIN-LAYER-38: поверх области страницы кладём слой цветных пинов (plan_pins). Позиция пина —
+// в ДОЛЯХ 0..1 области страницы, поэтому кружки едут вместе с зумом/паном (для изображения слой
+// разделяет transform картинки; для PDF iframe заполняет всю сцену — доли = доли страницы).
+// Клик по пину → карточка (title/note/kind). owner/admin получают режим «Добавить пин»: клик по
+// странице → форма → createPlanPin. Данные и колбэк прокидывает вызывающий через fv.open (пины
+// подгружаются там, где есть profile+project). Всё опционально — базовый просмотр #37 не ломается.
+
+export interface ViewerPinDraft {
+  page: number
+  bbox: PlanPinBbox
+  severity: PinSeverity
+  kind: PinKind
+  title: string | null
+  note: string | null
+}
 
 export interface ViewerFile {
   name: string
   url: string
   mime: string | null
+  // PIN-LAYER-38 (опционально, обратная совместимость с 2 вызовами #37):
+  pins?: PlanPin[]
+  canAddPin?: boolean
+  onAddPin?: (draft: ViewerPinDraft) => Promise<PlanPin>
 }
 
 interface Props {
@@ -38,11 +67,29 @@ interface Props {
 export default function FileViewer({ file, onClose }: Props) {
   const { t } = useI18n()
   const kind = fileViewKind(file.mime, file.name)
+  const pinnable = kind === 'pdf' || kind === 'image'
 
   // Изображение: зум/панорама.
   const [scale, setScale] = useState(1)
   const [tx, setTx] = useState(0)
   const [ty, setTy] = useState(0)
+
+  // PIN-LAYER-38: локальный список пинов (сид из file.pins), режим добавления, открытая карточка,
+  // черновик формы. Пересеваем при смене файла.
+  const [pins, setPins] = useState<PlanPin[]>(file.pins ?? [])
+  const [addMode, setAddMode] = useState(false)
+  const [openPinId, setOpenPinId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<ViewerPinDraft | null>(null)
+  const [savingPin, setSavingPin] = useState(false)
+  const [pinError, setPinError] = useState(false)
+
+  useEffect(() => {
+    setPins(file.pins ?? [])
+    setAddMode(false)
+    setOpenPinId(null)
+    setDraft(null)
+    setPinError(false)
+  }, [file])
 
   const rootRef = useRef<HTMLDivElement | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -51,14 +98,21 @@ export default function FileViewer({ file, onClose }: Props) {
 
   const resetView = useCallback(() => { setScale(1); setTx(0); setTy(0) }, [])
 
-  // Esc — закрыть (когда не в системном fullscreen).
+  const openPin = openPinId ? pins.find((p) => p.id === openPinId) ?? null : null
+
+  // Esc — сперва закрывает карточку/форму/режим добавления, и только потом — сам просмотрщик
+  // (когда не в системном fullscreen).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !document.fullscreenElement) onClose()
+      if (e.key !== 'Escape' || document.fullscreenElement) return
+      if (draft) { setDraft(null); return }
+      if (openPinId) { setOpenPinId(null); return }
+      if (addMode) { setAddMode(false); return }
+      onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, draft, openPinId, addMode])
 
   // Зум колесом (только для изображений). Нативный слушатель { passive:false } — иначе preventDefault
   // не сработает и страница проскроллится (как в ImageLightbox).
@@ -119,6 +173,36 @@ export default function FileViewer({ file, onClose }: Props) {
     })
   }
 
+  // Клик по слою пинов в режиме добавления → черновик формы на позиции (доли 0..1 области слоя).
+  const onLayerClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!addMode || draft) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const bbox = pointToBbox(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height)
+    setPinError(false)
+    setOpenPinId(null)
+    setDraft({ page: 1, bbox, severity: 'green', kind: 'estimate', title: '', note: '' })
+  }
+
+  const saveDraft = async () => {
+    if (!draft || !file.onAddPin || savingPin) return
+    setSavingPin(true)
+    setPinError(false)
+    try {
+      const created = await file.onAddPin(draft)
+      setPins((prev) => [...prev, created])
+      setDraft(null)
+    } catch {
+      setPinError(true)
+    } finally {
+      setSavingPin(false)
+    }
+  }
+
+  // Слой пинов и картинки делят одну трансформацию, чтобы кружки не «отклеивались» при зуме/пане.
+  const layerTransform = kind === 'image' ? `translate(${tx}px, ${ty}px) scale(${scale})` : undefined
+
+  const canAdd = !!(file.canAddPin && file.onAddPin && pinnable)
+
   return (
     <div className="file-viewer" role="dialog" aria-modal="true" ref={rootRef} onClick={onClose}>
       <div className="file-viewer-bar" onClick={(e) => e.stopPropagation()}>
@@ -130,6 +214,17 @@ export default function FileViewer({ file, onClose }: Props) {
             <button type="button" className="file-viewer-btn" aria-label={t('viewer_fit')} onClick={resetView}>{t('viewer_fit')}</button>
             <button type="button" className="file-viewer-btn" aria-label={t('viewer_zoom_in')} onClick={() => zoomBy(0.5)}>+</button>
           </span>
+        )}
+
+        {canAdd && (
+          <button
+            type="button"
+            className={`file-viewer-btn plan-pin-add-toggle${addMode ? ' active' : ''}`}
+            aria-pressed={addMode}
+            onClick={() => { setAddMode((v) => !v); setDraft(null); setOpenPinId(null) }}
+          >
+            📌 {addMode ? t('pin_add_done') : t('pin_add')}
+          </button>
         )}
 
         <a
@@ -180,6 +275,113 @@ export default function FileViewer({ file, onClose }: Props) {
             title={file.name}
             src={file.url}
           />
+        )}
+
+        {/* PIN-LAYER-38: слой пинов поверх страницы. pointer-events:none у слоя (чтобы не мешать
+            прокрутке PDF/зуму картинки), auto — у самих кружков; в режиме добавления слой ловит клик. */}
+        {pinnable && (
+          <div
+            className={`plan-pin-layer${addMode ? ' adding' : ''}`}
+            style={layerTransform ? { transform: layerTransform } : undefined}
+            onClick={onLayerClick}
+          >
+            {pins.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`plan-pin${openPinId === p.id ? ' open' : ''}`}
+                style={{ left: pinPercent(p.bbox.x), top: pinPercent(p.bbox.y), background: pinColor(p.severity) }}
+                aria-label={p.title || t('pin_add')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (addMode) return
+                  setDraft(null)
+                  setOpenPinId((cur) => (cur === p.id ? null : p.id))
+                }}
+              />
+            ))}
+
+            {draft && (
+              <div
+                className="plan-pin-marker"
+                style={{ left: pinPercent(draft.bbox.x), top: pinPercent(draft.bbox.y), background: pinColor(draft.severity) }}
+                aria-hidden="true"
+              />
+            )}
+          </div>
+        )}
+
+        {/* Карточка открытого пина. */}
+        {openPin && (
+          <div className="plan-pin-card" onClick={(e) => e.stopPropagation()}>
+            <div className="plan-pin-card-head">
+              <span className="plan-pin-badge" style={{ background: pinColor(openPin.severity) }}>
+                {pinEmoji(openPin.severity)}
+              </span>
+              <span className="plan-pin-card-title">{openPin.title || t('pin_untitled')}</span>
+              <button
+                type="button"
+                className="file-viewer-btn plan-pin-card-close"
+                aria-label={t('viewer_close')}
+                onClick={() => setOpenPinId(null)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="plan-pin-card-kind">{t(`pin_kind_${openPin.kind}`)}</div>
+            {openPin.note && <div className="plan-pin-card-note">{openPin.note}</div>}
+          </div>
+        )}
+
+        {/* Форма нового пина (owner/admin). */}
+        {draft && (
+          <div className="plan-pin-form" onClick={(e) => e.stopPropagation()}>
+            <div className="plan-pin-form-row plan-pin-sev">
+              {PIN_SEVERITIES.map((sev) => (
+                <button
+                  key={sev}
+                  type="button"
+                  className={`plan-pin-sev-btn${draft.severity === sev ? ' active' : ''}`}
+                  aria-pressed={draft.severity === sev}
+                  onClick={() => setDraft((d) => (d ? { ...d, severity: sev } : d))}
+                >
+                  {pinEmoji(sev)}
+                </button>
+              ))}
+            </div>
+            <input
+              className="plan-pin-input"
+              type="text"
+              placeholder={t('pin_title')}
+              value={draft.title ?? ''}
+              onChange={(e) => setDraft((d) => (d ? { ...d, title: e.target.value } : d))}
+            />
+            <textarea
+              className="plan-pin-input plan-pin-note"
+              placeholder={t('pin_note')}
+              value={draft.note ?? ''}
+              onChange={(e) => setDraft((d) => (d ? { ...d, note: e.target.value } : d))}
+            />
+            <select
+              className="plan-pin-input"
+              aria-label={t('pin_kind')}
+              value={draft.kind}
+              onChange={(e) => setDraft((d) => (d ? { ...d, kind: e.target.value as PinKind } : d))}
+            >
+              {PIN_KINDS.map((k) => (
+                <option key={k} value={k}>{t(`pin_kind_${k}`)}</option>
+              ))}
+            </select>
+            {pinError && <p className="error-msg plan-pin-error">{t('pin_save_failed')}</p>}
+            <div className="plan-pin-form-row plan-pin-form-actions">
+              <button type="button" className="btn small ghost" onClick={() => setDraft(null)} disabled={savingPin}>
+                {t('pin_cancel')}
+              </button>
+              <button type="button" className="btn small primary" onClick={saveDraft} disabled={savingPin}>
+                {savingPin ? t('pin_saving') : t('pin_save')}
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
