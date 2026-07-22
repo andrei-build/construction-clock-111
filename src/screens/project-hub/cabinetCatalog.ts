@@ -26,6 +26,7 @@ export type CabinetCatalogIcon =
   | 'refrigeratorEndPanel'
   | 'dishwasher'
   | 'range'
+  | 'cooktop'
   | 'refrigerator'
   | 'hood'
   | 'wine'
@@ -53,8 +54,9 @@ export const CABINET_CATALOG_WALL_HEIGHTS_IN = [12, 15, 18, 24, 30, 36, 42] as c
 
 const FILLER_WIDTHS_IN = [3, 6, 9, 12, 15, 18, 21, 24] as const
 const PANEL_DEPTHS_IN = [12, 21, 24, 30, 36] as const
-const DISHWASHER_WIDTHS_IN = [18, 24] as const
-const RANGE_WIDTHS_IN = [24, 30, 36, 48] as const
+const DISHWASHER_WIDTHS_IN = [24, 18] as const
+const RANGE_WIDTHS_IN = [30, 36, 48, 24] as const
+const COOKTOP_WIDTHS_IN = [30, 36] as const
 const REFRIGERATOR_WIDTHS_IN = [30, 33, 36, 42, 48] as const
 const HOOD_WIDTHS_IN = [24, 30, 36, 42, 48] as const
 
@@ -224,6 +226,15 @@ export const CABINET_CATALOG_ENTRIES: readonly CabinetCatalogEntry[] = [
     icon: 'range',
     sizeKind: 'width',
     widthsIn: RANGE_WIDTHS_IN,
+  },
+  {
+    id: 'cooktop',
+    categoryId: 'appliances',
+    labelKey: 'hub_sketch_cabinet_gallery_cooktop',
+    codePrefix: 'COOK',
+    icon: 'cooktop',
+    sizeKind: 'width',
+    widthsIn: COOKTOP_WIDTHS_IN,
   },
   {
     id: 'refrigerator',

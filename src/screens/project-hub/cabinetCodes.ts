@@ -1,7 +1,8 @@
 import type { Contour, Pt } from './sketchFinishes'
-import type { SketchPlacedCatalogItem } from './sketchCatalog'
+import { SKETCH_CATALOG_KIND_APPLIANCE, type SketchPlacedCatalogItem } from './sketchCatalog'
 import { formatInches, parseInches, snapInchesToPrecision } from './inches'
 import { freeRunsAlongWall, type InfraObstacleInterval } from './elements'
+import { applianceTypeFromCabinetPrefix } from './appliances'
 
 export type CabinetLayer = 'base' | 'wall'
 export type CabinetHinge = 'L' | 'R'
@@ -107,7 +108,8 @@ export function wallCabinetCenterYFt(item: Pick<SketchPlacedCatalogItem, 'wallGa
   return item.yFt
 }
 
-const PREFIXES = ['RANGE', 'WINE', 'HOOD', '3DB', '2DB', '1DB', 'BEP', 'REP', 'BLS', 'BBC', 'REF', 'SB', 'DB', 'BF', 'DW', 'B', 'W', 'U', 'V', 'F'] as const
+// APPLIANCES-28: COOK — варочная панель (базовый шкаф), техника-опора ряда как RANGE/DW/REF/HOOD.
+const PREFIXES = ['RANGE', 'COOK', 'WINE', 'HOOD', '3DB', '2DB', '1DB', 'BEP', 'REP', 'BLS', 'BBC', 'REF', 'SB', 'DB', 'BF', 'DW', 'B', 'W', 'U', 'V', 'F'] as const
 const PREFIX_SET = new Set<string>(PREFIXES)
 const DEFAULT_REFRIGERATOR_HEIGHT_IN = 72
 const DEFAULT_REFRIGERATOR_DEPTH_IN = 30
@@ -558,6 +560,14 @@ function makePlacedCabinet(
   // CABINETS-CORNER-FILLERS-24: филлер из явного кода (не авто ≤3") — ручной, помечаем чтобы
   // он пережил пересборку ряда (cabinetRunItemsForWall его включает в код-строку).
   if (parsed.filler && !parsed.auto) placed.manualFiller = true
+  // APPLIANCES-28: техника-опора ряда (плита/варочная/холодильник/ПММ/вытяжка) остаётся полноценным
+  // кабинетным элементом (участвует в остатке/зазорах/цепочках), но помечается kind=APPLIANCE +
+  // applianceType — развёртка/3D рисуют её различимо (конфорки/дверь/панель). Раскладка не меняется.
+  const applianceType = applianceTypeFromCabinetPrefix(parsed.prefix)
+  if (applianceType) {
+    placed.kind = SKETCH_CATALOG_KIND_APPLIANCE
+    placed.applianceType = applianceType
+  }
   if (warning) placed.layoutWarning = warning
   return placed
 }
