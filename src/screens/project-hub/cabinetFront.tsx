@@ -23,7 +23,7 @@ export type CabinetFrontKind =
   | 'panel'
   | 'appliance'
 
-export type CabinetFrontApplianceKind = 'dishwasher' | 'range' | 'refrigerator' | 'hood' | 'wine'
+export type CabinetFrontApplianceKind = 'dishwasher' | 'range' | 'cooktop' | 'refrigerator' | 'hood' | 'wine'
 
 export type CabinetFrontPanelType = 'door' | 'drawer' | 'glass' | 'blank'
 export type CabinetFrontPullKind = 'none' | 'barV' | 'barH'
@@ -111,6 +111,7 @@ function drawerBankCount(prefix: string): number {
 function applianceKind(prefix: string): CabinetFrontApplianceKind | null {
   if (prefix === 'DW') return 'dishwasher'
   if (prefix === 'RANGE') return 'range'
+  if (prefix === 'COOK') return 'cooktop'
   if (prefix === 'REF') return 'refrigerator'
   if (prefix === 'HOOD') return 'hood'
   if (prefix === 'WINE') return 'wine'
@@ -364,6 +365,12 @@ function applianceElements(kind: CabinetFrontApplianceKind, box: Rect, cls: Clas
     out.push(<circle key="rg-b2" className={cls.applianceLine} cx={x + w * 0.68} cy={y + h * 0.2} r={Math.min(w, h) * 0.1} />)
     out.push(<rect key="rg-oven" className={cls.applianceLine} x={x + w * 0.16} y={y + h * 0.42} width={w * 0.68} height={h * 0.44} rx={Math.min(w, h) * 0.04} fill="none" />)
     out.push(<line key="rg-h" className={cls.applianceLine} x1={x + w * 0.3} y1={y + h * 0.5} x2={x + w * 0.7} y2={y + h * 0.5} />)
+  } else if (kind === 'cooktop') {
+    // APPLIANCES-28: варочная панель — 4 конфорки без духового шкафа (в отличие от плиты RANGE).
+    out.push(<circle key="ck-b1" className={cls.applianceLine} cx={x + w * 0.3} cy={y + h * 0.32} r={Math.min(w, h) * 0.13} fill="none" />)
+    out.push(<circle key="ck-b2" className={cls.applianceLine} cx={x + w * 0.7} cy={y + h * 0.32} r={Math.min(w, h) * 0.13} fill="none" />)
+    out.push(<circle key="ck-b3" className={cls.applianceLine} cx={x + w * 0.3} cy={y + h * 0.7} r={Math.min(w, h) * 0.13} fill="none" />)
+    out.push(<circle key="ck-b4" className={cls.applianceLine} cx={x + w * 0.7} cy={y + h * 0.7} r={Math.min(w, h) * 0.13} fill="none" />)
   } else if (kind === 'refrigerator') {
     out.push(<line key="rf-v" className={cls.applianceLine} x1={x + w / 2} y1={y + h * 0.06} x2={x + w / 2} y2={y + h * 0.94} />)
     out.push(<line key="rf-h" className={cls.applianceLine} x1={x + w * 0.06} y1={y + h * 0.42} x2={x + w * 0.94} y2={y + h * 0.42} />)

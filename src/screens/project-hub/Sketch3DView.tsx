@@ -74,6 +74,7 @@ import {
   isOutletPlacedCatalogItem,
   isPipePlacedCatalogItem,
   isColumnPlacedCatalogItem,
+  isFurniturePlacedCatalogItem,
   isShowerPanPlacedCatalogItem,
   isSwitchPlacedCatalogItem,
   isToiletPlacedCatalogItem,
@@ -95,6 +96,7 @@ import {
   withShowerPanPlacedCatalogMetadata,
   type CatalogResolvedPlacedItem,
   type CatalogWallHit,
+  type SketchFurnitureType,
   type SketchPlacedCatalogItem,
 } from './sketchCatalog'
 import {
@@ -1810,6 +1812,36 @@ function addRoundColumn(THREE: any, group: any, resolved: CatalogResolvedPlacedI
   column.castShadow = false
   column.receiveShadow = false
   addMeshWithEdges(THREE, group, column, edgeColor)
+}
+
+// APPLIANCES-28: мебель — простые боксы-силуэты через тот же механизм объектов (как COLUMN/BOX #26).
+// Круглый стол = цилиндр, прямоугольный стол = бокс, стул = бокс + спинка. Тёплый деревянный тон.
+function addFurniture(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, furnitureType: SketchFurnitureType | undefined, edgeColor: number) {
+  const width = Math.max(0.04, resolved.dims.widthFt)
+  const height = Math.max(0.04, resolved.dims.heightFt)
+  const depth = Math.max(0.04, resolved.dims.depthFt)
+  const woodMaterial = new THREE.MeshStandardMaterial({ color: 0xb98a54, roughness: 0.7, metalness: 0.04 })
+  if (furnitureType === 'table-round') {
+    const table = new THREE.Mesh(new THREE.CylinderGeometry(width / 2, width / 2, height, 32), woodMaterial)
+    table.castShadow = false
+    table.receiveShadow = false
+    addMeshWithEdges(THREE, group, table, edgeColor)
+    return
+  }
+  const body = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), woodMaterial)
+  body.castShadow = false
+  body.receiveShadow = false
+  addMeshWithEdges(THREE, group, body, edgeColor)
+  if (furnitureType === 'chair') {
+    // Спинка стула — тонкий бокс у заднего края (силуэт «стула», а не просто куб).
+    const backThickness = Math.max(0.03, depth * 0.12)
+    const backHeight = Math.max(0.04, height * 0.9)
+    const back = new THREE.Mesh(new THREE.BoxGeometry(width, backHeight, backThickness), woodMaterial)
+    back.position.set(0, height / 2 + backHeight / 2, -depth / 2 + backThickness / 2)
+    back.castShadow = false
+    back.receiveShadow = false
+    addMeshWithEdges(THREE, group, back, edgeColor)
+  }
 }
 
 function addCabinetFixture(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, warn: boolean, edgeColor: number) {
@@ -3880,6 +3912,9 @@ export default function Sketch3DView({
           } else if (isColumnPlacedCatalogItem(placed) && placed.column === 'round') {
             // ELEMENTS-INFRA-26: круглая колонна — цилиндр; квадратная колонна/короб — обычный бокс.
             addRoundColumn(THREE, group, resolved, material, edgeColor)
+          } else if (isFurniturePlacedCatalogItem(placed)) {
+            // APPLIANCES-28: мебель (стол/стул) — простой боксов/цилиндр силуэт (как COLUMN/BOX #26).
+            addFurniture(THREE, group, resolved, placed.furnitureType, edgeColor)
           } else {
             addCatalogBox(THREE, group, resolved, material, edgeColor)
           }

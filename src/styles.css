@@ -6228,6 +6228,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: #475569;
   stroke-width: 1.2;
 }
+/* APPLIANCES-28: мебель (столы/стулья) — деревянный тон на плане */
+.hub-sketch-plan-furniture rect,
+.hub-sketch-plan-furniture ellipse {
+  fill: rgba(185, 138, 84, .2);
+  stroke: #a16f3c;
+  stroke-width: 1.6;
+}
+.hub-sketch-plan-furniture-mark {
+  fill: none;
+  stroke: #a16f3c;
+  stroke-width: 2;
+}
+/* APPLIANCES-28: встроенная техника (духовка/СВЧ) — маркер у стены */
+.hub-sketch-plan-appliance rect {
+  fill: rgba(71, 85, 105, .18);
+  stroke: #334155;
+  stroke-width: 1.7;
+}
+.hub-sketch-plan-appliance-label {
+  fill: #334155;
+  font-weight: 800;
+}
 .hub-sketch-plan-item-selected rect,
 .hub-sketch-plan-item-selected ellipse {
   stroke: #2563eb;
@@ -7864,6 +7886,28 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-infra-selected .hub-sketch-elevation-infra-plate,
 .hub-sketch-elevation-svg .hub-sketch-elevation-infra-selected .hub-sketch-elevation-infra-pipe-line {
+  stroke-width: .05;
+  filter: drop-shadow(0 0 .04px #2563eb);
+}
+/* APPLIANCES-28: встроенная техника (духовка/СВЧ в пенале) — маркер на развёртке (IKEA Integrated).
+   Тон нержавейки, как у приборов-опор ряда (hub-sketch-elevation-cabinet-appliance), чтобы читалось
+   как встроенный прибор в фасаде пенала. */
+.hub-sketch-elevation-svg .hub-sketch-elevation-appliance-body {
+  fill: rgba(203, 213, 225, .95);
+  stroke: #334155;
+  stroke-width: .026;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-appliance-mark {
+  fill: none;
+  stroke: #334155;
+  stroke-width: .022;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-appliance-selected .hub-sketch-elevation-appliance-body,
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-selected .hub-sketch-elevation-appliance-body {
+  stroke: #2563eb;
   stroke-width: .05;
   filter: drop-shadow(0 0 .04px #2563eb);
 }

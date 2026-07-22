@@ -59,18 +59,24 @@ import {
   type WindowType,
 } from './sketchFinishes'
 import {
+  BUILTIN_APPLIANCE_CATALOG_ID,
   BUILTIN_BOX_CATALOG_ID,
   BUILTIN_COLUMN_CATALOG_ID,
+  BUILTIN_FURNITURE_CATALOG_ID,
   BUILTIN_OUTLET_CATALOG_ID,
   BUILTIN_PIPE_CATALOG_ID,
   BUILTIN_SWITCH_CATALOG_ID,
+  SKETCH_CATALOG_KIND_APPLIANCE,
   SKETCH_CATALOG_KIND_BOX,
   SKETCH_CATALOG_KIND_COLUMN,
+  SKETCH_CATALOG_KIND_FURNITURE,
   SKETCH_CATALOG_KIND_OUTLET,
   SKETCH_CATALOG_KIND_PIPE,
   SKETCH_CATALOG_KIND_SWITCH,
   isBoxPlacedCatalogItem,
+  isBuiltInAppliancePlacedCatalogItem,
   isColumnPlacedCatalogItem,
+  isFurniturePlacedCatalogItem,
   isObstaclePlacedCatalogItem,
   isOutletPlacedCatalogItem,
   isPipePlacedCatalogItem,
@@ -79,8 +85,10 @@ import {
   isToiletPlacedCatalogItem,
   sanitizePlacedCatalogItems,
   showerPanShapeFromPlacedItem,
+  type SketchApplianceType,
   type SketchColumnShape,
   type SketchElectricalVariant,
+  type SketchFurnitureType,
   type SketchPipeKind,
   type SketchPlacedCatalogItem,
   type SketchShowerPanShape,
@@ -95,6 +103,12 @@ import {
   pipeDims,
   type InfraObstacleInterval,
 } from './elements'
+import {
+  applianceBuiltInCenterIn,
+  applianceDims,
+  furnitureDims,
+  isRoundFurnitureType,
+} from './appliances'
 import { formatFeetInches, formatInches, parseFeetInches, snapFeetToPrecision, snapOpeningFeetToPrecision } from './inches'
 import {
   centerOpeningT,
@@ -537,9 +551,17 @@ type Tool =
   | 'column-round'
   | 'column-square'
   | 'box'
+  // APPLIANCES-28: встроенная техника (духовка/СВЧ в пенале) — настенный маркер; мебель — напольный объект.
+  | 'appliance-oven'
+  | 'appliance-microwave'
+  | 'furniture-table-rect'
+  | 'furniture-table-round'
+  | 'furniture-chair'
 type OpeningTool = Extract<Tool, 'door' | 'window' | 'opening'>
 type PipeTool = Extract<Tool, 'pipe-water-h' | 'pipe-water-v' | 'pipe-gas'>
 type ObstacleTool = Extract<Tool, 'column-round' | 'column-square' | 'box'>
+type ApplianceMarkerTool = Extract<Tool, 'appliance-oven' | 'appliance-microwave'>
+type FurnitureTool = Extract<Tool, 'furniture-table-rect' | 'furniture-table-round' | 'furniture-chair'>
 type CabinetBuilderKind = 'base' | 'sink' | 'drawers' | 'wall' | 'vanity' | 'filler' | 'appliance'
 type CabinetAppliancePrefix = 'DW' | 'RANGE' | 'REF' | 'HOOD'
 
@@ -816,6 +838,9 @@ type PlanPlacedItem = {
   // ELEMENTS-INFRA-26: инженерная разметка на плане.
   pipe?: SketchPipeKind
   columnShape?: 'round' | 'square' | 'box'
+  // APPLIANCES-28: мебель (стол/стул) и встроенная техника (духовка/СВЧ) на плане.
+  furniture?: SketchFurnitureType
+  builtInAppliance?: SketchApplianceType
   selected?: boolean
 }
 
@@ -1185,6 +1210,9 @@ function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlace
         : isBoxPlacedCatalogItem(item)
           ? 'box'
           : undefined
+      // APPLIANCES-28: мебель и встроенная техника получают собственные плановые символы.
+      const furniture = isFurniturePlacedCatalogItem(item) ? item.furnitureType : undefined
+      const builtInAppliance = isBuiltInAppliancePlacedCatalogItem(item) ? item.applianceType : undefined
       return {
         item,
         x: (item.xFt / cellFt) * CELL_PX,
@@ -1202,6 +1230,8 @@ function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlace
         layer: item.layer,
         pipe,
         columnShape,
+        furniture,
+        builtInAppliance,
       }
     })
     .filter((item): item is PlanPlacedItem => !!item)
@@ -2712,6 +2742,56 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
   }
 
+  // APPLIANCES-28: встроенная техника (духовка/СВЧ в пенале) — настенный маркер, как электрика/подводка.
+  const applianceMarkerPlacedAt = (type: SketchApplianceType, c: number, s: number, rawT: number): SketchPlacedCatalogItem | null => {
+    const base = wallMarkerBaseAt(c, s, rawT)
+    if (!base) return null
+    const dims = applianceDims(type)
+    return {
+      id: makeId('appliance'),
+      catalogItemId: BUILTIN_APPLIANCE_CATALOG_ID,
+      category: 'other',
+      kind: SKETCH_CATALOG_KIND_APPLIANCE,
+      applianceType: type,
+      builtIn: true,
+      name: t(type === 'oven' ? 'hub_sketch_appliance_oven' : 'hub_sketch_appliance_microwave'),
+      model: SKETCH_CATALOG_KIND_APPLIANCE,
+      xFt: base.xFt,
+      yFt: applianceBuiltInCenterIn(type) / 12,
+      zFt: base.zFt,
+      rotationY: base.rotationY,
+      surface: 'wall',
+      c,
+      s,
+      t: base.tValue,
+      widthIn: dims.widthIn,
+      depthIn: dims.depthIn,
+      heightIn: dims.heightIn,
+    }
+  }
+
+  // APPLIANCES-28: мебель (стол/стул) — напольный объект на плане, как колонна/короб, но НЕ режет ряд.
+  const furniturePlacedAt = (type: SketchFurnitureType, point: { x: number; z: number }): SketchPlacedCatalogItem => {
+    const dims = furnitureDims(type)
+    return {
+      id: makeId('furniture'),
+      catalogItemId: BUILTIN_FURNITURE_CATALOG_ID,
+      category: 'other',
+      kind: SKETCH_CATALOG_KIND_FURNITURE,
+      furnitureType: type,
+      name: t(type === 'chair' ? 'hub_sketch_furniture_chair' : type === 'table-round' ? 'hub_sketch_furniture_table_round' : 'hub_sketch_furniture_table_rect'),
+      model: SKETCH_CATALOG_KIND_FURNITURE,
+      xFt: point.x,
+      yFt: floorObjectCenterIn(dims.heightIn) / 12,
+      zFt: point.z,
+      rotationY: 0,
+      surface: 'floor',
+      widthIn: dims.widthIn,
+      depthIn: dims.depthIn,
+      heightIn: dims.heightIn,
+    }
+  }
+
   const canvasPoint = (clientX: number, clientY: number, view = canvasViewRef.current): { x: number; y: number } | null => {
     const svg = svgRef.current
     if (!svg) return null
@@ -3755,7 +3835,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedMeasurementIndex(null)
     setMeasurementDraft(null)
     // ELEMENTS-INFRA-26: выбор колонны/короба открывает панель размеров в режиме «Электрика».
-    setSelectedPlacedId(isObstaclePlacedCatalogItem(item) ? item.id : null)
+    // APPLIANCES-28: мебель и встроенная техника — тоже параметрические объекты с панелью размеров.
+    setSelectedPlacedId(isObstaclePlacedCatalogItem(item) || isFurniturePlacedCatalogItem(item) || isBuiltInAppliancePlacedCatalogItem(item) ? item.id : null)
     setActiveMode(isCabinetPlacedItem(item) ? 'cabinet' : 'light')
     edgeAutoPanPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
     updateEdgeAutoPan(e.clientX, e.clientY)
@@ -3908,6 +3989,37 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     if (tool === 'column-round' || tool === 'column-square' || tool === 'box') {
       const placed = obstaclePlacedAt(tool, { x: raw.x, z: raw.y })
       commit(recutCabinetWalls({ ...model, placedItems: [...sanitizePlacedCatalogItems(model.placedItems), placed] }))
+      setSelectedPlacedId(placed.id)
+      return true
+    }
+
+    // APPLIANCES-28: встроенная техника (духовка/СВЧ в пенале) — на стену, как электрика/подводка.
+    if (tool === 'appliance-oven' || tool === 'appliance-microwave') {
+      const near = nearestSegment(model, raw)
+      if (!near || near.d > SEG_HIT) {
+        setError('hub_sketch_no_segment')
+        return true
+      }
+      const applianceKind: SketchApplianceType = tool === 'appliance-oven' ? 'oven' : 'microwave'
+      const placed = applianceMarkerPlacedAt(applianceKind, near.c, near.s, near.t)
+      if (!placed) {
+        setError('hub_sketch_no_segment')
+        return true
+      }
+      commit({ ...model, placedItems: [...sanitizePlacedCatalogItems(model.placedItems), placed] })
+      setSelectedPlacedId(placed.id)
+      return true
+    }
+
+    // APPLIANCES-28: мебель (стол/стул) — на пол (план), для компоновки; ряд НЕ режет.
+    if (tool === 'furniture-table-rect' || tool === 'furniture-table-round' || tool === 'furniture-chair') {
+      const furnitureKind: SketchFurnitureType = tool === 'furniture-chair'
+        ? 'chair'
+        : tool === 'furniture-table-round'
+          ? 'table-round'
+          : 'table-rect'
+      const placed = furniturePlacedAt(furnitureKind, { x: raw.x, z: raw.y })
+      commit({ ...model, placedItems: [...sanitizePlacedCatalogItems(model.placedItems), placed] })
       setSelectedPlacedId(placed.id)
       return true
     }
@@ -4330,15 +4442,18 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [cabinetWallOptions])
 
   // ELEMENTS-INFRA-26: выбранная напольная преграда (колонна/короб) — для ввода размеров числом.
+  // APPLIANCES-28: панель размеров/удаления работает для напольных преград (колонна/короб),
+  // мебели (стол/стул) и встроенной техники (духовка/СВЧ). Все — параметрические placed-объекты.
   const selectedObstacle = useMemo(() => {
     if (!selectedPlacedId) return null
     const item = sanitizePlacedCatalogItems(model.placedItems).find((candidate) => candidate.id === selectedPlacedId)
-    return item && isObstaclePlacedCatalogItem(item) ? item : null
+    return item && (isObstaclePlacedCatalogItem(item) || isFurniturePlacedCatalogItem(item) || isBuiltInAppliancePlacedCatalogItem(item)) ? item : null
   }, [model, selectedPlacedId])
 
   const updateSelectedObstacleDims = useCallback((patch: { widthIn?: number; depthIn?: number; heightIn?: number }) => {
     if (!selectedObstacle) return
-    const round = isColumnPlacedCatalogItem(selectedObstacle) && selectedObstacle.column === 'round'
+    const round = (isColumnPlacedCatalogItem(selectedObstacle) && selectedObstacle.column === 'round')
+      || (isFurniturePlacedCatalogItem(selectedObstacle) && !!selectedObstacle.furnitureType && isRoundFurnitureType(selectedObstacle.furnitureType))
     const clampDim = (value: number | undefined, fallback: number) => {
       const n = Number.isFinite(value) ? Number(value) : fallback
       return Math.max(1, Math.min(600, Math.round(n)))
@@ -4353,7 +4468,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         else if (patch.depthIn !== undefined) widthIn = depthIn
       }
       const heightIn = clampDim(patch.heightIn ?? item.heightIn, 96)
-      return { ...item, widthIn, depthIn, heightIn, yFt: floorObjectCenterIn(heightIn) / 12 }
+      // APPLIANCES-28: встроенная техника — настенный маркер: центр по высоте не пересчитываем из пола.
+      const yFt = item.surface === 'wall' ? item.yFt : floorObjectCenterIn(heightIn) / 12
+      return { ...item, widthIn, depthIn, heightIn, yFt }
     })
     commit(recutCabinetWalls({ ...model, placedItems: items }))
   }, [commit, model, recutCabinetWalls, selectedObstacle])
@@ -5786,6 +5903,45 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               ))}
             </div>
 
+            {/* APPLIANCES-28: встроенная техника (духовка/СВЧ в пенале) — настенный маркер на стену. */}
+            <div className="hub-sketch-context-subhead">{t('hub_sketch_appliances_group')}</div>
+            <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_appliances_group')}>
+              {([
+                ['appliance-oven', 'hub_sketch_appliance_oven'],
+                ['appliance-microwave', 'hub_sketch_appliance_microwave'],
+              ] as const).map(([toolKind, key]) => (
+                <button
+                  key={toolKind}
+                  type="button"
+                  className={tool === toolKind ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={tool === toolKind}
+                  onClick={() => selectInfraTool(toolKind)}
+                >
+                  {t(key)}
+                </button>
+              ))}
+            </div>
+
+            {/* APPLIANCES-28: мебель (столы/стулья) — напольные объекты на план для компоновки. */}
+            <div className="hub-sketch-context-subhead">{t('hub_sketch_furniture_group')}</div>
+            <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_furniture_group')}>
+              {([
+                ['furniture-table-rect', 'hub_sketch_furniture_table_rect'],
+                ['furniture-table-round', 'hub_sketch_furniture_table_round'],
+                ['furniture-chair', 'hub_sketch_furniture_chair'],
+              ] as const).map(([toolKind, key]) => (
+                <button
+                  key={toolKind}
+                  type="button"
+                  className={tool === toolKind ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={tool === toolKind}
+                  onClick={() => selectInfraTool(toolKind)}
+                >
+                  {t(key)}
+                </button>
+              ))}
+            </div>
+
             {selectedObstacle && (
               <div className="hub-sketch-obstacle-dims">
                 <div className="hub-sketch-context-subhead">{t('hub_sketch_object_size')}</div>
@@ -6771,7 +6927,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
           {planItems.map((entry) => {
             const infraSelected = selectedPlacedId === entry.item.id
-            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.electrical ? ` hub-sketch-plan-electrical hub-sketch-plan-${entry.electrical}` : ''}${entry.pipe ? ` hub-sketch-plan-pipe hub-sketch-plan-pipe-${entry.pipe}` : ''}${entry.columnShape ? ` hub-sketch-plan-obstacle hub-sketch-plan-obstacle-${entry.columnShape}` : ''}${infraSelected ? ' hub-sketch-plan-item-selected' : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}${dragPlacedId === entry.item.id ? ' hub-sketch-plan-item-dragging' : ''}`
+            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.electrical ? ` hub-sketch-plan-electrical hub-sketch-plan-${entry.electrical}` : ''}${entry.pipe ? ` hub-sketch-plan-pipe hub-sketch-plan-pipe-${entry.pipe}` : ''}${entry.columnShape ? ` hub-sketch-plan-obstacle hub-sketch-plan-obstacle-${entry.columnShape}` : ''}${entry.furniture ? ` hub-sketch-plan-furniture hub-sketch-plan-furniture-${entry.furniture}` : ''}${entry.builtInAppliance ? ` hub-sketch-plan-appliance hub-sketch-plan-appliance-${entry.builtInAppliance}` : ''}${infraSelected ? ' hub-sketch-plan-item-selected' : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}${dragPlacedId === entry.item.id ? ' hub-sketch-plan-item-dragging' : ''}`
             const labelFontSize = Math.max(5 * screenWorldPx, Math.min(11 * screenWorldPx, entry.width / Math.max(4, entry.cabinetCode.length * 0.6)))
             return (
               <g
@@ -6822,6 +6978,26 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                       <path className="hub-sketch-plan-obstacle-mark" d={`M ${-entry.width / 2} ${-entry.depth / 2} L ${entry.width / 2} ${entry.depth / 2} M ${entry.width / 2} ${-entry.depth / 2} L ${-entry.width / 2} ${entry.depth / 2}`} />
                     </>
                   )
+                ) : entry.furniture ? (
+                  // APPLIANCES-28: мебель на плане — круглый стол круг, прямоуг. стол/стул прямоугольник со спинкой.
+                  entry.furniture === 'table-round' ? (
+                    <ellipse cx={0} cy={0} rx={entry.width / 2} ry={entry.depth / 2} />
+                  ) : (
+                    <>
+                      <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(4 * screenWorldPx, entry.width * 0.08)} />
+                      {entry.furniture === 'chair' && (
+                        <line className="hub-sketch-plan-furniture-mark" x1={-entry.width / 2} y1={-entry.depth / 2} x2={entry.width / 2} y2={-entry.depth / 2} />
+                      )}
+                    </>
+                  )
+                ) : entry.builtInAppliance ? (
+                  // APPLIANCES-28: встроенная техника на плане — маркер у стены с типовой меткой (O/M).
+                  <>
+                    <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(3 * screenWorldPx, entry.width * 0.12)} />
+                    <text className="hub-sketch-plan-appliance-label" x={0} y={0} textAnchor="middle" dominantBaseline="central" style={{ fontSize: Math.max(5 * screenWorldPx, entry.width * 0.5) }}>
+                      {entry.builtInAppliance === 'microwave' ? 'M' : 'O'}
+                    </text>
+                  </>
                 ) : entry.toilet ? (
                   <>
                     <rect

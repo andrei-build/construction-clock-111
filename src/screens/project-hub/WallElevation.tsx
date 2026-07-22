@@ -39,6 +39,7 @@ import {
   type CodeClearanceCheck,
 } from './code-clearances'
 import {
+  isBuiltInAppliancePlacedCatalogItem,
   isElectricalPlacedCatalogItem,
   isOutletPlacedCatalogItem,
   isPipePlacedCatalogItem,
@@ -46,6 +47,7 @@ import {
   isToiletPlacedCatalogItem,
   sanitizePlacedCatalogItems,
   showerPanShapeFromPlacedItem,
+  type SketchApplianceType,
   type SketchPipeKind,
   type SketchPlacedCatalogItem,
   type SketchShowerPanShape,
@@ -142,6 +144,9 @@ type ElevationPlacedItem = {
   electrical?: 'outlet' | 'switch'
   electricalVariant?: 'single' | 'double'
   pipe?: SketchPipeKind
+  // APPLIANCES-28: встроенная техника (духовка/СВЧ в пенале) — настенный маркер с иконкой на развёртке.
+  // Техника-опора ряда (плита/варочная/холодильник/ПММ/вытяжка) рисуется через CabinetFront по коду.
+  builtInAppliance?: SketchApplianceType
   centerXFt: number
   centerYFt: number
 }
@@ -378,6 +383,8 @@ function elevationPlacedItems(
         ? (isOutletPlacedCatalogItem(item) ? 'outlet' : 'switch')
         : undefined
       const pipe = isPipePlacedCatalogItem(item) ? item.pipe : undefined
+      // APPLIANCES-28: встроенная техника (духовка/СВЧ в пенале) — настенный маркер с иконкой.
+      const builtInAppliance = isBuiltInAppliancePlacedCatalogItem(item) ? item.applianceType : undefined
       return {
         item,
         x: Math.max(0, Math.min(lengthFt - projectedWidth, centerX - projectedWidth / 2)),
@@ -395,6 +402,7 @@ function elevationPlacedItems(
         electrical,
         electricalVariant: item.variant,
         pipe,
+        builtInAppliance,
         centerXFt: Math.max(0, Math.min(lengthFt, centerX)),
         centerYFt: Number.isFinite(centerYFt) ? centerYFt : 0,
       }
@@ -789,7 +797,8 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     return { ax, az, bx, bz }
   }, [wall.a.x, wall.a.y, wall.b.x, wall.b.y, cellFt])
 
-  const infraEntries = useMemo(() => wallPlacedItems.filter((entry) => entry.electrical || entry.pipe), [wallPlacedItems])
+  // APPLIANCES-28: встроенная техника (духовка/СВЧ) — тоже настенный маркер: тащится/выбирается как инженерка.
+  const infraEntries = useMemo(() => wallPlacedItems.filter((entry) => entry.electrical || entry.pipe || entry.builtInAppliance), [wallPlacedItems])
   const selectedInfraEntry = useMemo(
     () => infraEntries.find((entry) => entry.item.id === selectedInfraId) ?? null,
     [infraEntries, selectedInfraId],
@@ -921,6 +930,32 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
         {entry.pipe === 'gas' && (
           <text className="hub-sketch-elevation-infra-pipe-label" x={cx} y={cy - height * 0.9} textAnchor="middle" dominantBaseline="central">G</text>
         )}
+      </>
+    )
+  }
+
+  // APPLIANCES-28: встроенная техника (духовка/СВЧ в пенале) — узнаваемый символ на развёртке
+  // (IKEA Integrated in cabinet). Простые примитивы, как renderInfraSymbol. Плита/варочная/холодильник/
+  // ПММ/вытяжка (техника-опоры ряда) рисуются через CabinetFront по кабинетному коду — здесь не проходят.
+  const renderApplianceSymbol = (entry: ElevationPlacedItem): ReactNode => {
+    const { x, y, width, height } = entry
+    const cx = x + width / 2
+    if (entry.builtInAppliance === 'microwave') {
+      return (
+        <>
+          <rect className="hub-sketch-elevation-appliance-body" x={x} y={y} width={width} height={height} rx={Math.min(width, height) * 0.08} />
+          <rect className="hub-sketch-elevation-appliance-mark" x={x + width * 0.08} y={y + height * 0.16} width={width * 0.6} height={height * 0.68} rx={Math.min(width, height) * 0.05} fill="none" />
+          <line className="hub-sketch-elevation-appliance-mark" x1={x + width * 0.76} y1={y + height * 0.2} x2={x + width * 0.76} y2={y + height * 0.8} />
+        </>
+      )
+    }
+    // духовка (встроенный духовой шкаф) — корпус + окно дверцы + ручка сверху.
+    return (
+      <>
+        <rect className="hub-sketch-elevation-appliance-body" x={x} y={y} width={width} height={height} rx={Math.min(width, height) * 0.06} />
+        <line className="hub-sketch-elevation-appliance-mark" x1={x + width * 0.12} y1={y + height * 0.18} x2={x + width * 0.88} y2={y + height * 0.18} />
+        <rect className="hub-sketch-elevation-appliance-mark" x={x + width * 0.16} y={y + height * 0.32} width={width * 0.68} height={height * 0.5} rx={Math.min(width, height) * 0.04} fill="none" />
+        <line className="hub-sketch-elevation-appliance-mark" x1={cx - width * 0.14} y1={y + height * 0.1} x2={cx + width * 0.14} y2={y + height * 0.1} />
       </>
     )
   }
@@ -1653,11 +1688,12 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           const draggableWall = cabinetVerticalEnabled && entry.cabinet && entry.layer === 'wall' && !entry.filler
           const draggingThis = cabinetVDrag?.itemId === entry.item.id
           // ELEMENTS-INFRA-26: маркер разметки (электрика/подводка) — тащится по развёртке, выбирается кликом.
-          const isInfra = !!(entry.electrical || entry.pipe)
+          // APPLIANCES-28: встроенная техника (духовка/СВЧ в пенале) — такой же настенный маркер.
+          const isInfra = !!(entry.electrical || entry.pipe || entry.builtInAppliance)
           const infraDraggable = infraEditEnabled && isInfra
           const selectedInfra = isInfra && selectedInfraId === entry.item.id
           const infraDraggingThis = infraDrag?.itemId === entry.item.id
-          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.showerPan ? ' hub-sketch-elevation-shower' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}${editableCabinet ? ' hub-sketch-elevation-cabinet-editable' : ''}${draggableWall ? ' hub-sketch-elevation-cabinet-vdrag' : ''}${draggingThis ? ' hub-sketch-elevation-cabinet-vdragging' : ''}${selectedCab ? ' hub-sketch-elevation-cabinet-selected' : ''}${entry.electrical ? ` hub-sketch-elevation-infra hub-sketch-elevation-electrical hub-sketch-elevation-${entry.electrical}` : ''}${entry.pipe ? ` hub-sketch-elevation-infra hub-sketch-elevation-pipe hub-sketch-elevation-pipe-${entry.pipe}` : ''}${infraDraggable ? ' hub-sketch-elevation-infra-drag' : ''}${selectedInfra ? ' hub-sketch-elevation-infra-selected' : ''}${infraDraggingThis ? ' hub-sketch-elevation-infra-dragging' : ''}`
+          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.showerPan ? ' hub-sketch-elevation-shower' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}${editableCabinet ? ' hub-sketch-elevation-cabinet-editable' : ''}${draggableWall ? ' hub-sketch-elevation-cabinet-vdrag' : ''}${draggingThis ? ' hub-sketch-elevation-cabinet-vdragging' : ''}${selectedCab ? ' hub-sketch-elevation-cabinet-selected' : ''}${entry.electrical ? ` hub-sketch-elevation-infra hub-sketch-elevation-electrical hub-sketch-elevation-${entry.electrical}` : ''}${entry.pipe ? ` hub-sketch-elevation-infra hub-sketch-elevation-pipe hub-sketch-elevation-pipe-${entry.pipe}` : ''}${entry.builtInAppliance ? ` hub-sketch-elevation-infra hub-sketch-elevation-appliance hub-sketch-elevation-appliance-${entry.builtInAppliance}` : ''}${infraDraggable ? ' hub-sketch-elevation-infra-drag' : ''}${selectedInfra ? ' hub-sketch-elevation-infra-selected' : ''}${infraDraggingThis ? ' hub-sketch-elevation-infra-dragging' : ''}`
           return (
             <g
               key={`ei-${entry.item.id}`}
@@ -1677,7 +1713,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             >
               <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
               {isInfra ? (
-                renderInfraSymbol(entry)
+                entry.builtInAppliance ? renderApplianceSymbol(entry) : renderInfraSymbol(entry)
               ) : entry.toilet ? (
                 <>
                   <rect x={entry.x + entry.width * 0.08} y={entry.y + entry.height * 0.02} width={entry.width * 0.84} height={entry.height * 0.36} rx={0.05} />
