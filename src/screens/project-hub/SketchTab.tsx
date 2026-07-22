@@ -38,6 +38,7 @@ import {
   DEFAULT_WALL_PAINT,
   TILE_SIZE_OPTIONS,
   cleanColor,
+  finishCoverageAreaSqft,
   normalizeDrywallPatchSurface,
   normalizeFinishes,
   normalizeTileSurface,
@@ -150,6 +151,18 @@ import {
   cabinetCatalogEntryCode,
   type CabinetCatalogEntry,
 } from './cabinetCatalog'
+import {
+  TILE_CATALOG_BRANDS,
+  TILE_CATALOG_ENTRIES,
+  tileCatalogByBrand,
+  tilePriceLabel,
+  tileSizeLabel,
+  tileZoneCostUsd,
+  tileZoneTileCount,
+  formatUsd,
+  type TileBrand,
+  type TileCatalogEntry,
+} from './tileCatalog'
 import { CabinetFrontThumb } from './cabinetFront'
 import {
   ELECTRICAL_MATERIAL_SECTION,
@@ -1581,6 +1594,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [cabinetGallerySearch, setCabinetGallerySearch] = useState('')
   const [selectedCabinetGalleryEntryId, setSelectedCabinetGalleryEntryId] = useState<string | null>(null)
   const [cabinetGalleryWallHeight, setCabinetGalleryWallHeight] = useState(30)
+  // TILE-CATALOG-29: фильтр бренда галереи плитки + заглушка «добавить по ссылке» (импорт делает бэкенд).
+  const [tileGalleryBrand, setTileGalleryBrand] = useState<TileBrand | 'all'>('all')
+  const [tileLinkDraft, setTileLinkDraft] = useState('')
+  const [tileLinkSoon, setTileLinkSoon] = useState(false)
   const [selectedCabinetWallKey, setSelectedCabinetWallKey] = useState<string | null>(null)
   const [includePrimer, setIncludePrimer] = useState(true)
   const [includeTexture, setIncludeTexture] = useState(true)
@@ -4664,6 +4681,24 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     updateSelectedWallSurface({ ...normalizeTileSurface(selectedWallSurface), ...patch, kind: 'tile' })
   }, [selectedWallSurface, updateSelectedWallSurface])
 
+  // TILE-CATALOG-29: выбор позиции каталога диктует реальный размер раскладки + текстуру (цвет/фото-
+  // плейсхолдер) + цену → предварительную стоимость зоны. Всё через updateSelectedWallTile (allowlist).
+  const selectWallTileCatalogEntry = useCallback((entry: TileCatalogEntry) => {
+    updateSelectedWallTile({
+      tileWIn: entry.widthIn,
+      tileHIn: entry.heightIn,
+      tileColor: entry.color,
+      groutColor: entry.groutColor,
+      catalogItemId: entry.id,
+      catalogItemName: `${entry.brand} · ${entry.name}`,
+      catalogPhotoPath: entry.photoUrl,
+      catalogBrand: entry.brand,
+      catalogCollection: entry.collection,
+      catalogPriceUsd: entry.priceUsd,
+      catalogPriceUnit: entry.priceUnit,
+    })
+  }, [updateSelectedWallTile])
+
   const updateSelectedWallDrywallColor = useCallback((field: 'baseColor' | 'patchColor', color: string) => {
     if (!selectedWallSurface) return
     updateSelectedWallSurface({ ...normalizeDrywallPatchSurface(selectedWallSurface), [field]: cleanColor(color, field === 'baseColor' ? DEFAULT_WALL_PAINT : DEFAULT_DRYWALL_PATCH_COLOR), kind: 'drywall-patch' })
@@ -5070,6 +5105,20 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const activeTile = normalizeTileSurface(selectedWallSurface)
     const tileSizeValue = `${activeTile.tileWIn ?? 12}x${activeTile.tileHIn ?? 24}`
     const tileSizePresetValue = TILE_SIZE_OPTIONS.some((option) => `${option.w}x${option.h}` === tileSizeValue) ? tileSizeValue : 'custom'
+    // TILE-CATALOG-29: карточки каталога (фильтр бренда) + предварительная стоимость зоны отделки.
+    const tileGalleryEntries = tileGalleryBrand === 'all' ? TILE_CATALOG_ENTRIES : tileCatalogByBrand(tileGalleryBrand)
+    const tileWallHeightFt = wallHeightFt(model)
+    const tileZoneAreaSqft = finishCoverageAreaSqft(selectedWallSurface, selectedWall.lengthFt, tileWallHeightFt)
+    const tileCostBasis = activeTile.catalogPriceUsd
+      ? {
+          priceUsd: activeTile.catalogPriceUsd,
+          priceUnit: activeTile.catalogPriceUnit ?? 'sqft',
+          widthIn: activeTile.tileWIn ?? 12,
+          heightIn: activeTile.tileHIn ?? 24,
+        }
+      : null
+    const tileZoneCost = tileCostBasis ? tileZoneCostUsd(tileCostBasis, tileZoneAreaSqft) : null
+    const tileZoneCount = tileCostBasis && tileCostBasis.priceUnit === 'piece' ? tileZoneTileCount(tileCostBasis, tileZoneAreaSqft) : null
     return (
       <div className={fullscreen ? 'hub-sketch-wall-finishbar hub-sketch-wall-finishbar-fullscreen' : 'hub-sketch-wall-finishbar'}>
         <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_3d_finish_mode')}>
@@ -5134,6 +5183,94 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 onChange={(event) => updateSelectedWallTile({ tileColor: event.target.value })}
               />
             </label>
+            {/* TILE-CATALOG-29: реальный каталог плитки карточками (бренд/размер/цена/фото-плейсхолдер). */}
+            <div className="hub-sketch-tile-catalog">
+              <div className="hub-sketch-tile-catalog-head">
+                <span>{t('hub_sketch_tile_catalog_title')}</span>
+                <span className="hub-sketch-cabinet-gallery-count">{tileGalleryEntries.length}</span>
+              </div>
+              <p className="muted hub-sketch-tile-catalog-hint">{t('hub_sketch_tile_catalog_pick_hint')}</p>
+              <div className="hub-sketch-segmented hub-sketch-tile-brand-filter" role="group" aria-label={t('hub_sketch_tile_catalog_brand')}>
+                <button
+                  type="button"
+                  className={tileGalleryBrand === 'all' ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={tileGalleryBrand === 'all'}
+                  onClick={() => setTileGalleryBrand('all')}
+                >
+                  {t('hub_sketch_tile_catalog_brand_all')}
+                </button>
+                {TILE_CATALOG_BRANDS.map((brand) => (
+                  <button
+                    key={brand}
+                    type="button"
+                    className={tileGalleryBrand === brand ? 'btn small' : 'btn ghost small'}
+                    aria-pressed={tileGalleryBrand === brand}
+                    onClick={() => setTileGalleryBrand(brand)}
+                  >
+                    {brand === 'other' ? t('hub_sketch_tile_catalog_brand_other') : brand}
+                  </button>
+                ))}
+              </div>
+              <div className="hub-sketch-tile-catalog-grid">
+                {tileGalleryEntries.map((entry) => {
+                  const selected = activeTile.catalogItemId === entry.id
+                  return (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className={selected ? 'hub-sketch-tile-card hub-sketch-tile-card-active' : 'hub-sketch-tile-card'}
+                      aria-pressed={selected}
+                      onClick={() => selectWallTileCatalogEntry(entry)}
+                    >
+                      <span className="hub-sketch-tile-card-thumb">
+                        <img src={entry.photoUrl} alt={entry.name} loading="lazy" />
+                      </span>
+                      <span className="hub-sketch-tile-card-body">
+                        <span className="hub-sketch-tile-card-name">{entry.name}</span>
+                        <span className="muted">{tileSizeLabel(entry)} · {tilePriceLabel(entry)}</span>
+                        <span className="muted">{entry.brand === 'other' ? entry.collection : `${entry.brand} · ${entry.collection}`}</span>
+                        {selected && <span className="hub-sketch-tile-card-selected">{t('hub_sketch_tile_catalog_selected')}</span>}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="hub-sketch-tile-zone-cost">
+                <div className="hub-sketch-tile-zone-row">
+                  <span className="muted">{t('hub_sketch_tile_catalog_zone_area')}</span>
+                  <strong>{tileZoneAreaSqft.toFixed(1)} {t('hub_sketch_tile_catalog_sqft')}</strong>
+                </div>
+                {tileCostBasis ? (
+                  <>
+                    {tileZoneCount !== null && (
+                      <div className="hub-sketch-tile-zone-row">
+                        <span className="muted">{t('hub_sketch_tile_count')}</span>
+                        <strong>{tileZoneCount}</strong>
+                      </div>
+                    )}
+                    <div className="hub-sketch-tile-zone-row hub-sketch-tile-zone-total">
+                      <span className="muted">{t('hub_sketch_tile_catalog_zone_cost')}</span>
+                      <strong>{tileZoneCost ? formatUsd(tileZoneCost) : '—'}</strong>
+                    </div>
+                  </>
+                ) : (
+                  <p className="muted hub-sketch-tile-zone-empty">{t('hub_sketch_tile_catalog_zone_hint')}</p>
+                )}
+              </div>
+              <div className="hub-sketch-tile-link">
+                <input
+                  type="url"
+                  value={tileLinkDraft}
+                  onChange={(event) => { setTileLinkDraft(event.target.value); setTileLinkSoon(false) }}
+                  placeholder={t('hub_sketch_tile_catalog_link_placeholder')}
+                  aria-label={t('hub_sketch_tile_catalog_add_link')}
+                />
+                <button type="button" className="btn ghost small" onClick={() => setTileLinkSoon(true)}>
+                  {t('hub_sketch_tile_catalog_add_link')}
+                </button>
+              </div>
+              {tileLinkSoon && <p className="muted hub-sketch-tile-link-soon">{t('hub_sketch_tile_catalog_link_soon')}</p>}
+            </div>
           </div>
         )}
         {selectedWallSurface.kind === 'drywall-patch' && (

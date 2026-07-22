@@ -1490,6 +1490,10 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             <pattern id={patternId} width={tileW + grout} height={tileH + grout} patternUnits="userSpaceOnUse">
               <rect width={tileW + grout} height={tileH + grout} fill={groutColor} />
               <rect width={tileW} height={tileH} fill={tileColor} />
+              {/* TILE-CATALOG-29: фото-плейсхолдер выбранной позиции каталога тайлится по ячейке плитки. */}
+              {tile?.catalogPhotoPath && (
+                <image href={tile.catalogPhotoPath} x={0} y={0} width={tileW} height={tileH} preserveAspectRatio="none" />
+              )}
             </pattern>
           )}
         </defs>
