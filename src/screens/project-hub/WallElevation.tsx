@@ -1460,8 +1460,13 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
               {segs.map((seg, index) => {
                 const x1 = seg.x
                 const x2 = seg.x + seg.width
+                // CABINETS-CORNER-FILLERS-24: филлер — ОТДЕЛЬНАЯ секция в цепочке размеров:
+                // своя заметная планка на базовой линии + подпись ширины (визуально ≠ шкаф).
                 return (
-                  <g key={`cabinet-dim-seg-${index}`}>
+                  <g key={`cabinet-dim-seg-${index}`} className={seg.filler ? 'hub-sketch-elevation-cabinet-dim-filler' : undefined}>
+                    {seg.filler && (
+                      <line className="hub-sketch-elevation-cabinet-dim-filler-bar" x1={x1} y1={segLineY} x2={x2} y2={segLineY} />
+                    )}
                     <line className="hub-sketch-elevation-cabinet-dim-tick" x1={x1} y1={segLineY - tick} x2={x1} y2={segLineY + tick} />
                     {index === segs.length - 1 && (
                       <line className="hub-sketch-elevation-cabinet-dim-tick" x1={x2} y1={segLineY - tick} x2={x2} y2={segLineY + tick} />

@@ -17,6 +17,8 @@ export type ParsedCabinetCode = {
   hinge?: CabinetHinge
   filler: boolean
   panel: boolean
+  // CABINETS-CORNER-FILLERS-24: авто-филлер (синтетический, ≤3" зазор) — не считается ручным.
+  auto?: boolean
 }
 
 export type CabinetCodeParseResult = {
@@ -390,6 +392,44 @@ export function cabinetDisplayCode(item: Pick<SketchPlacedCatalogItem, 'code' | 
   return item.code?.trim() || item.model?.trim() || item.name?.trim() || ''
 }
 
+// CABINETS-CORNER-FILLERS-24: магнит-прилипание шкафа при drag вдоль стены. Переиспользует
+// bump-стоп из CABINETS-PLACE-13 (флаш к соседу / углу стены), но ДОБАВЛЯЕТ активный магнит:
+// когда центр в пределах magnetIn от ближайшего flush-стопа (угол стены ИЛИ соседний шкаф),
+// прилипает точно к нему (зазор 0). Возвращает T центра шкафа (0..1) вдоль стены.
+export const CABINET_CORNER_MAGNET_IN = 3
+
+export function clampCabinetCenterTAlongWall(
+  neighbors: SketchPlacedCatalogItem[],
+  dragged: Pick<SketchPlacedCatalogItem, 'id' | 'widthIn' | 'wallId' | 'layer' | 't'>,
+  wallLengthIn: number,
+  targetWallId: string,
+  desiredT: number,
+  magnetIn: number = CABINET_CORNER_MAGNET_IN,
+): number {
+  const clamped01 = Math.max(0, Math.min(1, desiredT))
+  if (!(wallLengthIn > 0)) return clamped01
+  const halfFrac = ((dragged.widthIn ?? 0) / 2) / wallLengthIn
+  if (halfFrac * 2 >= 1) return 0.5
+  let minT = halfFrac          // левый угол стены = флаш к началу
+  let maxT = 1 - halfFrac      // правый угол стены = флаш к концу
+  const currentCenter = dragged.wallId === targetWallId && typeof dragged.t === 'number' ? dragged.t : clamped01
+  neighbors.forEach((neighbor) => {
+    if (neighbor.id === dragged.id) return
+    if (neighbor.wallId !== targetWallId || neighbor.layer !== dragged.layer) return
+    if (!isCabinetPlacedItem(neighbor)) return
+    const neighborCenter = typeof neighbor.t === 'number' ? neighbor.t : 0
+    const neighborHalf = ((neighbor.widthIn ?? 0) / 2) / wallLengthIn
+    if (neighborCenter <= currentCenter) minT = Math.max(minT, neighborCenter + neighborHalf + halfFrac)
+    else maxT = Math.min(maxT, neighborCenter - neighborHalf - halfFrac)
+  })
+  if (minT > maxT) return Math.max(halfFrac, Math.min(1 - halfFrac, currentCenter))
+  const clamped = Math.max(minT, Math.min(maxT, clamped01))
+  const magnetT = Math.max(0, magnetIn) / wallLengthIn
+  if (Math.abs(clamped - minT) <= magnetT) return minT
+  if (Math.abs(clamped - maxT) <= magnetT) return maxT
+  return clamped
+}
+
 export function cabinetScheduleCsv(items: SketchPlacedCatalogItem[]): string | null {
   const rows = items.filter(isCabinetPlacedItem)
   if (rows.length === 0) return null
@@ -514,6 +554,9 @@ function makePlacedCabinet(
     heightIn: parsed.heightIn,
   }
   if (parsed.hinge) placed.hinge = parsed.hinge
+  // CABINETS-CORNER-FILLERS-24: филлер из явного кода (не авто ≤3") — ручной, помечаем чтобы
+  // он пережил пересборку ряда (cabinetRunItemsForWall его включает в код-строку).
+  if (parsed.filler && !parsed.auto) placed.manualFiller = true
   if (warning) placed.layoutWarning = warning
   return placed
 }
@@ -559,6 +602,7 @@ export function layoutCabinetRunOnWall(
               layer,
               filler: true,
               panel: false,
+              auto: true,
             },
           ]
         } else {

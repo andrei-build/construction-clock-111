@@ -91,6 +91,7 @@ import {
 import {
   cabinetDisplayCode,
   cabinetScheduleCsv,
+  clampCabinetCenterTAlongWall,
   isCabinetPlacedItem,
   layoutCabinetRunOnWall,
   normalizeCabinetCodeInput,
@@ -459,10 +460,13 @@ type CabinetAppliancePrefix = 'DW' | 'RANGE' | 'REF' | 'HOOD'
 
 const CABINET_STANDARD_WIDTHS_IN = CABINET_CATALOG_STANDARD_WIDTHS_IN
 const CABINET_WALL_HEIGHTS_IN = CABINET_CATALOG_WALL_HEIGHTS_IN
+// CABINETS-CORNER-FILLERS-24: тянущаяся ширина ручного филлера — чипы 1"–6" + свободный ввод числом.
+const CABINET_FILLER_WIDTHS_IN = [1, 2, 3, 4, 5, 6] as const
 
-// CABINETS-PLACE-13: при перетаскивании кабинета вдоль стены ограничиваем его центр (доля t)
-// так, чтобы он не заходил внутрь соседа того же слоя/стены и не выходил за концы стены (угол).
-// Скольжение с bump-упором — как у Chief Architect / 2020, без свободного «сквозь соседа».
+// CABINETS-PLACE-13 / CABINETS-CORNER-FILLERS-24: при перетаскивании кабинета вдоль стены его центр
+// ограничен bump-упором (не заходит в соседа/за угол) И магнитится к ближайшему flush-стопу (угол
+// стены или соседний шкаф). Общий расчёт вынесен в cabinetCodes.clampCabinetCenterTAlongWall и
+// переиспользован здесь и в юнит-тестах — единый источник правды для флаша/магнита.
 function clampCabinetTAlongWall(
   placedItems: SketchPlacedCatalogItem[],
   dragged: SketchPlacedCatalogItem,
@@ -470,25 +474,7 @@ function clampCabinetTAlongWall(
   targetWallId: string,
   desiredT: number,
 ): number {
-  const clamped01 = Math.max(0, Math.min(1, desiredT))
-  if (!(wallLengthIn > 0)) return clamped01
-  const halfFrac = ((dragged.widthIn ?? 0) / 2) / wallLengthIn
-  if (halfFrac * 2 >= 1) return 0.5
-  let minT = halfFrac
-  let maxT = 1 - halfFrac
-  // сторону соседа определяем по прежнему положению (dragged.t) — так слот стабилен между кадрами
-  const currentCenter = dragged.wallId === targetWallId && typeof dragged.t === 'number' ? dragged.t : clamped01
-  placedItems.forEach((neighbor) => {
-    if (neighbor.id === dragged.id) return
-    if (neighbor.wallId !== targetWallId || neighbor.layer !== dragged.layer) return
-    if (!isCabinetPlacedItem(neighbor)) return
-    const neighborCenter = typeof neighbor.t === 'number' ? neighbor.t : 0
-    const neighborHalf = ((neighbor.widthIn ?? 0) / 2) / wallLengthIn
-    if (neighborCenter <= currentCenter) minT = Math.max(minT, neighborCenter + neighborHalf + halfFrac)
-    else maxT = Math.min(maxT, neighborCenter - neighborHalf - halfFrac)
-  })
-  if (minT > maxT) return Math.max(halfFrac, Math.min(1 - halfFrac, currentCenter))
-  return Math.max(minT, Math.min(maxT, clamped01))
+  return clampCabinetCenterTAlongWall(placedItems, dragged, wallLengthIn, targetWallId, desiredT)
 }
 const CABINET_BUILDER_KINDS: CabinetBuilderKind[] = ['base', 'sink', 'drawers', 'wall', 'vanity', 'filler', 'appliance']
 const CABINET_APPLIANCE_PREFIXES: CabinetAppliancePrefix[] = ['DW', 'RANGE', 'REF', 'HOOD']
@@ -3723,7 +3709,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       return
     }
     if (!canEdit) return
-    if (isCabinetPlacedItem(item) && !item.filler) {
+    // CABINETS-CORNER-FILLERS-24: ручной филлер тоже открывает поповер (правка ширины числом/чипами);
+    // авто-филлер (≤3") не редактируется — его шириной управляет расчёт остатка.
+    if (isCabinetPlacedItem(item) && (!item.filler || item.manualFiller === true)) {
       setActiveMode('cabinet')
       setPlanCabinetEditor({ id: item.id, x: e.clientX, y: e.clientY })
     } else {
@@ -4198,11 +4186,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setStatus(layout.overflow ? 'hub_sketch_cabinet_overflow' : layout.smallFiller ? 'hub_sketch_cabinet_small_filler' : 'hub_sketch_cabinet_placed')
   }
 
-  // UX-CABINETS-6: визуальное размещение — ряд стены хранится как placedItems,
-  // код-строка собирается заново из уже стоящих шкафов (без авто-филлеров) → layoutCabinetRunOnWall.
+  // UX-CABINETS-6: визуальное размещение — ряд стены хранится как placedItems, код-строка
+  // собирается заново из уже стоящих шкафов → layoutCabinetRunOnWall.
+  // CABINETS-CORNER-FILLERS-24: РУЧНЫЕ филлеры (manualFiller) остаются в код-строке ряда на своей
+  // позиции (иначе исчезали бы при пересборке); авто-филлеры (≤3") по-прежнему выкидываем — их
+  // добавляет сам расчёт.
   const cabinetRunItemsForWall = useCallback((wallId: string): SketchPlacedCatalogItem[] => (
     sanitizePlacedCatalogItems(model.placedItems)
-      .filter((item) => isCabinetPlacedItem(item) && item.wallId === wallId && !item.filler)
+      .filter((item) => isCabinetPlacedItem(item) && item.wallId === wallId && (!item.filler || item.manualFiller === true))
       .sort((a, b) => (a.t ?? 0) - (b.t ?? 0))
   ), [model])
 
@@ -4233,8 +4224,28 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     rebuildCabinetWall(selectedCabinetWall, [...existing, code])
   }, [cabinetGalleryWallHeight, cabinetRunItemsForWall, rebuildCabinetWall, selectedCabinetWall])
 
+  // CABINETS-CORNER-FILLERS-24: вставка РУЧНОГО филлера в любое место ряда (index — позиция в
+  // код-строке слоя: 0 = у угла/начала, length = у края/конца, между = между шкафами). Клампим
+  // ширину 1..48". Базовый филлер = BF{w}, навесной = F{w}. Пересборка сохраняет manualFiller.
+  const insertCabinetFillerAt = useCallback((index: number, widthIn = 3, layer: 'base' | 'wall' = 'base') => {
+    if (!selectedCabinetWall) {
+      setError('hub_sketch_no_segment')
+      return
+    }
+    const wallId = sketchWallKey(selectedCabinetWall.c, selectedCabinetWall.s)
+    const codes = cabinetRunItemsForWall(wallId).map((item) => cabinetDisplayCode(item)).filter(Boolean)
+    const width = Math.max(1, Math.min(48, Math.round(widthIn)))
+    const fillerCode = `${layer === 'wall' ? 'F' : 'BF'}${width}`
+    const at = Math.max(0, Math.min(codes.length, index))
+    codes.splice(at, 0, fillerCode)
+    rebuildCabinetWall(selectedCabinetWall, codes)
+  }, [cabinetRunItemsForWall, rebuildCabinetWall, selectedCabinetWall])
+
   const cabinetItemCodeWithSize = (item: SketchPlacedCatalogItem, widthIn: number, wallHeightIn?: number): string => {
     const pad2 = (value: number) => String(Math.round(value)).padStart(2, '0')
+    // CABINETS-CORNER-FILLERS-24: филлер остаётся филлером при правке ширины (BF/F), не превращается
+    // в шкаф из-за слоя wall (иначе W-код сделал бы из него навесной шкаф).
+    if (item.filler) return `${item.cabinetPrefix || (item.layer === 'wall' ? 'F' : 'BF')}${Math.round(widthIn)}`
     if (item.layer === 'wall') {
       const heightIn = wallHeightIn ?? Math.round(item.heightIn ?? 30)
       return `W${pad2(widthIn)}${pad2(heightIn)}`
@@ -4265,6 +4276,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [cabinetRunItemsForWall, cabinetWallOptions, rebuildCabinetWall])
 
   const cabinetRunItems = effectiveCabinetWallKey ? cabinetRunItemsForWall(effectiveCabinetWallKey) : []
+
+  // CABINETS-CORNER-FILLERS-24: раскладка текущего ВИЗУАЛЬНОГО ряда (по кодам стоящих шкафов) —
+  // из неё берём незакрытый остаток стены для кликабельной подсказки «заполнить филлером».
+  const cabinetRunLayout = useMemo<CabinetLayoutResult | null>(() => {
+    if (!selectedCabinetWall) return null
+    const codes = cabinetRunItems.map((item) => cabinetDisplayCode(item)).filter(Boolean)
+    if (codes.length === 0) return null
+    return layoutCabinetRunOnWall(model, selectedCabinetWall, codes.join(' '))
+  }, [model, selectedCabinetWall, cabinetRunItems])
 
   // CABINETS-PLACE-13: Esc/Delete для поповера шкафа на плане (как на развёртке).
   useEffect(() => {
@@ -5230,20 +5250,54 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                                     ))}
                                   </div>
                                 )}
-                                <div className="hub-sketch-cabinet-gallery-size-row" role="group" aria-label={t(entry.sizeKind === 'panelDepth' ? 'hub_sketch_cabinet_gallery_depth' : 'hub_sketch_width')}>
-                                  <span className="muted">{t(entry.sizeKind === 'panelDepth' ? 'hub_sketch_cabinet_gallery_depth' : 'hub_sketch_width')}</span>
-                                  {entry.widthsIn.map((widthIn) => (
-                                    <button
-                                      key={`${entry.id}-${widthIn}`}
-                                      type="button"
-                                      className="btn ghost small hub-sketch-cabinet-gallery-code-chip"
+                                {entry.codePrefix === 'BF' ? (
+                                  // CABINETS-CORNER-FILLERS-24: филлер тянется — чипы 1"–6" + свободный ввод числом (1..48").
+                                  <div className="hub-sketch-cabinet-gallery-size-row hub-sketch-cabinet-filler-width" role="group" aria-label={t('hub_sketch_cabinet_filler_width')}>
+                                    <span className="muted">{t('hub_sketch_cabinet_filler_width')}</span>
+                                    {CABINET_FILLER_WIDTHS_IN.map((widthIn) => (
+                                      <button
+                                        key={`${entry.id}-${widthIn}`}
+                                        type="button"
+                                        className="btn ghost small hub-sketch-cabinet-gallery-code-chip"
+                                        disabled={!selectedCabinetWall}
+                                        onClick={() => placeCabinetEntry(entry, widthIn)}
+                                      >
+                                        {`+BF${widthIn}`}
+                                      </button>
+                                    ))}
+                                    <input
+                                      className="hub-sketch-cabinet-filler-width-input"
+                                      type="number"
+                                      min={1}
+                                      max={48}
+                                      step={1}
+                                      defaultValue={3}
                                       disabled={!selectedCabinetWall}
-                                      onClick={() => placeCabinetEntry(entry, widthIn)}
-                                    >
-                                      {entry.sizeKind === 'wall' ? `${widthIn}"` : `+${cabinetCatalogEntryCode(entry, widthIn, cabinetGalleryWallHeight)}`}
-                                    </button>
-                                  ))}
-                                </div>
+                                      aria-label={t('hub_sketch_cabinet_filler_width')}
+                                      onKeyDown={(event) => {
+                                        if (event.key !== 'Enter') return
+                                        event.preventDefault()
+                                        const n = Number((event.target as HTMLInputElement).value)
+                                        if (Number.isFinite(n) && n > 0) placeCabinetEntry(entry, Math.max(1, Math.min(48, Math.round(n))))
+                                      }}
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="hub-sketch-cabinet-gallery-size-row" role="group" aria-label={t(entry.sizeKind === 'panelDepth' ? 'hub_sketch_cabinet_gallery_depth' : 'hub_sketch_width')}>
+                                    <span className="muted">{t(entry.sizeKind === 'panelDepth' ? 'hub_sketch_cabinet_gallery_depth' : 'hub_sketch_width')}</span>
+                                    {entry.widthsIn.map((widthIn) => (
+                                      <button
+                                        key={`${entry.id}-${widthIn}`}
+                                        type="button"
+                                        className="btn ghost small hub-sketch-cabinet-gallery-code-chip"
+                                        disabled={!selectedCabinetWall}
+                                        onClick={() => placeCabinetEntry(entry, widthIn)}
+                                      >
+                                        {entry.sizeKind === 'wall' ? `${widthIn}"` : `+${cabinetCatalogEntryCode(entry, widthIn, cabinetGalleryWallHeight)}`}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -5261,8 +5315,21 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             {cabinetRunItems.length === 0 ? (
               <span className="muted">{t('hub_sketch_cabinet_run_empty')}</span>
             ) : (
-              cabinetRunItems.map((item) => (
-                <span className="hub-sketch-cabinet-run-chip" key={item.id}>
+              // CABINETS-CORNER-FILLERS-24: между чипами — слоты «+» для вставки ручного филлера
+              // в это место ряда (слот перед шкафом i = позиция i; хвостовой слот = у края).
+              cabinetRunItems.flatMap((item, index) => [
+                <button
+                  key={`ins-${index}`}
+                  type="button"
+                  className="hub-sketch-cabinet-run-insert"
+                  title={t('hub_sketch_cabinet_filler_insert')}
+                  aria-label={t('hub_sketch_cabinet_filler_insert')}
+                  disabled={!selectedCabinetWall}
+                  onClick={() => insertCabinetFillerAt(index, 3, item.layer === 'wall' ? 'wall' : 'base')}
+                >
+                  +
+                </button>,
+                <span className={item.filler ? 'hub-sketch-cabinet-run-chip hub-sketch-cabinet-run-chip-filler' : 'hub-sketch-cabinet-run-chip'} key={item.id}>
                   <span>{cabinetDisplayCode(item)}</span>
                   <button
                     type="button"
@@ -5272,10 +5339,40 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                   >
                     ×
                   </button>
-                </span>
-              ))
+                </span>,
+              ])
+            )}
+            {(cabinetRunItems.length > 0 || !!selectedCabinetWall) && (
+              <button
+                key="ins-end"
+                type="button"
+                className="hub-sketch-cabinet-run-insert hub-sketch-cabinet-run-insert-end"
+                title={t('hub_sketch_cabinet_filler_insert')}
+                disabled={!selectedCabinetWall}
+                onClick={() => insertCabinetFillerAt(cabinetRunItems.length, 3, 'base')}
+              >
+                {`+ ${t('hub_sketch_cabinet_filler')}`}
+              </button>
             )}
           </div>
+          {/* CABINETS-CORNER-FILLERS-24: незакрытый остаток стены — КЛИКАБЕЛЬНАЯ подсказка,
+              один клик вставляет филлер нужной ширины в остаток (у края ряда). */}
+          {cabinetRunLayout && cabinetRunLayout.summaries.some((summary) => summary.remainderIn > 0) && (
+            <div className="hub-sketch-cabinet-remainder">
+              {cabinetRunLayout.summaries.filter((summary) => summary.remainderIn > 0).map((summary) => (
+                <button
+                  type="button"
+                  key={summary.layer}
+                  className="hub-sketch-cabinet-remainder-chip hub-sketch-cabinet-remainder-fill"
+                  title={t('hub_sketch_cabinet_fill_remainder')}
+                  disabled={!selectedCabinetWall}
+                  onClick={() => insertCabinetFillerAt(cabinetRunItems.length, summary.remainderIn, summary.layer)}
+                >
+                  {`${t(summary.layer === 'base' ? 'hub_sketch_cabinet_base' : 'hub_sketch_cabinet_wall_layer')} · ${t('hub_sketch_cabinet_wall_remainder')} ${formatInches(summary.remainderIn)} · ${t('hub_sketch_cabinet_fill_remainder')}`}
+                </button>
+              ))}
+            </div>
+          )}
           {/* ПРО-режим: ввод кодами (эксперт) — свёрнут по умолчанию */}
           <details className="hub-sketch-cabinet-expert">
             <summary>{t('hub_sketch_cabinet_expert')}</summary>
@@ -6718,24 +6815,67 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                           ×
                         </button>
                       </div>
-                      <div className="hub-sketch-elevation-cabinet-editor-row" role="group" aria-label={t('hub_sketch_width')}>
-                        <span className="muted">{t('hub_sketch_width')}</span>
-                        {CABINET_STANDARD_WIDTHS_IN.map((w) => {
-                          const current = widthIn === w
-                          return (
-                            <button
-                              key={w}
-                              type="button"
-                              className={current ? 'btn small' : 'btn ghost small'}
-                              aria-pressed={current}
-                              onClick={() => handleCabinetResize(editorItem, w)}
-                            >
-                              {`${w}"`}
-                            </button>
-                          )
-                        })}
-                      </div>
-                      {editorItem.layer === 'wall' && (
+                      {editorItem.filler ? (
+                        // CABINETS-CORNER-FILLERS-24: тянущийся филлер — чипы 1"–6" + ввод числом (1..48").
+                        <div className="hub-sketch-elevation-cabinet-editor-row hub-sketch-cabinet-filler-width" role="group" aria-label={t('hub_sketch_cabinet_filler_width')}>
+                          <span className="muted">{t('hub_sketch_cabinet_filler_width')}</span>
+                          {CABINET_FILLER_WIDTHS_IN.map((w) => {
+                            const current = widthIn === w
+                            return (
+                              <button
+                                key={w}
+                                type="button"
+                                className={current ? 'btn small' : 'btn ghost small'}
+                                aria-pressed={current}
+                                onClick={() => handleCabinetResize(editorItem, w)}
+                              >
+                                {`${w}"`}
+                              </button>
+                            )
+                          })}
+                          <input
+                            key={`filler-width-${editorItem.id}`}
+                            className="hub-sketch-cabinet-filler-width-input"
+                            type="number"
+                            min={1}
+                            max={48}
+                            step={1}
+                            defaultValue={widthIn}
+                            aria-label={t('hub_sketch_cabinet_filler_width')}
+                            onKeyDown={(event) => {
+                              if (event.key !== 'Enter') return
+                              event.preventDefault()
+                              const n = Number((event.target as HTMLInputElement).value)
+                              if (Number.isFinite(n) && n > 0) handleCabinetResize(editorItem, Math.max(1, Math.min(48, Math.round(n))))
+                            }}
+                            onBlur={(event) => {
+                              const n = Number(event.target.value)
+                              if (Number.isFinite(n) && n > 0 && Math.max(1, Math.min(48, Math.round(n))) !== widthIn) {
+                                handleCabinetResize(editorItem, Math.max(1, Math.min(48, Math.round(n))))
+                              }
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <div className="hub-sketch-elevation-cabinet-editor-row" role="group" aria-label={t('hub_sketch_width')}>
+                          <span className="muted">{t('hub_sketch_width')}</span>
+                          {CABINET_STANDARD_WIDTHS_IN.map((w) => {
+                            const current = widthIn === w
+                            return (
+                              <button
+                                key={w}
+                                type="button"
+                                className={current ? 'btn small' : 'btn ghost small'}
+                                aria-pressed={current}
+                                onClick={() => handleCabinetResize(editorItem, w)}
+                              >
+                                {`${w}"`}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                      {editorItem.layer === 'wall' && !editorItem.filler && (
                         <div className="hub-sketch-elevation-cabinet-editor-row" role="group" aria-label={t('hub_sketch_cabinet_wall_height')}>
                           <span className="muted">{t('hub_sketch_cabinet_wall_height')}</span>
                           {CABINET_WALL_HEIGHTS_IN.map((h) => {

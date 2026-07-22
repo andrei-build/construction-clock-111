@@ -5784,6 +5784,59 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-cabinet-run-remove:hover {
   background: rgba(220, 38, 38, .22);
 }
+/* CABINETS-CORNER-FILLERS-24: ручной филлер в ряду — жёлтый штрихованный чип (визуально ≠ шкаф) */
+.hub-sketch-cabinet-run-chip-filler {
+  border-color: rgba(180, 83, 9, .5);
+  background: repeating-linear-gradient(45deg, rgba(244, 201, 93, .28), rgba(244, 201, 93, .28) 4px, rgba(244, 201, 93, .12) 4px, rgba(244, 201, 93, .12) 8px);
+  color: #92400e;
+}
+/* CABINETS-CORNER-FILLERS-24: слот «+» для вставки филлера между шкафами / у края */
+.hub-sketch-cabinet-run-insert {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px dashed rgba(180, 83, 9, .5);
+  border-radius: 999px;
+  background: rgba(251, 191, 36, .1);
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+.hub-sketch-cabinet-run-insert:hover:not(:disabled) {
+  background: rgba(251, 191, 36, .22);
+}
+.hub-sketch-cabinet-run-insert:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+.hub-sketch-cabinet-run-insert-end {
+  border-style: solid;
+}
+/* CABINETS-CORNER-FILLERS-24: кликабельная подсказка остатка + ввод ширины филлера числом */
+.hub-sketch-cabinet-remainder-fill {
+  cursor: pointer;
+}
+.hub-sketch-cabinet-remainder-fill:hover:not(:disabled) {
+  background: rgba(251, 191, 36, .3);
+  border-color: rgba(180, 83, 9, .6);
+}
+.hub-sketch-cabinet-remainder-fill:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.hub-sketch-cabinet-filler-width-input {
+  width: 56px;
+  padding: 2px 6px;
+  border: 1px solid rgba(126,160,190,.4);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 800;
+}
 .hub-sketch-cabinet-expert {
   grid-column: 1 / -1;
   border: 1px solid rgba(126,160,190,.24);
@@ -7373,6 +7426,20 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim-total text {
   fill: #0f172a;
   font-size: .22px;
+}
+/* CABINETS-CORNER-FILLERS-24: филлер = отдельная секция цепочки размеров — янтарная планка,
+   тики и подпись отличаются от шкафа. */
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim-filler text {
+  fill: #92400e;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim-filler line {
+  stroke: #b45309;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim-filler-bar {
+  stroke: #b45309;
+  stroke-width: .07;
+  stroke-dasharray: .06 .05;
+  vector-effect: non-scaling-stroke;
 }
 .hub-sketch-elevation-item rect,
 .hub-sketch-elevation-item path,
