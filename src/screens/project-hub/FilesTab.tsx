@@ -9,6 +9,7 @@ import {
 } from '../../lib/api'
 import type { Profile, Project, ProjectHubFile } from '../../lib/types'
 import { useImageLightbox, type LightboxImage } from '../../components/ImageLightbox'
+import { useFileViewer } from '../../components/FileViewer'
 import { buildStoreZip, dedupeNames, watermarkGeometry } from './photoExport'
 
 interface FilesTabProps {
@@ -93,7 +94,9 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
   const [exportMsg, setExportMsg] = useState<string | null>(null)
   // LIGHTBOX-1: изображения — через общий лайтбокс (зум/листание/на весь экран/скачать В ПРИЛОЖЕНИИ).
   const lb = useImageLightbox()
-  // Видео остаётся в простом оверлее; прочие файлы (pdf и т.п.) открываем в новой вкладке — прежнее поведение.
+  // FILES-VIEWER-37: прочие файлы (PDF/документы) — во ВСТРОЕННОМ полноэкранном просмотрщике, а не
+  // через window.open (Закон Андрея: «файл на весь экран» В ПРИЛОЖЕНИИ). Видео остаётся в своём оверлее.
+  const fv = useFileViewer()
   const [videoLightbox, setVideoLightbox] = useState<{ url: string; name: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -205,7 +208,7 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
       const url = await fileUrl(file)
       if (!url) { setOpenError(true); return }
       if (category === 'videos') setVideoLightbox({ url, name: file.name })
-      else window.open(url, '_blank', 'noopener,noreferrer')
+      else fv.open({ url, name: file.name, mime: file.mime })
     } catch {
       setOpenError(true)
     } finally {
@@ -481,6 +484,7 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
       )}
 
       {lb.node}
+      {fv.node}
 
       {videoLightbox && (
         <div className="gallery-lightbox" onClick={() => setVideoLightbox(null)}>
