@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
+import { encodeQr, qrToSvg } from '../lib/qr'
 import { useLiveRefresh } from '../lib/useLiveRefresh'
 import { getTeam, getTodayEvents, createWorker, setWorkerCheckoutVideo, getExpiringWorkerDocs } from '../lib/api'
 import type { ExpiringWorkerDoc } from '../lib/api'
@@ -57,6 +58,8 @@ export default function Team() {
   const [role, setRole] = useState('worker')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  // INSTALL-PWA-40: блок «Отправить приложение работнику» — ссылка на публичную /install + QR.
+  const [inviteCopied, setInviteCopied] = useState(false)
 
   // LIVE-REFRESH-1: у экрана нет флага loading — load() и так фоновый (обновляет только массивы
   // team/events, не трогает форму добавления и открытый drawer), поэтому его же используем как refetch.
@@ -116,6 +119,25 @@ export default function Team() {
     r === 'owner' || r === 'admin' ? 'red' : r === 'manager' || r === 'supervisor' ? 'amber' : r === 'driver' ? 'blue' : 'green'
 
   const canManage = profile ? isManagerWrite(profile.role) : false
+  // INSTALL-PWA-40: только owner/admin показывают блок-приглашение на установку приложения.
+  const canInvite = profile?.role === 'owner' || profile?.role === 'admin'
+  const inviteUrl = typeof window !== 'undefined' ? `${window.location.origin}/install` : '/install'
+  const inviteQr = useMemo(() => {
+    try {
+      return qrToSvg(encodeQr(inviteUrl, 'M'), { size: 168, dark: '#0f1420', light: '#ffffff' })
+    } catch {
+      return ''
+    }
+  }, [inviteUrl])
+  const copyInvite = async () => {
+    try {
+      await navigator.clipboard.writeText(inviteUrl)
+      setInviteCopied(true)
+      setTimeout(() => setInviteCopied(false), 2000)
+    } catch {
+      setInviteCopied(false)
+    }
+  }
 
   // TEAM-1: раскладываем команду по ролевым группам (порядок фиксирован), плюс бакет
   // «Прочие» для ролей вне списка (например client), чтобы никто не исчез из списка.
@@ -156,6 +178,26 @@ export default function Team() {
         <span className={`badge ${onShiftCount > 0 ? 'green' : 'grey'}`}>●</span>{' '}
         {t('team_pulse_label')}: {t('on_shift')} {onShiftCount} {t('team_pulse_of')} {team.length}
       </div>
+
+      {/* INSTALL-PWA-40: «Отправить приложение работнику» — ссылка на публичную /install + QR
+          (навести камеру телефона). Только owner/admin. QR dep-free, битый ввод не роняет UI. */}
+      {canInvite && (
+        <div className="card team-invite">
+          <div className="team-invite-body">
+            <h2 className="team-invite-title">📲 {t('team_invite_title')}</h2>
+            <p className="muted">{t('team_invite_desc')}</p>
+            <div className="team-invite-actions">
+              <button className="btn ghost small" onClick={copyInvite}>
+                {inviteCopied ? t('team_invite_copied') : t('team_invite_copy')}
+              </button>
+              <code className="team-invite-url">{inviteUrl}</code>
+            </div>
+          </div>
+          {inviteQr && (
+            <div className="team-invite-qr" dangerouslySetInnerHTML={{ __html: inviteQr }} aria-label={t('team_invite_title')} />
+          )}
+        </div>
+      )}
 
       {/* DOC-EXPIRY-UI: компактная плашка-сводка, если у кого-то в команде истекают/просрочены документы. */}
       {(docSummary.red > 0 || docSummary.amber > 0) && (
