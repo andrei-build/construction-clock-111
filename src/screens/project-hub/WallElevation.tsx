@@ -1857,6 +1857,27 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </g>
           )
         })()}
+        {/* SWEEP-FIX-34: статичная высота от пола для КАЖДОГО инфра-маркера (розетка/выключатель/подводка/
+            техника) — видна ВСЕГДА, без выделения. Активный (выбранный/перетаскиваемый) уже показывает полную
+            размерную цепочку выше, поэтому его компактную подпись пропускаем, чтобы не дублировать. */}
+        {!compact && !measureTool && !zoneTool && infraEntries.map((entry) => {
+          const activeId = infraDrag ? infraDrag.itemId : selectedInfraId
+          if (entry.item.id === activeId) return null
+          const floorText = formatInches(entry.centerYFt * 12)
+          const labelY = Math.max(0.12, entry.y - 0.08)
+          return (
+            <text
+              key={`infra-floor-static-${entry.item.id}`}
+              className="hub-sketch-elevation-infra-dim-static"
+              x={entry.centerXFt}
+              y={labelY}
+              textAnchor="middle"
+              pointerEvents="none"
+            >
+              {floorText}
+            </text>
+          )
+        })}
         {/* CABINETS-PLACE-13: живая размерная цепочка над рядом (посегментно + общий габарит). */}
         {!measureTool && !zoneTool && cabinetDimChains.map(({ layer, segs }) => {
           const topY = Math.min(...segs.map((seg) => seg.y))
