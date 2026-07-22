@@ -143,6 +143,11 @@ import {
   type CabinetLayoutResult,
 } from './cabinetCodes'
 import {
+  solveKitchenLayout,
+  type KitchenLayoutVariant,
+  type KitchenSlot,
+} from './kitchenLayoutSolver'
+import {
   CABINET_CATALOG_CATEGORIES,
   CABINET_CATALOG_ENTRIES,
   CABINET_CATALOG_STANDARD_WIDTHS_IN,
@@ -1548,6 +1553,25 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
 }
 
+// AI-LAYOUT-30: «спросить Marvel» (умные варианты/объяснение через edge ai-layout) — ЗА ФЛАГОМ.
+// Кнопка скрыта/disabled, НИЧЕГО не шлёт; бэкенд ai-layout появится в Бете-7.
+const AI_LAYOUT_MARVEL_ENABLED = false
+
+// AI-LAYOUT-30: мини-превью варианта раскладки (базовый ряд) — пропорциональные плашки по ролям.
+function KitchenVariantPreview({ slots }: { slots: KitchenSlot[] }) {
+  const base = slots.filter((slot) => slot.layer === 'base')
+  const total = base.reduce((sum, slot) => sum + slot.widthIn, 0) || 1
+  return (
+    <svg className="hub-sketch-ai-preview" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      {base.map((slot, index) => {
+        const x = base.slice(0, index).reduce((sum, s) => sum + s.widthIn, 0) / total * 100
+        const w = slot.widthIn / total * 100
+        return <rect key={`${slot.code}-${index}`} x={x} y={1} width={Math.max(0.4, w - 0.3)} height={20} rx={0.8} className={`hub-sketch-ai-cell hub-sketch-ai-cell-${slot.role}`} />
+      })}
+    </svg>
+  )
+}
+
 export default function SketchTab({ project, profile }: SketchTabProps) {
   const { t, lang } = useI18n()
   const canEdit = profile ? isManagerWrite(profile.role) : false
@@ -1565,6 +1589,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [snapMode, setSnapMode] = useState<SnapMode>('1ft')
   const [showMeasurements, setShowMeasurements] = useState(true)
   const [codeCheckEnabled, setCodeCheckEnabled] = useState(true)
+  // AI-LAYOUT-30: предложенные детерминированным солвером варианты раскладки (карточки-превью).
+  const [layoutSuggestions, setLayoutSuggestions] = useState<KitchenLayoutVariant[]>([])
   const [measurementDraft, setMeasurementDraft] = useState<Pt | null>(null)
   const [selectedMeasurementIndex, setSelectedMeasurementIndex] = useState<number | null>(null)
   const [hover, setHover] = useState<Pt | null>(null)
@@ -4519,6 +4545,56 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     rebuildCabinetWall(selectedCabinetWall, [...existing, code])
   }, [cabinetGalleryWallHeight, cabinetRunItemsForWall, rebuildCabinetWall, selectedCabinetWall])
 
+  // AI-LAYOUT-30: детерминированный солвер предлагает 2-3 варианта раскладки из стены/проёмов/подводок.
+  // Вход собираем проекцией на ось выбранной стены; окна дают якорь мойки, подводки — запасной якорь,
+  // розетки — контекст NEC. Ничего не мутируем — только показываем карточки-превью.
+  const suggestKitchenLayout = useCallback(() => {
+    if (!selectedCabinetWall) {
+      setError('hub_sketch_no_segment')
+      return
+    }
+    const wall = selectedCabinetWall
+    const cellFt = modelCellFt(model)
+    const wallLengthIn = dist(wall.a, wall.b) * cellFt * 12
+    const windows = (model.openings ?? [])
+      .filter((o) => o.c === wall.c && o.s === wall.s && o.kind === 'window')
+      .map((o) => {
+        const center = o.t * wallLengthIn
+        const half = (openingWidthFt(o) * 12) / 2
+        return { kind: 'window' as const, startIn: Math.max(0, center - half), endIn: Math.min(wallLengthIn, center + half) }
+      })
+    const onWall = sanitizePlacedCatalogItems(model.placedItems)
+      .filter((it) => it.c === wall.c && it.s === wall.s && typeof it.t === 'number')
+    const waterCentersIn = onWall
+      .filter((it) => it.pipe === 'water-h' || it.pipe === 'water-v')
+      .map((it) => (it.t ?? 0) * wallLengthIn)
+    const outletsIn = onWall
+      .filter((it) => it.kind === SKETCH_CATALOG_KIND_OUTLET)
+      .map((it) => (it.t ?? 0) * wallLengthIn)
+    const variants = solveKitchenLayout({
+      wallLengthIn,
+      windows,
+      waterCentersIn,
+      outletsIn,
+      appliances: { dishwasher: true, range: true, refrigerator: true, hood: true },
+    })
+    setError(null)
+    setLayoutSuggestions(variants)
+    setStatus(variants.length > 0 ? 'hub_sketch_ai_layout_ready' : null)
+  }, [model, selectedCabinetWall])
+
+  // AI-LAYOUT-30: «Применить» — раскладка становится ОБЫЧНЫМИ шкафами/техникой через существующий
+  // rebuildCabinetWall → layoutCabinetRunOnWall (ничего не залочено, двигается как всегда).
+  const applyKitchenSuggestion = useCallback((variant: KitchenLayoutVariant) => {
+    if (!selectedCabinetWall) {
+      setError('hub_sketch_no_segment')
+      return
+    }
+    const codes = variant.code.split(/\s+/).filter(Boolean)
+    rebuildCabinetWall(selectedCabinetWall, codes)
+    setLayoutSuggestions([])
+  }, [rebuildCabinetWall, selectedCabinetWall])
+
   // CABINETS-CORNER-FILLERS-24: вставка РУЧНОГО филлера в любое место ряда (index — позиция в
   // код-строке слоя: 0 = у угла/начала, length = у края/конца, между = между шкафами). Клампим
   // ширину 1..48". Базовый филлер = BF{w}, навесной = F{w}. Пересборка сохраняет manualFiller.
@@ -5893,6 +5969,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 <button type="button" className="btn small" disabled={!selectedCabinetWall || !cabinetCodes.trim()} onClick={applyCabinetLayout}>
                   {t('hub_sketch_cabinet_apply')}
                 </button>
+                {/* AI-LAYOUT-30: детерминированный солвер по нормам (NKBA/NEC/IRC) */}
+                <button type="button" className="btn ghost small hub-sketch-ai-suggest-btn" disabled={!selectedCabinetWall} onClick={suggestKitchenLayout}>
+                  {`⚡ ${t('hub_sketch_ai_layout_suggest')}`}
+                </button>
                 {cabinetLayoutPreview && (
                   <span className={cabinetLayoutPreview.overflow || cabinetLayoutPreview.smallFiller || cabinetLayoutPreview.invalidCodes.length > 0 ? 'hub-sketch-cabinet-summary hub-sketch-cabinet-summary-warn' : 'hub-sketch-cabinet-summary'}>
                     {`${cabinetLayoutPreview.parsed.length} · ${t('hub_sketch_dim_length_short')} ${formatInches(cabinetLayoutPreview.wallLengthIn)}`}
@@ -5900,6 +5980,43 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                   </span>
                 )}
               </div>
+              {/* AI-LAYOUT-30: карточки вариантов раскладки с мини-превью ряда + «Применить». */}
+              {layoutSuggestions.length > 0 && (
+                <div className="hub-sketch-ai-layout" role="group" aria-label={t('hub_sketch_ai_layout_title')}>
+                  <div className="hub-sketch-ai-layout-head">
+                    <span className="hub-sketch-ai-layout-title">{t('hub_sketch_ai_layout_title')}</span>
+                    <button type="button" className="btn ghost small" onClick={() => setLayoutSuggestions([])}>{t('hub_sketch_ai_layout_dismiss')}</button>
+                  </div>
+                  <div className="hub-sketch-ai-cards">
+                    {layoutSuggestions.map((variant) => {
+                      const errors = variant.issues.filter((i) => i.severity === 'error').length
+                      const warnings = variant.issues.filter((i) => i.severity === 'warning').length
+                      return (
+                        <div className="hub-sketch-ai-card" key={variant.id}>
+                          <div className="hub-sketch-ai-card-title">{t(variant.titleKey)}</div>
+                          <KitchenVariantPreview slots={variant.slots} />
+                          <div className="hub-sketch-ai-card-meta">
+                            <span className={warnings + errors === 0 ? 'hub-sketch-ai-badge hub-sketch-ai-badge-ok' : 'hub-sketch-ai-badge'}>
+                              {warnings + errors === 0
+                                ? t('hub_sketch_ai_layout_compliant')
+                                : `${errors > 0 ? `${errors} ⛔ ` : ''}${warnings > 0 ? `${warnings} ⚠` : ''}`.trim()}
+                            </span>
+                            <span className="muted">{`${t('hub_sketch_dim_length_short')} ${formatInches(variant.metrics.wallLengthIn)}`}</span>
+                          </div>
+                          <button type="button" className="btn small" disabled={!selectedCabinetWall} onClick={() => applyKitchenSuggestion(variant)}>
+                            {t('hub_sketch_ai_layout_apply')}
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {AI_LAYOUT_MARVEL_ENABLED && (
+                    <button type="button" className="btn ghost small hub-sketch-ai-marvel" disabled title={t('hub_sketch_ai_layout_marvel_hint')}>
+                      {`✨ ${t('hub_sketch_ai_layout_marvel')}`}
+                    </button>
+                  )}
+                </div>
+              )}
               {/* CABINETS-PLACE-13: незакрытый остаток стены показываем цифрой, а не гигантским авто-филлером */}
               {cabinetLayoutPreview && cabinetLayoutPreview.summaries.some((summary) => summary.remainderIn > 0) && (
                 <div className="hub-sketch-cabinet-remainder">

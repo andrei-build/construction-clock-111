@@ -14,6 +14,13 @@ import {
   type SketchPlacedCatalogItem,
 } from './sketchCatalog'
 import { formatInches } from './inches'
+import {
+  checkKitchenWall,
+  type KitchenElement1D,
+  type KitchenOpening1D,
+  type KitchenRole,
+  type KitchenWallScene,
+} from './kitchenLayoutSolver'
 
 const CELL_FT = 1
 const IN_PER_FT = 12
@@ -78,8 +85,12 @@ export type CodeClearanceCheckType =
   | 'vanity-side'
   | 'shower-size'
   | 'door-swing'
+  | 'kitchen' // AI-LAYOUT-30: правила раскладки кухни (NKBA/NEC/IRC) из реестра kitchenLayoutSolver
 
-export type CodeClearanceDirection = 'left' | 'right' | 'front' | 'width' | 'depth' | 'swing'
+export type CodeClearanceDirection = 'left' | 'right' | 'front' | 'width' | 'depth' | 'swing' | 'along'
+
+// AI-LAYOUT-30: NEC/IRC → error (красный), NKBA-эргономика → warning (жёлтый), мягкие эвристики → info.
+export type CodeClearanceSeverity = 'error' | 'warning' | 'info'
 
 export type CodeClearanceCheck = {
   id: string
@@ -94,6 +105,11 @@ export type CodeClearanceCheck = {
   ok: boolean
   line?: CodeClearanceLine
   arc?: CodeClearanceArc
+  // AI-LAYOUT-30: severity + предвычисленный ключ сообщения для правил реестра (у старых проверок
+  // severity отсутствует ⇒ трактуется как 'error'; сообщение берётся из formatCodeClearanceMessage).
+  severity?: CodeClearanceSeverity
+  messageKey?: string
+  messageParams?: Record<string, string>
 }
 
 export type CodeClearanceViolation = CodeClearanceCheck & { ok: false }
@@ -656,6 +672,105 @@ function doorSwingChecks(model: CodeClearanceModel, items: SizedPlacedItem[]): C
   return checks
 }
 
+// ── AI-LAYOUT-30: живые правила раскладки кухни через реестр kitchenLayoutSolver ────────────────
+// Проецируем размещённые шкафы/технику/подводки/проёмы каждой стены на ось стены (1D-сцена) и
+// прогоняем реестр KITCHEN_LAYOUT_RULES. Срабатывает при ЛЮБЫХ ручных правках (тот же getCodeClearanceChecks).
+function kitchenRoleOf(item: SketchPlacedCatalogItem): KitchenRole | null {
+  const appliance = item.applianceType
+  const prefix = item.cabinetPrefix
+  if (appliance === 'dishwasher' || prefix === 'DW') return 'dishwasher'
+  if (appliance === 'range' || appliance === 'cooktop' || prefix === 'RANGE' || prefix === 'COOK') return 'range'
+  if (appliance === 'refrigerator' || prefix === 'REF') return 'refrigerator'
+  if (appliance === 'hood' || prefix === 'HOOD') return 'hood'
+  if (prefix === 'SB') return 'sink'
+  if (item.filler) return 'filler'
+  if (item.layer === 'wall') return 'wall-cabinet'
+  if (item.category === 'cabinet' || item.layer === 'base') return 'base'
+  return null
+}
+
+function kitchenWallScene(wall: WallSegment, items: SizedPlacedItem[]): KitchenWallScene {
+  const wallLengthIn = toIn(dist(wall.a, wall.b))
+  const onWall = items.filter(({ item }) => item.c === wall.c && item.s === wall.s && typeof item.t === 'number')
+  const base: KitchenElement1D[] = []
+  const wallRow: KitchenElement1D[] = []
+  const waterCentersIn: number[] = []
+  const outletsIn: number[] = []
+  onWall.forEach(({ item, dims }) => {
+    const center = (item.t ?? 0) * wallLengthIn
+    if (item.pipe === 'water-h' || item.pipe === 'water-v') { waterCentersIn.push(roundIn(center)); return }
+    if (item.kind === 'OUTLET') { outletsIn.push(roundIn(center)); return }
+    const role = kitchenRoleOf(item)
+    if (!role) return
+    const half = dims.widthIn / 2
+    const el: KitchenElement1D = {
+      id: item.id,
+      role,
+      startIn: roundIn(Math.max(0, center - half)),
+      endIn: roundIn(Math.min(wallLengthIn, center + half)),
+      layer: item.layer === 'wall' ? 'wall' : 'base',
+    }
+    ;(el.layer === 'wall' ? wallRow : base).push(el)
+  })
+  return { wallLengthIn: roundIn(wallLengthIn), base, wall: wallRow, windows: [], waterCentersIn, outletsIn }
+}
+
+function kitchenWallOpenings(model: CodeClearanceModel, wall: WallSegment, wallLengthIn: number): KitchenOpening1D[] {
+  return (model.openings ?? [])
+    .filter((opening) => opening.c === wall.c && opening.s === wall.s)
+    .map((opening) => {
+      const center = opening.t * wallLengthIn
+      const half = toIn(openingWidthFt(opening)) / 2
+      return {
+        kind: opening.kind,
+        startIn: roundIn(Math.max(0, center - half)),
+        endIn: roundIn(Math.min(wallLengthIn, center + half)),
+      }
+    })
+}
+
+function pointAlongWall(wall: WallSegment, frac: number): Vec {
+  return { x: wall.a.x + (wall.b.x - wall.a.x) * frac, z: wall.a.z + (wall.b.z - wall.a.z) * frac }
+}
+
+function kitchenLayoutChecks(model: CodeClearanceModel): CodeClearanceCheck[] {
+  const items = sizedItems(model)
+  const checks: CodeClearanceCheck[] = []
+  wallSegments(model).forEach((wall) => {
+    const scene = kitchenWallScene(wall, items)
+    if (scene.wallLengthIn <= 0) return
+    scene.windows = kitchenWallOpenings(model, wall, scene.wallLengthIn)
+    const hasKitchenRow = scene.base.some((el) => el.role === 'sink' || el.role === 'range' || el.role === 'dishwasher' || el.role === 'refrigerator')
+    if (!hasKitchenRow) return
+    const wallEnt: CodeClearanceEntity = { kind: 'wall', id: `wall:${wall.c}:${wall.s}`, wall: { c: wall.c, s: wall.s } }
+    checkKitchenWall(scene).forEach((issue, index) => {
+      const subject: CodeClearanceEntity = issue.elementId
+        ? { kind: 'item', id: issue.elementId, wall: { c: wall.c, s: wall.s } }
+        : wallEnt
+      const line = (typeof issue.centerIn === 'number' && typeof issue.targetIn === 'number' && scene.wallLengthIn > 0)
+        ? { a: pointAlongWall(wall, issue.centerIn / scene.wallLengthIn), b: pointAlongWall(wall, issue.targetIn / scene.wallLengthIn) }
+        : undefined
+      checks.push({
+        id: `kitchen:${wall.c}:${wall.s}:${issue.ruleId}:${issue.elementId ?? index}`,
+        type: 'kitchen',
+        direction: 'along',
+        subject,
+        target: wallEnt,
+        actualIn: roundIn(issue.actualIn ?? 0),
+        requiredIn: roundIn(issue.requiredIn ?? 0),
+        code: issue.code,
+        codeUrl: '',
+        ok: false,
+        severity: issue.severity,
+        messageKey: issue.messageKey,
+        messageParams: issue.params,
+        line,
+      })
+    })
+  })
+  return checks
+}
+
 export function getCodeClearanceChecks(model: CodeClearanceModel): CodeClearanceCheck[] {
   const items = sizedItems(model)
   const checks: CodeClearanceCheck[] = []
@@ -675,6 +790,7 @@ export function getCodeClearanceChecks(model: CodeClearanceModel): CodeClearance
     }
   })
   checks.push(...doorSwingChecks(model, items))
+  checks.push(...kitchenLayoutChecks(model))
   return checks
 }
 
@@ -714,6 +830,11 @@ export function codeClearanceEntityLabel(entity: CodeClearanceEntity, t: CodeCle
 }
 
 export function formatCodeClearanceMessage(check: CodeClearanceCheck, t: CodeClearanceTranslator): string {
+  // AI-LAYOUT-30: правила реестра несут собственный ключ + параметры (число-нормы уже отформатированы).
+  if (check.messageKey) {
+    const params = check.messageParams ?? {}
+    return t(check.messageKey).replace(/\{(\w+)\}/g, (_, name: string) => params[name] ?? '')
+  }
   const vars: Record<string, string> = {
     actual: formatCodeClearanceIn(check.actualIn),
     required: formatCodeClearanceIn(check.requiredIn),
@@ -725,4 +846,9 @@ export function formatCodeClearanceMessage(check: CodeClearanceCheck, t: CodeCle
       ? 'hub_sketch_code_msg_shower'
       : 'hub_sketch_code_msg_clearance'
   return t(key).replace(/\{(\w+)\}/g, (_, name: string) => vars[name] ?? '')
+}
+
+// AI-LAYOUT-30: severity проверки (у старых проверок поле отсутствует ⇒ 'error'/красный).
+export function codeClearanceSeverity(check: CodeClearanceCheck): CodeClearanceSeverity {
+  return check.severity ?? 'error'
 }
