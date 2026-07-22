@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useI18n } from '../../lib/i18n'
 import {
@@ -12,8 +12,14 @@ import {
   updateEstimateStatus,
   listPlanPins,
   createPlanPin,
+  getCatalogItems,
+  updateCatalogItem,
+  createCatalogItem,
+  CATALOG_CATEGORIES,
   type EstimateDraft,
   type EstimateItem,
+  type CatalogItem,
+  type CatalogCategory,
 } from '../../lib/api'
 import {
   canTransition,
@@ -25,6 +31,14 @@ import {
   sourceFileId,
   type EstimateStatus,
 } from '../../lib/estimateCore'
+import {
+  priceAgeDays,
+  priceFreshness,
+  staleBadgeTone,
+  formatUsd,
+  parsePriceInput,
+  matchesPricebookSearch,
+} from '../../lib/pricebookCore'
 import { hasFinanceAccess } from '../../lib/types'
 import type { DocumentRow, Profile, Project, ProjectExpense, ProjectHubFile } from '../../lib/types'
 import { useFileViewer } from '../../components/FileViewer'
@@ -343,6 +357,245 @@ function EstimatesCard({ project, profile }: { project: Project; profile: Profil
   )
 }
 
+// FIN-PRICEBOOK-36 (серия PLAN-TO-ESTIMATE, 4/4): секция «Прайс-бук» — единый по организации каталог
+// материалов с ценами (catalog_items). Это ИСТОЧНИК ЦЕН для смет (#39). Поиск, жёлтый бейдж «цена
+// устарела» по price_updated_at (порог 90 дн. в чистом ядре pricebookCore), инлайн-правка цены и
+// добавление позиции. Доступ уже гейтит родительская Финанс-панель (hasFinanceAccess) + RLS.
+function PricebookCard({ profile }: { profile: Profile | null }) {
+  const { t } = useI18n()
+  const [items, setItems] = useState<CatalogItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+  // Инлайн-правка цены: id редактируемой строки + черновик значения.
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const [rowBusy, setRowBusy] = useState(false)
+  const [rowError, setRowError] = useState(false)
+  // Форма добавления позиции.
+  const [adding, setAdding] = useState(false)
+  const [addName, setAddName] = useState('')
+  const [addCategory, setAddCategory] = useState<CatalogCategory>('other')
+  const [addPrice, setAddPrice] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
+  const [addError, setAddError] = useState(false)
+  // «Сейчас» фиксируем один раз на маунт — детерминизм давности внутри сессии рендера.
+  const nowIso = useMemo(() => new Date().toISOString(), [])
+
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      setLoading(true)
+      // getCatalogItems сам возвращает [] на ошибке чтения — пустой каталог не роняет секцию.
+      const rows = await getCatalogItems()
+      if (mounted) {
+        setItems(rows)
+        setLoading(false)
+      }
+    })()
+    return () => { mounted = false }
+  }, [])
+
+  const visible = useMemo(
+    () => items.filter((it) => matchesPricebookSearch(it, query)),
+    [items, query],
+  )
+
+  const startEdit = (item: CatalogItem) => {
+    if (rowBusy) return
+    setEditId(item.id)
+    setEditValue(item.price == null ? '' : String(item.price))
+    setRowError(false)
+  }
+
+  const cancelEdit = () => {
+    setEditId(null)
+    setEditValue('')
+    setRowError(false)
+  }
+
+  const savePrice = async (item: CatalogItem) => {
+    const price = parsePriceInput(editValue)
+    // Пустой/невалидный ввод — не пишем (просто закрываем поле).
+    if (price == null) { cancelEdit(); return }
+    if (!profile || rowBusy) return
+    setRowBusy(true)
+    setRowError(false)
+    try {
+      const updated = await updateCatalogItem(profile, item.id, { price })
+      setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)))
+      cancelEdit()
+    } catch {
+      setRowError(true)
+    } finally {
+      setRowBusy(false)
+    }
+  }
+
+  const submitAdd = async (e: FormEvent) => {
+    e.preventDefault()
+    const name = addName.trim()
+    if (!name || !profile || addBusy) return
+    setAddBusy(true)
+    setAddError(false)
+    try {
+      const created = await createCatalogItem(profile, {
+        category: addCategory,
+        name,
+        price: parsePriceInput(addPrice),
+      })
+      setItems((prev) => [created, ...prev])
+      setAddName('')
+      setAddPrice('')
+      setAddCategory('other')
+      setAdding(false)
+    } catch {
+      setAddError(true)
+    } finally {
+      setAddBusy(false)
+    }
+  }
+
+  // Бейдж давности цены: жёлтый для «устарела»/«нет даты», зелёный для свежей. Число дней — из ядра.
+  const ageBadge = (item: CatalogItem) => {
+    const freshness = priceFreshness(item.price_updated_at, nowIso)
+    const tone = staleBadgeTone(freshness)
+    let label: string
+    if (freshness === 'unknown') {
+      label = t('pricebook_no_date')
+    } else {
+      const days = Math.max(0, priceAgeDays(item.price_updated_at, nowIso) ?? 0)
+      label = freshness === 'stale'
+        ? `${t('pricebook_stale')} · ${days} ${t('pricebook_days')}`
+        : `${t('pricebook_fresh')} ${days} ${t('pricebook_days_ago')}`
+    }
+    return <span className={`badge ${tone} pricebook-age-badge`}>{label}</span>
+  }
+
+  return (
+    <div className="card pricebook-card">
+      <h2>{t('pricebook_title')}</h2>
+      <p className="muted pricebook-subtitle">{t('pricebook_subtitle')}</p>
+
+      <div className="pricebook-toolbar">
+        <input
+          className="pricebook-search"
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('pricebook_search_placeholder')}
+        />
+        {!adding && (
+          <button type="button" className="btn small ghost" onClick={() => setAdding(true)}>
+            {t('pricebook_add_toggle')}
+          </button>
+        )}
+      </div>
+
+      {adding && (
+        <form className="pricebook-add-form" onSubmit={submitAdd}>
+          <div className="pricebook-add-title item-title">{t('pricebook_add_title')}</div>
+          <div className="pricebook-add-grid">
+            <label className="pricebook-add-field">
+              <span className="muted">{t('pricebook_add_name')}</span>
+              <input value={addName} onChange={(e) => setAddName(e.target.value)} autoFocus />
+            </label>
+            <label className="pricebook-add-field">
+              <span className="muted">{t('pricebook_add_category')}</span>
+              <select value={addCategory} onChange={(e) => setAddCategory(e.target.value as CatalogCategory)}>
+                {CATALOG_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>{t(`pricebook_cat_${c}`)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="pricebook-add-field">
+              <span className="muted">{t('pricebook_add_price')}</span>
+              <input inputMode="decimal" value={addPrice} onChange={(e) => setAddPrice(e.target.value)} />
+            </label>
+          </div>
+          {addError && <span className="error-msg">{t('pricebook_add_failed')}</span>}
+          <div className="pricebook-add-actions">
+            <button type="button" className="btn small ghost" onClick={() => { setAdding(false); setAddError(false) }}>
+              {t('pricebook_add_cancel')}
+            </button>
+            <button type="submit" className="btn small primary" disabled={addBusy || !addName.trim()}>
+              {t('pricebook_add_save')}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {loading && <div className="center muted">{t('loading')}</div>}
+      {!loading && items.length === 0 && <p className="muted">{t('pricebook_empty')}</p>}
+      {!loading && items.length > 0 && visible.length === 0 && (
+        <p className="muted">{t('pricebook_search_empty')}</p>
+      )}
+
+      {!loading && visible.length > 0 && (
+        <div className="pricebook-table-wrap">
+          <table className="pricebook-table">
+            <thead>
+              <tr>
+                <th>{t('pricebook_col_name')}</th>
+                <th>{t('pricebook_col_category')}</th>
+                <th>{t('pricebook_col_brand')}</th>
+                <th className="num">{t('pricebook_col_price')}</th>
+                <th>{t('pricebook_col_age')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((item) => {
+                const editing = editId === item.id
+                return (
+                  <tr key={item.id} className={`pricebook-row${rowBusy && editing ? ' busy' : ''}`}>
+                    <td className="pricebook-cell-name">{item.name || '—'}</td>
+                    <td className="pricebook-cell-cat">{t(`pricebook_cat_${item.category}`)}</td>
+                    <td className="pricebook-cell-brand">{item.brand || '—'}</td>
+                    <td className="num pricebook-cell-price">
+                      {editing ? (
+                        <span className="pricebook-price-edit">
+                          <input
+                            className="pricebook-price-input"
+                            inputMode="decimal"
+                            autoFocus
+                            value={editValue}
+                            disabled={rowBusy}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') savePrice(item)
+                              if (e.key === 'Escape') cancelEdit()
+                            }}
+                          />
+                          <button type="button" className="btn small primary" disabled={rowBusy} onClick={() => savePrice(item)}>
+                            {t('pricebook_price_save')}
+                          </button>
+                          <button type="button" className="btn small ghost" disabled={rowBusy} onClick={cancelEdit}>
+                            {t('pricebook_price_cancel')}
+                          </button>
+                          {rowError && <span className="error-msg pricebook-price-error">{t('pricebook_price_failed')}</span>}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="pricebook-price-btn num-display"
+                          title={t('pricebook_price_edit_hint')}
+                          onClick={() => startEdit(item)}
+                        >
+                          {formatUsd(item.price)}
+                        </button>
+                      )}
+                    </td>
+                    <td className="pricebook-cell-age">{ageBadge(item)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function FinanceTab({ project, profile }: FinanceTabProps) {
   const { t } = useI18n()
   // A2: доступ к финансам = owner/admin ИЛИ гранта finance_access (единый предикат hasFinanceAccess).
@@ -413,6 +666,8 @@ export default function FinanceTab({ project, profile }: FinanceTabProps) {
       {!loading && !loadError && (
         <>
           <EstimatesCard project={project} profile={profile} />
+
+          <PricebookCard profile={profile} />
 
           <div className="card">
             <h2>{t('hub_finance_documents_title')}</h2>
