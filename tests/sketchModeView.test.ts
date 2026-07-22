@@ -13,21 +13,21 @@ describe('sketchModeViewMode', () => {
     expect(sketchModeViewMode('light')).toBe('2d')
   })
 
-  it('finish (Отделка) по-прежнему открывается в 3D — это отдельный таск #35, не трогаем', () => {
-    expect(sketchModeViewMode('finish')).toBe('3d')
+  it('SWEEP-FIX-35: finish (Отделка) больше НЕ прыгает в 3D — открывается на 2D-плане', () => {
+    expect(sketchModeViewMode('finish')).toBe('2d')
   })
 
-  it('стены/проёмы/шкафы/замер/разметка — все 2D', () => {
-    const twoD: SketchModeName[] = ['wall', 'opening', 'cabinet', 'light', 'measure', 'markup']
-    for (const mode of twoD) {
+  it('все режимы рейла — 2D (стены/проёмы/отделка/шкафы/электрика/замер/разметка)', () => {
+    const modes: SketchModeName[] = ['wall', 'opening', 'finish', 'cabinet', 'light', 'measure', 'markup']
+    for (const mode of modes) {
       expect(sketchModeViewMode(mode)).toBe('2d')
     }
   })
 
-  it('единственный 3D-режим — finish', () => {
+  it('SWEEP-FIX-35: НИ ОДИН режим не даёт 3D автоматически', () => {
     const modes: SketchModeName[] = ['wall', 'opening', 'finish', 'cabinet', 'light', 'measure', 'markup']
     const threeD = modes.filter((mode) => sketchModeViewMode(mode) === '3d')
-    expect(threeD).toEqual(['finish'])
+    expect(threeD).toEqual([])
   })
 })
 

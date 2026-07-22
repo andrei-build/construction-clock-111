@@ -3,10 +3,11 @@
 
 export type SketchModeName = 'wall' | 'opening' | 'finish' | 'cabinet' | 'light' | 'measure' | 'markup'
 
-// Единственный режим, автоматически открывающий эскиз в 3D-виде, — 'finish' (Отделка).
-// 'light' (Электрика) и все прочие режимы остаются на 2D-плане; 3D доступен только по явной кнопке «3D вид».
-export function sketchModeViewMode(mode: SketchModeName): '2d' | '3d' {
-  return mode === 'finish' ? '3d' : '2d'
+// SWEEP-FIX-35: НИ ОДИН режим рейла не открывает эскиз в 3D автоматически — все остаются на 2D-плане.
+// 'finish' (Отделка) теперь тоже 2D: стену выбирают кликом на плане, палитра отделки применяется к ней.
+// 'light' (Электрика, #34) и все прочие режимы также 2D; 3D доступен только по явной кнопке «3D вид».
+export function sketchModeViewMode(_mode: SketchModeName): '2d' | '3d' {
+  return '2d'
 }
 
 // Инструменты 2D-панели инфраструктуры режима «Электрика»
