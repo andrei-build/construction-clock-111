@@ -27,15 +27,24 @@ import {
   type TileCalcPattern,
   type TileCalcResult,
 } from './tileCalc'
+import {
+  DEFAULT_TRIM_WASTE_PCT,
+  clampTrimWastePct,
+  summarizeTrimMaterials,
+  trimLabel,
+  type TrimLinearInput,
+} from './trimCatalog'
 
 export { TILE_MATERIAL_SECTION } from './tileCalc'
 
 export const WALL_MATERIAL_SECTION = 'Стены-краска'
 export const CABINET_MATERIAL_SECTION = 'Кабинеты'
 export const ELECTRICAL_MATERIAL_SECTION = 'Электрика'
+export const TRIM_MATERIAL_SECTION = 'Тримы'
 export const SKETCH_MATERIAL_SECTIONS = [
   TILE_MATERIAL_SECTION,
   WALL_MATERIAL_SECTION,
+  TRIM_MATERIAL_SECTION,
   CABINET_MATERIAL_SECTION,
   ELECTRICAL_MATERIAL_SECTION,
 ] as const
@@ -113,6 +122,8 @@ export type SketchMaterialLabels = {
   outletName?: string
   switchName?: string
   eachUnit?: string
+  linearFtUnit?: string
+  trimLang?: 'ru' | 'en' | 'es'
 }
 
 export type SketchMaterialsResult = {
@@ -570,11 +581,40 @@ export function buildElectricalMaterialRows(model: SketchMaterialModel, labels: 
   return rows
 }
 
+// TRIM-OPENINGS-21: строки материала тримов ПО ВИДАМ (casing / header / подоконник) — линейные футы
+// со всех проёмов эскиза + запас %. Расчётное ядро — чистый summarizeTrimMaterials (trimCatalog).
+export function buildTrimMaterialRows(
+  model: SketchMaterialModel,
+  options: { wastePct?: number; labels?: SketchMaterialLabels } = {},
+): SketchMaterialRow[] {
+  const wastePct = clampTrimWastePct(options.wastePct ?? DEFAULT_TRIM_WASTE_PCT)
+  const lang = options.labels?.trimLang ?? 'en'
+  const lnftUnit = options.labels?.linearFtUnit ?? 'lnft'
+  const inputs: TrimLinearInput[] = (model.openings ?? [])
+    .map((opening) => ({
+      kind: opening.kind,
+      trim: opening.trim,
+      widthFt: openingWidthFt(model, opening),
+      heightFt: openingHeightFt(model, opening),
+    }))
+    .filter((input) => input.widthFt > AREA_EPS && input.heightFt > AREA_EPS)
+  return summarizeTrimMaterials(inputs, wastePct)
+    .filter((row) => row.lnft > AREA_EPS)
+    .map((row) => ({
+      section: TRIM_MATERIAL_SECTION,
+      name: trimLabel(row.labels, lang),
+      qty: Math.round(row.lnft * 10) / 10,
+      unit: lnftUnit,
+      note: `+${wastePct}% · ${formatInches(row.widthIn)}`,
+    }))
+}
+
 export async function calculateSketchMaterials(
   model: SketchMaterialModel,
   options: {
     includePrimer: boolean
     includeTexture: boolean
+    trimWastePct?: number
     labels?: SketchMaterialLabels
   },
 ): Promise<SketchMaterialsResult> {
@@ -610,6 +650,7 @@ export async function calculateSketchMaterials(
   const rows = aggregateSketchMaterialRows([
     ...tileItemsToRows(tileResults),
     ...wallItemsToRows(wallResult),
+    ...buildTrimMaterialRows(model, { wastePct: options.trimWastePct, labels: options.labels }),
     ...buildCabinetMaterialRows(model, options.labels),
     ...buildElectricalMaterialRows(model, options.labels),
   ])

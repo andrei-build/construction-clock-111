@@ -52,6 +52,7 @@ import {
   CABINET_CATALOG_STANDARD_WIDTHS_IN,
   CABINET_CATALOG_WALL_HEIGHTS_IN,
 } from './cabinetCatalog'
+import { resolveOpeningTrim, trimProfileById } from './trimCatalog'
 
 const CELL_FT = 1
 
@@ -1169,6 +1170,40 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
               >
                 <title>{label}</title>
               </rect>
+              {/* TRIM-OPENINGS-21: обводка проёма тримами — толщина/цвет линии по профилю каждой стороны. */}
+              <g className="hub-sketch-elevation-trim" pointerEvents="none">
+                {resolveOpeningTrim(opening.kind, opening.trim).map((side) => {
+                  if (!side.enabled) return null
+                  const profile = trimProfileById(side.profileId)
+                  if (!profile) return null
+                  const strokeWidth = Math.max(0.03, Math.min(profile.widthIn / 12, Math.min(box.width, box.openingHeight) * 0.6))
+                  const half = strokeWidth / 2
+                  const left = box.x
+                  const right = box.x + box.width
+                  const top = box.y
+                  const bottom = box.y + box.openingHeight
+                  const line = side.side === 'top'
+                    ? { x1: left - half, y1: top, x2: right + half, y2: top }
+                    : side.side === 'bottom'
+                      ? { x1: left - half, y1: bottom, x2: right + half, y2: bottom }
+                      : side.side === 'left'
+                        ? { x1: left, y1: top - half, x2: left, y2: bottom + half }
+                        : { x1: right, y1: top - half, x2: right, y2: bottom + half }
+                  return (
+                    <line
+                      key={`trim-${side.side}`}
+                      x1={line.x1}
+                      y1={line.y1}
+                      x2={line.x2}
+                      y2={line.y2}
+                      stroke={profile.color}
+                      strokeWidth={strokeWidth}
+                      strokeLinecap="butt"
+                      opacity={0.92}
+                    />
+                  )
+                })}
+              </g>
               <text x={box.x + box.width / 2} y={Math.max(0.28, box.y - 0.14)} textAnchor="middle">
                 {label}
               </text>
