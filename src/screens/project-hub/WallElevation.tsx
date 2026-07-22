@@ -26,7 +26,7 @@ import {
   type SketchSegmentResizeConflict,
   type SketchSurfaceFinish,
 } from './sketchFinishes'
-import { formatFeetInches, formatInches, parseFeetInches, snapFeetToPrecision } from './inches'
+import { formatFeetInches, formatInches, parseFeetInches, parseInches, snapFeetToPrecision, snapInchesToPrecision } from './inches'
 import {
   codeClearanceItemIds,
   formatCodeClearanceMessage,
@@ -45,8 +45,15 @@ import {
   CABINET_COUNTERTOP_HEIGHT_IN,
   CABINET_TOE_KICK_IN,
   CABINET_WALL_BOTTOM_IN,
+  DEFAULT_WALL_CABINET_GAP_IN,
+  WALL_CABINET_MAX_GAP_IN,
+  WALL_CABINET_MIN_GAP_IN,
   cabinetDisplayCode,
   isCabinetPlacedItem,
+  wallCabinetBottomInFromGap,
+  wallCabinetCenterYFt,
+  wallCabinetGapFromBottomIn,
+  wallCabinetGapIn,
 } from './cabinetCodes'
 import {
   CABINET_CATALOG_STANDARD_WIDTHS_IN,
@@ -121,6 +128,20 @@ type ElevationPlacedItem = {
   cabinetCode: string
   filler: boolean
   layer?: 'base' | 'wall'
+}
+// CABINETS-VERTICAL-22: вертикальный drag навесного шкафа по развёртке.
+type CabinetVerticalDrag = {
+  pointerId: number
+  itemId: string
+  heightFt: number
+  minBottomFt: number
+  maxBottomFt: number
+  grabOffsetFt: number
+  startBottomFt: number
+  bottomFt: number
+  centerXFt: number
+  altOnly: boolean
+  moved: boolean
 }
 type FinishRegionHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 type FinishRegionDraftField = 'left' | 'bottom' | 'width' | 'height'
@@ -312,9 +333,11 @@ function elevationPlacedItems(
       const maxX = Math.max(0, Math.min(lengthFt, Math.max(...projections)))
       const projectedWidth = Math.max(0.12, maxX - minX)
       const centerX = Number.isFinite(item.t) ? Math.max(0, Math.min(lengthFt, (item.t ?? 0.5) * lengthFt)) : (minX + maxX) / 2
-      const bottomFt = Math.max(0, Math.min(height, Number.isFinite(item.yFt) ? item.yFt - heightFt / 2 : 0))
-      const drawnHeight = Math.min(heightFt, Math.max(0.08, height - bottomFt))
       const cabinet = isCabinetPlacedItem(item)
+      // CABINETS-VERTICAL-22: навесной шкаф позиционируем по зазору wallGapIn (иначе yFt/дефолт 18").
+      const centerYFt = cabinet && item.layer === 'wall' ? wallCabinetCenterYFt(item, heightIn) : item.yFt
+      const bottomFt = Math.max(0, Math.min(height, Number.isFinite(centerYFt) ? centerYFt - heightFt / 2 : 0))
+      const drawnHeight = Math.min(heightFt, Math.max(0.08, height - bottomFt))
       return {
         item,
         x: Math.max(0, Math.min(lengthFt - projectedWidth, centerX - projectedWidth / 2)),
@@ -412,6 +435,9 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const [measureTool, setMeasureTool] = useState(false)
   const [zoneTool, setZoneTool] = useState(false)
   const [selectedCabinetId, setSelectedCabinetId] = useState<string | null>(null)
+  const [cabinetVDrag, setCabinetVDrag] = useState<CabinetVerticalDrag | null>(null)
+  const [gapDraft, setGapDraft] = useState<string | null>(null)
+  const suppressCabinetClickRef = useRef(false)
   const [zoom, setZoom] = useState(1)
   const [showMeasurements, setShowMeasurements] = useState(true)
   const [draft, setDraft] = useState<ElevationPoint | null>(null)
@@ -503,9 +529,28 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
       .filter((group) => group.segs.length > 0)
   ), [wallPlacedItems])
   const cabinetEditEnabled = canEdit && !compact && !measureTool && !zoneTool && (!!onCabinetResize || !!onCabinetRemove)
+  // CABINETS-VERTICAL-22: вертикальный жест доступен ТОЛЬКО навесным (layer==='wall');
+  // базы/tall/pantry (layer==='base') стоят на полу и вертикально не тащатся.
+  const cabinetVerticalEnabled = canEdit && !compact && !measureTool && !zoneTool && !!onModelChange
   const selectedCabinet = selectedCabinetId
     ? wallPlacedItems.find((entry) => entry.cabinet && !entry.filler && entry.item.id === selectedCabinetId) ?? null
     : null
+  // Ряд навесных этой стены (без филлеров) — для размерной надписи зазора и числового ввода.
+  const wallRowEntries = useMemo(
+    () => wallPlacedItems.filter((entry) => entry.cabinet && entry.layer === 'wall' && !entry.filler),
+    [wallPlacedItems],
+  )
+  const cabinetBottomFt = (item: SketchPlacedCatalogItem): number => {
+    const hIn = Number(item.heightIn) || 30
+    return wallCabinetCenterYFt(item, hIn) - (hIn / 12) / 2
+  }
+  const counterTopFt = CABINET_COUNTERTOP_HEIGHT_IN / 12
+  const wallRowBottomFt = wallRowEntries.length > 0
+    ? Math.min(...wallRowEntries.map((entry) => cabinetBottomFt(entry.item)))
+    : null
+  const wallRowGapIn = wallRowBottomFt !== null
+    ? wallCabinetGapFromBottomIn(wallRowBottomFt * 12)
+    : DEFAULT_WALL_CABINET_GAP_IN
   const wallCodeViolations = useMemo(
     () => codeClearanceViolations.filter((check) => {
       const onWall = (entity: CodeClearanceCheck['subject']) => entity.wall && `${entity.wall.c}:${entity.wall.s}` === currentWallKey
@@ -568,6 +613,84 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
       x: snapLengthFt(Math.max(0, Math.min(lengthFt, local.x)), snapStepFt),
       y: snapLengthFt(Math.max(0, Math.min(height, height - local.y)), snapStepFt),
     })
+  }
+
+  // CABINETS-VERTICAL-22: чистая высота курсора (футы от пола), без снапа к гайдам проёмов.
+  const svgElevationY = (clientY: number): number | null => {
+    const svg = svgRef.current
+    const matrix = svg?.getScreenCTM()
+    if (!svg || !matrix) return null
+    const point = svg.createSVGPoint()
+    point.x = 0
+    point.y = clientY
+    const local = point.matrixTransform(matrix.inverse())
+    return Math.max(0, Math.min(height, height - local.y))
+  }
+
+  // Применить зазор навесного (дюймы) — весь ряд стены (altOnly=false) либо один шкаф (altOnly=true).
+  // Пишем ДВА поля: wallGapIn (семантика/сохранение) и yFt (позиция для 3D/развёртки) синхронно.
+  const applyWallCabinetGap = (targetId: string, gapIn: number, altOnly: boolean) => {
+    if (!onModelChange) return
+    const items = sanitizePlacedCatalogItems(model.placedItems)
+    const target = items.find((item) => item.id === targetId)
+    if (!target) return
+    const clampedGap = Math.max(WALL_CABINET_MIN_GAP_IN, Math.min(WALL_CABINET_MAX_GAP_IN, snapInchesToPrecision(gapIn)))
+    const nextItems = items.map((item) => {
+      const sameWall = item.c === target.c && item.s === target.s
+      const affected = altOnly
+        ? item.id === target.id
+        : isCabinetPlacedItem(item) && item.layer === 'wall' && sameWall
+      if (!affected) return item
+      const hIn = Number(item.heightIn) || 30
+      const centerFt = snapFeetToPrecision((wallCabinetBottomInFromGap(clampedGap) + hIn / 2) / 12)
+      return { ...item, wallGapIn: clampedGap, yFt: centerFt }
+    })
+    onModelChange({ ...model, placedItems: nextItems })
+  }
+
+  const commitCabinetVertical = (targetId: string, bottomFt: number, altOnly: boolean) => {
+    const bottomIn = snapInchesToPrecision(bottomFt * 12)
+    applyWallCabinetGap(targetId, wallCabinetGapFromBottomIn(bottomIn), altOnly)
+  }
+
+  const startCabinetVDrag = (entry: ElevationPlacedItem) => (event: ReactPointerEvent<SVGGElement>) => {
+    if (!cabinetVerticalEnabled || entry.layer !== 'wall' || entry.filler) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    const pointerFt = svgElevationY(event.clientY)
+    if (pointerFt === null) return
+    const hIn = Number(entry.item.heightIn) || 30
+    const heightFt = hIn / 12
+    const bottomFt = cabinetBottomFt(entry.item)
+    svgRef.current?.setPointerCapture?.(event.pointerId)
+    suppressCabinetClickRef.current = false
+    setSelectedMeasurementIndex(null)
+    setSelectedRegionIndex(null)
+    setGapDraft(null)
+    setCabinetVDrag({
+      pointerId: event.pointerId,
+      itemId: entry.item.id,
+      heightFt,
+      minBottomFt: Math.min(counterTopFt, Math.max(0, height - heightFt)),
+      maxBottomFt: Math.max(0, height - heightFt),
+      grabOffsetFt: pointerFt - bottomFt,
+      startBottomFt: bottomFt,
+      bottomFt,
+      centerXFt: entry.x + entry.width / 2,
+      altOnly: event.altKey,
+      moved: false,
+    })
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+  const commitGapDraft = () => {
+    if (gapDraft === null) return
+    const parsed = parseInches(gapDraft)
+    setGapDraft(null)
+    if (!Number.isFinite(parsed)) return
+    const target = wallRowEntries[0]
+    if (!target) return
+    applyWallCabinetGap(target.item.id, parsed, false)
   }
 
   const updateMeasurements = (nextMeasurements: SketchMeasurement[]) => {
@@ -770,6 +893,8 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     setRegionDrag(null)
     setWallLengthDraft(null)
     setWallLengthConflict(null)
+    setCabinetVDrag(null)
+    setGapDraft(null)
     setZoneTool(false)
     setZoom(1)
   }, [currentWallKey])
@@ -855,6 +980,18 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }
 
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (cabinetVDrag && cabinetVDrag.pointerId === event.pointerId) {
+      const pointerFt = svgElevationY(event.clientY)
+      if (pointerFt !== null) {
+        const rawBottom = pointerFt - cabinetVDrag.grabOffsetFt
+        const snapped = snapLengthFt(rawBottom, snapStepFt)
+        const clamped = Math.max(cabinetVDrag.minBottomFt, Math.min(cabinetVDrag.maxBottomFt, snapped))
+        const moved = cabinetVDrag.moved || Math.abs(clamped - cabinetVDrag.startBottomFt) > 0.02
+        setCabinetVDrag({ ...cabinetVDrag, bottomFt: clamped, altOnly: event.altKey, moved })
+      }
+      event.preventDefault()
+      return
+    }
     if (regionDrag && regionDrag.pointerId === event.pointerId) {
       const point = svgPoint(event.clientX, event.clientY)
       if (point) setRegionDrag({ ...regionDrag, current: point })
@@ -866,6 +1003,17 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }
 
   const handlePointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (cabinetVDrag && cabinetVDrag.pointerId === event.pointerId) {
+      const drag = cabinetVDrag
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+      setCabinetVDrag(null)
+      if (drag.moved) {
+        suppressCabinetClickRef.current = true
+        commitCabinetVertical(drag.itemId, drag.bottomFt, drag.altOnly)
+      }
+      event.preventDefault()
+      return
+    }
     if (!regionDrag || regionDrag.pointerId !== event.pointerId) return
     const point = svgPoint(event.clientX, event.clientY)
     const finalDrag = point ? { ...regionDrag, current: point } : regionDrag
@@ -1230,13 +1378,21 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
         {wallPlacedItems.map((entry) => {
           const editableCabinet = cabinetEditEnabled && entry.cabinet && !entry.filler
           const selectedCab = editableCabinet && selectedCabinetId === entry.item.id
-          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.showerPan ? ' hub-sketch-elevation-shower' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}${editableCabinet ? ' hub-sketch-elevation-cabinet-editable' : ''}${selectedCab ? ' hub-sketch-elevation-cabinet-selected' : ''}`
+          // CABINETS-VERTICAL-22: навесной шкаф (не филлер) тащится вверх/вниз.
+          const draggableWall = cabinetVerticalEnabled && entry.cabinet && entry.layer === 'wall' && !entry.filler
+          const draggingThis = cabinetVDrag?.itemId === entry.item.id
+          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.showerPan ? ' hub-sketch-elevation-shower' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}${editableCabinet ? ' hub-sketch-elevation-cabinet-editable' : ''}${draggableWall ? ' hub-sketch-elevation-cabinet-vdrag' : ''}${draggingThis ? ' hub-sketch-elevation-cabinet-vdragging' : ''}${selectedCab ? ' hub-sketch-elevation-cabinet-selected' : ''}`
           return (
             <g
               key={`ei-${entry.item.id}`}
               className={cls}
+              onPointerDown={draggableWall ? startCabinetVDrag(entry) : undefined}
               onClick={editableCabinet ? (event) => {
                 event.stopPropagation()
+                if (suppressCabinetClickRef.current) {
+                  suppressCabinetClickRef.current = false
+                  return
+                }
                 setSelectedCabinetId((current) => current === entry.item.id ? null : entry.item.id)
               } : undefined}
             >
@@ -1329,6 +1485,103 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </g>
           )
         })}
+        {/* CABINETS-VERTICAL-22: размерная надпись зазора (столешница→низ навесных) + числовой ввод. */}
+        {!measureTool && !zoneTool && wallRowEntries.length > 0 && wallRowBottomFt !== null && (() => {
+          const rowStartX = Math.min(...wallRowEntries.map((entry) => entry.x))
+          const rowEndX = Math.max(...wallRowEntries.map((entry) => entry.x + entry.width))
+          const counterSvgY = height - counterTopFt
+          const bottomSvgY = height - wallRowBottomFt
+          const midY = (counterSvgY + bottomSvgY) / 2
+          const gapDimX = rowStartX - 0.34 >= 0.12 ? rowStartX - 0.34 : Math.min(lengthFt - 0.12, rowEndX + 0.34)
+          const tick = 0.08
+          const gapText = formatInches(wallRowGapIn)
+          const editing = gapDraft !== null
+          return (
+            <g className="hub-sketch-elevation-cabinet-gap-dim">
+              <line x1={gapDimX} y1={counterSvgY} x2={gapDimX} y2={bottomSvgY} />
+              <line x1={gapDimX - tick} y1={counterSvgY} x2={gapDimX + tick} y2={counterSvgY} />
+              <line x1={gapDimX - tick} y1={bottomSvgY} x2={gapDimX + tick} y2={bottomSvgY} />
+              {editing ? (
+                <foreignObject x={gapDimX + 0.06} y={midY - 0.21} width={Math.min(1.6, Math.max(1.1, lengthFt * 0.3))} height={0.42}>
+                  <input
+                    className="hub-sketch-elevation-dim-input"
+                    value={gapDraft ?? ''}
+                    inputMode="text"
+                    autoFocus
+                    placeholder={t('hub_sketch_cabinet_gap_hint')}
+                    aria-label={t('hub_sketch_cabinet_gap_label')}
+                    onChange={(event) => setGapDraft(event.target.value)}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                    onBlur={commitGapDraft}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        commitGapDraft()
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault()
+                        setGapDraft(null)
+                      }
+                    }}
+                  />
+                </foreignObject>
+              ) : (
+                <text
+                  x={gapDimX + 0.1}
+                  y={midY}
+                  textAnchor="start"
+                  dominantBaseline="central"
+                  role={cabinetVerticalEnabled ? 'button' : undefined}
+                  tabIndex={cabinetVerticalEnabled ? 0 : undefined}
+                  aria-label={cabinetVerticalEnabled ? `${t('hub_sketch_cabinet_gap_label')} ${gapText}` : undefined}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    if (!cabinetVerticalEnabled) return
+                    event.stopPropagation()
+                    setSelectedCabinetId(null)
+                    setGapDraft(gapText)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    setGapDraft(gapText)
+                  }}
+                >
+                  {gapText}
+                </text>
+              )}
+            </g>
+          )
+        })()}
+        {/* CABINETS-VERTICAL-22: живой предпросмотр вертикального drag навесного + размеры у курсора. */}
+        {cabinetVDrag && (() => {
+          const entry = wallPlacedItems.find((candidate) => candidate.item.id === cabinetVDrag.itemId)
+          if (!entry) return null
+          const bottomFt = cabinetVDrag.bottomFt
+          const previewH = Math.min(cabinetVDrag.heightFt, Math.max(0.08, height - bottomFt))
+          const previewTop = height - bottomFt - previewH
+          const guideY = height - bottomFt
+          const counterSvgY = height - counterTopFt
+          const gapInLive = Math.max(0, wallCabinetGapFromBottomIn(bottomFt * 12))
+          const bottomInLive = bottomFt * 12
+          const labelX = Math.max(0.9, Math.min(lengthFt - 0.9, cabinetVDrag.centerXFt))
+          const labelY = Math.max(0.5, previewTop - 0.1)
+          const gapLine = `${t('hub_sketch_cabinet_gap_label')} ${formatInches(gapInLive)}`
+          const floorLine = `${t('hub_sketch_cabinet_gap_from_floor')} ${formatInches(bottomInLive)}`
+          const onlyThis = cabinetVDrag.altOnly ? ` · ${t('hub_sketch_cabinet_gap_only_this')}` : ''
+          return (
+            <g className="hub-sketch-elevation-cabinet-vdrag-layer" pointerEvents="none">
+              <line className="hub-sketch-elevation-cabinet-vdrag-guide" x1={0} y1={guideY} x2={lengthFt} y2={guideY} />
+              <rect className="hub-sketch-elevation-cabinet-vdrag-preview" x={entry.x} y={previewTop} width={entry.width} height={previewH} rx={0.025} />
+              <line className="hub-sketch-elevation-cabinet-gap-dim" x1={cabinetVDrag.centerXFt} y1={counterSvgY} x2={cabinetVDrag.centerXFt} y2={guideY} strokeDasharray="0.05 0.05" />
+              <g className="hub-sketch-elevation-cabinet-vdrag-label">
+                <rect x={labelX - 1.15} y={labelY - 0.62} width={2.3} height={0.66} rx={0.06} />
+                <text x={labelX} y={labelY - 0.4} textAnchor="middle" dominantBaseline="central">{`${gapLine}${onlyThis}`}</text>
+                <text x={labelX} y={labelY - 0.14} textAnchor="middle" dominantBaseline="central">{floorLine}</text>
+              </g>
+            </g>
+          )
+        })()}
         {showFinishRegionLabels && finishRegions.map((region, index) => {
           const label = finishRegionLabel(region)
           return (

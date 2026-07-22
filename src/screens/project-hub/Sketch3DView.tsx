@@ -95,6 +95,7 @@ import {
   CABINET_TOE_KICK_IN,
   cabinetDisplayCode,
   isCabinetPlacedItem,
+  wallCabinetCenterYFt,
 } from './cabinetCodes'
 import { SHERWIN_WILLIAMS_COLORS } from './sw-colors'
 import { DEFAULT_TILE_WASTE_FACTOR, estimateTileLayout, type TileLayoutOpening } from './tileLayout'
@@ -1226,7 +1227,13 @@ export function buildPhotoRenderFacts(
       pan_finish: resolved.placed.panFinish ? surfaceFinishFact(resolved.placed.panFinish, DEFAULT_FLOOR_PAINT, resolved.dims.heightFt) : null,
       position_ft: {
         x: roundFact(resolved.placed.xFt, 4),
-        y: roundFact(resolved.placed.yFt, 4),
+        // CABINETS-VERTICAL-22: навесной ставим по зазору wallGapIn (иначе yFt/дефолт 18").
+        y: roundFact(
+          isCabinetPlacedItem(resolved.placed) && resolved.placed.layer === 'wall'
+            ? wallCabinetCenterYFt(resolved.placed, resolved.heightIn)
+            : resolved.placed.yFt,
+          4,
+        ),
         z: roundFact(resolved.placed.zFt, 4),
       },
       rotation_deg: roundFact((resolved.placed.rotationY * 180) / Math.PI, 2),
@@ -3794,8 +3801,8 @@ export default function Sketch3DView({
           return seg ? dist(seg.a, seg.b) * cellFt : undefined
         }
 
-        const applyCatalogObjectPose = (object: any, placed: SketchPlacedCatalogItem) => {
-          object.position.set(placed.xFt, placed.yFt, placed.zFt)
+        const applyCatalogObjectPose = (object: any, placed: SketchPlacedCatalogItem, centerYFt = placed.yFt) => {
+          object.position.set(placed.xFt, centerYFt, placed.zFt)
           object.rotation.y = placed.rotationY
         }
 
@@ -3805,7 +3812,11 @@ export default function Sketch3DView({
           const codeWarn = codeWarningItemIds.has(placed.id)
           const visualWarn = doesNotFit || codeWarn
           const group = new THREE.Group()
-          applyCatalogObjectPose(group, placed)
+          // CABINETS-VERTICAL-22: навесной шкаф ставим на отметку из wallGapIn (иначе прежний yFt/дефолт 18").
+          const centerYFt = isCabinetPlacedItem(placed) && placed.layer === 'wall'
+            ? wallCabinetCenterYFt(placed, resolved.heightIn)
+            : placed.yFt
+          applyCatalogObjectPose(group, placed, centerYFt)
           const edgeColor = visualWarn ? 0x991b1b : selectedId === placed.id ? 0x0f172a : 0xffffff
           const material = createCatalogMaterial(THREE, resolved, visualWarn, textureLoader, maxAnisotropy, invalidate)
           if (placed.surface === 'floor') addContactShadow(THREE, group, resolved.dims.widthFt, resolved.dims.depthFt, resolved.dims.heightFt)
@@ -3833,7 +3844,7 @@ export default function Sketch3DView({
             const cabinetCode = isCabinetPlacedItem(placed) ? cabinetDisplayCode(placed) : ''
             const text = `${cabinetCode || resolvedCatalogDisplayName(resolved, t)}\n${resolvedCatalogDimsText(resolved)}${warning}`
             const sprite = createLabelSprite(THREE, text)
-            sprite.position.set(placed.xFt, placed.yFt + resolved.dims.heightFt / 2 + 0.42, placed.zFt)
+            sprite.position.set(placed.xFt, centerYFt + resolved.dims.heightFt / 2 + 0.42, placed.zFt)
             scene.add(sprite)
           }
         })

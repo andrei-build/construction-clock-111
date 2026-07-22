@@ -36,6 +36,9 @@ export type SketchPlacedCatalogItem = {
   widthIn?: number
   depthIn?: number
   heightIn?: number
+  // CABINETS-VERTICAL-22: зазор (дюймы) от столешницы (36") до низа навесного шкафа.
+  // Опционально, только для layer==='wall'. Отсутствует → дефолт 18" (низ навесных 54" от пола).
+  wallGapIn?: number
   photoPath?: string
   specs?: CatalogItemSpecs
 }
@@ -622,6 +625,10 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       if (widthIn !== undefined) placed.widthIn = widthIn
       if (depthIn !== undefined) placed.depthIn = depthIn
       if (heightIn !== undefined) placed.heightIn = heightIn
+      // CABINETS-VERTICAL-22: сохраняем зазор навесного (дюймы). Клампим в разумный диапазон,
+      // чтобы старые/битые эскизы не ломали высоту; отсутствие поля = дефолт 18" на чтении.
+      const wallGapIn = cleanFinite(item.wallGapIn ?? item.wall_gap_in)
+      if (wallGapIn !== undefined) placed.wallGapIn = Math.max(0, Math.min(600, wallGapIn))
       return placed
     })
     .filter((item): item is SketchPlacedCatalogItem => !!item)
