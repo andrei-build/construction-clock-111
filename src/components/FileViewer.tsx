@@ -57,6 +57,11 @@ export interface ViewerFile {
   pins?: PlanPin[]
   canAddPin?: boolean
   onAddPin?: (draft: ViewerPinDraft) => Promise<PlanPin>
+  // ESTIMATE-REVIEW-39 (опционально): клик по строке сметы открывает файл сразу на нужной странице
+  // PDF (начальный #page=N&FitH — дальше нативный тулбар вьювера) и подсвечивает связанный пин
+  // (plan_pins.estimate_item_id === строка). Оба поля опциональны — вызовы #37/#38 не ломаются.
+  page?: number
+  highlightPinId?: string | null
 }
 
 interface Props {
@@ -86,7 +91,8 @@ export default function FileViewer({ file, onClose }: Props) {
   useEffect(() => {
     setPins(file.pins ?? [])
     setAddMode(false)
-    setOpenPinId(null)
+    // ESTIMATE-REVIEW-39: при открытии из строки сметы сразу раскрываем связанный пин (карточку).
+    setOpenPinId(file.highlightPinId ?? null)
     setDraft(null)
     setPinError(false)
   }, [file])
@@ -265,7 +271,7 @@ export default function FileViewer({ file, onClose }: Props) {
           <iframe
             className="file-viewer-frame"
             title={file.name}
-            src={pdfPageSrc(file.url, 1)}
+            src={pdfPageSrc(file.url, file.page ?? 1)}
           />
         )}
 
@@ -289,7 +295,7 @@ export default function FileViewer({ file, onClose }: Props) {
               <button
                 key={p.id}
                 type="button"
-                className={`plan-pin${openPinId === p.id ? ' open' : ''}`}
+                className={`plan-pin${openPinId === p.id ? ' open' : ''}${file.highlightPinId === p.id ? ' highlight' : ''}`}
                 style={{ left: pinPercent(p.bbox.x), top: pinPercent(p.bbox.y), background: pinColor(p.severity) }}
                 aria-label={p.title || t('pin_add')}
                 onClick={(e) => {
@@ -329,6 +335,10 @@ export default function FileViewer({ file, onClose }: Props) {
               </button>
             </div>
             <div className="plan-pin-card-kind">{t(`pin_kind_${openPin.kind}`)}</div>
+            {/* ESTIMATE-REVIEW-39: лёгкая связь пин↔строка сметы (если пин привязан к estimate_item). */}
+            {openPin.estimate_item_id && (
+              <div className="plan-pin-card-link">🔗 {t('estimate_pin_linked')}</div>
+            )}
             {openPin.note && <div className="plan-pin-card-note">{openPin.note}</div>}
           </div>
         )}
