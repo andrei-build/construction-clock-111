@@ -34,6 +34,7 @@ import {
 import { formatFeetInches, formatInches, parseFeetInches, parseInches, snapFeetToPrecision, snapInchesToPrecision } from './inches'
 import {
   codeClearanceItemIds,
+  codeClearanceSeverity,
   formatCodeClearanceMessage,
   getCodeClearanceChecks,
   type CodeClearanceCheck,
@@ -1455,8 +1456,8 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           )}
           {!compact && codeCheckEnabled && wallCodeViolations.length > 0 && (
             <div className="hub-sketch-elevation-code-list" role="status" aria-live="polite">
-              {wallCodeViolations.slice(0, 3).map((check) => (
-                <span key={check.id} className="hub-sketch-code-chip">
+              {wallCodeViolations.slice(0, 4).map((check) => (
+                <span key={check.id} className={`hub-sketch-code-chip hub-sketch-code-chip-${codeClearanceSeverity(check)}`}>
                   {formatCodeClearanceMessage(check, t)}
                 </span>
               ))}

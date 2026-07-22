@@ -7501,6 +7501,91 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   line-height: 1.2;
   overflow-wrap: anywhere;
 }
+/* AI-LAYOUT-30: severity нарушений — NEC/IRC красным, NKBA жёлтым, эвристики приглушённо. */
+.hub-sketch-code-chip-error {
+  border-color: rgba(220, 38, 38, .24);
+  background: rgba(220, 38, 38, .09);
+  color: #b91c1c;
+}
+.hub-sketch-code-chip-warning {
+  border-color: rgba(217, 119, 6, .3);
+  background: rgba(245, 158, 11, .12);
+  color: #b45309;
+}
+.hub-sketch-code-chip-info {
+  border-color: rgba(100, 116, 139, .28);
+  background: rgba(100, 116, 139, .1);
+  color: #475569;
+}
+/* AI-LAYOUT-30: карточки вариантов раскладки + мини-превью ряда. */
+.hub-sketch-ai-layout {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.hub-sketch-ai-layout-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.hub-sketch-ai-layout-title {
+  font-size: 12px;
+  font-weight: 850;
+}
+.hub-sketch-ai-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+.hub-sketch-ai-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.hub-sketch-ai-card-title {
+  font-size: 11px;
+  font-weight: 850;
+}
+.hub-sketch-ai-preview {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+.hub-sketch-ai-cell { fill: #cbd5e1; stroke: rgba(15, 23, 42, .18); stroke-width: .3; }
+.hub-sketch-ai-cell-sink { fill: #38bdf8; }
+.hub-sketch-ai-cell-dishwasher { fill: #a5b4fc; }
+.hub-sketch-ai-cell-range { fill: #fb923c; }
+.hub-sketch-ai-cell-refrigerator { fill: #34d399; }
+.hub-sketch-ai-cell-base { fill: #e2e8f0; }
+.hub-sketch-ai-cell-filler { fill: #94a3b8; }
+.hub-sketch-ai-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10px;
+}
+.hub-sketch-ai-badge {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, .14);
+  color: #b45309;
+  font-weight: 850;
+}
+.hub-sketch-ai-badge-ok {
+  background: rgba(16, 185, 129, .14);
+  color: #047857;
+}
+.hub-sketch-ai-marvel { margin-top: 8px; }
 .hub-sketch-elevation-svg {
   width: 100%;
   aspect-ratio: 16 / 9;
