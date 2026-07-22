@@ -15,6 +15,8 @@ import Messages from './screens/Messages'
 import DriverRoute from './screens/Route'
 import More from './screens/More'
 import ResetPassword from './screens/ResetPassword'
+// INSTALL-PWA-40: публичная страница установки PWA (без логина, как /reset).
+import InstallApp from './screens/InstallApp'
 // PERF-1: тяжёлые экраны владельца/менеджера — ленивые чанки, грузятся по требованию,
 // чтобы полевой работник не перекачивал их после каждого деплоя (route-splitting).
 const Overview = lazy(() => import('./screens/Overview'))
@@ -64,6 +66,9 @@ export default function App() {
   // ACC-1 (b): экран восстановления пароля доступен ДО загрузки профиля —
   // по recovery-ссылке из письма профиль может ещё не подняться, а форму показать надо.
   if (location.pathname === '/reset') return <ResetPassword />
+  // INSTALL-PWA-40: страница установки приложения на телефон публична (работник ещё без входа
+  // ставит ярлык на главный экран). Тот же паттерн early-return ДО гейтов loading/profile.
+  if (location.pathname === '/install') return <InstallApp />
   if (loading) return <div className="spinner">…</div>
   if (!profile) return <Login />
 
