@@ -6,6 +6,8 @@ import {
   getProjectFileDownloadUrl,
   mediaUrl,
   uploadErrorCode,
+  listPlanPins,
+  createPlanPin,
 } from '../../lib/api'
 import type { Profile, Project, ProjectHubFile } from '../../lib/types'
 import { useImageLightbox, type LightboxImage } from '../../components/ImageLightbox'
@@ -207,8 +209,30 @@ export default function FilesTab({ project, profile }: FilesTabProps) {
     try {
       const url = await fileUrl(file)
       if (!url) { setOpenError(true); return }
-      if (category === 'videos') setVideoLightbox({ url, name: file.name })
-      else fv.open({ url, name: file.name, mime: file.mime })
+      if (category === 'videos') { setVideoLightbox({ url, name: file.name }); return }
+      // PIN-LAYER-38: слой пинов plan_pins поверх встроенного просмотрщика (PDF/документы).
+      // Пины гейтит RLS; добавлять может только owner/admin (кнопка прячется остальным).
+      const pins = profile ? await listPlanPins(profile, { projectId: project.id, fileId: file.id }) : []
+      const canAddPin = !!profile && (profile.role === 'owner' || profile.role === 'admin')
+      fv.open({
+        url,
+        name: file.name,
+        mime: file.mime,
+        pins,
+        canAddPin,
+        onAddPin: profile
+          ? (draft) => createPlanPin(profile, {
+              projectId: project.id,
+              fileId: file.id,
+              page: draft.page,
+              bbox: draft.bbox,
+              severity: draft.severity,
+              kind: draft.kind,
+              title: draft.title,
+              note: draft.note,
+            })
+          : undefined,
+      })
     } catch {
       setOpenError(true)
     } finally {
