@@ -59,6 +59,7 @@ import {
   CABINET_CATALOG_STANDARD_WIDTHS_IN,
   CABINET_CATALOG_WALL_HEIGHTS_IN,
 } from './cabinetCatalog'
+import { CabinetFront } from './cabinetFront'
 import { resolveOpeningTrim, trimProfileById } from './trimCatalog'
 
 const CELL_FT = 1
@@ -1413,32 +1414,21 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
                   <line className="hub-sketch-elevation-shower-rim" x1={entry.x + entry.width * 0.08} y1={entry.y + entry.height * 0.48} x2={entry.x + entry.width * 0.92} y2={entry.y + entry.height * 0.48} />
                 </>
               ) : entry.cabinet ? (
-                <>
-                  <rect x={entry.x} y={entry.y} width={entry.width} height={entry.height} rx={0.025} />
-                  {entry.layer === 'base' && !entry.filler && (
-                    <>
-                      <rect
-                        className="hub-sketch-elevation-cabinet-toe"
-                        x={entry.x + entry.width * 0.08}
-                        y={entry.y + entry.height - Math.min(entry.height * 0.3, CABINET_TOE_KICK_IN / 12)}
-                        width={entry.width * 0.84}
-                        height={Math.min(entry.height * 0.3, CABINET_TOE_KICK_IN / 12)}
-                        rx={0.015}
-                      />
-                      <line className="hub-sketch-elevation-cabinet-counter" x1={entry.x - 0.02} y1={Math.max(0, height - CABINET_COUNTERTOP_HEIGHT_IN / 12)} x2={entry.x + entry.width + 0.02} y2={Math.max(0, height - CABINET_COUNTERTOP_HEIGHT_IN / 12)} />
-                    </>
-                  )}
-                  <line className="hub-sketch-elevation-cabinet-face" x1={entry.x + entry.width * 0.1} y1={entry.y + entry.height * 0.28} x2={entry.x + entry.width * 0.9} y2={entry.y + entry.height * 0.28} />
-                  <line className="hub-sketch-elevation-cabinet-face" x1={entry.x + entry.width / 2} y1={entry.y + entry.height * 0.28} x2={entry.x + entry.width / 2} y2={entry.y + entry.height * 0.9} />
-                  {entry.filler && (
-                    <path className="hub-sketch-elevation-cabinet-fill-mark" d={`M ${entry.x} ${entry.y} L ${entry.x + entry.width} ${entry.y + entry.height} M ${entry.x + entry.width} ${entry.y} L ${entry.x} ${entry.y + entry.height}`} />
-                  )}
-                  {entry.cabinetCode && (
-                    <text x={entry.x + entry.width / 2} y={entry.y + entry.height / 2} textAnchor="middle" dominantBaseline="central">
-                      {entry.cabinetCode}
-                    </text>
-                  )}
-                </>
+                // CABINET-FRONTS-25: единый shaker-рендер фронта (рамка+филёнка+ручки+toe-kick/стекло),
+                // раскладка дверей/ящиков по KCMA из кода+ширины. Первый <rect> — корпус (тон слоя,
+                // цель селекторов selection/hover). Модель не трогается — фронт из кода/ширины/высоты.
+                <CabinetFront
+                  code={entry.cabinetCode}
+                  widthIn={Number(entry.item.widthIn)}
+                  heightIn={Number(entry.item.heightIn)}
+                  x={entry.x}
+                  y={entry.y}
+                  width={entry.width}
+                  height={entry.height}
+                  variant="elevation"
+                  showLabel={!!entry.cabinetCode}
+                  countertopLineY={Math.max(0, height - CABINET_COUNTERTOP_HEIGHT_IN / 12)}
+                />
               ) : (
                 <rect x={entry.x} y={entry.y} width={entry.width} height={entry.height} rx={0.05} />
               )}
