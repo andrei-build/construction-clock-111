@@ -77,6 +77,18 @@ import {
   type OpeningPlacementMagnet,
 } from './sketchOpeningPlacement'
 import {
+  DEFAULT_TRIM_WASTE_PCT,
+  activeTrimPresetId,
+  clampTrimWastePct,
+  resolveOpeningTrim,
+  sanitizeOpeningTrim,
+  trimLabel,
+  trimPresetsForKind,
+  trimProfilesForKind,
+  type OpeningTrim,
+  type OpeningTrimSideKey,
+} from './trimCatalog'
+import {
   cabinetDisplayCode,
   cabinetScheduleCsv,
   isCabinetPlacedItem,
@@ -100,6 +112,7 @@ import {
   ELECTRICAL_MATERIAL_SECTION,
   SKETCH_MATERIAL_SECTIONS,
   TILE_MATERIAL_SECTION,
+  TRIM_MATERIAL_SECTION,
   WALL_MATERIAL_SECTION,
   CABINET_MATERIAL_SECTION,
   appendSketchMaterialRows,
@@ -216,6 +229,7 @@ type Opening = {
   w?: number // ширина проёма в футах
   h?: number // высота окна в футах (только окно)
   sill?: number // высота окна от пола в футах (только окно)
+  trim?: OpeningTrim // TRIM-OPENINGS-21: назначение тримов проёма (опционально/аддитивно)
 }
 type SketchModel = {
   version: 1
@@ -766,6 +780,9 @@ function normalizeOpeningForModel(model: SketchModel, opening: Opening): Opening
     next.h = height
     next.sill = sill
   }
+  // TRIM-OPENINGS-21: normalizeOpeningForModel пересобирает проём с нуля — трим НЕ теряем при save/edit.
+  const trim = sanitizeOpeningTrim(opening.trim)
+  if (trim) next.trim = trim
   return next
 }
 
@@ -1539,7 +1556,7 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
 }
 
 export default function SketchTab({ project, profile }: SketchTabProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const canEdit = profile ? isManagerWrite(profile.role) : false
 
   const [model, setModel] = useState<SketchModel>(EMPTY_MODEL)
@@ -1580,6 +1597,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [selectedCabinetWallKey, setSelectedCabinetWallKey] = useState<string | null>(null)
   const [includePrimer, setIncludePrimer] = useState(true)
   const [includeTexture, setIncludeTexture] = useState(true)
+  const [trimWastePct, setTrimWastePct] = useState(DEFAULT_TRIM_WASTE_PCT)
   const [sketchMaterials, setSketchMaterials] = useState<SketchMaterialsResult | null>(null)
   const [sketchMaterialsBusy, setSketchMaterialsBusy] = useState(false)
   const [sketchMaterialsAppendBusy, setSketchMaterialsAppendBusy] = useState(false)
@@ -2174,6 +2192,24 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const index = selectedOpeningIndexRef.current
     if (index === null) return
     updateOpeningAt(index, { sill: Math.max(0, snapOpeningFeetToPrecision(valueFt)) })
+  }
+
+  // TRIM-OPENINGS-21: выбор пресета трима — стороны назначаются автоматом по правилу пресета.
+  const applySelectedOpeningTrimPreset = (presetId: string) => {
+    const index = selectedOpeningIndexRef.current
+    if (index === null) return
+    updateOpeningAt(index, { trim: { presetId } })
+  }
+
+  // TRIM-OPENINGS-21: переопределение / выключение одной стороны трима поверх пресета.
+  const setSelectedOpeningTrimSide = (side: OpeningTrimSideKey, profileId: string, enabled: boolean) => {
+    const index = selectedOpeningIndexRef.current
+    if (index === null) return
+    const current = modelRef.current.openings[index]
+    if (!current) return
+    const baseTrim: OpeningTrim = current.trim ?? { presetId: activeTrimPresetId(current.kind, current.trim) }
+    const nextSides = { ...(baseTrim.sides ?? {}), [side]: { profileId, enabled } }
+    updateOpeningAt(index, { trim: { ...baseTrim, sides: nextSides } })
   }
 
   const removeSelectedOpening = () => {
@@ -4293,10 +4329,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       const result = await calculateSketchMaterials(normalizeSketchModelForStorage(model), {
         includePrimer,
         includeTexture,
+        trimWastePct,
         labels: {
           outletName: t('hub_sketch_outlet'),
           switchName: t('hub_sketch_switch'),
           eachUnit: t('hub_sketch_material_unit_each'),
+          linearFtUnit: t('hub_sketch_trim_unit_lnft'),
+          trimLang: lang,
         },
       })
       setSketchMaterials(result)
@@ -4588,6 +4627,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const sketchMaterialSectionLabel = (section: SketchMaterialRow['section']): string => {
     if (section === TILE_MATERIAL_SECTION) return t('hub_sketch_material_section_tile')
     if (section === WALL_MATERIAL_SECTION) return t('hub_sketch_material_section_walls')
+    if (section === TRIM_MATERIAL_SECTION) return t('hub_sketch_material_section_trim')
     if (section === CABINET_MATERIAL_SECTION) return t('hub_sketch_material_section_cabinets')
     if (section === ELECTRICAL_MATERIAL_SECTION) return t('hub_sketch_material_section_electrical')
     return section
@@ -5340,6 +5380,19 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 />
                 <span>{t('hub_sketch_material_include_texture')}</span>
               </label>
+              {/* TRIM-OPENINGS-21: запас % для линейных футов тримов (дефолт 10%). */}
+              <label className="hub-sketch-layer-toggle hub-sketch-trim-waste">
+                <span>{t('hub_sketch_trim_waste')}</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={trimWastePct}
+                  onChange={(event) => setTrimWastePct(clampTrimWastePct(event.target.value))}
+                />
+                <span aria-hidden="true">%</span>
+              </label>
             </div>
             <div className="hub-sketch-save-actions">
               <button type="button" className="btn small" disabled={busy} onClick={save}>
@@ -5649,6 +5702,48 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             {lengthInput('doorW', 'hub_sketch_width', openingWidthFt(selectedOpening), 0.5, 20, updateSelectedOpeningWidth)}
             {lengthInput('doorH', 'hub_sketch_height', openingHeightFt(selectedOpening), 0.5, 20, updateSelectedOpeningHeight)}
             {selectedOpening.kind === 'window' && lengthInput('winSill', 'hub_sketch_sill', openingFloorFt(selectedOpening), 0, 20, updateSelectedOpeningFloor)}
+            {/* TRIM-OPENINGS-21: блок «Трим» — пресет из библиотеки + переопределение/выключение сторон. */}
+            <div className="hub-sketch-trim" role="group" aria-label={t('hub_sketch_trim')}>
+              <span className="muted hub-sketch-trim-title">{t('hub_sketch_trim')}</span>
+              <div className="hub-sketch-trim-presets">
+                {trimPresetsForKind(selectedOpening.kind).map((preset) => {
+                  const active = activeTrimPresetId(selectedOpening.kind, selectedOpening.trim) === preset.id
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className={active ? 'btn small' : 'btn ghost small'}
+                      aria-pressed={active}
+                      disabled={!canEdit}
+                      onClick={() => applySelectedOpeningTrimPreset(preset.id)}
+                    >
+                      {trimLabel(preset.labels, lang)}
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="hub-sketch-trim-sides">
+                {resolveOpeningTrim(selectedOpening.kind, selectedOpening.trim).map((side) => (
+                  <label className="hub-sketch-trim-side" key={side.side}>
+                    <span className="muted">{t(`hub_sketch_trim_side_${side.side}`)}</span>
+                    <select
+                      value={side.enabled ? side.profileId : 'off'}
+                      disabled={!canEdit}
+                      onChange={(event) => {
+                        const value = event.target.value
+                        if (value === 'off') setSelectedOpeningTrimSide(side.side, side.profileId, false)
+                        else setSelectedOpeningTrimSide(side.side, value, true)
+                      }}
+                    >
+                      <option value="off">{t('hub_sketch_trim_off')}</option>
+                      {trimProfilesForKind(selectedOpening.kind).map((profile) => (
+                        <option key={profile.id} value={profile.id}>{trimLabel(profile.labels, lang)}</option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            </div>
             <div className="hub-sketch-wall-panel-actions">
               <button type="button" className="btn ghost small" disabled={!canCenterOpening} onClick={centerSelectedOpening}>
                 {t('hub_sketch_opening_center')}

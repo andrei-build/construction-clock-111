@@ -1,4 +1,5 @@
 import { snapOpeningFeetToPrecision } from './inches'
+import { sanitizeOpeningTrim, type OpeningTrim } from './trimCatalog'
 
 export type Pt = { x: number; y: number }
 export type Contour = { points: Pt[]; closed: boolean; label?: string }
@@ -10,6 +11,8 @@ export type Opening = {
   w?: number
   h?: number
   sill?: number
+  // TRIM-OPENINGS-21: назначение тримов проёма — опционально/аддитивно (version:1 не тронут).
+  trim?: OpeningTrim
 }
 
 export const DEFAULT_DOOR_WIDTH_IN = 32
@@ -749,6 +752,8 @@ export function sanitizeSketchOpenings(value: unknown): Opening[] {
       if (width !== undefined) opening.w = snapOpeningFeetToPrecision(width)
       if (height !== undefined) opening.h = snapOpeningFeetToPrecision(height)
       if (kind === 'window' && sill !== undefined) opening.sill = snapOpeningFeetToPrecision(sill)
+      const trim = sanitizeOpeningTrim(item.trim)
+      if (trim) opening.trim = trim
       return opening
     })
     .filter((item): item is Opening => !!item)
