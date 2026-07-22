@@ -3,7 +3,7 @@
 // перечисление всех сегментов стен и поиск ближайшего сегмента к точке.
 // Формат модели (version:1) здесь НЕ трогается — читаются только контуры и поля c/s/t проёма.
 
-import { dist, type Contour, type Pt } from './sketchPlanGeometry'
+import { dist, projectT, type Contour, type Pt } from './sketchPlanGeometry'
 
 // Минимальная форма модели: для сегментной геометрии нужны только контуры.
 export type ContourModel = { contours: Contour[] }
@@ -76,4 +76,47 @@ export function nearestSegment(model: ContourModel, p: Pt): NearestSegment | nul
     if (!best || d < best.d) best = { c: seg.c, s: seg.s, t, d }
   }
   return best
+}
+
+// SWEEP-FIX-33: расстояние (в клетках) от точки p до «пролёта» проёма — отрезка ширины
+// spanCells, центрированного в точке проёма и лежащего вдоль стены. Та же геометрия, что
+// использует хит-тест выделения (selectCanvasObjectAt): проекция курсора на отрезок пролёта.
+// Возвращает null для вырожденного сегмента. spanCells — ширина проёма в клетках (widthFt/cellFt).
+export function openingHitDistance(model: ContourModel, o: SegmentPlacement, spanCells: number, p: Pt): number | null {
+  const geom = openingGeom(model, o)
+  if (!geom) return null
+  const half = Math.min(Math.max(spanCells, 0), dist(geom.a, geom.b)) / 2
+  const a = { x: geom.p.x - geom.ux * half, y: geom.p.y - geom.uy * half }
+  const b = { x: geom.p.x + geom.ux * half, y: geom.p.y + geom.uy * half }
+  const tv = projectT(p, a, b)
+  const proj = { x: a.x + (b.x - a.x) * tv, y: a.y + (b.y - a.y) * tv }
+  return dist(p, proj)
+}
+
+// SWEEP-FIX-33: индекс ближайшего проёма под точкой p в пределах порога hitCells, или null.
+// spanCellsOf возвращает ширину проёма в клетках для i-го элемента (единый источник — рендер плана).
+export function hitTestOpeningIndex(
+  model: ContourModel,
+  openings: SegmentPlacement[],
+  p: Pt,
+  hitCells: number,
+  spanCellsOf: (o: SegmentPlacement, index: number) => number,
+): number | null {
+  let best: { index: number; d: number } | null = null
+  for (let index = 0; index < openings.length; index++) {
+    const d = openingHitDistance(model, openings[index], spanCellsOf(openings[index], index), p)
+    if (d !== null && d <= hitCells && (!best || d < best.d)) best = { index, d }
+  }
+  return best ? best.index : null
+}
+
+// SWEEP-FIX-33: кламп параметра t так, чтобы «пролёт» ширины widthAlong целиком оставался в
+// пределах сегмента длиной segLen (учёт полуширины). Отношение padT = (ширина/2)/длина не зависит
+// от единиц (клетки/футы) — вызывать можно и в клетках, и в футах. Слишком широкий проём центрируется.
+export function clampOpeningSpanT(segLen: number, widthAlong: number, t: number): number {
+  if (segLen <= 0.001) return 0.5
+  const w = Math.max(0, Math.min(widthAlong, segLen))
+  if (w >= segLen - 0.001) return 0.5
+  const padT = (w / 2) / segLen
+  return Math.max(padT, Math.min(1 - padT, t))
 }

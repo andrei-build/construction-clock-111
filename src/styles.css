@@ -6125,6 +6125,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-drag-dim { fill: #b45309; font-size: 12px; font-weight: 800; pointer-events: none; }
 .hub-sketch-hover-snap { fill: rgba(22, 163, 74, .4); stroke: #16a34a; }
 .hub-sketch-opening { cursor: grab; }
+/* SWEEP-FIX-33: явная подсказка захвата — «grabbing» пока тащим существующий проём вдоль стены. */
+.hub-sketch-opening:active,
+.hub-sketch-opening-selected { cursor: grabbing; }
 .hub-sketch-door { stroke: #b45309; stroke-width: 6; stroke-linecap: butt; }
 .hub-sketch-window { stroke: #2563eb; stroke-width: 6; stroke-linecap: butt; }
 /* OPENINGS-DRAG-TYPES-27: проём-вырез на плане — пунктирная линия проёма без полотна. */
