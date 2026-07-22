@@ -97,6 +97,12 @@ export type SketchTileFinish = {
   catalogItemId?: string
   catalogItemName?: string
   catalogPhotoPath?: string
+  // TILE-CATALOG-29: выбранная позиция каталога плитки — бренд/коллекция/цена диктуют текстуру и
+  // предварительную стоимость зоны. Опц./аддитивно, только через allowlist, version:1 не тронут.
+  catalogBrand?: string
+  catalogCollection?: string
+  catalogPriceUsd?: number
+  catalogPriceUnit?: 'sqft' | 'piece'
   coverage?: SketchFinishCoverage
 }
 
@@ -677,10 +683,20 @@ export function normalizeTileSurface(surface?: SketchSurfaceFinish): SketchTileF
   }
   const catalogItemId = cleanId(tile?.catalogItemId)
   const catalogItemName = cleanText(tile?.catalogItemName)
-  const catalogPhotoPath = cleanText(tile?.catalogPhotoPath, 600)
+  const catalogPhotoPath = cleanText(tile?.catalogPhotoPath, 4000)
   if (catalogItemId) out.catalogItemId = catalogItemId
   if (catalogItemName) out.catalogItemName = catalogItemName
   if (catalogPhotoPath) out.catalogPhotoPath = catalogPhotoPath
+  // TILE-CATALOG-29: доп. поля выбранной позиции — строго через allowlist (сохраняем цену/бренд, чтобы
+  // стоимость зоны переживала перезагрузку даже если id не из фронт-сида, а влит бэкендом).
+  const catalogBrand = cleanText(tile?.catalogBrand, 80)
+  const catalogCollection = cleanText(tile?.catalogCollection, 120)
+  const catalogPriceUsd = cleanOptionalNumber(tile?.catalogPriceUsd, 0, 100000)
+  const catalogPriceUnit = tile?.catalogPriceUnit === 'piece' ? 'piece' : tile?.catalogPriceUnit === 'sqft' ? 'sqft' : undefined
+  if (catalogBrand) out.catalogBrand = catalogBrand
+  if (catalogCollection) out.catalogCollection = catalogCollection
+  if (catalogPriceUsd !== undefined) out.catalogPriceUsd = catalogPriceUsd
+  if (catalogPriceUnit) out.catalogPriceUnit = catalogPriceUnit
   const coverage = sanitizeCoverage(tile?.coverage)
   if (coverage) out.coverage = coverage
   return out

@@ -6869,6 +6869,68 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-catalog-empty .btn {
   width: fit-content;
 }
+/* TILE-CATALOG-29: каталог плитки в баре Отделка → Плитка (карточки/фильтр бренда/стоимость/по ссылке) */
+.hub-sketch-tile-catalog {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.hub-sketch-tile-catalog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 900;
+  font-size: 12px;
+}
+.hub-sketch-tile-catalog-hint {
+  margin: 0;
+  font-size: 11px;
+}
+.hub-sketch-tile-brand-filter {
+  flex-wrap: wrap;
+}
+.hub-sketch-tile-card-selected {
+  color: rgba(37, 99, 235, .92);
+  font-weight: 800;
+  font-size: 11px;
+}
+.hub-sketch-tile-zone-cost {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+}
+.hub-sketch-tile-zone-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.hub-sketch-tile-zone-total strong {
+  font-size: 15px;
+  color: rgba(37, 99, 235, .95);
+}
+.hub-sketch-tile-zone-empty {
+  margin: 0;
+  font-size: 11px;
+}
+.hub-sketch-tile-link {
+  display: flex;
+  gap: 6px;
+}
+.hub-sketch-tile-link input {
+  flex: 1;
+  min-width: 0;
+}
+.hub-sketch-tile-link-soon {
+  margin: 0;
+  font-size: 11px;
+}
 .hub-sketch-finish-coverage,
 .hub-sketch-drywall-controls {
   display: grid;
