@@ -74,6 +74,36 @@ export const CABINET_COUNTERTOP_HEIGHT_IN = 36
 export const CABINET_TOE_KICK_IN = 4
 export const CABINET_MIN_FILLER_IN = 3
 
+// CABINETS-VERTICAL-22: стандарт NKBA — зазор 18" между столешницей (36") и низом навесного ⇒ низ 54" от пола.
+export const DEFAULT_WALL_CABINET_GAP_IN = CABINET_WALL_BOTTOM_IN - CABINET_COUNTERTOP_HEIGHT_IN
+export const WALL_CABINET_MIN_GAP_IN = 0
+export const WALL_CABINET_MAX_GAP_IN = 240
+
+// Эффективный зазор навесного: явное поле wallGapIn (дюймы) либо дефолт 18".
+export function wallCabinetGapIn(item: Pick<SketchPlacedCatalogItem, 'wallGapIn'>): number {
+  const gap = Number(item.wallGapIn)
+  return Number.isFinite(gap) ? gap : DEFAULT_WALL_CABINET_GAP_IN
+}
+
+// Низ навесного (дюймы от пола) из зазора.
+export function wallCabinetBottomInFromGap(gapIn: number): number {
+  return CABINET_COUNTERTOP_HEIGHT_IN + gapIn
+}
+
+// Зазор (дюймы) из низа навесного (дюймы от пола).
+export function wallCabinetGapFromBottomIn(bottomIn: number): number {
+  return bottomIn - CABINET_COUNTERTOP_HEIGHT_IN
+}
+
+// Центр навесного по Y (футы) — как его позиционируют развёртка и 3D. Предпочитает wallGapIn,
+// иначе fallback на yFt (старые эскизы без поля грузятся штатно, дефолт 18").
+export function wallCabinetCenterYFt(item: Pick<SketchPlacedCatalogItem, 'wallGapIn' | 'yFt'>, heightIn: number): number {
+  if (Number.isFinite(Number(item.wallGapIn))) {
+    return (wallCabinetBottomInFromGap(wallCabinetGapIn(item)) + heightIn / 2) / IN_PER_FT
+  }
+  return item.yFt
+}
+
 const PREFIXES = ['RANGE', 'WINE', 'HOOD', '3DB', '2DB', '1DB', 'BEP', 'REP', 'BLS', 'BBC', 'REF', 'SB', 'DB', 'BF', 'DW', 'B', 'W', 'U', 'V', 'F'] as const
 const PREFIX_SET = new Set<string>(PREFIXES)
 const DEFAULT_REFRIGERATOR_HEIGHT_IN = 72

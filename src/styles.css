@@ -7432,6 +7432,50 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: #2563eb;
   stroke-width: .06;
 }
+/* CABINETS-VERTICAL-22: вертикальный drag навесных + зазор числом. */
+.hub-sketch-elevation-cabinet-vdrag {
+  cursor: ns-resize;
+  touch-action: none;
+}
+.hub-sketch-elevation-cabinet-vdragging > rect:first-of-type {
+  stroke: #4f46e5;
+  stroke-width: .06;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-gap-dim line {
+  stroke: #4f46e5;
+  stroke-width: .022;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-gap-dim text {
+  fill: #3730a3;
+  stroke: rgba(255, 255, 255, .94);
+  stroke-width: .08;
+  paint-order: stroke;
+  font-size: .21px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-vdrag-guide {
+  stroke: #4f46e5;
+  stroke-width: .02;
+  stroke-dasharray: .08 .06;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-vdrag-preview {
+  fill: rgba(129, 140, 248, .28);
+  stroke: #4f46e5;
+  stroke-width: .04;
+  stroke-dasharray: .1 .07;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-vdrag-label rect {
+  fill: rgba(30, 27, 75, .92);
+  stroke: none;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-vdrag-label text {
+  fill: #ffffff;
+  font-size: .2px;
+  font-weight: 800;
+}
 .hub-sketch-elevation-cabinet-editor {
   position: absolute;
   left: 50%;
