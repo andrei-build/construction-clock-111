@@ -2456,7 +2456,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       return
     }
     if (mode === 'finish') {
-      // Отделка остаётся в 3D-виде; её 2D-панель — отдельная задача (SWEEP-FIX-35), здесь не трогаем.
+      // SWEEP-FIX-35: «Отделка» больше НЕ прыгает в 3D — открывается на 2D-плане, где стену
+      // выбирают кликом (палитра отделки применяется к selectedWallKey). 3D — только по кнопке «3D вид».
+      // tool='wall' держим ради wallSelectEnabled=true (выбор стены); старт рисования стены гейтится
+      // по activeMode!=='finish' в applyCanvasActionAt → клик по пустому в Отделке НЕ рисует новую стену.
       setViewMode(sketchModeViewMode('finish'))
       setTool('wall')
       setMeasurementDraft(null)
@@ -4122,7 +4125,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       return true
     }
 
-    if (tool === 'wall') {
+    // SWEEP-FIX-35: в «Отделке» (activeMode==='finish') tool='wall' держим только ради выбора стены —
+    // рисовать/дополнять/замыкать контуры тут нельзя, иначе клик по пустому создал бы стену. Гейт узкий:
+    // режимы «Стены» (wall) и «Разметка» (markup) с tool='wall' рисуют как раньше.
+    if (tool === 'wall' && activeMode !== 'finish') {
       const p = wallPoint(raw).p
       const contours = model.contours
       const last = contours[contours.length - 1]
