@@ -4207,6 +4207,43 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   font-size: 12px;
   line-height: 1.4;
 }
+/* ELEMENTS-INFRA-26: подзаголовки групп и панель размеров колонны/короба в режиме «Электрика» */
+.hub-sketch-context-subhead {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  opacity: .7;
+}
+.hub-sketch-electrical-panel .hub-sketch-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: .72;
+}
+.hub-sketch-obstacle-dims {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(100, 116, 139, .3);
+  border-radius: 8px;
+}
+.hub-sketch-obstacle-dims-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.hub-sketch-obstacle-dims-row label {
+  display: grid;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.hub-sketch-obstacle-dims-row input {
+  width: 56px;
+  padding: 3px 6px;
+  font-size: 13px;
+}
 .hub-sketch-context-stats {
   display: grid;
   gap: 7px;
@@ -6115,6 +6152,45 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   color: #1f2937;
   stroke-linecap: round;
 }
+/* ELEMENTS-INFRA-26: сантех-подводки на плане */
+.hub-sketch-plan-pipe rect {
+  stroke-width: 1.6;
+  fill: rgba(14, 165, 233, .14);
+  stroke: #0369a1;
+}
+.hub-sketch-plan-pipe-gas rect {
+  fill: rgba(234, 179, 8, .16);
+  stroke: #a16207;
+}
+.hub-sketch-plan-pipe-mark {
+  fill: none;
+  stroke: #0369a1;
+  stroke-width: 1.4;
+}
+.hub-sketch-plan-pipe-gas .hub-sketch-plan-pipe-mark {
+  stroke: #a16207;
+}
+.hub-sketch-plan-pipe-label {
+  fill: #a16207;
+  font-weight: 700;
+}
+/* ELEMENTS-INFRA-26: колонны/короба на плане (напольные преграды) */
+.hub-sketch-plan-obstacle rect,
+.hub-sketch-plan-obstacle ellipse {
+  fill: rgba(100, 116, 139, .22);
+  stroke: #475569;
+  stroke-width: 1.7;
+}
+.hub-sketch-plan-obstacle-mark {
+  fill: none;
+  stroke: #475569;
+  stroke-width: 1.2;
+}
+.hub-sketch-plan-item-selected rect,
+.hub-sketch-plan-item-selected ellipse {
+  stroke: #2563eb;
+  stroke-width: 2.4;
+}
 .hub-sketch-code-arc,
 .hub-sketch-code-clearance-line {
   stroke: #047857;
@@ -7659,6 +7735,84 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   fill: #ffffff;
   font-size: .2px;
   font-weight: 800;
+}
+/* ELEMENTS-INFRA-26: инженерные маркеры на развёртке (электрика/подводки) + их живые размеры */
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-drag {
+  cursor: move;
+  touch-action: none;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-plate {
+  fill: rgba(59, 130, 246, .16);
+  stroke: #1d4ed8;
+  stroke-width: .02;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-switch .hub-sketch-elevation-infra-plate {
+  fill: rgba(245, 158, 11, .18);
+  stroke: #b45309;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-mark {
+  fill: none;
+  stroke: #1d4ed8;
+  stroke-width: .022;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-mark-fill {
+  fill: #b45309;
+  stroke: none;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-pipe-line {
+  fill: none;
+  stroke: #0369a1;
+  stroke-width: .05;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-pipe-gas {
+  stroke: #a16207;
+  stroke-dasharray: .12 .08;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-pipe-cap {
+  fill: #ffffff;
+  stroke: #0369a1;
+  stroke-width: .022;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-pipe-gas .hub-sketch-elevation-infra-pipe-cap {
+  stroke: #a16207;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-pipe-label {
+  fill: #a16207;
+  font-size: .22px;
+  font-weight: 900;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, .9);
+  stroke-width: .05;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-selected .hub-sketch-elevation-infra-plate,
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-selected .hub-sketch-elevation-infra-pipe-line {
+  stroke-width: .05;
+  filter: drop-shadow(0 0 .04px #2563eb);
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-dim-line {
+  stroke: #0f766e;
+  stroke-width: .02;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-dim-tick {
+  stroke: #0f766e;
+  stroke-width: .02;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-svg .hub-sketch-elevation-infra-dim-label {
+  fill: #0f766e;
+  stroke: rgba(255, 255, 255, .94);
+  stroke-width: .08;
+  paint-order: stroke;
+  font-size: .2px;
+  font-weight: 900;
+  cursor: pointer;
 }
 .hub-sketch-elevation-cabinet-editor {
   position: absolute;

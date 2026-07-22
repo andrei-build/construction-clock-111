@@ -1,6 +1,7 @@
 import type { Contour, Pt } from './sketchFinishes'
 import type { SketchPlacedCatalogItem } from './sketchCatalog'
 import { formatInches, parseInches, snapInchesToPrecision } from './inches'
+import { freeRunsAlongWall, type InfraObstacleInterval } from './elements'
 
 export type CabinetLayer = 'base' | 'wall'
 export type CabinetHinge = 'L' | 'R'
@@ -561,14 +562,45 @@ function makePlacedCabinet(
   return placed
 }
 
+// ELEMENTS-INFRA-26: раскладка ширин по свободным пробегам стены (в обход колонн/коробов).
+// Каждый шкаф встаёт в текущий пробег; если не влезает — перескакивает в начало следующего
+// (шкаф НЕ проходит сквозь преграду). При отсутствии преград — обычная сплошная упаковка.
+function packWidthsIntoRuns(widths: number[], runs: InfraObstacleInterval[]): number[] {
+  const starts: number[] = []
+  if (runs.length === 0) {
+    let cursor = 0
+    widths.forEach((w) => {
+      starts.push(cursor)
+      cursor += w
+    })
+    return starts
+  }
+  let runIdx = 0
+  let cursor = runs[0].startIn
+  widths.forEach((w) => {
+    while (runIdx < runs.length - 1 && cursor + w > runs[runIdx].endIn + 0.001) {
+      runIdx += 1
+      cursor = runs[runIdx].startIn
+    }
+    starts.push(cursor)
+    cursor += w
+  })
+  return starts
+}
+
 export function layoutCabinetRunOnWall(
   model: CabinetLayoutModel,
   wall: CabinetLayoutWall,
   input: string,
   runId = `cabinet-run-${wall.c}-${wall.s}`,
+  obstacles: InfraObstacleInterval[] = [],
 ): CabinetLayoutResult {
   const { cabinets, invalidCodes, suggestions } = parseCabinetCodes(input)
   const wallLengthIn = snapInchesToPrecision(wallLengthFt(model, wall) * IN_PER_FT)
+  // ELEMENTS-INFRA-26: пробеги вдоль стены минус преграды (колонны/короба). Ёмкость ряда = сумма
+  // пробегов; без преград freeRuns = [0..wallLengthIn], поведение прежнее (обратная совместимость).
+  const freeRuns = freeRunsAlongWall(wallLengthIn, obstacles)
+  const freeLengthIn = snapInchesToPrecision(freeRuns.reduce((sum, run) => sum + (run.endIn - run.startIn), 0))
   const items: SketchPlacedCatalogItem[] = []
   const summaries: CabinetLayoutLayerSummary[] = []
   let overflow = false
@@ -578,12 +610,12 @@ export function layoutCabinetRunOnWall(
     const layerCabinets = cabinets.filter((cabinet) => cabinet.layer === layer)
     if (layerCabinets.length === 0) return
     const cabinetWidth = snapInchesToPrecision(layerCabinets.reduce((sum, cabinet) => sum + cabinet.widthIn, 0))
-    const overflowIn = Math.max(0, snapInchesToPrecision(cabinetWidth - wallLengthIn))
+    const overflowIn = Math.max(0, snapInchesToPrecision(cabinetWidth - freeLengthIn))
     let fillerWidthIn = 0
     let remainderIn = 0
     let runCabinets = layerCabinets
     if (overflowIn <= 0) {
-      const gap = snapInchesToPrecision(wallLengthIn - cabinetWidth)
+      const gap = snapInchesToPrecision(freeLengthIn - cabinetWidth)
       if (gap > 0) {
         // CABINETS-PLACE-13: авто-филлер только для мелкого зазора (≤3"); большой остаток
         // НЕ закрываем синтетическим шкафом — показываем цифрой (remainderIn) как у лидеров.
@@ -613,15 +645,16 @@ export function layoutCabinetRunOnWall(
       overflow = true
     }
 
-    let cursorIn = 0
+    const starts = packWidthsIntoRuns(runCabinets.map((cabinet) => cabinet.widthIn), freeRuns)
     runCabinets.forEach((cabinet, index) => {
-      const warning = overflowIn > 0 && cursorIn + cabinet.widthIn > wallLengthIn + 0.001
+      const startIn = snapInchesToPrecision(starts[index] ?? 0)
+      const warning = startIn + cabinet.widthIn > wallLengthIn + 0.001
         ? 'overflow'
         : cabinet.filler && cabinet.widthIn < CABINET_MIN_FILLER_IN
           ? 'small-filler'
           : undefined
-      items.push(makePlacedCabinet(cabinet, model, wall, runId, index, cursorIn, warning))
-      cursorIn = snapInchesToPrecision(cursorIn + cabinet.widthIn)
+      if (warning === 'overflow') overflow = true
+      items.push(makePlacedCabinet(cabinet, model, wall, runId, index, startIn, warning))
     })
 
     summaries.push({

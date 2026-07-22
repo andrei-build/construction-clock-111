@@ -34,10 +34,14 @@ import {
   type CodeClearanceCheck,
 } from './code-clearances'
 import {
+  isElectricalPlacedCatalogItem,
+  isOutletPlacedCatalogItem,
+  isPipePlacedCatalogItem,
   isShowerPanPlacedCatalogItem,
   isToiletPlacedCatalogItem,
   sanitizePlacedCatalogItems,
   showerPanShapeFromPlacedItem,
+  type SketchPipeKind,
   type SketchPlacedCatalogItem,
   type SketchShowerPanShape,
 } from './sketchCatalog'
@@ -129,6 +133,12 @@ type ElevationPlacedItem = {
   cabinetCode: string
   filler: boolean
   layer?: 'base' | 'wall'
+  // ELEMENTS-INFRA-26: инженерная разметка на развёртке (электрика/подводки) + её живые размеры.
+  electrical?: 'outlet' | 'switch'
+  electricalVariant?: 'single' | 'double'
+  pipe?: SketchPipeKind
+  centerXFt: number
+  centerYFt: number
 }
 // CABINETS-VERTICAL-22: вертикальный drag навесного шкафа по развёртке.
 type CabinetVerticalDrag = {
@@ -142,6 +152,17 @@ type CabinetVerticalDrag = {
   bottomFt: number
   centerXFt: number
   altOnly: boolean
+  moved: boolean
+}
+// ELEMENTS-INFRA-26: перетаскивание маркера разметки (электрика/подводка) по развёртке — вдоль
+// стены (горизонт) и по высоте (вертикаль) с живыми размерами; фиксируется на pointer-up.
+type InfraDrag = {
+  pointerId: number
+  itemId: string
+  grabDXFt: number
+  grabDYFt: number
+  centerXFt: number
+  centerYFt: number
   moved: boolean
 }
 type FinishRegionHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
@@ -339,6 +360,11 @@ function elevationPlacedItems(
       const centerYFt = cabinet && item.layer === 'wall' ? wallCabinetCenterYFt(item, heightIn) : item.yFt
       const bottomFt = Math.max(0, Math.min(height, Number.isFinite(centerYFt) ? centerYFt - heightFt / 2 : 0))
       const drawnHeight = Math.min(heightFt, Math.max(0.08, height - bottomFt))
+      // ELEMENTS-INFRA-26: маркеры разметки (электрика/подводки) — узнаём для символа + живых размеров.
+      const electrical: 'outlet' | 'switch' | undefined = isElectricalPlacedCatalogItem(item)
+        ? (isOutletPlacedCatalogItem(item) ? 'outlet' : 'switch')
+        : undefined
+      const pipe = isPipePlacedCatalogItem(item) ? item.pipe : undefined
       return {
         item,
         x: Math.max(0, Math.min(lengthFt - projectedWidth, centerX - projectedWidth / 2)),
@@ -353,6 +379,11 @@ function elevationPlacedItems(
         cabinetCode: cabinet ? cabinetDisplayCode(item) : '',
         filler: item.filler === true,
         layer: item.layer,
+        electrical,
+        electricalVariant: item.variant,
+        pipe,
+        centerXFt: Math.max(0, Math.min(lengthFt, centerX)),
+        centerYFt: Number.isFinite(centerYFt) ? centerYFt : 0,
       }
     })
     .filter((item): item is ElevationPlacedItem => !!item)
@@ -438,6 +469,11 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const [selectedCabinetId, setSelectedCabinetId] = useState<string | null>(null)
   const [cabinetVDrag, setCabinetVDrag] = useState<CabinetVerticalDrag | null>(null)
   const [gapDraft, setGapDraft] = useState<string | null>(null)
+  // ELEMENTS-INFRA-26: выбранный маркер разметки + числовые черновики (высота от пола / слева до опоры) + drag.
+  const [selectedInfraId, setSelectedInfraId] = useState<string | null>(null)
+  const [infraDrag, setInfraDrag] = useState<InfraDrag | null>(null)
+  const [infraFloorDraft, setInfraFloorDraft] = useState<string | null>(null)
+  const [infraLeftDraft, setInfraLeftDraft] = useState<string | null>(null)
   const suppressCabinetClickRef = useRef(false)
   const [zoom, setZoom] = useState(1)
   const [showMeasurements, setShowMeasurements] = useState(true)
@@ -692,6 +728,153 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     const target = wallRowEntries[0]
     if (!target) return
     applyWallCabinetGap(target.item.id, parsed, false)
+  }
+
+  // ── ELEMENTS-INFRA-26: живые размеры инженерных маркеров (электрика/подводки) на развёртке ──
+  const infraEditEnabled = canEdit && !compact && !measureTool && !zoneTool && !!onModelChange
+  // Ось стены в мировых футах — для перевода горизонтального положения (центр вдоль стены) в t/xFt/zFt.
+  const wallAxisFt = useMemo(() => {
+    const ax = wall.a.x * cellFt
+    const az = wall.a.y * cellFt
+    const bx = wall.b.x * cellFt
+    const bz = wall.b.y * cellFt
+    return { ax, az, bx, bz }
+  }, [wall.a.x, wall.a.y, wall.b.x, wall.b.y, cellFt])
+
+  const infraEntries = useMemo(() => wallPlacedItems.filter((entry) => entry.electrical || entry.pipe), [wallPlacedItems])
+  const selectedInfraEntry = useMemo(
+    () => infraEntries.find((entry) => entry.item.id === selectedInfraId) ?? null,
+    [infraEntries, selectedInfraId],
+  )
+
+  // Опоры слева/справа: угол стены (0 / lengthFt) либо ближайший край соседнего объекта/шкафа.
+  const infraBounds = (entry: ElevationPlacedItem) => {
+    const itemLeft = entry.x
+    const itemRight = entry.x + entry.width
+    let leftBound = 0
+    let rightBound = lengthFt
+    wallPlacedItems.forEach((other) => {
+      if (other.item.id === entry.item.id) return
+      const otherRight = other.x + other.width
+      if (otherRight <= itemLeft + 0.02 && otherRight > leftBound) leftBound = otherRight
+      if (other.x >= itemRight - 0.02 && other.x < rightBound) rightBound = other.x
+    })
+    return { leftBound, rightBound }
+  }
+
+  const commitInfraPosition = (itemId: string, centerXFt: number, centerYFt: number) => {
+    if (!onModelChange) return
+    const items = sanitizePlacedCatalogItems(model.placedItems)
+    if (!items.some((item) => item.id === itemId)) return
+    const cx = Math.max(0, Math.min(lengthFt, centerXFt))
+    const cy = Math.max(0, Math.min(height, centerYFt))
+    const tValue = lengthFt > 0 ? cx / lengthFt : 0
+    const xFt = wallAxisFt.ax + (wallAxisFt.bx - wallAxisFt.ax) * tValue
+    const zFt = wallAxisFt.az + (wallAxisFt.bz - wallAxisFt.az) * tValue
+    const nextItems = items.map((item) => (item.id === itemId ? { ...item, t: tValue, xFt, zFt, yFt: cy } : item))
+    onModelChange({ ...model, placedItems: nextItems })
+  }
+
+  const startInfraDrag = (entry: ElevationPlacedItem) => (event: ReactPointerEvent<SVGGElement>) => {
+    if (!infraEditEnabled) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    const point = svgPoint(event.clientX, event.clientY)
+    if (!point) return
+    svgRef.current?.setPointerCapture?.(event.pointerId)
+    setSelectedInfraId(entry.item.id)
+    setSelectedCabinetId(null)
+    setSelectedMeasurementIndex(null)
+    setInfraFloorDraft(null)
+    setInfraLeftDraft(null)
+    setInfraDrag({
+      pointerId: event.pointerId,
+      itemId: entry.item.id,
+      grabDXFt: point.x - entry.centerXFt,
+      grabDYFt: point.y - entry.centerYFt,
+      centerXFt: entry.centerXFt,
+      centerYFt: entry.centerYFt,
+      moved: false,
+    })
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+  const commitInfraFloorDraft = () => {
+    if (infraFloorDraft === null || !selectedInfraEntry) { setInfraFloorDraft(null); return }
+    const parsed = parseInches(infraFloorDraft)
+    setInfraFloorDraft(null)
+    if (!Number.isFinite(parsed)) return
+    commitInfraPosition(selectedInfraEntry.item.id, selectedInfraEntry.centerXFt, parsed / 12)
+  }
+
+  const commitInfraLeftDraft = () => {
+    if (infraLeftDraft === null || !selectedInfraEntry) { setInfraLeftDraft(null); return }
+    const parsed = parseInches(infraLeftDraft)
+    setInfraLeftDraft(null)
+    if (!Number.isFinite(parsed)) return
+    const { leftBound } = infraBounds(selectedInfraEntry)
+    commitInfraPosition(selectedInfraEntry.item.id, leftBound + parsed / 12, selectedInfraEntry.centerYFt)
+  }
+
+  // ELEMENTS-INFRA-26: схематичный символ инженерного маркера на развёртке (простые узнаваемые формы).
+  const renderInfraSymbol = (entry: ElevationPlacedItem): ReactNode => {
+    const { x, y, width, height } = entry
+    const cx = x + width / 2
+    const cy = y + height / 2
+    if (entry.electrical === 'outlet') {
+      const gangs = entry.electricalVariant === 'double' ? 2 : 1
+      const gangW = width / gangs
+      return (
+        <>
+          <rect className="hub-sketch-elevation-infra-plate" x={x} y={y} width={width} height={height} rx={Math.min(width, height) * 0.18} />
+          {Array.from({ length: gangs }, (_, i) => {
+            const gx = x + gangW * (i + 0.5)
+            return (
+              <g key={`og-${i}`}>
+                <line className="hub-sketch-elevation-infra-mark" x1={gx - gangW * 0.14} y1={cy - height * 0.24} x2={gx - gangW * 0.14} y2={cy - height * 0.02} />
+                <line className="hub-sketch-elevation-infra-mark" x1={gx + gangW * 0.14} y1={cy - height * 0.24} x2={gx + gangW * 0.14} y2={cy - height * 0.02} />
+                <circle className="hub-sketch-elevation-infra-mark" cx={gx} cy={cy + height * 0.22} r={Math.max(0.01, Math.min(gangW, height) * 0.09)} />
+              </g>
+            )
+          })}
+        </>
+      )
+    }
+    if (entry.electrical === 'switch') {
+      const gangs = entry.electricalVariant === 'double' ? 2 : 1
+      const gangW = width / gangs
+      return (
+        <>
+          <rect className="hub-sketch-elevation-infra-plate" x={x} y={y} width={width} height={height} rx={Math.min(width, height) * 0.18} />
+          {Array.from({ length: gangs }, (_, i) => {
+            const gx = x + gangW * (i + 0.5)
+            return (
+              <rect key={`sw-${i}`} className="hub-sketch-elevation-infra-mark-fill" x={gx - gangW * 0.12} y={cy - height * 0.26} width={gangW * 0.24} height={height * 0.52} rx={gangW * 0.06} />
+            )
+          })}
+        </>
+      )
+    }
+    if (entry.pipe === 'water-v') {
+      return (
+        <>
+          <line className="hub-sketch-elevation-infra-pipe-line" x1={cx} y1={y} x2={cx} y2={y + height} />
+          <circle className="hub-sketch-elevation-infra-pipe-cap" cx={cx} cy={y} r={Math.max(0.02, width * 0.5)} />
+          <circle className="hub-sketch-elevation-infra-pipe-cap" cx={cx} cy={y + height} r={Math.max(0.02, width * 0.5)} />
+        </>
+      )
+    }
+    // water-h / gas — горизонтальная подводка; газ = штрих + подпись G.
+    return (
+      <>
+        <line className={`hub-sketch-elevation-infra-pipe-line${entry.pipe === 'gas' ? ' hub-sketch-elevation-infra-pipe-gas' : ''}`} x1={x} y1={cy} x2={x + width} y2={cy} />
+        <circle className="hub-sketch-elevation-infra-pipe-cap" cx={x} cy={cy} r={Math.max(0.02, height * 0.5)} />
+        <circle className="hub-sketch-elevation-infra-pipe-cap" cx={x + width} cy={cy} r={Math.max(0.02, height * 0.5)} />
+        {entry.pipe === 'gas' && (
+          <text className="hub-sketch-elevation-infra-pipe-label" x={cx} y={cy - height * 0.9} textAnchor="middle" dominantBaseline="central">G</text>
+        )}
+      </>
+    )
   }
 
   const updateMeasurements = (nextMeasurements: SketchMeasurement[]) => {
@@ -981,6 +1164,17 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }
 
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (infraDrag && infraDrag.pointerId === event.pointerId) {
+      const point = svgPoint(event.clientX, event.clientY)
+      if (point) {
+        const nextX = Math.max(0, Math.min(lengthFt, snapLengthFt(point.x - infraDrag.grabDXFt, snapStepFt)))
+        const nextY = Math.max(0, Math.min(height, snapLengthFt(point.y - infraDrag.grabDYFt, snapStepFt)))
+        const moved = infraDrag.moved || Math.abs(nextX - infraDrag.centerXFt) > 0.02 || Math.abs(nextY - infraDrag.centerYFt) > 0.02
+        setInfraDrag({ ...infraDrag, centerXFt: nextX, centerYFt: nextY, moved })
+      }
+      event.preventDefault()
+      return
+    }
     if (cabinetVDrag && cabinetVDrag.pointerId === event.pointerId) {
       const pointerFt = svgElevationY(event.clientY)
       if (pointerFt !== null) {
@@ -1004,6 +1198,14 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }
 
   const handlePointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (infraDrag && infraDrag.pointerId === event.pointerId) {
+      const drag = infraDrag
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+      setInfraDrag(null)
+      if (drag.moved) commitInfraPosition(drag.itemId, drag.centerXFt, drag.centerYFt)
+      event.preventDefault()
+      return
+    }
     if (cabinetVDrag && cabinetVDrag.pointerId === event.pointerId) {
       const drag = cabinetVDrag
       event.currentTarget.releasePointerCapture?.(event.pointerId)
@@ -1382,12 +1584,17 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           // CABINETS-VERTICAL-22: навесной шкаф (не филлер) тащится вверх/вниз.
           const draggableWall = cabinetVerticalEnabled && entry.cabinet && entry.layer === 'wall' && !entry.filler
           const draggingThis = cabinetVDrag?.itemId === entry.item.id
-          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.showerPan ? ' hub-sketch-elevation-shower' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}${editableCabinet ? ' hub-sketch-elevation-cabinet-editable' : ''}${draggableWall ? ' hub-sketch-elevation-cabinet-vdrag' : ''}${draggingThis ? ' hub-sketch-elevation-cabinet-vdragging' : ''}${selectedCab ? ' hub-sketch-elevation-cabinet-selected' : ''}`
+          // ELEMENTS-INFRA-26: маркер разметки (электрика/подводка) — тащится по развёртке, выбирается кликом.
+          const isInfra = !!(entry.electrical || entry.pipe)
+          const infraDraggable = infraEditEnabled && isInfra
+          const selectedInfra = isInfra && selectedInfraId === entry.item.id
+          const infraDraggingThis = infraDrag?.itemId === entry.item.id
+          const cls = `hub-sketch-elevation-item${entry.warning ? ' hub-sketch-elevation-item-warn' : ''}${entry.toilet ? ' hub-sketch-elevation-toilet' : ''}${entry.showerPan ? ' hub-sketch-elevation-shower' : ''}${entry.cabinet ? ' hub-sketch-elevation-cabinet' : ''}${entry.layer === 'wall' ? ' hub-sketch-elevation-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-elevation-cabinet-filler' : ''}${editableCabinet ? ' hub-sketch-elevation-cabinet-editable' : ''}${draggableWall ? ' hub-sketch-elevation-cabinet-vdrag' : ''}${draggingThis ? ' hub-sketch-elevation-cabinet-vdragging' : ''}${selectedCab ? ' hub-sketch-elevation-cabinet-selected' : ''}${entry.electrical ? ` hub-sketch-elevation-infra hub-sketch-elevation-electrical hub-sketch-elevation-${entry.electrical}` : ''}${entry.pipe ? ` hub-sketch-elevation-infra hub-sketch-elevation-pipe hub-sketch-elevation-pipe-${entry.pipe}` : ''}${infraDraggable ? ' hub-sketch-elevation-infra-drag' : ''}${selectedInfra ? ' hub-sketch-elevation-infra-selected' : ''}${infraDraggingThis ? ' hub-sketch-elevation-infra-dragging' : ''}`
           return (
             <g
               key={`ei-${entry.item.id}`}
               className={cls}
-              onPointerDown={draggableWall ? startCabinetVDrag(entry) : undefined}
+              onPointerDown={draggableWall ? startCabinetVDrag(entry) : infraDraggable ? startInfraDrag(entry) : undefined}
               onClick={editableCabinet ? (event) => {
                 event.stopPropagation()
                 if (suppressCabinetClickRef.current) {
@@ -1395,10 +1602,15 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
                   return
                 }
                 setSelectedCabinetId((current) => current === entry.item.id ? null : entry.item.id)
+              } : infraDraggable ? (event) => {
+                event.stopPropagation()
+                setSelectedInfraId((current) => current === entry.item.id ? null : entry.item.id)
               } : undefined}
             >
               <title>{entry.item.name ?? (entry.toilet ? t('hub_sketch_toilet') : entry.cabinet ? entry.cabinetCode : t('hub_sketch_code_target_item'))}</title>
-              {entry.toilet ? (
+              {isInfra ? (
+                renderInfraSymbol(entry)
+              ) : entry.toilet ? (
                 <>
                   <rect x={entry.x + entry.width * 0.08} y={entry.y + entry.height * 0.02} width={entry.width * 0.84} height={entry.height * 0.36} rx={0.05} />
                   <path d={`M ${entry.x + entry.width * 0.18} ${entry.y + entry.height * 0.38} C ${entry.x + entry.width * 0.2} ${entry.y + entry.height * 0.78}, ${entry.x + entry.width * 0.8} ${entry.y + entry.height * 0.78}, ${entry.x + entry.width * 0.82} ${entry.y + entry.height * 0.38} Z`} />
@@ -1435,6 +1647,107 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </g>
           )
         })}
+        {/* ELEMENTS-INFRA-26: живые размеры выбранного/перетаскиваемого маркера — высота от пола + слева/справа до опоры. */}
+        {infraEditEnabled && (() => {
+          const activeEntry = infraDrag
+            ? infraEntries.find((entry) => entry.item.id === infraDrag.itemId) ?? null
+            : selectedInfraEntry
+          if (!activeEntry) return null
+          const centerXFt = infraDrag ? infraDrag.centerXFt : activeEntry.centerXFt
+          const centerYFt = infraDrag ? infraDrag.centerYFt : activeEntry.centerYFt
+          const { leftBound, rightBound } = infraBounds(activeEntry)
+          const centerSvgY = height - centerYFt
+          const tick = 0.07
+          const dimX = centerXFt - 0.42 >= 0.12 ? centerXFt - 0.42 : Math.min(lengthFt - 0.12, centerXFt + 0.42)
+          const floorText = formatInches(centerYFt * 12)
+          const leftText = formatInches(Math.max(0, (centerXFt - leftBound) * 12))
+          const rightText = formatInches(Math.max(0, (rightBound - centerXFt) * 12))
+          const editingFloor = infraFloorDraft !== null
+          const editingLeft = infraLeftDraft !== null
+          const inputW = Math.min(1.4, Math.max(0.9, lengthFt * 0.28))
+          return (
+            <g className="hub-sketch-elevation-infra-dims" pointerEvents={infraDrag ? 'none' : undefined}>
+              {/* высота от пола (вертикаль) */}
+              <line className="hub-sketch-elevation-infra-dim-line" x1={dimX} y1={height} x2={dimX} y2={centerSvgY} />
+              <line className="hub-sketch-elevation-infra-dim-tick" x1={dimX - tick} y1={height} x2={dimX + tick} y2={height} />
+              <line className="hub-sketch-elevation-infra-dim-tick" x1={dimX - tick} y1={centerSvgY} x2={dimX + tick} y2={centerSvgY} />
+              {editingFloor && !infraDrag ? (
+                <foreignObject x={dimX + 0.08} y={(height + centerSvgY) / 2 - 0.21} width={inputW} height={0.42}>
+                  <input
+                    className="hub-sketch-elevation-dim-input"
+                    value={infraFloorDraft ?? ''}
+                    autoFocus
+                    aria-label={t('hub_sketch_dim_floor_short')}
+                    onChange={(event) => setInfraFloorDraft(event.target.value)}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                    onBlur={commitInfraFloorDraft}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') { event.preventDefault(); commitInfraFloorDraft() }
+                      else if (event.key === 'Escape') { event.preventDefault(); setInfraFloorDraft(null) }
+                    }}
+                  />
+                </foreignObject>
+              ) : (
+                <text
+                  className="hub-sketch-elevation-infra-dim-label"
+                  x={dimX + 0.1}
+                  y={(height + centerSvgY) / 2}
+                  textAnchor="start"
+                  dominantBaseline="central"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${t('hub_sketch_dim_floor_short')} ${floorText}`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => { event.stopPropagation(); setInfraLeftDraft(null); setInfraFloorDraft(floorText) }}
+                  onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setInfraFloorDraft(floorText) } }}
+                >
+                  {`${t('hub_sketch_dim_floor_short')} ${floorText}`}
+                </text>
+              )}
+              {/* слева до опоры (редактируемо) */}
+              <line className="hub-sketch-elevation-infra-dim-line" x1={leftBound} y1={centerSvgY} x2={centerXFt} y2={centerSvgY} />
+              <line className="hub-sketch-elevation-infra-dim-tick" x1={leftBound} y1={centerSvgY - tick} x2={leftBound} y2={centerSvgY + tick} />
+              {editingLeft && !infraDrag ? (
+                <foreignObject x={Math.max(0, (leftBound + centerXFt) / 2 - inputW / 2)} y={centerSvgY - 0.5} width={inputW} height={0.42}>
+                  <input
+                    className="hub-sketch-elevation-dim-input"
+                    value={infraLeftDraft ?? ''}
+                    autoFocus
+                    aria-label={t('hub_sketch_dim_left_short')}
+                    onChange={(event) => setInfraLeftDraft(event.target.value)}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                    onBlur={commitInfraLeftDraft}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') { event.preventDefault(); commitInfraLeftDraft() }
+                      else if (event.key === 'Escape') { event.preventDefault(); setInfraLeftDraft(null) }
+                    }}
+                  />
+                </foreignObject>
+              ) : (
+                <text
+                  className="hub-sketch-elevation-infra-dim-label"
+                  x={(leftBound + centerXFt) / 2}
+                  y={centerSvgY - 0.14}
+                  textAnchor="middle"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${t('hub_sketch_dim_left_short')} ${leftText}`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => { event.stopPropagation(); setInfraFloorDraft(null); setInfraLeftDraft(leftText) }}
+                  onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setInfraLeftDraft(leftText) } }}
+                >
+                  {leftText}
+                </text>
+              )}
+              {/* справа до опоры (показ) */}
+              <line className="hub-sketch-elevation-infra-dim-line" x1={centerXFt} y1={centerSvgY} x2={rightBound} y2={centerSvgY} />
+              <line className="hub-sketch-elevation-infra-dim-tick" x1={rightBound} y1={centerSvgY - tick} x2={rightBound} y2={centerSvgY + tick} />
+              <text className="hub-sketch-elevation-infra-dim-label" x={(centerXFt + rightBound) / 2} y={centerSvgY - 0.14} textAnchor="middle">{rightText}</text>
+            </g>
+          )
+        })()}
         {/* CABINETS-PLACE-13: живая размерная цепочка над рядом (посегментно + общий габарит). */}
         {!measureTool && !zoneTool && cabinetDimChains.map(({ layer, segs }) => {
           const topY = Math.min(...segs.map((seg) => seg.y))

@@ -67,6 +67,8 @@ import {
   isBuiltinShowerPanCatalogItem,
   isElectricalPlacedCatalogItem,
   isOutletPlacedCatalogItem,
+  isPipePlacedCatalogItem,
+  isColumnPlacedCatalogItem,
   isShowerPanPlacedCatalogItem,
   isSwitchPlacedCatalogItem,
   isToiletPlacedCatalogItem,
@@ -1793,6 +1795,17 @@ function addCatalogBox(THREE: any, group: any, resolved: CatalogResolvedPlacedIt
   addMeshWithEdges(THREE, group, box, edgeColor)
 }
 
+// ELEMENTS-INFRA-26: круглая колонна — цилиндр из тех же resolved.dims (диаметр = ширина).
+// Существующий примитив three.js (CylinderGeometry уже применяется у сантехники/света), движок не меняем.
+function addRoundColumn(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, material: any, edgeColor: number) {
+  const radius = Math.max(0.04, resolved.dims.widthFt / 2)
+  const height = Math.max(0.04, resolved.dims.heightFt)
+  const column = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, height, 32), material)
+  column.castShadow = false
+  column.receiveShadow = false
+  addMeshWithEdges(THREE, group, column, edgeColor)
+}
+
 function addCabinetFixture(THREE: any, group: any, resolved: CatalogResolvedPlacedItem, warn: boolean, edgeColor: number) {
   const placed = resolved.placed
   const width = Math.max(0.04, resolved.dims.widthFt)
@@ -2404,7 +2417,8 @@ export default function Sketch3DView({
   const catalogById = useMemo(() => new Map(catalogItems.map((item) => [item.id, item])), [catalogItems])
   const resolvedPlacedItems = useMemo(
     () => placedItems
-      .filter((placed) => !isElectricalPlacedCatalogItem(placed))
+      // ELEMENTS-INFRA-26: электрика и подводки — настенные маркеры разметки, не 3D-объёмы (рисуются отдельно/на развёртке).
+      .filter((placed) => !isElectricalPlacedCatalogItem(placed) && !isPipePlacedCatalogItem(placed))
       .map((placed) => resolvePlacedCatalogItem(placed, catalogById.get(placed.catalogItemId) ?? null))
       .filter((item): item is CatalogResolvedPlacedItem => !!item),
     [placedItems, catalogById],
@@ -3829,6 +3843,9 @@ export default function Sketch3DView({
               ? createPanTileMaterial(THREE, normalizeTileSurface(placed.panFinish), resolved.dims.widthFt, resolved.dims.depthFt, textureLoader, maxAnisotropy, invalidate)
               : null
             addShowerPan(THREE, group, resolved, material, edgeColor, panTileMaterial)
+          } else if (isColumnPlacedCatalogItem(placed) && placed.column === 'round') {
+            // ELEMENTS-INFRA-26: круглая колонна — цилиндр; квадратная колонна/короб — обычный бокс.
+            addRoundColumn(THREE, group, resolved, material, edgeColor)
           } else {
             addCatalogBox(THREE, group, resolved, material, edgeColor)
           }
