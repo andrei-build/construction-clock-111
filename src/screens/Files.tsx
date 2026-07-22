@@ -5,6 +5,7 @@ import { isManagerRole } from '../lib/types'
 import { getFiles, uploadFile, softDeleteFile, mediaUrl, uploadErrorCode } from '../lib/api'
 import type { FileRow } from '../lib/types'
 import { useImageLightbox, type LightboxImage } from '../components/ImageLightbox'
+import { useFileViewer } from '../components/FileViewer'
 
 const localeByLang = {
   ru: 'ru-RU',
@@ -36,6 +37,8 @@ export default function Files() {
   const manager = profile ? isManagerRole(profile.role) : false
   // LIGHTBOX-1: изображения открываем В ПРИЛОЖЕНИИ (общий лайтбокс), не в отдельной вкладке.
   const lb = useImageLightbox()
+  // FILES-VIEWER-37: не-картинки (PDF/документы) — во ВСТРОЕННОМ полноэкранном просмотрщике, не window.open.
+  const fv = useFileViewer()
 
   const [files, setFiles] = useState<FileRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -127,7 +130,7 @@ export default function Files() {
 
   async function handleDownload(row: FileRow) {
     // Картинки — в общий лайтбокс (просмотр по центру + «на весь экран» + «скачать» внутри него),
-    // со стрелками по всем изображениям списка. Не-картинки (pdf/doc/…) — прежнее поведение (новая вкладка).
+    // со стрелками по всем изображениям списка. Не-картинки (pdf/doc/…) — встроенный полноэкранный просмотрщик.
     if (row.mime?.startsWith('image/')) {
       const imageRows = files.filter((r) => r.mime?.startsWith('image/'))
       const idx = Math.max(0, imageRows.findIndex((r) => r.id === row.id))
@@ -144,7 +147,7 @@ export default function Files() {
     try {
       const url = await mediaUrl(row.storage_path)
       if (!url) { setError(true); return }
-      window.open(url, '_blank', 'noopener,noreferrer')
+      fv.open({ url, name: row.name, mime: row.mime })
     } catch {
       setError(true)
     }
@@ -176,6 +179,7 @@ export default function Files() {
   return (
     <div className="screen">
       {lb.node}
+      {fv.node}
       <h1>📁 {t('files')}</h1>
       <p className="muted" style={{ marginTop: -8 }}>{t('files_subtitle')}</p>
 

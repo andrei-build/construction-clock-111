@@ -2479,6 +2479,17 @@ const dict: Record<string, Record<Lang, string>> = {
   lightbox_error: { ru: 'Не удалось загрузить изображение', en: 'Could not load image', es: 'No se pudo cargar la imagen' },
   lightbox_fullscreen: { ru: 'На весь экран', en: 'Fullscreen', es: 'Pantalla completa' },
   lightbox_fullscreen_exit: { ru: 'Выйти из полноэкранного', en: 'Exit fullscreen', es: 'Salir de pantalla completa' },
+  // FILES-VIEWER-37: встроенный полноэкранный просмотрщик файлов (PDF/документы).
+  viewer_close: { ru: 'Закрыть', en: 'Close', es: 'Cerrar' },
+  viewer_download: { ru: 'Скачать', en: 'Download', es: 'Descargar' },
+  viewer_zoom_in: { ru: 'Увеличить', en: 'Zoom in', es: 'Acercar' },
+  viewer_zoom_out: { ru: 'Уменьшить', en: 'Zoom out', es: 'Alejar' },
+  viewer_fit: { ru: 'Вписать', en: 'Fit', es: 'Ajustar' },
+  viewer_other_hint: {
+    ru: 'Если файл не отображается — нажмите «Скачать».',
+    en: 'If the file does not display, tap “Download”.',
+    es: 'Si el archivo no se muestra, pulsa «Descargar».',
+  },
   // MARKUP-1: разметка (аннотации) поверх любой картинки в лайтбоксе с умным автоисправлением фигур.
   markup_toggle: { ru: 'Разметка', en: 'Markup', es: 'Anotar' },
   markup_toolbar: { ru: 'Инструменты разметки', en: 'Markup tools', es: 'Herramientas de anotación' },
