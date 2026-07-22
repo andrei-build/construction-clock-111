@@ -591,8 +591,10 @@ export function buildTrimMaterialRows(
   const lang = options.labels?.trimLang ?? 'en'
   const lnftUnit = options.labels?.linearFtUnit ?? 'lnft'
   const inputs: TrimLinearInput[] = (model.openings ?? [])
+    // OPENINGS-DRAG-TYPES-27: проём-вырез без полотна не окантовывается — в тримы не идёт.
+    .filter((opening) => opening.kind !== 'opening')
     .map((opening) => ({
-      kind: opening.kind,
+      kind: (opening.kind === 'door' ? 'door' : 'window') as 'door' | 'window',
       trim: opening.trim,
       widthFt: openingWidthFt(model, opening),
       heightFt: openingHeightFt(model, opening),

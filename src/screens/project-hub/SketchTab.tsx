@@ -26,6 +26,10 @@ import {
   DEFAULT_WINDOW_HEIGHT_FT,
   DEFAULT_WINDOW_SILL_FT,
   DEFAULT_WINDOW_WIDTH_FT,
+  DEFAULT_OPENING_WIDTH_FT,
+  DEFAULT_OPENING_HEIGHT_FT,
+  DEFAULT_OPENING_SILL_FT,
+  DEFAULT_WINDOW_TYPE,
   DEFAULT_DRYWALL_PATCH_COLOR,
   DEFAULT_TILE_COLOR,
   DOOR_WIDTH_PRESETS_FT,
@@ -52,6 +56,7 @@ import {
   type SketchSegmentResizeConflict,
   type SketchSurfaceFinish,
   type SketchSwitch,
+  type WindowType,
 } from './sketchFinishes'
 import {
   BUILTIN_BOX_CATALOG_ID,
@@ -247,13 +252,15 @@ type Pt = { x: number; y: number }
 type Contour = { points: Pt[]; closed: boolean; label?: string }
 // Габариты (w/h/sill) опциональны и аддитивны — старый JSON без них открывается с дефолтами.
 type Opening = {
-  kind: 'door' | 'window'
+  // OPENINGS-DRAG-TYPES-27: 'opening' — сквозной вырез без полотна (проём между зонами).
+  kind: 'door' | 'window' | 'opening'
   c: number
   s: number
   t: number
   w?: number // ширина проёма в футах
   h?: number // высота окна в футах (только окно)
-  sill?: number // высота окна от пола в футах (только окно)
+  sill?: number // высота окна/проёма от пола в футах
+  winType?: WindowType // OPENINGS-DRAG-TYPES-27: подтип окна (только kind === 'window')
   trim?: OpeningTrim // TRIM-OPENINGS-21: назначение тримов проёма (опционально/аддитивно)
 }
 type SketchModel = {
@@ -272,7 +279,7 @@ type ViewMode = '2d' | '3d'
 type SketchCameraPreset = 'fit' | 'top' | 'angle' | 'inside'
 type SnapMode = '1ft' | '6in' | '1in' | '1_8in'
 type SketchMode = 'wall' | 'opening' | 'finish' | 'cabinet' | 'light' | 'measure' | 'markup'
-type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill'
+type FeetDraftField = 'wallHeight' | 'doorW' | 'doorH' | 'winW' | 'winH' | 'winSill' | 'openW' | 'openH' | 'openSill'
 type SegmentLengthEdit = { ref: SketchSegmentRef; value: string }
 type OpeningOffsetEdit = { index: number; side: OpeningOffsetSide; value: string }
 type DragNode = { c: number; p: number }
@@ -322,15 +329,53 @@ const MODES_WITH_3D_CONTEXT = new Set<SketchMode>(['opening', 'finish', 'light',
 
 // Ширина проёма в футах с учётом дефолта по типу.
 function openingWidthFt(o: Opening): number {
-  return o.w ?? (o.kind === 'door' ? DEFAULT_DOOR_WIDTH_FT : DEFAULT_WINDOW_WIDTH_FT)
+  if (o.w !== undefined) return o.w
+  if (o.kind === 'door') return DEFAULT_DOOR_WIDTH_FT
+  if (o.kind === 'opening') return DEFAULT_OPENING_WIDTH_FT
+  return DEFAULT_WINDOW_WIDTH_FT
 }
 
 function openingHeightFt(o: Opening): number {
-  return o.kind === 'door' ? (o.h ?? DEFAULT_DOOR_HEIGHT_FT) : (o.h ?? DEFAULT_WINDOW_HEIGHT_FT)
+  if (o.h !== undefined) return o.h
+  if (o.kind === 'door') return DEFAULT_DOOR_HEIGHT_FT
+  if (o.kind === 'opening') return DEFAULT_OPENING_HEIGHT_FT
+  return DEFAULT_WINDOW_HEIGHT_FT
 }
 
 function openingFloorFt(o: Opening): number {
-  return o.kind === 'door' ? 0 : (o.sill ?? DEFAULT_WINDOW_SILL_FT)
+  // Дверь всегда от пола; окно и проём-вырез могут стоять выше пола.
+  if (o.kind === 'door') return 0
+  if (o.kind === 'opening') return o.sill ?? DEFAULT_OPENING_SILL_FT
+  return o.sill ?? DEFAULT_WINDOW_SILL_FT
+}
+
+// OPENINGS-DRAG-TYPES-27: подтип окна (только kind === 'window') с дефолтом.
+function windowTypeOf(o: Opening): WindowType {
+  return o.kind === 'window' ? (o.winType ?? DEFAULT_WINDOW_TYPE) : DEFAULT_WINDOW_TYPE
+}
+
+// OPENINGS-DRAG-TYPES-27: пресеты типов окон (референс IKEA Planner) — иконка + подпись.
+const WINDOW_TYPE_OPTIONS: ReadonlyArray<{ type: WindowType; labelKey: string }> = [
+  { type: 'fixed', labelKey: 'hub_sketch_window_type_fixed' },
+  { type: 'casement', labelKey: 'hub_sketch_window_type_casement' },
+  { type: 'double', labelKey: 'hub_sketch_window_type_double' },
+]
+
+// Превью-иконка типа окна: рама + маркеры створок/переплёта (глухое — без створок).
+function WindowTypeGlyph({ type }: { type: WindowType }) {
+  return (
+    <svg className="hub-sketch-wintype-glyph" viewBox="0 0 24 20" aria-hidden="true" focusable="false">
+      <rect x={2.5} y={2.5} width={19} height={15} rx={1.2} className="wt-frame" />
+      {type === 'casement' && <line x1={4.5} y1={15.5} x2={19.5} y2={4.5} className="wt-swing" />}
+      {type === 'double' && (
+        <>
+          <line x1={12} y1={2.5} x2={12} y2={17.5} className="wt-mullion" />
+          <line x1={3.5} y1={15.5} x2={11.2} y2={4.5} className="wt-swing" />
+          <line x1={20.5} y1={15.5} x2={12.8} y2={4.5} className="wt-swing" />
+        </>
+      )}
+    </svg>
+  )
 }
 
 function modelCellFt(model: SketchModel): number {
@@ -481,6 +526,7 @@ type Tool =
   | 'wall'
   | 'door'
   | 'window'
+  | 'opening'
   | 'measure'
   | 'cabinet'
   | 'outlet'
@@ -491,7 +537,7 @@ type Tool =
   | 'column-round'
   | 'column-square'
   | 'box'
-type OpeningTool = Extract<Tool, 'door' | 'window'>
+type OpeningTool = Extract<Tool, 'door' | 'window' | 'opening'>
 type PipeTool = Extract<Tool, 'pipe-water-h' | 'pipe-water-v' | 'pipe-gas'>
 type ObstacleTool = Extract<Tool, 'column-round' | 'column-square' | 'box'>
 type CabinetBuilderKind = 'base' | 'sink' | 'drawers' | 'wall' | 'vanity' | 'filler' | 'appliance'
@@ -643,9 +689,12 @@ function normalizeOpeningForModel(model: SketchModel, opening: Opening): Opening
   }
   if (opening.kind === 'door') next.h = height
   else {
+    // Окно и проём-вырез: высота + от пола (sill).
     next.h = height
     next.sill = sill
   }
+  // OPENINGS-DRAG-TYPES-27: подтип окна не теряем при пересборке (только для окна).
+  if (opening.kind === 'window' && opening.winType) next.winType = opening.winType
   // TRIM-OPENINGS-21: normalizeOpeningForModel пересобирает проём с нуля — трим НЕ теряем при save/edit.
   const trim = sanitizeOpeningTrim(opening.trim)
   if (trim) next.trim = trim
@@ -1423,7 +1472,7 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
     const wCells = Math.min(openingWidthFt(o) / (model.cellFt || CELL_FT), dist(g.a, g.b))
     const hx = (g.ux * wCells) / 2
     const hy = (g.uy * wCells) / 2
-    ctx.strokeStyle = o.kind === 'door' ? '#b45309' : '#2563eb'
+    ctx.strokeStyle = o.kind === 'door' ? '#b45309' : o.kind === 'window' ? '#2563eb' : '#0f766e'
     ctx.lineWidth = 6 / viewScale
     ctx.beginPath()
     ctx.moveTo((g.p.x - hx) * CELL_PX, (g.p.y - hy) * CELL_PX)
@@ -1489,6 +1538,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [winW, setWinW] = useState(OPENING_DEFAULTS_FT.winW)
   const [winH, setWinH] = useState(OPENING_DEFAULTS_FT.winH)
   const [winSill, setWinSill] = useState(OPENING_DEFAULTS_FT.winSill)
+  // OPENINGS-DRAG-TYPES-27: подтип окна для новой постановки + габариты проёма-выреза.
+  const [winType, setWinType] = useState<WindowType>(DEFAULT_WINDOW_TYPE)
+  const [openW, setOpenW] = useState(DEFAULT_OPENING_WIDTH_FT)
+  const [openH, setOpenH] = useState(DEFAULT_OPENING_HEIGHT_FT)
+  const [openSill, setOpenSill] = useState(DEFAULT_OPENING_SILL_FT)
   const [feetDrafts, setFeetDrafts] = useState<Partial<Record<FeetDraftField, string>>>({})
   const [cabinetCodes, setCabinetCodes] = useState('B30 2DB27 W3030')
   const [cabinetBuilderKind, setCabinetBuilderKind] = useState<CabinetBuilderKind>('base')
@@ -2103,6 +2157,14 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     updateOpeningAt(index, { sill: Math.max(0, snapOpeningFeetToPrecision(valueFt)) })
   }
 
+  // OPENINGS-DRAG-TYPES-27: смена типа выбранного окна + запоминаем как дефолт постановки.
+  const updateSelectedOpeningWinType = (type: WindowType) => {
+    setWinType(type)
+    const index = selectedOpeningIndexRef.current
+    if (index === null) return
+    updateOpeningAt(index, { winType: type })
+  }
+
   // TRIM-OPENINGS-21: выбор пресета трима — стороны назначаются автоматом по правилу пресета.
   const applySelectedOpeningTrimPreset = (presetId: string) => {
     const index = selectedOpeningIndexRef.current
@@ -2116,6 +2178,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     if (index === null) return
     const current = modelRef.current.openings[index]
     if (!current) return
+    // Проём-вырез без полотна не окантовывается тримом.
+    if (current.kind === 'opening') return
     const baseTrim: OpeningTrim = current.trim ?? { presetId: activeTrimPresetId(current.kind, current.trim) }
     const nextSides = { ...(baseTrim.sides ?? {}), [side]: { profileId, enabled } }
     updateOpeningAt(index, { trim: { ...baseTrim, sides: nextSides } })
@@ -2507,6 +2571,25 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     </button>
   )
 
+  // OPENINGS-DRAG-TYPES-27: выбор типа окна (глухое/створчатое/двойное) с превью-иконкой.
+  const renderWindowTypeChooser = (value: WindowType, apply: (type: WindowType) => void) => (
+    <div className="hub-sketch-wintype-row" role="group" aria-label={t('hub_sketch_window_type')}>
+      {WINDOW_TYPE_OPTIONS.map((option) => (
+        <button
+          key={option.type}
+          type="button"
+          className={value === option.type ? 'hub-sketch-wintype-btn is-active' : 'hub-sketch-wintype-btn'}
+          aria-pressed={value === option.type}
+          disabled={!canEdit}
+          onClick={() => apply(option.type)}
+        >
+          <WindowTypeGlyph type={option.type} />
+          <span>{t(option.labelKey)}</span>
+        </button>
+      ))}
+    </div>
+  )
+
   const bifoldPresetButton = (valueFt: number) => {
     const leafWidthIn = (valueFt * 12) / 2
     return presetButton(valueFt, setDoorW, `${t('hub_sketch_bifold')} 2x${formatInches(leafWidthIn)}`)
@@ -2516,7 +2599,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const draft: Opening =
       kind === 'door'
         ? { kind: 'door', c, s, t: rawT, w: Math.max(0.5, snapOpeningFeetToPrecision(doorW)), h: Math.max(0.5, snapOpeningFeetToPrecision(doorH)) }
-        : { kind: 'window', c, s, t: rawT, w: Math.max(0.5, snapOpeningFeetToPrecision(winW)), h: Math.max(0.5, snapOpeningFeetToPrecision(winH)), sill: Math.max(0, snapOpeningFeetToPrecision(winSill)) }
+        : kind === 'opening'
+          ? { kind: 'opening', c, s, t: rawT, w: Math.max(0.5, snapOpeningFeetToPrecision(openW)), h: Math.max(0.5, snapOpeningFeetToPrecision(openH)), sill: Math.max(0, snapOpeningFeetToPrecision(openSill)) }
+          : { kind: 'window', c, s, t: rawT, w: Math.max(0.5, snapOpeningFeetToPrecision(winW)), h: Math.max(0.5, snapOpeningFeetToPrecision(winH)), sill: Math.max(0, snapOpeningFeetToPrecision(winSill)), winType }
     const segmentLengthFt = openingSegmentLengthFt(model, draft)
     if (segmentLengthFt <= 0.001) return { ...draft, t: clampOpeningT(model, draft, rawT) }
     const placement = softOpeningPlacement({
@@ -3867,7 +3952,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       return true
     }
 
-    if (tool !== 'door' && tool !== 'window') return false
+    if (tool !== 'door' && tool !== 'window' && tool !== 'opening') return false
 
     // door / window: ставим на ближайший сегмент в пределах порога
     const near = nearestSegment(model, raw)
@@ -4651,7 +4736,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const activeContourOpen = !!activeContour && !activeContour.closed && activeContour.points.length > 0
   const wallDraftPointerActive = shouldTrackWallDraftPointer(activeContour, newRoomDraftPending)
   const canClearSketch = hasClearableSketchContent(model)
-  const wallSelectEnabled = canEdit && tool !== 'door' && tool !== 'window' && tool !== 'measure' && tool !== 'outlet' && tool !== 'switch' && !activeContourOpen
+  const wallSelectEnabled = canEdit && tool !== 'door' && tool !== 'window' && tool !== 'opening' && tool !== 'measure' && tool !== 'outlet' && tool !== 'switch' && !activeContourOpen
   const selectedOpening = selectedOpeningIndex !== null ? model.openings[selectedOpeningIndex] ?? null : null
   const canCenterOpening = canEdit && !!selectedOpening && !!openingEnds(model, selectedOpening)
   const heightFt = wallHeightFt(model)
@@ -5182,7 +5267,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         {activeMode === 'opening' && (
           <div className="hub-sketch-context-section">
             <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_3d_openings')}>
-              {(['door', 'window'] as const).map((kind) => (
+              {(['door', 'window', 'opening'] as const).map((kind) => (
                 <button
                   key={kind}
                   type="button"
@@ -5194,7 +5279,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     setSelectedMeasurementIndex(null)
                   }}
                 >
-                  {t(kind === 'door' ? 'hub_sketch_tool_door' : 'hub_sketch_tool_window')}
+                  {t(kind === 'door' ? 'hub_sketch_tool_door' : kind === 'window' ? 'hub_sketch_tool_window' : 'hub_sketch_mode_opening')}
                 </button>
               ))}
             </div>
@@ -5212,11 +5297,24 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       )}
             {tool === 'window' && (
         <div className="hub-sketch-dims">
+          {/* OPENINGS-DRAG-TYPES-27: пресеты типов окон применяются сразу к новой постановке. */}
+          {renderWindowTypeChooser(winType, setWinType)}
           {lengthInput('winW', 'hub_sketch_width', winW, 0.5, 20, setWinW)}
           {lengthInput('winH', 'hub_sketch_height', winH, 0.5, 20, setWinH)}
           {lengthInput('winSill', 'hub_sketch_sill', winSill, 0, 20, setWinSill)}
           <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_width')}>
             {WINDOW_WIDTH_PRESETS_FT.map((value) => presetButton(value, setWinW))}
+          </div>
+        </div>
+      )}
+            {tool === 'opening' && (
+        <div className="hub-sketch-dims">
+          {/* OPENINGS-DRAG-TYPES-27: проём-вырез без полотна — Ш/В/от пола сразу при постановке. */}
+          {lengthInput('openW', 'hub_sketch_width', openW, 0.5, 20, setOpenW)}
+          {lengthInput('openH', 'hub_sketch_height', openH, 0.5, 20, setOpenH)}
+          {lengthInput('openSill', 'hub_sketch_sill', openSill, 0, 20, setOpenSill)}
+          <div className="hub-sketch-preset-row" role="group" aria-label={t('hub_sketch_width')}>
+            {WINDOW_WIDTH_PRESETS_FT.map((value) => presetButton(value, setOpenW))}
           </div>
         </div>
       )}
@@ -6091,7 +6189,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         {selectedOpening && selectedOpeningIndex !== null && (
           <section className="hub-sketch-properties-section">
             <div className="hub-sketch-properties-head">
-              <h3>{t(selectedOpening.kind === 'door' ? 'hub_sketch_tool_door' : 'hub_sketch_tool_window')}</h3>
+              <h3>{t(selectedOpening.kind === 'door' ? 'hub_sketch_tool_door' : selectedOpening.kind === 'window' ? 'hub_sketch_tool_window' : 'hub_sketch_mode_opening')}</h3>
               <button
                 type="button"
                 className="btn ghost small"
@@ -6105,15 +6203,21 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 ×
               </button>
             </div>
+            {/* OPENINGS-DRAG-TYPES-27: тип окна (глухое/створчатое/двойное) — только для окна. */}
+            {selectedOpening.kind === 'window' && renderWindowTypeChooser(windowTypeOf(selectedOpening), updateSelectedOpeningWinType)}
             {lengthInput('doorW', 'hub_sketch_width', openingWidthFt(selectedOpening), 0.5, 20, updateSelectedOpeningWidth)}
             {lengthInput('doorH', 'hub_sketch_height', openingHeightFt(selectedOpening), 0.5, 20, updateSelectedOpeningHeight)}
-            {selectedOpening.kind === 'window' && lengthInput('winSill', 'hub_sketch_sill', openingFloorFt(selectedOpening), 0, 20, updateSelectedOpeningFloor)}
-            {/* TRIM-OPENINGS-21: блок «Трим» — пресет из библиотеки + переопределение/выключение сторон. */}
+            {selectedOpening.kind !== 'door' && lengthInput('winSill', 'hub_sketch_sill', openingFloorFt(selectedOpening), 0, 20, updateSelectedOpeningFloor)}
+            {/* TRIM-OPENINGS-21: блок «Трим» — пресет из библиотеки + переопределение/выключение сторон. Проём-вырез без полотна не окантовывается. */}
+            {selectedOpening.kind !== 'opening' && (() => {
+            // Локально сужаем kind до OpeningKind ('door'|'window'), т.к. трим не для проёма-выреза.
+            const trimKind: 'door' | 'window' = selectedOpening.kind === 'door' ? 'door' : 'window'
+            return (
             <div className="hub-sketch-trim" role="group" aria-label={t('hub_sketch_trim')}>
               <span className="muted hub-sketch-trim-title">{t('hub_sketch_trim')}</span>
               <div className="hub-sketch-trim-presets">
-                {trimPresetsForKind(selectedOpening.kind).map((preset) => {
-                  const active = activeTrimPresetId(selectedOpening.kind, selectedOpening.trim) === preset.id
+                {trimPresetsForKind(trimKind).map((preset) => {
+                  const active = activeTrimPresetId(trimKind, selectedOpening.trim) === preset.id
                   return (
                     <button
                       key={preset.id}
@@ -6129,7 +6233,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 })}
               </div>
               <div className="hub-sketch-trim-sides">
-                {resolveOpeningTrim(selectedOpening.kind, selectedOpening.trim).map((side) => (
+                {resolveOpeningTrim(trimKind, selectedOpening.trim).map((side) => (
                   <label className="hub-sketch-trim-side" key={side.side}>
                     <span className="muted">{t(`hub_sketch_trim_side_${side.side}`)}</span>
                     <select
@@ -6142,7 +6246,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                       }}
                     >
                       <option value="off">{t('hub_sketch_trim_off')}</option>
-                      {trimProfilesForKind(selectedOpening.kind).map((profile) => (
+                      {trimProfilesForKind(trimKind).map((profile) => (
                         <option key={profile.id} value={profile.id}>{trimLabel(profile.labels, lang)}</option>
                       ))}
                     </select>
@@ -6150,6 +6254,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 ))}
               </div>
             </div>
+            )
+            })()}
             <div className="hub-sketch-wall-panel-actions">
               <button type="button" className="btn ghost small" disabled={!canCenterOpening} onClick={centerSelectedOpening}>
                 {t('hub_sketch_opening_center')}
@@ -6489,7 +6595,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             const y1 = (g.p.y - hy) * CELL_PX
             const x2 = (g.p.x + hx) * CELL_PX
             const y2 = (g.p.y + hy) * CELL_PX
-            const cls = o.kind === 'door' ? 'hub-sketch-door' : 'hub-sketch-window'
+            const cls = o.kind === 'door' ? 'hub-sketch-door' : o.kind === 'window' ? 'hub-sketch-window' : 'hub-sketch-passthrough'
             const selected = selectedOpeningIndex === i || dragIdx === i
             const dimLabel = openingDimLabel(model, o, i, t, screenWorldPx)
             return (
@@ -6530,7 +6636,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             (() => {
               const span = openingSpan2D(model, openingPreview)
               if (!span) return null
-              const cls = openingPreview.kind === 'door' ? 'hub-sketch-door' : 'hub-sketch-window'
+              const cls = openingPreview.kind === 'door' ? 'hub-sketch-door' : openingPreview.kind === 'window' ? 'hub-sketch-window' : 'hub-sketch-passthrough'
               return (
                 <g className="hub-sketch-opening-preview">
                   <line
@@ -6939,7 +7045,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               const px = g.p.x * CELL_PX
               const py = g.p.y * CELL_PX
               const sizeTxt = `${t('hub_sketch_dim_size_short')} ${formatOpeningFt(openingWidthFt(o))}×${formatOpeningFt(openingHeightFt(o))}`
-              const floorTxt = o.kind === 'window' ? ` · ${t('hub_sketch_dim_floor_short')} ${formatOpeningFt(openingFloorFt(o))}` : ''
+              const floorTxt = o.kind !== 'door' ? ` · ${t('hub_sketch_dim_floor_short')} ${formatOpeningFt(openingFloorFt(o))}` : ''
               return (
                 <text className="hub-sketch-drag-dim" x={px} y={py - 12} textAnchor="middle">
                   {`${sizeTxt} · ${t('hub_sketch_dim_left_short')} ${formatOpeningFt(offsets.left)} · ${t('hub_sketch_dim_right_short')} ${formatOpeningFt(offsets.right)}${floorTxt}`}

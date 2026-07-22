@@ -3,14 +3,19 @@ import { sanitizeOpeningTrim, type OpeningTrim } from './trimCatalog'
 
 export type Pt = { x: number; y: number }
 export type Contour = { points: Pt[]; closed: boolean; label?: string }
+// OPENINGS-DRAG-TYPES-27: тип окна как в IKEA Planner — глухое/створчатое/двойное.
+export type WindowType = 'fixed' | 'casement' | 'double'
 export type Opening = {
-  kind: 'door' | 'window'
+  // 'opening' — сквозной вырез в стене без полотна (проём между зонами).
+  kind: 'door' | 'window' | 'opening'
   c: number
   s: number
   t: number
   w?: number
   h?: number
   sill?: number
+  // OPENINGS-DRAG-TYPES-27: подтип окна (только kind === 'window') — опц./аддитивно, version:1 цел.
+  winType?: WindowType
   // TRIM-OPENINGS-21: назначение тримов проёма — опционально/аддитивно (version:1 не тронут).
   trim?: OpeningTrim
 }
@@ -20,12 +25,20 @@ export const DEFAULT_DOOR_HEIGHT_IN = 80
 export const DEFAULT_WINDOW_WIDTH_IN = 36
 export const DEFAULT_WINDOW_HEIGHT_IN = 48
 export const DEFAULT_WINDOW_SILL_IN = 36
+// OPENINGS-DRAG-TYPES-27: дефолты проёма-выреза (без полотна) — дверной по ширине/высоте, от пола 0.
+export const DEFAULT_OPENING_WIDTH_IN = 36
+export const DEFAULT_OPENING_HEIGHT_IN = 84
+export const DEFAULT_OPENING_SILL_IN = 0
 
 export const DEFAULT_DOOR_WIDTH_FT = DEFAULT_DOOR_WIDTH_IN / 12
 export const DEFAULT_DOOR_HEIGHT_FT = DEFAULT_DOOR_HEIGHT_IN / 12
 export const DEFAULT_WINDOW_WIDTH_FT = DEFAULT_WINDOW_WIDTH_IN / 12
 export const DEFAULT_WINDOW_HEIGHT_FT = DEFAULT_WINDOW_HEIGHT_IN / 12
 export const DEFAULT_WINDOW_SILL_FT = DEFAULT_WINDOW_SILL_IN / 12
+export const DEFAULT_OPENING_WIDTH_FT = DEFAULT_OPENING_WIDTH_IN / 12
+export const DEFAULT_OPENING_HEIGHT_FT = DEFAULT_OPENING_HEIGHT_IN / 12
+export const DEFAULT_OPENING_SILL_FT = DEFAULT_OPENING_SILL_IN / 12
+export const DEFAULT_WINDOW_TYPE: WindowType = 'fixed'
 
 export const DOOR_WIDTH_PRESETS_IN = [24, 28, 30, 32, 36]
 export const BIFOLD_DOOR_WIDTH_PRESETS_IN = [48, 60, 72]
@@ -491,6 +504,11 @@ export function cleanColor(value: unknown, fallback: string): string {
   return typeof value === 'string' && HEX_COLOR_RE.test(value) ? value : fallback
 }
 
+// OPENINGS-DRAG-TYPES-27: узкий валидатор подтипа окна для allowlist проёмов.
+export function cleanWindowType(value: unknown): WindowType | undefined {
+  return value === 'fixed' || value === 'casement' || value === 'double' ? value : undefined
+}
+
 function cleanRegionId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
@@ -738,7 +756,8 @@ export function sanitizeSketchOpenings(value: unknown): Opening[] {
       if (!raw || typeof raw !== 'object') return null
       const item = raw as Partial<Opening>
       const kind = item.kind
-      if (kind !== 'door' && kind !== 'window') return null
+      // OPENINGS-DRAG-TYPES-27: allowlist принимает и 'opening' (сквозной вырез без полотна).
+      if (kind !== 'door' && kind !== 'window' && kind !== 'opening') return null
       if (!Number.isInteger(item.c) || !Number.isInteger(item.s)) return null
       const opening: Opening = {
         kind,
@@ -751,7 +770,13 @@ export function sanitizeSketchOpenings(value: unknown): Opening[] {
       const sill = cleanOptionalNumber(item.sill, 0, 100)
       if (width !== undefined) opening.w = snapOpeningFeetToPrecision(width)
       if (height !== undefined) opening.h = snapOpeningFeetToPrecision(height)
-      if (kind === 'window' && sill !== undefined) opening.sill = snapOpeningFeetToPrecision(sill)
+      // Дверь всегда от пола (sill 0); окно и проём-вырез могут стоять выше пола.
+      if (kind !== 'door' && sill !== undefined) opening.sill = snapOpeningFeetToPrecision(sill)
+      // OPENINGS-DRAG-TYPES-27: подтип окна — только для окна, значение из белого списка.
+      if (kind === 'window') {
+        const winType = cleanWindowType(item.winType)
+        if (winType) opening.winType = winType
+      }
       const trim = sanitizeOpeningTrim(item.trim)
       if (trim) opening.trim = trim
       return opening

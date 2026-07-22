@@ -6,6 +6,10 @@ import {
   DEFAULT_WINDOW_HEIGHT_FT,
   DEFAULT_WINDOW_SILL_FT,
   DEFAULT_WINDOW_WIDTH_FT,
+  DEFAULT_OPENING_WIDTH_FT,
+  DEFAULT_OPENING_HEIGHT_FT,
+  DEFAULT_OPENING_SILL_FT,
+  DEFAULT_WINDOW_TYPE,
   DEFAULT_GROUT_COLOR,
   DEFAULT_TILE_COLOR,
   DEFAULT_WALL_PAINT,
@@ -25,6 +29,7 @@ import {
   type SketchSegmentResizeAnchor,
   type SketchSegmentResizeConflict,
   type SketchSurfaceFinish,
+  type WindowType,
 } from './sketchFinishes'
 import { formatFeetInches, formatInches, parseFeetInches, parseInches, snapFeetToPrecision, snapInchesToPrecision } from './inches'
 import {
@@ -184,15 +189,23 @@ function dist(a: Pt, b: Pt): number {
 }
 
 function openingWidthFt(opening: Opening): number {
-  return opening.w ?? (opening.kind === 'door' ? DEFAULT_DOOR_WIDTH_FT : DEFAULT_WINDOW_WIDTH_FT)
+  if (opening.w !== undefined) return opening.w
+  if (opening.kind === 'door') return DEFAULT_DOOR_WIDTH_FT
+  if (opening.kind === 'opening') return DEFAULT_OPENING_WIDTH_FT
+  return DEFAULT_WINDOW_WIDTH_FT
 }
 
 function openingHeightFt(opening: Opening): number {
-  return opening.kind === 'door' ? (opening.h ?? DEFAULT_DOOR_HEIGHT_FT) : (opening.h ?? DEFAULT_WINDOW_HEIGHT_FT)
+  if (opening.h !== undefined) return opening.h
+  if (opening.kind === 'door') return DEFAULT_DOOR_HEIGHT_FT
+  if (opening.kind === 'opening') return DEFAULT_OPENING_HEIGHT_FT
+  return DEFAULT_WINDOW_HEIGHT_FT
 }
 
 function openingFloorFt(opening: Opening): number {
-  return opening.kind === 'door' ? 0 : (opening.sill ?? DEFAULT_WINDOW_SILL_FT)
+  if (opening.kind === 'door') return 0
+  if (opening.kind === 'opening') return opening.sill ?? DEFAULT_OPENING_SILL_FT
+  return opening.sill ?? DEFAULT_WINDOW_SILL_FT
 }
 
 function formatLength(valueFt: number): string {
@@ -417,6 +430,41 @@ function elevationOpeningBox(opening: Opening, lengthFt: number, height: number)
   const x = Math.max(0, Math.min(lengthFt - width, opening.t * lengthFt - width / 2))
   const y = height - floor - openingHeight
   return { x, y, width, openingHeight, floor }
+}
+
+// OPENINGS-DRAG-TYPES-27: раскладка створок/переплёта окна на развёртке (глухое/створчатое/двойное).
+function renderElevationWindowGlazing(winType: WindowType, box: ElevationOpeningBox) {
+  const fw = Math.max(0.03, Math.min(0.1, box.width * 0.07, box.openingHeight * 0.07))
+  const px0 = box.x + fw
+  const py0 = box.y + fw
+  const pw = Math.max(0.02, box.width - fw * 2)
+  const ph = Math.max(0.02, box.openingHeight - fw * 2)
+  const px1 = px0 + pw
+  const py1 = py0 + ph
+  const midY = py0 + ph / 2
+  const cx = box.x + box.width / 2
+  return (
+    <g className="hub-sketch-elevation-glazing" pointerEvents="none">
+      <rect className="hub-sketch-elevation-window-pane" x={px0} y={py0} width={pw} height={ph} />
+      {winType === 'casement' && (
+        <>
+          {/* Створчатое одинарное: треугольник створки (петли слева). */}
+          <line className="hub-sketch-elevation-window-swing" x1={px0} y1={py0} x2={px1} y2={midY} />
+          <line className="hub-sketch-elevation-window-swing" x1={px0} y1={py1} x2={px1} y2={midY} />
+        </>
+      )}
+      {winType === 'double' && (
+        <>
+          {/* Двойное: центральный переплёт + две зеркальные створки. */}
+          <line className="hub-sketch-elevation-window-sash" x1={cx} y1={box.y} x2={cx} y2={box.y + box.openingHeight} />
+          <line className="hub-sketch-elevation-window-swing" x1={px0} y1={py0} x2={cx} y2={midY} />
+          <line className="hub-sketch-elevation-window-swing" x1={px0} y1={py1} x2={cx} y2={midY} />
+          <line className="hub-sketch-elevation-window-swing" x1={px1} y1={py0} x2={cx} y2={midY} />
+          <line className="hub-sketch-elevation-window-swing" x1={px1} y1={py1} x2={cx} y2={midY} />
+        </>
+      )}
+    </g>
+  )
 }
 
 function elevationOpeningDims(
@@ -1510,10 +1558,15 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             ? `${formatLength(box.width)} x ${formatLength(box.openingHeight)}`
             : `${formatLength(box.width)} x ${formatLength(box.openingHeight)} / ${formatLength(box.floor)}`
           const dims = elevationOpeningDims(openings, opening, index, lengthFt, height, t)
+          const rectClass = opening.kind === 'door'
+            ? 'hub-sketch-elevation-door'
+            : opening.kind === 'opening'
+              ? 'hub-sketch-elevation-passthrough'
+              : 'hub-sketch-elevation-window'
           return (
             <g key={`${opening.kind}-${index}`}>
               <rect
-                className={opening.kind === 'door' ? 'hub-sketch-elevation-door' : 'hub-sketch-elevation-window'}
+                className={rectClass}
                 x={box.x}
                 y={box.y}
                 width={box.width}
@@ -1521,7 +1574,21 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
               >
                 <title>{label}</title>
               </rect>
-              {/* TRIM-OPENINGS-21: обводка проёма тримами — толщина/цвет линии по профилю каждой стороны. */}
+              {/* OPENINGS-DRAG-TYPES-27: створки/переплёт окна на развёртке — тип различим. */}
+              {opening.kind === 'window' && renderElevationWindowGlazing(opening.winType ?? DEFAULT_WINDOW_TYPE, box)}
+              {/* OPENINGS-DRAG-TYPES-27: проём-вырез — пунктирная рамка выреза без полотна. */}
+              {opening.kind === 'opening' && (
+                <rect
+                  className="hub-sketch-elevation-passthrough-inner"
+                  x={box.x}
+                  y={box.y}
+                  width={box.width}
+                  height={box.openingHeight}
+                  pointerEvents="none"
+                />
+              )}
+              {/* TRIM-OPENINGS-21: обводка проёма тримами — толщина/цвет линии по профилю каждой стороны. Проём-вырез без полотна не окантовывается. */}
+              {opening.kind !== 'opening' && (
               <g className="hub-sketch-elevation-trim" pointerEvents="none">
                 {resolveOpeningTrim(opening.kind, opening.trim).map((side) => {
                   if (!side.enabled) return null
@@ -1555,6 +1622,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
                   )
                 })}
               </g>
+              )}
               <text x={box.x + box.width / 2} y={Math.max(0.28, box.y - 0.14)} textAnchor="middle">
                 {label}
               </text>
