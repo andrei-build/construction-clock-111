@@ -29,6 +29,10 @@ export type SketchPlacedCatalogItem = {
   layer?: SketchPlacedCabinetLayer
   hinge?: 'L' | 'R'
   filler?: boolean
+  // CABINETS-CORNER-FILLERS-24: ручной филлер, вставленный пользователем. Отличает его от
+  // авто-филлера (≤3" зазор, добавляется расчётом): ручной сохраняется в код-строке ряда и
+  // не срезается при пересборке. Опционально; старый эскиз без поля грузится штатно.
+  manualFiller?: boolean
   panel?: boolean
   showerPanShape?: SketchShowerPanShape
   panFinish?: SketchTileFinish
@@ -614,6 +618,9 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       if (hinge) placed.hinge = hinge
       if (showerPanShape) placed.showerPanShape = showerPanShape
       if (item.filler === true) placed.filler = true
+      // CABINETS-CORNER-FILLERS-24: сохраняем маркер ручного филлера в allowlist, иначе он
+      // срежется при save/reload и филлер потеряет позицию в ряду при следующей пересборке.
+      if (item.manualFiller === true) placed.manualFiller = true
       if (item.panel === true) placed.panel = true
       if (panFinish) placed.panFinish = panFinish
       if (layoutWarning) placed.layoutWarning = layoutWarning
@@ -622,7 +629,8 @@ export function sanitizePlacedCatalogItems(value: unknown): SketchPlacedCatalogI
       const widthIn = cleanPositive(item.widthIn ?? item.width_in)
       const depthIn = cleanPositive(item.depthIn ?? item.depth_in)
       const heightIn = cleanPositive(item.heightIn ?? item.height_in)
-      if (widthIn !== undefined) placed.widthIn = widthIn
+      // CABINETS-CORNER-FILLERS-24: ширина филлера ограничена 0..48" (валидация round-trip).
+      if (widthIn !== undefined) placed.widthIn = placed.filler ? Math.min(48, widthIn) : widthIn
       if (depthIn !== undefined) placed.depthIn = depthIn
       if (heightIn !== undefined) placed.heightIn = heightIn
       // CABINETS-VERTICAL-22: сохраняем зазор навесного (дюймы). Клампим в разумный диапазон,
