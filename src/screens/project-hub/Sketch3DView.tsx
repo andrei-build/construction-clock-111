@@ -19,6 +19,10 @@ import {
   DEFAULT_WINDOW_HEIGHT_FT,
   DEFAULT_WINDOW_SILL_FT,
   DEFAULT_WINDOW_WIDTH_FT,
+  DEFAULT_OPENING_WIDTH_FT,
+  DEFAULT_OPENING_HEIGHT_FT,
+  DEFAULT_OPENING_SILL_FT,
+  DEFAULT_WINDOW_TYPE,
   TILE_SIZE_OPTIONS,
   WALL_PAINT_SWATCHES,
   cleanColor,
@@ -42,6 +46,7 @@ import {
   type SketchSurfaceFinish,
   type SketchSwitch,
   type SketchTileFinish,
+  type WindowType,
 } from './sketchFinishes'
 import { formatFeetInches, formatInches, parseFeetInches, parseInches, snapOpeningFeetToPrecision } from './inches'
 import WallElevation from './WallElevation'
@@ -949,7 +954,8 @@ function openingMetrics(model: Sketch3DModel, opening: Opening, roomHeightFt: nu
 }
 
 function openingName(opening: Opening, index: number, t: (k: string) => string): string {
-  return `${t(opening.kind === 'door' ? 'hub_sketch_tool_door' : 'hub_sketch_tool_window')} ${index + 1}`
+  const key = opening.kind === 'door' ? 'hub_sketch_tool_door' : opening.kind === 'window' ? 'hub_sketch_tool_window' : 'hub_sketch_mode_opening'
+  return `${t(key)} ${index + 1}`
 }
 
 function openingDimensionText(opening: Opening, metrics: OpeningMetrics, t: (k: string) => string): string {
@@ -2937,15 +2943,27 @@ export default function Sketch3DView({
             w: Math.max(0.5, snapOpeningFeetToPrecision(defaults.doorW)),
             h: Math.max(0.5, snapOpeningFeetToPrecision(defaults.doorH)),
           }
-        : {
-            kind: 'window',
-            c,
-            s,
-            t: rawT,
-            w: Math.max(0.5, snapOpeningFeetToPrecision(defaults.winW)),
-            h: Math.max(0.5, snapOpeningFeetToPrecision(defaults.winH)),
-            sill: Math.max(0, snapOpeningFeetToPrecision(defaults.winSill)),
-          }
+        : kind === 'opening'
+          ? {
+              // OPENINGS-DRAG-TYPES-27: сквозной вырез без полотна.
+              kind: 'opening',
+              c,
+              s,
+              t: rawT,
+              w: Math.max(0.5, snapOpeningFeetToPrecision(DEFAULT_OPENING_WIDTH_FT)),
+              h: Math.max(0.5, snapOpeningFeetToPrecision(DEFAULT_OPENING_HEIGHT_FT)),
+              sill: Math.max(0, snapOpeningFeetToPrecision(DEFAULT_OPENING_SILL_FT)),
+            }
+          : {
+              kind: 'window',
+              c,
+              s,
+              t: rawT,
+              w: Math.max(0.5, snapOpeningFeetToPrecision(defaults.winW)),
+              h: Math.max(0.5, snapOpeningFeetToPrecision(defaults.winH)),
+              sill: Math.max(0, snapOpeningFeetToPrecision(defaults.winSill)),
+              winType: DEFAULT_WINDOW_TYPE,
+            }
     return { ...draft, t: snapOpeningT(model, draft, rawT, snapStepFt) }
   }
 
@@ -3456,6 +3474,8 @@ export default function Sketch3DView({
           depthWrite: false,
         })
         const openingPickMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.01, depthWrite: false })
+        // OPENINGS-DRAG-TYPES-27: нейтральный откос для проёма-выреза без полотна.
+        const passthroughMaterial = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, roughness: 0.82, metalness: 0.02 })
         model.contours.forEach((contour) => {
           if (!contour.closed || contour.points.length < 3) return
           const shape = new THREE.Shape()
@@ -3614,7 +3634,8 @@ export default function Sketch3DView({
           group.rotation.y = metrics.rotationY
           const trim = Math.max(0.055, Math.min(0.12, metrics.width * 0.045))
           const frameDepth = 0.12
-          const frameMaterial = opening.kind === 'door' ? doorMaterial : windowMaterial
+          // OPENINGS-DRAG-TYPES-27: проём-вырез — нейтральный откос без полотна.
+          const frameMaterial = opening.kind === 'door' ? doorMaterial : opening.kind === 'opening' ? passthroughMaterial : windowMaterial
           const addFramePiece = (width: number, frameHeight: number, x: number, y: number) => {
             const frame = new THREE.Mesh(new THREE.BoxGeometry(width, frameHeight, frameDepth), frameMaterial)
             frame.position.set(x, y, 0)
@@ -3626,7 +3647,10 @@ export default function Sketch3DView({
           addFramePiece(trim, metrics.height, -metrics.width / 2 + trim / 2, metrics.sill + metrics.height / 2)
           addFramePiece(trim, metrics.height, metrics.width / 2 - trim / 2, metrics.sill + metrics.height / 2)
           addFramePiece(metrics.width, trim, 0, metrics.sill + metrics.height - trim / 2)
-          if (opening.kind === 'window') {
+          if (opening.kind === 'opening') {
+            // Сквозной вырез: тонкий нижний откос (если приподнят над полом), без стекла.
+            addFramePiece(metrics.width, trim, 0, metrics.sill + trim / 2)
+          } else if (opening.kind === 'window') {
             addFramePiece(metrics.width, trim, 0, metrics.sill + trim / 2)
             const paneWidth = Math.max(0.02, metrics.width - trim * 2)
             const paneHeight = Math.max(0.02, metrics.height - trim * 2)
@@ -3635,6 +3659,16 @@ export default function Sketch3DView({
             pane.castShadow = false
             pane.receiveShadow = false
             group.add(pane)
+            // OPENINGS-DRAG-TYPES-27: тип окна различим в 3D — переплёт/створка.
+            const winType: WindowType = opening.winType ?? DEFAULT_WINDOW_TYPE
+            const barY = metrics.sill + metrics.height / 2
+            if (winType === 'double') {
+              // Двойное: центральный вертикальный переплёт (две створки).
+              addFramePiece(trim * 0.85, Math.max(0.02, metrics.height - trim * 2), 0, barY)
+            } else if (winType === 'casement') {
+              // Створчатое одинарное: тонкая ручка-марка створки сбоку.
+              addFramePiece(trim * 0.7, Math.max(0.02, metrics.height * 0.24), metrics.width * 0.3, barY)
+            }
           }
           const pickFace = new THREE.Mesh(
             new THREE.BoxGeometry(metrics.width, metrics.height, 0.025),
@@ -3646,7 +3680,7 @@ export default function Sketch3DView({
           pickFace.renderOrder = 3
           group.add(pickFace)
           if (selectedId === openingInteractiveId(index)) {
-            addMeshWithEdges(THREE, group, pickFace, opening.kind === 'door' ? 0x7c2d12 : 0x1d4ed8, 0.95)
+            addMeshWithEdges(THREE, group, pickFace, opening.kind === 'door' ? 0x7c2d12 : opening.kind === 'opening' ? 0x0f766e : 0x1d4ed8, 0.95)
             const sprite = createLabelSprite(THREE, `${openingName(opening, index, t)}\n${openingDimensionText(opening, metrics, t)}`)
             sprite.position.set(metrics.centerX + metrics.nx * 0.34, metrics.sill + metrics.height + 0.48, metrics.centerZ + metrics.nz * 0.34)
             scene.add(sprite)
@@ -4113,7 +4147,7 @@ export default function Sketch3DView({
           const currentPlacement = placementRef.current
           if (!currentPlacement) return
           updatePointer(event)
-          if (currentPlacement === 'door' || currentPlacement === 'window') {
+          if (currentPlacement === 'door' || currentPlacement === 'window' || currentPlacement === 'opening') {
             const anchor = wallHitAnchor()
             if (!anchor) return
             const nextOpening = openingAtWall(currentPlacement, anchor.c, anchor.s, anchor.t)
@@ -4909,7 +4943,7 @@ export default function Sketch3DView({
           )}
           {canEdit && show3DOpenings && onOpeningDefaultsChange && (
             <div className="hub-sketch-3d-opening-tools" role="group" aria-label={t('hub_sketch_3d_place_opening')}>
-              {(['door', 'window'] as OpeningPlacementKind[]).map((kind) => (
+              {(['door', 'window', 'opening'] as OpeningPlacementKind[]).map((kind) => (
                 <button
                   key={kind}
                   type="button"
@@ -4923,7 +4957,7 @@ export default function Sketch3DView({
                     setSelectedId(null)
                   }}
                 >
-                  {t(kind === 'door' ? 'hub_sketch_3d_add_door' : 'hub_sketch_3d_add_window')}
+                  {t(kind === 'door' ? 'hub_sketch_3d_add_door' : kind === 'window' ? 'hub_sketch_3d_add_window' : 'hub_sketch_3d_add_opening')}
                 </button>
               ))}
               <div className="hub-sketch-3d-opening-size">
@@ -4951,7 +4985,7 @@ export default function Sketch3DView({
                   </div>
                 )}
               </div>
-              {(placement === 'door' || placement === 'window') && (
+              {(placement === 'door' || placement === 'window' || placement === 'opening') && (
                 <span className="hub-sketch-3d-opening-hint">{t('hub_sketch_3d_opening_click_hint')}</span>
               )}
             </div>
@@ -5293,7 +5327,7 @@ export default function Sketch3DView({
         )}
         {selectedOpening && selectedOpeningIndex !== null && selectedOpeningMetrics && (
           <div className="hub-sketch-3d-item-popover hub-sketch-3d-opening-popover">
-            <div className={selectedOpening.kind === 'door' ? 'hub-sketch-3d-opening-thumb hub-sketch-3d-opening-thumb-door' : 'hub-sketch-3d-opening-thumb hub-sketch-3d-opening-thumb-window'} aria-hidden="true" />
+            <div className={`hub-sketch-3d-opening-thumb ${selectedOpening.kind === 'door' ? 'hub-sketch-3d-opening-thumb-door' : selectedOpening.kind === 'opening' ? 'hub-sketch-3d-opening-thumb-passthrough' : `hub-sketch-3d-opening-thumb-window hub-sketch-3d-opening-thumb-win-${selectedOpening.winType ?? DEFAULT_WINDOW_TYPE}`}`} aria-hidden="true" />
             <div className="hub-sketch-3d-item-popover-body">
               <div className="item-title">{openingName(selectedOpening, selectedOpeningIndex, t)}</div>
               <div className="muted">{openingDimensionText(selectedOpening, selectedOpeningMetrics, t).replace('\n', ' · ')}</div>
@@ -5836,7 +5870,7 @@ export default function Sketch3DView({
           <section className="hub-sketch-3d-section">
             <h3>{t('hub_sketch_3d_openings')}</h3>
             <div className="hub-sketch-place-grid" role="group" aria-label={t('hub_sketch_3d_place_opening')}>
-              {(['door', 'window'] as OpeningPlacementKind[]).map((kind) => (
+              {(['door', 'window', 'opening'] as OpeningPlacementKind[]).map((kind) => (
                 <button
                   key={kind}
                   type="button"
@@ -5850,7 +5884,7 @@ export default function Sketch3DView({
                     setSelectedId(null)
                   }}
                 >
-                  {t(kind === 'door' ? 'hub_sketch_tool_door' : 'hub_sketch_tool_window')}
+                  {t(kind === 'door' ? 'hub_sketch_tool_door' : kind === 'window' ? 'hub_sketch_tool_window' : 'hub_sketch_mode_opening')}
                 </button>
               ))}
             </div>

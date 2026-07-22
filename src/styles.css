@@ -6044,6 +6044,46 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   align-items: center;
 }
 .hub-sketch-preset-row .btn { width: auto; }
+/* OPENINGS-DRAG-TYPES-27: выбор типа окна с превью-иконкой (глухое/створчатое/двойное). */
+.hub-sketch-wintype-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+.hub-sketch-wintype-btn {
+  flex: 1 1 0;
+  min-width: 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px;
+  border: 1px solid var(--border, #d0d7e2);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .7);
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.hub-sketch-wintype-btn:disabled { cursor: default; opacity: .6; }
+.hub-sketch-wintype-btn.is-active {
+  border-color: #2563eb;
+  background: rgba(37, 99, 235, .12);
+  box-shadow: inset 0 0 0 1px #2563eb;
+}
+.hub-sketch-wintype-glyph {
+  width: 40px;
+  height: 32px;
+}
+.hub-sketch-wintype-glyph .wt-frame {
+  fill: rgba(155, 213, 255, .38);
+  stroke: #1d4ed8;
+  stroke-width: 1.6;
+}
+.hub-sketch-wintype-glyph .wt-mullion { stroke: #1d4ed8; stroke-width: 1.6; }
+.hub-sketch-wintype-glyph .wt-swing { stroke: rgba(29, 78, 216, .75); stroke-width: 1.2; }
 .hub-sketch-preview { stroke: #2563eb; stroke-width: 2; stroke-dasharray: 4 4; pointer-events: none; }
 .hub-sketch-live-dim { fill: #2563eb; font-size: 13px; font-weight: 800; pointer-events: none; }
 .hub-sketch-drag-dim { fill: #b45309; font-size: 12px; font-weight: 800; pointer-events: none; }
@@ -6051,6 +6091,8 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-opening { cursor: grab; }
 .hub-sketch-door { stroke: #b45309; stroke-width: 6; stroke-linecap: butt; }
 .hub-sketch-window { stroke: #2563eb; stroke-width: 6; stroke-linecap: butt; }
+/* OPENINGS-DRAG-TYPES-27: проём-вырез на плане — пунктирная линия проёма без полотна. */
+.hub-sketch-passthrough { stroke: #0f766e; stroke-width: 6; stroke-linecap: butt; stroke-dasharray: 7 4; }
 .hub-sketch-opening-hit { stroke: transparent; stroke-width: 24; stroke-linecap: round; }
 .hub-sketch-plan-item {
   pointer-events: auto;
@@ -7530,6 +7572,36 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: #1d4ed8;
   stroke-width: .04;
 }
+/* OPENINGS-DRAG-TYPES-27: проём-вырез на развёртке — пунктирный контур без полотна. */
+.hub-sketch-elevation-passthrough {
+  fill: rgba(15, 118, 110, .12);
+  stroke: #0f766e;
+  stroke-width: .04;
+}
+.hub-sketch-elevation-passthrough-inner {
+  fill: none;
+  stroke: #0f766e;
+  stroke-width: 1.4;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+/* OPENINGS-DRAG-TYPES-27: створки/переплёт окна (глухое/створчатое/двойное) на развёртке. */
+.hub-sketch-elevation-window-pane {
+  fill: rgba(155, 213, 255, .34);
+  stroke: #1d4ed8;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-window-sash {
+  stroke: #1d4ed8;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-window-swing {
+  stroke: rgba(29, 78, 216, .7);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
 .hub-sketch-elevation-svg .hub-sketch-elevation-opening-dim line {
   stroke: #0f766e;
   stroke-width: .022;
@@ -8213,6 +8285,24 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     linear-gradient(90deg, transparent 48%, rgba(29, 78, 216, .78) 49% 51%, transparent 52%),
     linear-gradient(0deg, transparent 48%, rgba(29, 78, 216, .78) 49% 51%, transparent 52%),
     rgba(37, 99, 235, .18);
+}
+/* OPENINGS-DRAG-TYPES-27: превью подтипа окна в поповере 3D. */
+.hub-sketch-3d-opening-thumb-win-fixed {
+  background:
+    linear-gradient(0deg, transparent 46%, rgba(29, 78, 216, .5) 47% 53%, transparent 54%),
+    rgba(37, 99, 235, .2);
+}
+.hub-sketch-3d-opening-thumb-win-double {
+  background:
+    linear-gradient(90deg, transparent 48%, rgba(29, 78, 216, .85) 49% 51%, transparent 52%),
+    rgba(37, 99, 235, .2);
+}
+/* OPENINGS-DRAG-TYPES-27: превью проёма-выреза без полотна. */
+.hub-sketch-3d-opening-thumb-passthrough {
+  color: #0f766e;
+  background:
+    repeating-linear-gradient(45deg, rgba(15, 118, 110, .25) 0 4px, transparent 4px 9px);
+  border-style: dashed;
 }
 .hub-sketch-3d-item-popover-body {
   min-width: 0;

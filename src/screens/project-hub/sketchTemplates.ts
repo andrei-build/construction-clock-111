@@ -1,13 +1,15 @@
 export type SketchTemplatePoint = { x: number; y: number }
 export type SketchTemplateContour = { points: SketchTemplatePoint[]; closed: boolean }
 export type SketchTemplateOpening = {
-  kind: 'door' | 'window'
+  // OPENINGS-DRAG-TYPES-27: шаблоны сохраняют и проём-вырез, и подтип окна.
+  kind: 'door' | 'window' | 'opening'
   c: number
   s: number
   t: number
   w?: number
   h?: number
   sill?: number
+  winType?: 'fixed' | 'casement' | 'double'
 }
 export type SketchTemplatePlacedItem = {
   id: string
