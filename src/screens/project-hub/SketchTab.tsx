@@ -249,6 +249,8 @@ import {
   openingGeom,
   type WallSegment,
 } from './sketchOpeningGeometry'
+// SWEEP-FIX-34: единый источник правды «прыгает ли режим в 3D» + выбор инфра-инструмента для «Электрики».
+import { sketchModeViewMode, infraToolForLight } from './sketchModeView'
 
 interface SketchTabProps {
   project: Project
@@ -2453,9 +2455,19 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       setMeasurementDraft(null)
       return
     }
-    if (mode === 'finish' || mode === 'light') {
-      setViewMode('3d')
+    if (mode === 'finish') {
+      // Отделка остаётся в 3D-виде; её 2D-панель — отдельная задача (SWEEP-FIX-35), здесь не трогаем.
+      setViewMode(sketchModeViewMode('finish'))
       setTool('wall')
+      setMeasurementDraft(null)
+      setSelectedMeasurementIndex(null)
+      return
+    }
+    if (mode === 'light') {
+      // SWEEP-FIX-34: «Электрика» больше НЕ прыгает в 3D — остаётся на 2D-плане с панелью
+      // инфраструктуры (розетка/труба). 3D доступен только по явной кнопке «3D вид».
+      setViewMode(sketchModeViewMode('light'))
+      setTool((current) => infraToolForLight(current) as Tool)
       setMeasurementDraft(null)
       setSelectedMeasurementIndex(null)
       return
