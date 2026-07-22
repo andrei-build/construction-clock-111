@@ -241,7 +241,9 @@ import {
   projectT,
 } from './sketchPlanGeometry'
 import {
+  clampOpeningSpanT,
   eachSegment,
+  hitTestOpeningIndex,
   nearestSegment,
   openingEnds,
   openingGeom,
@@ -327,6 +329,9 @@ type ContourDragCandidate = {
   startPoints: Pt[]
 }
 type ContourDragActive = { c: number; startCell: Pt; startPoints: Pt[] }
+// SWEEP-FIX-33: захват существующего проёма армируется на pointer-down и «прорастает» в drag только
+// после порога сдвига (как узел/комната) — тап без сдвига = выделение, реальный drag = один шаг истории.
+type OpeningDragCandidate = { i: number; pointerId: number; pointerType: string; origin: { clientX: number; clientY: number } }
 type WallClickAppend = { contourIndex: number; pointIndex: number; point: Pt; clientX: number; clientY: number; time: number }
 type CanvasPointer = { clientX: number; clientY: number; pointerType: string }
 type CanvasTapGesture = {
@@ -461,11 +466,9 @@ function clampOpeningT(model: SketchModel, opening: Opening, t: number): number 
   const ends = openingEnds(model, opening)
   if (!ends) return Math.max(0, Math.min(1, t))
   const segLenFt = dist(ends.a, ends.b) * modelCellFt(model)
-  if (segLenFt <= 0.001) return 0.5
   const widthFt = Math.max(0.1, Math.min(openingWidthFt(opening), segLenFt))
-  if (widthFt >= segLenFt - 0.001) return 0.5
-  const padT = (widthFt / 2) / segLenFt
-  return Math.max(padT, Math.min(1 - padT, t))
+  // SWEEP-FIX-33: полуширинный кламп вынесен в чистый clampOpeningSpanT (единый источник + юнит-тест).
+  return clampOpeningSpanT(segLenFt, widthFt, t)
 }
 
 function openingSegmentLengthFt(model: SketchModel, opening: Opening): number {
@@ -1656,6 +1659,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [customRoomTemplates, setCustomRoomTemplates] = useState<SketchRoomTemplate[]>([])
   const dragMovedRef = useRef(false)
   const armedDragNodeRef = useRef<NodeDragCandidate | null>(null)
+  // SWEEP-FIX-33: кандидат на перетаскивание существующего проёма (арминг до порога сдвига).
+  const armedDragOpeningRef = useRef<OpeningDragCandidate | null>(null)
   // ROOM-MOVE-23: состояние перетаскивания всей комнаты (только React-state/refs, в модель эскиза не пишется).
   const [dragContour, setDragContour] = useState<number | null>(null)
   const armedDragContourRef = useRef<ContourDragCandidate | null>(null)
@@ -2964,6 +2969,29 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       edgeAutoPanPointerRef.current = currentScreenPoint
       updateEdgeAutoPan(clientX, clientY)
     }
+    // SWEEP-FIX-33: армированный захват проёма «прорастает» в drag после порога сдвига (как узел/комната).
+    const armedDragOpening = armedDragOpeningRef.current
+    if (
+      armedDragOpening &&
+      dragIdxRef.current === null &&
+      (pointerId === undefined || armedDragOpening.pointerId === pointerId)
+    ) {
+      const currentScreenPoint = { clientX, clientY }
+      if (!screenPointerMovedBeyondThreshold(armedDragOpening.origin, currentScreenPoint, NODE_DRAG_THRESHOLD_PX)) return
+      if (!raw) {
+        setOpeningSnapGuide(null)
+        setSmartGuides([])
+        setHoverSnapGuide(null)
+        return
+      }
+      armedDragOpeningRef.current = null
+      recordHistoryStep()
+      dragMovedRef.current = true
+      dragIdxRef.current = armedDragOpening.i
+      setDragIdx(armedDragOpening.i)
+      edgeAutoPanPointerRef.current = currentScreenPoint
+      updateEdgeAutoPan(clientX, clientY)
+    }
     // ROOM-MOVE-23: армированное перетаскивание комнаты «прорастает» в drag после порога сдвига (как у узла).
     const armedDragContour = armedDragContourRef.current
     if (
@@ -3740,7 +3768,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     })
   }
 
-  // Начало перетаскивания существующего проёма.
+  // SWEEP-FIX-33: pointer-down по существующему проёму имеет приоритет над постановкой нового.
+  // Захват армируется (как узел/комната) и «прорастает» в drag только после порога сдвига в
+  // applyPointerMoveAt; тап без сдвига выделяет проём (карточка редактирования), не двигая его и не
+  // засоряя историю. recordHistoryStep() снимается в момент реального drag, а НЕ на каждый тап.
   const startDragOpening = (i: number) => (e: React.PointerEvent) => {
     if (!canEdit) return
     if (e.pointerType === 'mouse' && e.button !== 0) return
@@ -3750,20 +3781,22 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       activePenPointerIdRef.current = e.pointerId
     }
     e.stopPropagation()
-    recordHistoryStep()
-    // любое взаимодействие с проёмом подавляет следующий click (иначе поставили бы новую точку/проём)
+    // любое взаимодействие с проёмом подавляет следующий click (иначе поставили бы новый проём поверх)
     dragMovedRef.current = true
-    dragIdxRef.current = i
+    // выделяем проём сразу (тап открывает карточку); реальный drag/история — после порога сдвига
     selectedOpeningIndexRef.current = i
-    setDragIdx(i)
     setSelectedOpeningIndex(i)
     setActiveMode('opening')
     setSelectedWallKey(null)
     setSelectedMeasurementIndex(null)
     setMeasurementDraft(null)
     setOpeningOffsetEdit(null)
-    edgeAutoPanPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
-    updateEdgeAutoPan(e.clientX, e.clientY)
+    armedDragOpeningRef.current = {
+      i,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      origin: { clientX: e.clientX, clientY: e.clientY },
+    }
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   }
 
@@ -3915,6 +3948,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   // Отпускание проёма: сохраняем свободную позицию; storage-normalize отдельно округляет до 1/8".
   const endDragOpening = () => {
+    // SWEEP-FIX-33: снимаем арминг захвата (тап без drag) вместе с активным drag.
+    armedDragOpeningRef.current = null
     if (dragIdxRef.current === null) return
     stopEdgeAutoPan()
     dragIdxRef.current = null
@@ -4210,23 +4245,18 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       return true
     }
 
-    let openingHit: { index: number; d: number } | null = null
-    for (let index = 0; index < currentModel.openings.length; index++) {
-      const opening = currentModel.openings[index]
-      const geom = openingGeom(currentModel, opening)
-      if (!geom) continue
-      const widthCells = Math.min(openingWidthFt(opening) / modelCellFt(currentModel), dist(geom.a, geom.b))
-      const a = { x: geom.p.x - (geom.ux * widthCells) / 2, y: geom.p.y - (geom.uy * widthCells) / 2 }
-      const b = { x: geom.p.x + (geom.ux * widthCells) / 2, y: geom.p.y + (geom.uy * widthCells) / 2 }
-      const tValue = projectT(raw, a, b)
-      const projected = { x: a.x + (b.x - a.x) * tValue, y: a.y + (b.y - a.y) * tValue }
-      const d = dist(raw, projected)
-      if (d <= hitCells && (!openingHit || d < openingHit.d)) openingHit = { index, d }
-    }
-    if (openingHit) {
+    // SWEEP-FIX-33: та же геометрия хит-теста, что и захват проёма при drag — единый чистый helper.
+    const openingHitIndex = hitTestOpeningIndex(
+      currentModel,
+      currentModel.openings,
+      raw,
+      hitCells,
+      (opening) => openingWidthFt(opening as Opening) / modelCellFt(currentModel),
+    )
+    if (openingHitIndex !== null) {
       setActiveMode('opening')
-      selectedOpeningIndexRef.current = openingHit.index
-      setSelectedOpeningIndex(openingHit.index)
+      selectedOpeningIndexRef.current = openingHitIndex
+      setSelectedOpeningIndex(openingHitIndex)
       setSelectedWallKey(null)
       setSelectedContourIndex(null)
       setSelectedNode(null)
