@@ -11014,3 +11014,62 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding-top: 8px; border-top: 1px solid var(--border, rgba(255, 255, 255, .12));
   font-weight: 700; font-size: 16px;
 }
+
+/* FIN-PRICEBOOK-36: секция «Прайс-бук» — каталог материалов с ценами (источник цен для смет). */
+.pricebook-subtitle { margin: 2px 0 12px; font-size: 13px; }
+.pricebook-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.pricebook-search {
+  flex: 1 1 220px; min-width: 0; padding: 9px 12px; border-radius: 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, .12)); background: var(--panel); color: var(--text); font-size: 14px;
+}
+.pricebook-search::placeholder { color: var(--muted2); }
+
+.pricebook-add-form {
+  border: 1px solid var(--border, rgba(255, 255, 255, .1)); border-radius: 12px;
+  background: var(--panel2); padding: 14px; margin-bottom: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.pricebook-add-title { font-size: 15px; }
+.pricebook-add-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
+.pricebook-add-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.pricebook-add-field span { font-size: 12px; }
+.pricebook-add-field input, .pricebook-add-field select {
+  padding: 8px 10px; border-radius: 9px; border: 1px solid var(--border, rgba(255, 255, 255, .12));
+  background: var(--panel); color: var(--text); font-size: 14px;
+}
+.pricebook-add-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.pricebook-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 10px; }
+.pricebook-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 560px; }
+.pricebook-table thead th {
+  text-align: left; padding: 8px 10px;
+  color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em;
+  background: var(--panel); border-bottom: 1px solid var(--border, rgba(255, 255, 255, .1));
+}
+.pricebook-table th.num, .pricebook-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pricebook-table tbody td {
+  padding: 9px 10px; border-bottom: 1px solid var(--border, rgba(255, 255, 255, .05));
+  vertical-align: middle; color: var(--text);
+}
+.pricebook-cell-cat, .pricebook-cell-brand { color: var(--muted); white-space: nowrap; }
+.pricebook-cell-name { font-weight: 600; }
+.pricebook-row.busy { opacity: .55; }
+.pricebook-age-badge { font-weight: 600; white-space: nowrap; }
+
+.pricebook-price-btn {
+  background: none; border: 1px dashed transparent; border-radius: 7px; color: var(--text);
+  font-weight: 700; cursor: pointer; padding: 3px 7px; font-size: 13px;
+}
+.pricebook-price-btn:hover { border-color: var(--blue); color: var(--blue); }
+.pricebook-price-edit { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.pricebook-price-edit .btn.small { padding: 6px 10px; font-size: 12px; }
+.pricebook-price-input {
+  width: 96px; padding: 5px 8px; border-radius: 8px; text-align: right;
+  border: 1px solid var(--blue); background: var(--panel); color: var(--text); font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.pricebook-price-error { font-size: 12px; }
+
+@media (max-width: 640px) {
+  .pricebook-add-grid { grid-template-columns: 1fr; }
+}
