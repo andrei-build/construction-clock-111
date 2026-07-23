@@ -11,6 +11,7 @@ import { isManagerWrite } from '../../lib/types'
 import type { Profile, Project, ProjectHubFile } from '../../lib/types'
 import Sketch3DView from './Sketch3DView'
 import WallElevation from './WallElevation'
+import SketchPrintPackage from './SketchPrintPackage'
 import {
   codeClearanceEntityLabel,
   codeClearanceItemIds,
@@ -1673,6 +1674,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // EXPORT-PACKAGE-46: печатный «пакет проекта». printing — монтируем печатный контейнер и зовём
+  // window.print(); printPlanUrl — PNG плана (renderPng) как data/object-URL для <img> в пакете.
+  const [printing, setPrinting] = useState(false)
+  const [printPlanUrl, setPrintPlanUrl] = useState<string | null>(null)
 
   const [saved, setSaved] = useState<ProjectHubFile[]>([])
   const [loadOpen, setLoadOpen] = useState(false)
@@ -4878,6 +4883,60 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
   }
 
+  // EXPORT-PACKAGE-46: собрать печатный пакет — перерисовать план в PNG (renderPng, чёрным по белому),
+  // смонтировать печатный контейнер и вызвать window.print(). Ничего не пишет в persist/api.
+  const downloadPackage = useCallback(async () => {
+    if (busy || printing) return
+    if (model.contours.every((c) => c.points.length < 2)) {
+      setError('hub_sketch_empty')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    setStatus(null)
+    try {
+      const png = await renderPng(model, t)
+      setPrintPlanUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev)
+        return png ? URL.createObjectURL(png) : null
+      })
+      setPrinting(true)
+    } catch {
+      setError('hub_sketch_save_failed')
+    } finally {
+      setBusy(false)
+    }
+  }, [busy, printing, model, t])
+
+  // Когда печатный контейнер смонтирован — дать SVG-развёрткам прорисоваться (два кадра) и печатать.
+  // По afterprint снимаем контейнер и освобождаем object-URL плана (без утечек).
+  useEffect(() => {
+    if (!printing) return
+    const finish = () => {
+      setPrinting(false)
+      setPrintPlanUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev)
+        return null
+      })
+    }
+    window.addEventListener('afterprint', finish)
+    let raf2 = 0
+    const raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => {
+        try {
+          window.print()
+        } catch {
+          finish()
+        }
+      })
+    })
+    return () => {
+      window.removeEventListener('afterprint', finish)
+      window.cancelAnimationFrame(raf1)
+      if (raf2) window.cancelAnimationFrame(raf2)
+    }
+  }, [printing])
+
   const calcMaterial = async () => {
     if (!profile || busy) return
     if (stats.perContour.length === 0) {
@@ -6371,6 +6430,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               <button type="button" className="btn ghost small" disabled={busy} onClick={calcMaterial}>
                 {t('hub_sketch_material')}
               </button>
+              <button type="button" className="btn ghost small" disabled={busy || printing} onClick={downloadPackage}>
+                {t('hub_sketch_export_package')}
+              </button>
               <button type="button" className="btn ghost small" disabled={sketchMaterialsBusy} onClick={runSketchMaterials}>
                 {sketchMaterialsBusy ? t('loading') : t('hub_sketch_materials_from_sketch')}
               </button>
@@ -6772,6 +6834,17 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   return (
     <section className={canvasFullscreenActive ? 'hub-tab-panel hub-sketch hub-sketch-2d-fullscreen-active' : 'hub-tab-panel hub-sketch'}>
+      {printing && (
+        <SketchPrintPackage
+          model={model}
+          projectName={project.name}
+          projectAddress={project.address}
+          sketchName={name}
+          dateText={new Date().toLocaleDateString(lang === 'ru' ? 'ru-RU' : lang === 'es' ? 'es-ES' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+          planImageUrl={printPlanUrl}
+          t={t}
+        />
+      )}
       {renderSketchTopbar()}
 
       <div className={workspaceClass}>
