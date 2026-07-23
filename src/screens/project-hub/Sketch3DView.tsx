@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { CATALOG_CATEGORIES, getCatalogItems, getProjectFileDownloadUrl, getProjectHubFiles, mediaUrl, uploadProjectFileToR2 } from '../../lib/api'
 import type { CatalogCategory, CatalogItem } from '../../lib/api'
 import { useI18n } from '../../lib/i18n'
+import { show3DViewPresetsInStrip } from '../../lib/sketchToolbar'
 import { supabase, SUPABASE_KEY, SUPABASE_URL } from '../../lib/supabase'
 import type { Profile, Project, ProjectHubFile } from '../../lib/types'
 import {
@@ -5034,18 +5035,25 @@ export default function Sketch3DView({
             />
             <span>{t('hub_sketch_3d_dimensions')}</span>
           </label>
-          <button type="button" className={cameraButtonClass('fit')} onClick={() => setCameraPreset('fit')}>
-            {t('hub_sketch_camera_fit')}
-          </button>
-          <button type="button" className={cameraButtonClass('top')} onClick={() => setCameraPreset('top')}>
-            {t('hub_sketch_camera_top')}
-          </button>
-          <button type="button" className={cameraButtonClass('angle')} onClick={() => setCameraPreset('angle')}>
-            {t('hub_sketch_camera_angle')}
-          </button>
-          <button type="button" className={cameraButtonClass('inside')} onClick={() => setCameraPreset('inside')}>
-            {t('hub_sketch_camera_inside')}
-          </button>
+          {/* SKETCH-TOPBAR-CONSOLIDATE-52: виды (Вписать/Сверху/Угол/Внутри) живут в ЕДИНОЙ верхней
+              строке приложения. В 3D-строке их дублируем ТОЛЬКО в полноэкранном режиме, где верхней
+              строки нет (иначе — «островной» дубль видов). Функции не теряются: см. sketchToolbar.ts. */}
+          {show3DViewPresetsInStrip({ fullscreenActive }) && (
+            <div className="hub-sketch-3d-view-presets" role="group" aria-label={t('hub_sketch_view_controls')}>
+              <button type="button" className={cameraButtonClass('fit')} onClick={() => setCameraPreset('fit')}>
+                {t('hub_sketch_camera_fit')}
+              </button>
+              <button type="button" className={cameraButtonClass('top')} onClick={() => setCameraPreset('top')}>
+                {t('hub_sketch_camera_top')}
+              </button>
+              <button type="button" className={cameraButtonClass('angle')} onClick={() => setCameraPreset('angle')}>
+                {t('hub_sketch_camera_angle')}
+              </button>
+              <button type="button" className={cameraButtonClass('inside')} onClick={() => setCameraPreset('inside')}>
+                {t('hub_sketch_camera_inside')}
+              </button>
+            </div>
+          )}
           <label className="hub-sketch-3d-toolbar-toggle">
             <input
               type="checkbox"

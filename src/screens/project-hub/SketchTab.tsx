@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useI18n } from '../../lib/i18n'
+import { railIconId } from '../../lib/sketchToolbar'
 import {
   createProjectNote,
   getProjectFileDownloadUrl,
@@ -373,6 +374,76 @@ const SKETCH_MODE_OPTIONS: Array<{ mode: SketchMode; labelKey: string; icon: str
   { mode: 'measure', labelKey: 'hub_sketch_mode_measure', icon: '⌖' },
   { mode: 'markup', labelKey: 'hub_sketch_mode_markup', icon: '✎' },
 ]
+
+// SKETCH-TOPBAR-CONSOLIDATE-52: узнаваемые иконки левого рейла вместо «загадочных квадратиков».
+// Инлайн-SVG (0 новых зависимостей), stroke=currentColor — наследует цвет активной/обычной кнопки.
+// id значка выбирает чистый модуль sketchToolbar (railIconId), покрытый тестами.
+function renderRailIcon(mode: string) {
+  const p = { width: 22, height: 22, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
+  switch (railIconId(mode)) {
+    case 'wall': // кирпичная кладка
+      return (
+        <svg {...p}>
+          <rect x="3" y="6" width="18" height="12" rx="1" />
+          <line x1="3" y1="12" x2="21" y2="12" />
+          <line x1="9" y1="6" x2="9" y2="12" />
+          <line x1="15" y1="12" x2="15" y2="18" />
+        </svg>
+      )
+    case 'opening': // дверь с петлёй и дугой открывания
+      return (
+        <svg {...p}>
+          <rect x="5" y="3" width="10" height="18" rx="1" />
+          <path d="M15 21a12 12 0 0 0 4-8" />
+          <circle cx="12" cy="12" r="0.9" fill="currentColor" stroke="none" />
+        </svg>
+      )
+    case 'finish': // малярный валик (отделка)
+      return (
+        <svg {...p}>
+          <rect x="4" y="4" width="13" height="6" rx="1.5" />
+          <path d="M17 7h2a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-7" />
+          <path d="M12 12v3" />
+          <rect x="9.5" y="15" width="5" height="6" rx="1" />
+        </svg>
+      )
+    case 'cabinet': // тумба с двумя дверцами и ручками
+      return (
+        <svg {...p}>
+          <rect x="4" y="3" width="16" height="18" rx="1" />
+          <line x1="12" y1="3" x2="12" y2="21" />
+          <line x1="10" y1="9" x2="10" y2="12" />
+          <line x1="14" y1="9" x2="14" y2="12" />
+        </svg>
+      )
+    case 'light': // лампочка
+      return (
+        <svg {...p}>
+          <path d="M9 18h6" />
+          <path d="M10 21h4" />
+          <path d="M12 3a6 6 0 0 1 4 10.5c-.7.6-1 1-1 2H9c0-1-.3-1.4-1-2A6 6 0 0 1 12 3Z" />
+        </svg>
+      )
+    case 'measure': // рулетка / измерение
+      return (
+        <svg {...p}>
+          <path d="M4 8h13a3 3 0 0 1 3 3v5a1 1 0 0 1-1 1H7a3 3 0 0 1-3-3V8Z" />
+          <circle cx="9" cy="14" r="2.5" />
+          <line x1="9" y1="4" x2="9" y2="8" />
+          <line x1="13" y1="4" x2="13" y2="8" />
+          <line x1="17" y1="4" x2="17" y2="8" />
+        </svg>
+      )
+    case 'markup': // карандаш (разметка)
+    default:
+      return (
+        <svg {...p}>
+          <path d="M14.5 4.5l5 5" />
+          <path d="M4 20l1.2-4L16 5.2a2 2 0 0 1 2.8 0l0 0a2 2 0 0 1 0 2.8L8 18.8 4 20Z" />
+        </svg>
+      )
+  }
+}
 
 const MODES_WITH_3D_CONTEXT = new Set<SketchMode>(['opening', 'finish', 'light', 'measure'])
 
@@ -5193,7 +5264,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const screenWorldPx = canvasView.width / Math.max(1, canvasSize.width)
   const nodeRadius = Math.max(3, Math.min(18, 5 * screenWorldPx))
   const hoverRadius = Math.max(4, Math.min(20, 6 * screenWorldPx))
-  const dimFontSize = 12 * screenWorldPx
+  // SKETCH-TOPBAR-CONSOLIDATE-52: крупнее кегль размерных подписей (12→13.5) — «меры отчётливее» (п.6).
+  const dimFontSize = 13.5 * screenWorldPx
   const wallDimLines = useMemo(
     () => eachSegment(model).map((seg) => segmentDimLine(model, seg, screenWorldPx)).filter((dim): dim is SegmentDimLine => !!dim),
     [model, screenWorldPx],
@@ -5618,60 +5690,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     </div>
   )
 
-  const renderCanvasControls = () => (
-    <div className="hub-sketch-2d-control-stack" role="toolbar" aria-label={t('hub_sketch_2d_canvas_tools')}>
-      <div className="hub-sketch-2d-control-group" role="group" aria-label={t('hub_sketch_history_controls')}>
-        <button
-          type="button"
-          className="hub-sketch-round-btn"
-          disabled={!canEdit || !canUndo}
-          aria-label={t('hub_sketch_step_back')}
-          title={t('hub_sketch_step_back')}
-          onClick={undo}
-        >
-          ↶
-        </button>
-        <button
-          type="button"
-          className="hub-sketch-round-btn"
-          disabled={!canEdit || !canRedo}
-          aria-label={t('hub_sketch_step_forward')}
-          title={t('hub_sketch_step_forward')}
-          onClick={redo}
-        >
-          ↷
-        </button>
-      </div>
-      <div className="hub-sketch-2d-control-group" role="group" aria-label={t('hub_sketch_zoom_controls')}>
-        <button
-          type="button"
-          className="hub-sketch-round-btn"
-          aria-label={t('hub_sketch_zoom_in')}
-          title={t('hub_sketch_zoom_in')}
-          onClick={() => zoomCanvasToCenter(1 / ZOOM_BUTTON_STEP)}
-        >
-          +
-        </button>
-        <button
-          type="button"
-          className="hub-sketch-round-btn"
-          aria-label={t('hub_sketch_zoom_out')}
-          title={t('hub_sketch_zoom_out')}
-          onClick={() => zoomCanvasToCenter(ZOOM_BUTTON_STEP)}
-        >
-          −
-        </button>
-      </div>
-      <div className="hub-sketch-2d-tools" role="group" aria-label={t('hub_sketch_view_controls')}>
-        <button type="button" className="btn ghost small" onClick={fitCanvasToModel}>
-          {t('hub_sketch_camera_fit')}
-        </button>
-        <button type="button" className="btn ghost small" aria-pressed={canvasFullscreenActive} onClick={toggleCanvasFullscreen}>
-          {t(canvasFullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
-        </button>
-      </div>
-    </div>
-  )
+  // SKETCH-TOPBAR-CONSOLIDATE-52: бывший плавающий остров 2D-навигации (renderCanvasControls)
+  // удалён — отмена/возврат/зум/Вписать/На весь экран теперь в единой верхней строке.
 
   const closeSketchSheet = (kind: SketchSheetKind) => {
     if (kind === 'context') {
@@ -6609,6 +6629,50 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             {t('hub_sketch_camera_inside')}
           </button>
         </div>
+        {/* SKETCH-TOPBAR-CONSOLIDATE-52: навигация 2D-канваса (отмена/возврат/зум) переселена из
+            плавающего острова в единую верхнюю строку — мелкие прямоугольные кнопки-иконки. */}
+        {viewMode === '2d' && (
+          <div className="hub-sketch-topbar-2d-nav" role="group" aria-label={t('hub_sketch_2d_canvas_tools')}>
+            <button
+              type="button"
+              className="btn ghost small hub-sketch-icon-btn"
+              disabled={!canEdit || !canUndo}
+              aria-label={t('hub_sketch_step_back')}
+              title={t('hub_sketch_step_back')}
+              onClick={undo}
+            >
+              <span aria-hidden="true">↶</span>
+            </button>
+            <button
+              type="button"
+              className="btn ghost small hub-sketch-icon-btn"
+              disabled={!canEdit || !canRedo}
+              aria-label={t('hub_sketch_step_forward')}
+              title={t('hub_sketch_step_forward')}
+              onClick={redo}
+            >
+              <span aria-hidden="true">↷</span>
+            </button>
+            <button
+              type="button"
+              className="btn ghost small hub-sketch-icon-btn"
+              aria-label={t('hub_sketch_zoom_in')}
+              title={t('hub_sketch_zoom_in')}
+              onClick={() => zoomCanvasToCenter(1 / ZOOM_BUTTON_STEP)}
+            >
+              <span aria-hidden="true">+</span>
+            </button>
+            <button
+              type="button"
+              className="btn ghost small hub-sketch-icon-btn"
+              aria-label={t('hub_sketch_zoom_out')}
+              title={t('hub_sketch_zoom_out')}
+              onClick={() => zoomCanvasToCenter(ZOOM_BUTTON_STEP)}
+            >
+              <span aria-hidden="true">−</span>
+            </button>
+          </div>
+        )}
       </div>
       <div className="hub-sketch-topbar-group hub-sketch-topbar-center">
         {lengthInput('wallHeight', 'hub_sketch_wall_height', heightFt, 1, 30, updateWallHeight, 'hub-sketch-height-field', 'hub_sketch_unit_ft')}
@@ -6690,7 +6754,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           title={t(option.labelKey)}
           onClick={() => selectSketchMode(option.mode)}
         >
-          <span className="hub-sketch-mode-icon" aria-hidden="true">{option.icon}</span>
+          <span className="hub-sketch-mode-icon hub-sketch-mode-icon-svg" aria-hidden="true">{renderRailIcon(option.mode)}</span>
           <span className="hub-sketch-mode-label">{t(option.labelKey)}</span>
         </button>
       ))}
@@ -7828,7 +7892,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     </button>
                   </div>
                 )}
-                {renderCanvasControls()}
+                {/* SKETCH-TOPBAR-CONSOLIDATE-52: плавающий остров 2D-навигации убран — отмена/возврат/зум
+                    теперь в единой верхней строке (renderSketchTopbar). Ноль плавающих островов. */}
                 {/* CABINETS-PLACE-13: поповер шкафа на плане — те же контролы, что на развёртке (ширина/высота навесных/удалить). */}
                 {planCabinetEditor && (() => {
                   const editorItem = planItems.find((entry) => entry.item.id === planCabinetEditor.id)?.item
