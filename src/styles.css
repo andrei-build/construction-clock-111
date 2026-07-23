@@ -10744,6 +10744,36 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .ask-diag-list li { font-size: 12px; }
 .ask-diag-list code { font-size: 11px; color: var(--text); }
 .ask-diag-empty { margin: 8px 0 0; }
+/* ASSISTANT-PAGE-42: три блока прозрачности ассистента (расход/память/инструменты), тёмная тема. */
+.ask-usage, .ask-memory, .ask-tooling { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; }
+.ask-block-title { margin: 0; font-size: 15px; font-weight: 700; }
+.ask-block-desc { margin: -4px 0 0; }
+.ask-block-empty { margin: 0; }
+.ask-usage-totals { display: flex; flex-wrap: wrap; gap: 10px 20px; }
+.ask-usage-stat { display: flex; flex-direction: column; gap: 2px; min-width: 90px; }
+.ask-usage-stat-value { font-size: 18px; font-weight: 700; color: var(--text); }
+.ask-usage-approx { margin: 0; }
+.ask-usage-days { display: flex; flex-direction: column; gap: 6px; }
+.ask-usage-days-title { margin: 0; text-transform: uppercase; letter-spacing: .04em; }
+.ask-usage-table { width: 100%; border-collapse: collapse; }
+.ask-usage-table td { padding: 3px 6px; font-size: 12px; vertical-align: middle; }
+.ask-usage-date { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ask-usage-bar-cell { width: 50%; }
+.ask-usage-bar {
+  display: block; height: 8px; min-width: 2px; border-radius: 4px;
+  background: var(--panel2); border: 1px solid var(--line);
+}
+.ask-usage-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ask-usage-cost { text-align: right; white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ask-memory-search { width: 100%; }
+.ask-memory-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 40vh; overflow-y: auto; }
+.ask-memory-row { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); }
+.ask-memory-role { text-transform: uppercase; letter-spacing: .04em; }
+.ask-memory-text { font-size: 13px; word-break: break-word; }
+.ask-tooling-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ask-tooling-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); }
+.ask-tooling-title { font-size: 13px; font-weight: 600; }
+.ask-tooling-status { text-transform: uppercase; letter-spacing: .04em; }
 .ask-input-row { position: sticky; bottom: 0; gap: 8px; padding-top: 4px; }
 
 @media (max-width: 760px) {
