@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
-import { getProjectHub } from '../lib/api'
-import { isManagerRole } from '../lib/types'
+import { getProjectHub, updateProject } from '../lib/api'
+import { isManagerRole, isManagerWrite } from '../lib/types'
 import type { ProjectHubData } from '../lib/types'
 import OverviewTab from './project-hub/OverviewTab'
 import TasksTab from './project-hub/TasksTab'
@@ -47,6 +47,15 @@ export default function ProjectHub() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const managerView = profile ? isManagerRole(profile.role) : false
+  const canWrite = profile ? isManagerWrite(profile.role) : false
+
+  // PROJECT-HEADER-COMPACT-55: имя проекта — кнопка-меню (Переименовать/Детали). Переименование
+  // переиспользует существующую мутацию updateProject (адрес сохраняем как есть) — 0 новой схемы/RPC.
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const [savingName, setSavingName] = useState(false)
+  const identRef = useRef<HTMLDivElement | null>(null)
   const visibleTabs = useMemo(
     () => HUB_TABS.filter((item) => managerView || item.workerVisible),
     [managerView],
@@ -85,13 +94,105 @@ export default function ProjectHub() {
 
   const project = hub.project
 
+  // Закрываем меню имени по клику вне области и по Esc.
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (identRef.current && !identRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menuOpen])
+
+  const startRename = () => {
+    if (!project) return
+    setNameDraft(project.name)
+    setRenaming(true)
+  }
+
+  const commitRename = async () => {
+    const next = nameDraft.trim()
+    if (!profile || !project || !id) { setRenaming(false); return }
+    if (!next || next === project.name) { setRenaming(false); return }
+    setSavingName(true)
+    try {
+      await updateProject(profile, id, { name: next, address: project.address ?? '' })
+      setHub((prev) => (prev.project ? { ...prev, project: { ...prev.project, name: next } } : prev))
+    } catch {
+      // сеть/RLS — тихо откатываем в режим просмотра, имя остаётся прежним
+    } finally {
+      setSavingName(false)
+      setRenaming(false)
+    }
+  }
+
   return (
     <div className="screen project-hub-screen">
-      <div className="worker-detail-head project-hub-head">
-        <div>
-          <Link className="inline-link muted" to="/projects">{t('hub_back_to_projects')}</Link>
-          <h1>{project ? project.name : t('project')}</h1>
-          {project?.address && <p className="muted">{project.address}</p>}
+      {/* PROJECT-HEADER-COMPACT-55: единая компактная панель (≤44px): back + имя·адрес + все
+          табы + бейдж статуса — вместо трёх верхних этажей. Табы скроллятся горизонтально на узких. */}
+      <div className="project-hub-head ph-compact">
+        <Link className="ph-back" to="/projects" aria-label={t('hub_back_to_projects')} title={t('hub_back_to_projects')}>←</Link>
+        <div className="ph-ident" ref={identRef}>
+          {renaming ? (
+            <input
+              className="ph-name-input"
+              value={nameDraft}
+              autoFocus
+              disabled={savingName}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={() => { void commitRename() }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { void commitRename() }
+                else if (e.key === 'Escape') { setRenaming(false) }
+              }}
+              aria-label={t('hub_menu_rename')}
+            />
+          ) : (
+            <button
+              type="button"
+              className="ph-name"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              disabled={!project}
+            >
+              {project ? project.name : t('project')}
+            </button>
+          )}
+          {project?.address && (
+            <span className="ph-address muted" title={project.address}>{project.address}</span>
+          )}
+          {menuOpen && project && !renaming && (
+            <div className="ph-name-menu" role="menu">
+              {canWrite && (
+                <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); startRename() }}>
+                  {t('hub_menu_rename')}
+                </button>
+              )}
+              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setTab('overview') }}>
+                {t('hub_menu_details')}
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="hub-tabs" role="tablist" aria-label={t('hub_tabs_label')}>
+          {visibleTabs.map((tabDef) => (
+            <button
+              key={tabDef.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === tabDef.key}
+              className={tab === tabDef.key ? 'active' : ''}
+              onClick={() => setTab(tabDef.key)}
+            >
+              {t(tabDef.labelKey)}
+            </button>
+          ))}
         </div>
         {project && (
           <span className={statusBadgeClass(project.status)}>
@@ -106,21 +207,6 @@ export default function ProjectHub() {
 
       {!loading && !error && project && (
         <>
-          <div className="hub-tabs" role="tablist" aria-label={t('hub_tabs_label')}>
-            {visibleTabs.map((tabDef) => (
-              <button
-                key={tabDef.key}
-                type="button"
-                role="tab"
-                aria-selected={tab === tabDef.key}
-                className={tab === tabDef.key ? 'active' : ''}
-                onClick={() => setTab(tabDef.key)}
-              >
-                {t(tabDef.labelKey)}
-              </button>
-            ))}
-          </div>
-
           {tab === 'overview' && (
             <OverviewTab
               project={project}
