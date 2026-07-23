@@ -11103,3 +11103,143 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 @media (max-width: 640px) {
   .pricebook-add-grid { grid-template-columns: 1fr; }
 }
+
+/* ===================================================================
+   ADAPT-TABLET-43 — планшет = полевой сценарий бригады (§12).
+   Всё под грубым указателем в диапазоне 721–1180px. Через (pointer:coarse)
+   fine-указатель десктопа (≥1181 и любой мыши) НЕ затрагивается ни при какой
+   ширине; телефон (≤720) вне диапазона — его выверенная раскладка не тронута.
+   =================================================================== */
+@media (pointer: coarse) and (min-width: 721px) and (max-width: 1180px) {
+  /* --- Тач-цель ≥44px: мелкие кнопки/чипы/табы/иконки/ссылки-строки --- */
+  .btn.small {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+  .side-link,
+  .side-ask {
+    min-height: 46px;
+  }
+  .check-row {
+    min-height: 46px;
+  }
+  .drawer-tabs button,
+  .hub-tabs button {
+    min-height: 46px;
+  }
+  .gallery-tabs button,
+  .mail-tab,
+  .projects-filter-tabs button {
+    min-height: 44px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .timeline-chip {
+    min-height: 44px;
+  }
+  .ai-icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .ai-icon-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+  .drawer-icon-action {
+    width: 44px;
+    height: 44px;
+    font-size: 19px;
+  }
+  .ask-voice-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  .pricebook-price-btn {
+    min-height: 44px;
+  }
+  /* Нативные чекбоксы/тумблеры — крупнее под палец (только известные toggle-строки,
+     чтобы не воевать с глобальным input{width:100%}). */
+  .check-row input,
+  .ai-toggle input {
+    width: 22px;
+    height: 22px;
+  }
+  /* Инлайн-ссылки-строки: вертикальный паддинг растит невидимую тач-зону,
+     display:inline сохранён — вертикальный паддинг инлайна не сдвигает поток. */
+  .inline-link {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  /* Нижняя навигация (роли работник/водитель/продажи на планшете — это и есть
+     бригада в поле): подпись читаемее, тач-строка и так ≥44px. */
+  .bottom-nav a {
+    font-size: 12px;
+  }
+
+  /* --- Панели эскиза как сворачиваемые правые ОВЕРЛЕИ ≥40% ширины --- */
+  /* Рабочая область — одна колонка (рейл + канва на всю ширину); панели плавают
+     поверх канвы, а не жмут её в узкие ~24% грид-колонки. */
+  .hub-sketch-workspace,
+  .hub-sketch-workspace-no-context,
+  .hub-sketch-workspace-has-properties,
+  .hub-sketch-workspace-no-context.hub-sketch-workspace-has-properties {
+    grid-template-columns: 78px minmax(0, 1fr);
+  }
+  .hub-sketch-context-panel,
+  .hub-sketch-properties-panel {
+    position: fixed;
+    top: auto;
+    left: auto;
+    right: calc(10px + env(safe-area-inset-right, 0px));
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    /* clamp(340,46vw,560): при 768 → 353px (46%), при 1180 → 543px (46%) — всегда ≥40% */
+    width: clamp(340px, 46vw, 560px);
+    max-width: calc(100vw - 24px);
+    max-height: min(82dvh, 760px);
+    z-index: 1011;
+    overflow: auto;
+    padding: 8px 12px 14px;
+    border-radius: 14px;
+    background: rgba(13, 21, 34, .98);
+    box-shadow: -18px 0 46px rgba(0, 0, 0, .46);
+    transform: translateX(0);
+    transition: transform .2s ease, opacity .2s ease;
+    -webkit-overflow-scrolling: touch;
+  }
+  .hub-sketch-properties-panel {
+    z-index: 1012;
+  }
+  /* Свёрнутый контекст — уезжает за правый край (крупная кнопка «Закрыть» ниже). */
+  .hub-sketch-context-panel.hub-sketch-sheet-closed {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(calc(100% + 40px));
+  }
+  /* «Крупная кнопка сворачивания» — тач-цель ≥48px. */
+  .hub-sketch-sheet-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    min-width: 100px;
+    margin-left: auto;
+  }
+  /* На планшете панель-оверлей закрывают крупной кнопкой, ручку-грип прячем. */
+  .hub-sketch-sheet-grip {
+    display: none;
+  }
+  .hub-sketch-context-head,
+  .hub-sketch-properties-head {
+    position: sticky;
+    top: -8px;
+    z-index: 2;
+    padding-top: 4px;
+    padding-bottom: 8px;
+    background: rgba(13, 21, 34, .98);
+  }
+}
