@@ -9680,6 +9680,98 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .cc-dispatch-grid, .cc-ops-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
+/* DISPATCH-REDESIGN-50: worker-centric доска расстановки. Слева проекты с назначенными и что
+   каждый делает; справа «Свободные» со счётчиком. Строгий, плотный, тёмно-зелёный вид. */
+.dispatch-cc { display: grid; gap: 12px; }
+.dispatch-cc-head { align-items: center; justify-content: space-between; }
+.dispatch-cc-head h2 { margin: 0; }
+.dispatch-cc-warn { display: grid; gap: 6px; }
+
+.dispatch-cc-board { display: grid; gap: 12px; grid-template-columns: 1fr; align-items: start; }
+@media (min-width: 720px) {
+  .dispatch-cc-board { grid-template-columns: minmax(0, 1fr) minmax(240px, 300px); }
+}
+.dispatch-cc-left { display: grid; gap: 10px; align-content: start; }
+.dispatch-cc-empty { padding: 10px 2px; }
+
+/* Правая колонка — «Свободные» (drop-зона для возврата назначенного). */
+.dispatch-cc-free {
+  display: grid; gap: 8px; align-content: start;
+  padding: 12px; border-radius: var(--radius);
+  background: var(--panel2); border: 1px solid var(--line);
+  position: sticky; top: 8px;
+}
+.dispatch-cc-free.drop-ready { border-color: rgba(63,174,122,.5); }
+.dispatch-cc-free.drag-over { border-color: var(--accent); background: var(--elevated); }
+.dispatch-cc-free-head { align-items: center; justify-content: space-between; }
+.dispatch-cc-free-head h3 { margin: 0; font-size: 14px; }
+.dispatch-free-list { display: grid; gap: 8px; }
+.dispatch-free-card {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: var(--radius);
+  background: var(--elevated); border: 1px solid var(--line);
+  cursor: pointer; user-select: none; min-height: 44px;
+}
+.dispatch-free-card:hover { border-color: rgba(63,174,122,.42); }
+.dispatch-free-card.selected { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.dispatch-free-name { font-weight: 700; }
+.dispatch-free-role { font-size: 12px; text-transform: capitalize; }
+.dispatch-drop-hint {
+  padding: 8px 10px; border-radius: var(--radius); text-align: center;
+  border: 1px dashed var(--accent); color: var(--accent); font-size: 13px; font-weight: 600;
+}
+.dispatch-hint { font-size: 12px; margin: 2px 0 0; }
+
+/* Панель назначения (клик-выбор свободного). */
+.dispatch-assign-bar {
+  display: grid; gap: 8px; padding: 10px;
+  border-radius: var(--radius); background: var(--panel2);
+  border: 1px solid var(--accent);
+}
+.dispatch-assign-title { font-weight: 700; }
+.dispatch-assign-bar select { margin: 0; }
+.dispatch-assign-task-row { display: flex; gap: 8px; align-items: center; }
+.dispatch-assign-task-row input { flex: 1; margin: 0; }
+.dispatch-assign-actions { display: flex; gap: 8px; }
+
+/* Карточка проекта (drop-цель для назначения/рокировки). */
+.dispatch-proj-card { display: grid; gap: 8px; }
+.dispatch-proj-card.drop-ready { border-color: rgba(63,174,122,.5); }
+.dispatch-proj-card.drag-over { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.dispatch-proj-head { align-items: flex-start; justify-content: space-between; }
+
+.dispatch-assigned-list { display: grid; gap: 8px; }
+.dispatch-assigned {
+  border-radius: var(--radius); background: var(--elevated); border: 1px solid var(--line);
+  overflow: hidden;
+}
+.dispatch-assigned.open { border-color: rgba(63,174,122,.42); }
+.dispatch-assigned-main {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  width: 100%; text-align: left; padding: 10px 12px; min-height: 44px;
+  background: none; border: none; color: inherit; font: inherit; cursor: pointer;
+}
+.dispatch-assigned-main:hover { background: var(--panel2); }
+.dispatch-assigned-name { font-weight: 700; }
+.dispatch-assigned-role { font-size: 12px; text-transform: capitalize; }
+.dispatch-assigned-task { flex: 1 1 100%; font-size: 13px; color: var(--text); }
+.dispatch-assigned-task.muted { color: var(--muted); }
+.dispatch-assigned-edit {
+  display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line);
+  background: var(--panel2);
+}
+.dispatch-task-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.dispatch-task-chips li {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px; border-radius: 12px; background: var(--elevated); border: 1px solid var(--line); font-size: 13px;
+}
+.dispatch-chip-x { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; font-size: 14px; line-height: 1; }
+.dispatch-chip-x:hover:not(:disabled) { color: var(--red); }
+.dispatch-move-row { display: flex; gap: 8px; align-items: center; }
+.dispatch-move-row select { flex: 1; margin: 0; }
+.dispatch-assigned-foot { display: flex; gap: 12px; align-items: center; }
+.dispatch-assign-here { justify-self: start; }
+
 /* MAIL-1-UI: экран «Почта». Вкладки ящиков, список писем, карточка письма. */
 .mail-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
 .mail-tab {

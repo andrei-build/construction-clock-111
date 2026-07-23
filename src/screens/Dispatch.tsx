@@ -218,6 +218,10 @@ export default function Dispatch() {
 
       {!loading && (
         <>
+          {/* DISPATCH-REDESIGN-50: worker-centric доска расстановки (две колонки) — главный блок
+              командного центра. Слева проекты с назначенными и что делают; справа «Свободные». */}
+          <PlanConstructor />
+
           <TeamMessageWidget
             crew={crew}
             messages={messages}
@@ -245,10 +249,6 @@ export default function Dispatch() {
             now={now}
             onOpenWorker={openWorker}
           />
-
-          {/* NAV-5: «Конструктор плана» (DISP-1) — единственный уникальный живой блок бывшей
-              «Главной». Ставим перед доской задач: сперва план дня по проектам, затем раздача задач. */}
-          <PlanConstructor />
 
           <TaskBoard
             projects={projects}

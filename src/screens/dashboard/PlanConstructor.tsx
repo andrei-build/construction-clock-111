@@ -3,34 +3,26 @@ import { useAuth } from '../../lib/auth'
 import { useI18n } from '../../lib/i18n'
 import {
   assignWorkerToProject,
-  createMaterialRequest,
   createTask,
   getRecentDispatchPlanSends,
-  markMaterialStatus,
   sendDispatchPlan,
+  softDeleteTask,
   subscribeToOrgEvents,
   subscribeToTaskChanges,
   unassignWorkerFromProject,
   type DispatchPlanSend,
-  type MaterialStatusAction,
 } from '../../lib/api'
 import { getOrgSnapshot } from '../../lib/api/dashboard'
-import { buildDashboardWorkerProfiles, buildUnassignedWorkerProfiles } from '../../lib/dashboardSnapshot'
+import {
+  buildDispatchBoard,
+  canAssign,
+  canSwap,
+  DISPATCH_CREW_ROLES,
+} from '../../lib/dispatchBoard'
 import { isManagerRole } from '../../lib/types'
-import type { CurrentAssignmentRow, Profile, Project, Role, Task, UnassignedWorkerRow } from '../../lib/types'
+import type { CurrentAssignmentRow, Profile, Project, Task, UnassignedWorkerRow } from '../../lib/types'
 import { useEntityDrawer } from '../../components/EntityDrawer'
-import MaterialStatusChain, { isMaterialFlowTask } from '../../components/MaterialStatusChain'
 import VoiceMic from '../../components/VoiceMic'
-
-type PlanConflict = {
-  id: string
-  tone: 'amber' | 'red'
-  text: string
-}
-
-type TaskDraft = { title: string; type: Task['task_type']; assignee: string }
-
-const CREW_ROLES: readonly Role[] = ['worker', 'driver', 'supervisor']
 
 function dateValue(date: Date) {
   const year = date.getFullYear()
@@ -49,11 +41,16 @@ function template(text: string, values: Record<string, string | number>) {
   return text.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''))
 }
 
-const emptyDraft: TaskDraft = { title: '', type: 'work', assignee: '' }
+// Что тащим: свободного (from=null) или назначенного (from=projectId) работника.
+type DragPayload = { workerId: string; from: string | null }
+// Раскрытая карточка назначенного работника (рокировка/задача/снятие).
+type EditState = { key: string; moveTo: string; taskText: string }
 
-// DISP-1: конструктор плана внутри командного центра. Андрей: «не понимаю, как создать
-// план; два плана и всё, добавить не могу» — старый /dispatch показывал только проекты,
-// где уже есть задачи. Здесь показываем ВСЕ активные проекты + поиск, чтобы добавить любой.
+// DISPATCH-REDESIGN-50: worker-centric доска расстановки (Командный центр). Слова Андрея:
+// «слева одна колонка — проекты с назначенными и что каждый делает; справа одна колонка со
+// ВСЕМИ ребятами, и как только одного отправил — он ИСЧЕЗ из общей группы; лёгкая рокировка».
+// Назначение = assignWorkerToProject; «что делает» = задача (createTask); рокировка = unassign+assign;
+// возврат в свободные = unassignWorkerFromProject; рассылка наряда = sendDispatchPlan (без изменений бэка).
 export default function PlanConstructor() {
   const { profile } = useAuth()
   const { t, lang } = useI18n()
@@ -69,14 +66,22 @@ export default function PlanConstructor() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
-  const [taskBusy, setTaskBusy] = useState<string | null>(null)
 
   const [date, setDate] = useState(() => tomorrowValue())
-  const [manualIds, setManualIds] = useState<Set<string>>(new Set())
-  const [query, setQuery] = useState('')
-  const [openForm, setOpenForm] = useState<string | null>(null)
-  const [draft, setDraft] = useState<TaskDraft>(emptyDraft)
   const [sentProject, setSentProject] = useState<string | null>(null)
+
+  // Клик-выбор свободного работника (правая колонка) → панель назначения.
+  const [selectedWorker, setSelectedWorker] = useState<string | null>(null)
+  const [assignProject, setAssignProject] = useState('')
+  const [assignTask, setAssignTask] = useState('')
+
+  // Drag-n-drop (нативный HTML5): payload держим в state (один вкладка/окно).
+  const [drag, setDrag] = useState<DragPayload | null>(null)
+  const [dragOverProject, setDragOverProject] = useState<string | null>(null)
+  const [dragOverFree, setDragOverFree] = useState(false)
+
+  // Раскрытая карточка назначенного (рокировка / +задача / снять).
+  const [edit, setEdit] = useState<EditState | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -84,7 +89,7 @@ export default function PlanConstructor() {
     try {
       const [snapshot, sendRows] = await Promise.all([getOrgSnapshot(), getRecentDispatchPlanSends()])
       setProjects(snapshot.projects)
-      setTeam(buildDashboardWorkerProfiles(snapshot.assignments, snapshot.unassigned, snapshot.team, CREW_ROLES))
+      setTeam(snapshot.team)
       setTasks(snapshot.open_tasks)
       setAssignments(snapshot.assignments)
       setUnassigned(snapshot.unassigned)
@@ -99,115 +104,62 @@ export default function PlanConstructor() {
   useEffect(() => { if (manager) void load() }, [profile?.id])
   useEffect(() => {
     if (!manager || !profile?.org_id) return
-    return subscribeToTaskChanges(profile.org_id, () => { void load() }, 'tasks:plan-constructor')
+    return subscribeToTaskChanges(profile.org_id, () => { void load() }, 'tasks:dispatch-board')
   }, [profile?.org_id])
   useEffect(() => {
     if (!manager || !profile?.org_id) return
-    return subscribeToOrgEvents(profile.org_id, () => { void load() }, `events:plan-constructor:${profile.org_id}`)
+    return subscribeToOrgEvents(profile.org_id, () => { void load() }, `events:dispatch-board:${profile.org_id}`)
   }, [profile?.org_id])
 
-  const peopleById = useMemo(() => new Map(team.map((person) => [person.id, person.name])), [team])
-  const unassignedWorkers = useMemo(() => buildUnassignedWorkerProfiles(unassigned, team, CREW_ROLES), [team, unassigned])
-  const assignedIds = (projectId: string) =>
-    new Set(assignments.filter((a) => a.project_id === projectId).map((a) => a.profile_id))
-  const projectTasks = (projectId: string) => tasks.filter((task) => task.project_id === projectId)
-  const assignedWorkers = (projectId: string) => {
-    const ids = assignedIds(projectId)
-    return team.filter((worker) => ids.has(worker.id))
-  }
-
-  // Проекты «в дне»: те, где уже есть бригада или задачи, плюс добавленные вручную из поиска.
-  const shownProjects = useMemo(() => {
-    const withAssign = new Set(assignments.map((a) => a.project_id))
-    const withTask = new Set(tasks.map((task) => task.project_id))
-    return projects.filter((p) => manualIds.has(p.id) || withAssign.has(p.id) || withTask.has(p.id))
-  }, [projects, assignments, tasks, manualIds])
-
-  const addableProjects = useMemo(() => {
-    const shown = new Set(shownProjects.map((p) => p.id))
-    const q = query.trim().toLowerCase()
-    return projects
-      .filter((p) => !shown.has(p.id) && (q === '' || p.name.toLowerCase().includes(q)))
-      .slice(0, 8)
-  }, [projects, shownProjects, query])
+  const board = useMemo(
+    () => buildDispatchBoard({ projects, team, assignments, unassigned, tasks, roles: DISPATCH_CREW_ROLES }),
+    [projects, team, assignments, unassigned, tasks],
+  )
 
   const sendByProject = useMemo(() => {
     const m = new Map<string, DispatchPlanSend>()
-    for (const s of sends) if (!m.has(s.project_id)) m.set(s.project_id, s) // sends отсортированы desc → первый = свежий
+    for (const s of sends) if (!m.has(s.project_id)) m.set(s.project_id, s) // sends desc → первый = свежий
     return m
   }, [sends])
 
-  const conflicts = useMemo<PlanConflict[]>(() => {
-    if (!manager) return []
-    const items: PlanConflict[] = []
-    const projectById = new Map(projects.map((project) => [project.id, project]))
-    const personById = new Map(team.map((person) => [person.id, person]))
+  const selectedWorkerName = useMemo(
+    () => board.free.find((w) => w.id === selectedWorker)?.name ?? null,
+    [board.free, selectedWorker],
+  )
 
-    // Человек назначен на 2+ проекта (project_assignments не датируется по дням, поэтому
-    // конфликт «на два проекта разом»). Считаем по уникальным проектам на человека.
-    const projectsByPerson = new Map<string, Map<string, Project>>()
-    for (const assignment of assignments) {
-      const project = projectById.get(assignment.project_id)
-      if (!project) continue
-      if (!projectsByPerson.has(assignment.profile_id)) projectsByPerson.set(assignment.profile_id, new Map())
-      projectsByPerson.get(assignment.profile_id)!.set(project.id, project)
+  // Если выбранный работник исчез из свободных (назначен/перезагрузка) — сбрасываем панель.
+  useEffect(() => {
+    if (selectedWorker && !board.free.some((w) => w.id === selectedWorker)) {
+      setSelectedWorker(null)
+      setAssignProject('')
+      setAssignTask('')
     }
-    const doubles = Array.from(projectsByPerson.entries()).sort((a, b) =>
-      (personById.get(a[0])?.name ?? '').localeCompare(personById.get(b[0])?.name ?? ''))
-    for (const [profileId, projectMap] of doubles) {
-      const activeProjects = Array.from(projectMap.values()).sort((a, b) => a.name.localeCompare(b.name))
-      if (activeProjects.length < 2) continue
-      items.push({
-        id: `double-${profileId}`,
-        tone: 'amber',
-        text: template(t('conflict_double_assignment'), {
-          name: personById.get(profileId)?.name ?? t('unknown_user'),
-          projectA: activeProjects[0].name,
-          projectB: activeProjects[1].name,
-        }),
-      })
-    }
-
-    // Проект с задачами, но без назначенной бригады.
-    for (const project of projects) {
-      if (projectTasks(project.id).length === 0) continue
-      if (assignedIds(project.id).size > 0) continue
-      items.push({
-        id: `nocrew-${project.id}`,
-        tone: 'red',
-        text: template(t('plan_conflict_no_crew'), { project: project.name }),
-      })
-    }
-
-    // Доставка без водителя (сохраняем прежний конфликт из /dispatch).
-    for (const task of tasks) {
-      if (task.task_type !== 'delivery' || !['open', 'in_progress'].includes(task.status)) continue
-      const assignee = task.assigned_to ? personById.get(task.assigned_to) : null
-      if (task.assigned_to && assignee?.role === 'driver') continue
-      items.push({
-        id: `delivery-${task.id}`,
-        tone: 'amber',
-        text: template(t('conflict_delivery_without_driver'), { title: task.title }),
-      })
-    }
-
-    return items
-  }, [assignments, manager, projects, t, tasks, team])
+  }, [board.free, selectedWorker])
 
   if (!manager) return null
 
-  const addProject = (projectId: string) => {
-    setManualIds((prev) => new Set(prev).add(projectId))
-    setQuery('')
-  }
-
-  const toggleWorker = async (projectId: string, workerId: string, checked: boolean) => {
+  // ── мутации ────────────────────────────────────────────────────────────────
+  const assign = async (workerId: string, projectId: string, taskText: string) => {
     if (!profile || busy) return
-    setBusy(`${projectId}-${workerId}`)
+    if (!canAssign(assignments, projects, workerId, projectId)) return
+    setBusy(`assign-${workerId}`)
     setError(false)
     try {
-      if (checked) await assignWorkerToProject(profile, projectId, workerId)
-      else await unassignWorkerFromProject(profile, projectId, workerId)
+      await assignWorkerToProject(profile, projectId, workerId)
+      const title = taskText.trim()
+      if (title) {
+        await createTask(profile, {
+          project_id: projectId,
+          title,
+          task_type: 'work',
+          priority: 'medium',
+          assigned_to: workerId,
+          due_date: date,
+        })
+      }
+      setSelectedWorker(null)
+      setAssignProject('')
+      setAssignTask('')
       await load()
     } catch {
       setError(true)
@@ -216,59 +168,87 @@ export default function PlanConstructor() {
     }
   }
 
-  const submitTask = async (projectId: string) => {
-    if (!profile || taskBusy) return
-    const title = draft.title.trim()
-    if (!title) return
-    setTaskBusy(projectId)
-    setError(false)
-    try {
-      if (draft.type === 'material') {
-        await createMaterialRequest(profile, { projectId, title, description: null })
-      } else {
-        await createTask(profile, {
-          project_id: projectId,
-          title,
-          task_type: draft.type,
-          priority: 'medium',
-          assigned_to: draft.assignee || null,
-          due_date: date,
-        })
-      }
-      setDraft(emptyDraft)
-      setOpenForm(null)
-      await load()
-    } catch {
-      setError(true)
-    } finally {
-      setTaskBusy(null)
-    }
-  }
-
-  const updateMaterialStatus = async (task: Task, action: MaterialStatusAction) => {
-    if (!profile || taskBusy) return
-    setTaskBusy(task.id)
-    setError(false)
-    try {
-      await markMaterialStatus(task.id, action)
-      await load()
-    } catch {
-      setError(true)
-    } finally {
-      setTaskBusy(null)
-    }
-  }
-
-  const sendPlan = async (project: Project) => {
+  const unassign = async (workerId: string, projectId: string) => {
     if (!profile || busy) return
-    const workers = assignedWorkers(project.id)
+    setBusy(`unassign-${workerId}`)
+    setError(false)
+    try {
+      await unassignWorkerFromProject(profile, projectId, workerId)
+      setEdit(null)
+      await load()
+    } catch {
+      setError(true)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const swap = async (workerId: string, fromProjectId: string, toProjectId: string) => {
+    if (!profile || busy) return
+    if (!canSwap(assignments, workerId, fromProjectId, toProjectId)) return
+    setBusy(`swap-${workerId}`)
+    setError(false)
+    try {
+      await unassignWorkerFromProject(profile, fromProjectId, workerId)
+      await assignWorkerToProject(profile, toProjectId, workerId)
+      setEdit(null)
+      await load()
+    } catch {
+      setError(true)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const addTask = async (workerId: string, projectId: string, taskText: string) => {
+    if (!profile || busy) return
+    const title = taskText.trim()
+    if (!title) return
+    setBusy(`task-${workerId}`)
+    setError(false)
+    try {
+      await createTask(profile, {
+        project_id: projectId,
+        title,
+        task_type: 'work',
+        priority: 'medium',
+        assigned_to: workerId,
+        due_date: date,
+      })
+      setEdit((e) => (e ? { ...e, taskText: '' } : e))
+      await load()
+    } catch {
+      setError(true)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const removeTask = async (task: Task) => {
+    if (!profile || busy) return
+    setBusy(`deltask-${task.id}`)
+    setError(false)
+    try {
+      await softDeleteTask(profile, task.id)
+      await load()
+    } catch {
+      setError(true)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const sendPlan = async (group: (typeof board.groups)[number]) => {
+    if (!profile || busy) return
+    const workers = group.workers.map((w) => w.profile)
     if (workers.length === 0) return
-    setBusy(project.id)
+    setBusy(`send-${group.project.id}`)
     setError(false)
     setSentProject(null)
     try {
-      await sendDispatchPlan(profile, project, workers, projectTasks(project.id), date)
-      setSentProject(project.id)
+      const projectTasks = tasks.filter((task) => task.project_id === group.project.id)
+      await sendDispatchPlan(profile, group.project, workers, projectTasks, date)
+      setSentProject(group.project.id)
       setSends(await getRecentDispatchPlanSends())
     } catch {
       setError(true)
@@ -277,10 +257,29 @@ export default function PlanConstructor() {
     }
   }
 
+  // ── drag-n-drop helpers ──────────────────────────────────────────────────────
+  const onDropProject = (projectId: string) => {
+    setDragOverProject(null)
+    const payload = drag
+    setDrag(null)
+    if (!payload) return
+    if (payload.from === null) void assign(payload.workerId, projectId, '')
+    else if (payload.from !== projectId) void swap(payload.workerId, payload.from, projectId)
+  }
+
+  const onDropFree = () => {
+    setDragOverFree(false)
+    const payload = drag
+    setDrag(null)
+    if (payload?.from) void unassign(payload.workerId, payload.from)
+  }
+
+  const projectOptions = projects // все активные проекты как цели назначения/рокировки
+
   return (
-    <section className="card plan-constructor">
-      <div className="row plan-constructor-head">
-        <h2>{t('plan_constructor_title')}</h2>
+    <section className="card dispatch-cc">
+      <div className="row dispatch-cc-head">
+        <h2>{t('dispatch_board_title')}</h2>
         <label className="plan-date-picker">
           {t('plan_date')}
           <input type="date" value={date} onChange={(e) => setDate(e.target.value || tomorrowValue())} />
@@ -288,198 +287,249 @@ export default function PlanConstructor() {
       </div>
 
       {error && <p className="error-msg">{t('load_error')}</p>}
+
       {loading ? (
         <div className="muted">{t('loading')}</div>
       ) : (
         <>
-          <div className="plan-conflicts">
-            <h3>{t('conflicts_title')}</h3>
-            {conflicts.length === 0 ? (
-              <p className="muted">{t('conflicts_none')}</p>
-            ) : (
-              conflicts.map((conflict) => (
-                <div className={`dispatch-conflict-row ${conflict.tone}`} key={conflict.id}>
-                  <span className={`status-dot ${conflict.tone}`} />
-                  <div className="item-title">{conflict.text}</div>
+          {board.doubleAssigned.length > 0 && (
+            <div className="dispatch-cc-warn">
+              {board.doubleAssigned.map((d) => (
+                <div className="dispatch-conflict-row amber" key={d.profileId}>
+                  <span className="status-dot amber" />
+                  <div className="item-title">
+                    {template(t('dispatch_double_warn'), { name: d.name, projects: d.projects.join(', ') })}
+                  </div>
                 </div>
-              ))
-            )}
-          </div>
-
-          <div className="plan-free-workers">
-            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3>{t('plan_free_workers')}</h3>
-              <span className="badge blue">{unassignedWorkers.length}</span>
+              ))}
             </div>
-            {unassignedWorkers.length === 0 ? (
-              <p className="muted">{t('plan_free_workers_empty')}</p>
-            ) : (
-              <div className="dispatch-workers">
-                {unassignedWorkers.map((worker) => (
-                  <button
-                    key={worker.id}
-                    type="button"
-                    className="inline-link"
-                    onClick={() => openWorker(worker)}
-                  >
-                    {worker.name} <span className="muted">· {worker.role}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
 
-          <div className="plan-add-project">
-            <input
-              type="search"
-              value={query}
-              placeholder={t('plan_add_project_search')}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            {(query.trim() !== '' || addableProjects.length > 0) && (
-              <div className="plan-add-list">
-                {addableProjects.length === 0 ? (
-                  <span className="muted">{t('no_active_projects')}</span>
-                ) : (
-                  addableProjects.map((p) => (
-                    <button key={p.id} type="button" className="btn small" onClick={() => addProject(p.id)}>
-                      + {p.name}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-
-          {shownProjects.length === 0 && <div className="muted plan-empty">{t('plan_no_projects_for_day')}</div>}
-
-          <div className="dispatch-board">
-            {shownProjects.map((project) => {
-              const ids = assignedIds(project.id)
-              const workers = assignedWorkers(project.id)
-              const ptasks = projectTasks(project.id)
-              const sent = sendByProject.get(project.id)
-              const isFormOpen = openForm === project.id
-              return (
-                <section className="card dispatch-card" key={project.id}>
-                  <div className="row">
-                    <div>
-                      <button className="inline-link item-title" onClick={() => openProject(project)}>{project.name}</button>
-                      <div className="muted">{project.address}</div>
-                    </div>
-                    <span className="badge blue">{workers.length}</span>
+          <div className="dispatch-cc-board">
+            {/* ЛЕВАЯ КОЛОНКА — проекты с назначенными + что делает */}
+            <div className="dispatch-cc-left">
+              {selectedWorker && (
+                <div className="dispatch-assign-bar">
+                  <div className="dispatch-assign-title">
+                    {template(t('dispatch_assign_worker'), { name: selectedWorkerName ?? '' })}
                   </div>
-
-                  {sent && (
-                    <div className="badge green plan-sent-badge">
-                      {template(t('plan_sent_badge'), { n: sent.workers, when: new Date(sent.created_at).toLocaleString() })}
-                    </div>
-                  )}
-
-                  <h3>{t('team')}</h3>
-                  <div className="dispatch-workers">
-                    {team.map((worker) => {
-                      const checked = ids.has(worker.id)
-                      return (
-                        <label key={worker.id} className="check-row">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={busy !== null}
-                            onChange={(e) => toggleWorker(project.id, worker.id, e.target.checked)}
-                          />
-                          <button
-                            type="button"
-                            className="inline-link"
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openWorker(worker) }}
-                          >
-                            {worker.name}
-                          </button>
-                        </label>
-                      )
-                    })}
+                  <select value={assignProject} onChange={(e) => setAssignProject(e.target.value)}>
+                    <option value="">{t('dispatch_pick_project')}</option>
+                    {projectOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  <div className="dispatch-assign-task-row">
+                    <input
+                      type="text"
+                      value={assignTask}
+                      placeholder={t('dispatch_what_doing_ph')}
+                      onChange={(e) => setAssignTask(e.target.value)}
+                    />
+                    <VoiceMic
+                      lang={lang}
+                      title={t('tasks_voice_hint')}
+                      onResult={(text) => setAssignTask((v) => (v ? `${v} ${text}` : text))}
+                    />
                   </div>
-
-                  <h3>{t('tasks')}</h3>
-                  {ptasks.length === 0 && <p className="muted">{t('no_tasks')}</p>}
-                  {ptasks.map((task) => (
-                    <div className="dispatch-task" key={task.id}>
-                      <div className="item-title">{task.title}</div>
-                      {task.description && <div className="muted task-description">{task.description}</div>}
-                      {isMaterialFlowTask(task) && (
-                        <MaterialStatusChain
-                          task={task}
-                          peopleById={peopleById}
-                          busy={taskBusy !== null}
-                          compact
-                          onStatusChange={updateMaterialStatus}
-                        />
-                      )}
-                    </div>
-                  ))}
-
-                  {isFormOpen ? (
-                    <div className="plan-task-form">
-                      <div className="plan-task-title-row">
-                        <input
-                          type="text"
-                          value={draft.title}
-                          placeholder={t('plan_task_title_ph')}
-                          onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
-                        />
-                        <VoiceMic
-                          lang={lang}
-                          title={t('mat_voice_hint')}
-                          onResult={(text) => setDraft((d) => ({ ...d, title: d.title ? `${d.title} ${text}` : text }))}
-                        />
-                      </div>
-                      <div className="plan-task-controls">
-                        <select value={draft.type} onChange={(e) => setDraft((d) => ({ ...d, type: e.target.value as Task['task_type'] }))}>
-                          <option value="work">{t('task_type_work')}</option>
-                          <option value="material">{t('task_type_material')}</option>
-                          <option value="delivery">{t('task_type_delivery')}</option>
-                        </select>
-                        {draft.type !== 'material' && (
-                          <select value={draft.assignee} onChange={(e) => setDraft((d) => ({ ...d, assignee: e.target.value }))}>
-                            <option value="">{t('plan_assignee_none')}</option>
-                            {team.map((worker) => (
-                              <option key={worker.id} value={worker.id}>{worker.name}</option>
-                            ))}
-                          </select>
-                        )}
-                      </div>
-                      <div className="plan-task-actions">
-                        <button
-                          type="button"
-                          className="btn small"
-                          disabled={taskBusy !== null || draft.title.trim() === ''}
-                          onClick={() => submitTask(project.id)}
-                        >
-                          {t('save')}
-                        </button>
-                        <button type="button" className="btn small ghost" disabled={taskBusy !== null} onClick={() => { setOpenForm(null); setDraft(emptyDraft) }}>
-                          {t('cancel')}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
+                  <div className="dispatch-assign-actions">
                     <button
                       type="button"
-                      className="inline-link plan-add-task"
-                      onClick={() => { setOpenForm(project.id); setDraft(emptyDraft) }}
+                      className="btn"
+                      disabled={busy !== null || !canAssign(assignments, projects, selectedWorker, assignProject)}
+                      onClick={() => assign(selectedWorker, assignProject, assignTask)}
                     >
-                      {t('plan_add_task')}
+                      {t('dispatch_assign_btn')}
                     </button>
-                  )}
+                    <button type="button" className="btn ghost" disabled={busy !== null} onClick={() => setSelectedWorker(null)}>
+                      {t('cancel')}
+                    </button>
+                  </div>
+                </div>
+              )}
 
-                  <button className="btn" title={t('send_plan_hint')} disabled={busy !== null || workers.length === 0} onClick={() => sendPlan(project)}>
-                    {t('send_plan')}
-                  </button>
-                  <p className="muted" style={{ marginTop: 4 }}>{t('send_plan_hint')}</p>
-                  {sentProject === project.id && <p className="ok-msg">{t('plan_sent')}</p>}
-                </section>
-              )
-            })}
+              {board.groups.length === 0 ? (
+                <div className="muted dispatch-cc-empty">{t('dispatch_no_projects')}</div>
+              ) : (
+                board.groups.map((group) => {
+                  const sent = sendByProject.get(group.project.id)
+                  const dropReady = drag !== null && drag.from !== group.project.id
+                  return (
+                    <section
+                      key={group.project.id}
+                      className={`card dispatch-proj-card${dragOverProject === group.project.id ? ' drag-over' : ''}${dropReady ? ' drop-ready' : ''}`}
+                      onDragOver={(e) => { if (drag) { e.preventDefault(); setDragOverProject(group.project.id) } }}
+                      onDragLeave={() => setDragOverProject((cur) => (cur === group.project.id ? null : cur))}
+                      onDrop={(e) => { e.preventDefault(); onDropProject(group.project.id) }}
+                    >
+                      <div className="row dispatch-proj-head">
+                        <div>
+                          <button className="inline-link item-title" onClick={() => openProject(group.project)}>{group.project.name}</button>
+                          {group.project.address && <div className="muted">{group.project.address}</div>}
+                        </div>
+                        <span className="badge blue">{group.workers.length}</span>
+                      </div>
+
+                      {sent && (
+                        <div className="badge green plan-sent-badge">
+                          {template(t('plan_sent_badge'), { n: sent.workers, when: new Date(sent.created_at).toLocaleString() })}
+                        </div>
+                      )}
+
+                      <div className="dispatch-assigned-list">
+                        {group.workers.map((w) => {
+                          const key = `${group.project.id}:${w.profile.id}`
+                          const open = edit?.key === key
+                          return (
+                            <div
+                              key={w.profile.id}
+                              className={`dispatch-assigned${open ? ' open' : ''}`}
+                              draggable={busy === null}
+                              onDragStart={() => setDrag({ workerId: w.profile.id, from: group.project.id })}
+                              onDragEnd={() => { setDrag(null); setDragOverProject(null); setDragOverFree(false) }}
+                            >
+                              <button
+                                type="button"
+                                className="dispatch-assigned-main"
+                                onClick={() => setEdit(open ? null : { key, moveTo: '', taskText: '' })}
+                              >
+                                <span className="dispatch-assigned-name">{w.profile.name}</span>
+                                <span className="muted dispatch-assigned-role">{w.profile.role}</span>
+                                {w.tasks.length > 0 ? (
+                                  <span className="dispatch-assigned-task">{w.tasks.map((tk) => tk.title).join(' · ')}</span>
+                                ) : w.note ? (
+                                  <span className="dispatch-assigned-task">{w.note}</span>
+                                ) : (
+                                  <span className="muted dispatch-assigned-task">{t('dispatch_no_task')}</span>
+                                )}
+                              </button>
+
+                              {open && (
+                                <div className="dispatch-assigned-edit" onClick={(e) => e.stopPropagation()}>
+                                  {w.tasks.length > 0 && (
+                                    <ul className="dispatch-task-chips">
+                                      {w.tasks.map((tk) => (
+                                        <li key={tk.id}>
+                                          <span>{tk.title}</span>
+                                          <button type="button" className="dispatch-chip-x" disabled={busy !== null} onClick={() => removeTask(tk)}>×</button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  <div className="dispatch-assign-task-row">
+                                    <input
+                                      type="text"
+                                      value={edit.taskText}
+                                      placeholder={t('dispatch_what_doing_ph')}
+                                      onChange={(e) => setEdit((s) => (s ? { ...s, taskText: e.target.value } : s))}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="btn small"
+                                      disabled={busy !== null || edit.taskText.trim() === ''}
+                                      onClick={() => addTask(w.profile.id, group.project.id, edit.taskText)}
+                                    >
+                                      {t('dispatch_add_task_btn')}
+                                    </button>
+                                  </div>
+                                  <div className="dispatch-move-row">
+                                    <select value={edit.moveTo} onChange={(e) => setEdit((s) => (s ? { ...s, moveTo: e.target.value } : s))}>
+                                      <option value="">{t('dispatch_move_to')}</option>
+                                      {projectOptions
+                                        .filter((p) => p.id !== group.project.id)
+                                        .map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      className="btn small"
+                                      disabled={busy !== null || !canSwap(assignments, w.profile.id, group.project.id, edit.moveTo)}
+                                      onClick={() => swap(w.profile.id, group.project.id, edit.moveTo)}
+                                    >
+                                      {t('dispatch_move_btn')}
+                                    </button>
+                                  </div>
+                                  <div className="dispatch-assigned-foot">
+                                    <button type="button" className="btn ghost small" disabled={busy !== null} onClick={() => unassign(w.profile.id, group.project.id)}>
+                                      {t('dispatch_unassign_btn')}
+                                    </button>
+                                    <button type="button" className="inline-link" onClick={() => openWorker(w.profile)}>{t('dispatch_open_card')}</button>
+                                  </div>
+                                </div>
+                              )}
+
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      {selectedWorker && canAssign(assignments, projects, selectedWorker, group.project.id) && (
+                        <button
+                          type="button"
+                          className="btn small dispatch-assign-here"
+                          disabled={busy !== null}
+                          onClick={() => assign(selectedWorker, group.project.id, assignTask)}
+                        >
+                          ← {t('dispatch_assign_here')}
+                        </button>
+                      )}
+
+                      <button
+                        className="btn"
+                        title={t('send_plan_hint')}
+                        disabled={busy !== null || group.workers.length === 0}
+                        onClick={() => sendPlan(group)}
+                      >
+                        {t('send_plan')}
+                      </button>
+                      {sentProject === group.project.id && <p className="ok-msg">{t('plan_sent')}</p>}
+                    </section>
+                  )
+                })
+              )}
+            </div>
+
+            {/* ПРАВАЯ КОЛОНКА — все свободные + счётчик «Осталось: N» */}
+            <aside
+              className={`dispatch-cc-free${dragOverFree ? ' drag-over' : ''}${drag?.from ? ' drop-ready' : ''}`}
+              onDragOver={(e) => { if (drag?.from) { e.preventDefault(); setDragOverFree(true) } }}
+              onDragLeave={() => setDragOverFree(false)}
+              onDrop={(e) => { e.preventDefault(); onDropFree() }}
+            >
+              <div className="row dispatch-cc-free-head">
+                <h3>{t('dispatch_free_title')}</h3>
+                <span className={`badge ${board.freeCount > 0 ? 'blue' : 'green'}`}>
+                  {template(t('dispatch_free_remaining'), { n: board.freeCount })}
+                </span>
+              </div>
+
+              {board.free.length === 0 ? (
+                <p className="muted dispatch-cc-empty">{t('dispatch_all_distributed')}</p>
+              ) : (
+                <div className="dispatch-free-list">
+                  {board.free.map((w) => (
+                    <div
+                      key={w.id}
+                      className={`dispatch-free-card${selectedWorker === w.id ? ' selected' : ''}`}
+                      draggable={busy === null}
+                      onDragStart={() => setDrag({ workerId: w.id, from: null })}
+                      onDragEnd={() => { setDrag(null); setDragOverProject(null); setDragOverFree(false) }}
+                      onClick={() => {
+                        setSelectedWorker((cur) => (cur === w.id ? null : w.id))
+                        setAssignProject('')
+                        setAssignTask('')
+                        setEdit(null)
+                      }}
+                    >
+                      <span className="dispatch-free-name">{w.name}</span>
+                      <span className="muted dispatch-free-role">{w.role}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {dragOverFree && <div className="dispatch-drop-hint">{t('dispatch_drop_to_free')}</div>}
+              {board.free.length > 0 && !selectedWorker && (
+                <p className="muted dispatch-hint">{t('dispatch_select_hint')}</p>
+              )}
+            </aside>
           </div>
         </>
       )}
