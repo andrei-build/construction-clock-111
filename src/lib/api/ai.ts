@@ -73,6 +73,47 @@ export async function getPendingProposals(): Promise<AiProposal[]> {
   return (data as AiProposal[]) ?? []
 }
 
+// ASSISTANT-PAGE-42 (блок 🛠 «что мне нужно»): предложения ИИ с action_type='tooling' (инструменты,
+// которых ассистенту не хватает), свежие сверху. В проде таких строк пока НОЛЬ → пустой список (это
+// НЕ баг — UI покажет аккуратное пустое состояние). RLS ai_proposals (owner-only) сама ограничивает
+// доступ; error → [] (мягкая деградация как getPendingProposals). 0 insert/update — только select.
+export async function getToolingProposals(): Promise<AiProposal[]> {
+  const { data, error } = await supabase
+    .from('ai_proposals')
+    .select(AI_PROPOSAL_SELECT)
+    .eq('action_type', 'tooling')
+    .order('created_at', { ascending: false })
+  if (error) {
+    warnReadError('getToolingProposals', error)
+    return []
+  }
+  return (data as AiProposal[]) ?? []
+}
+
+// ASSISTANT-PAGE-42 (блок 💰 расход на ИИ): сырьё для агрегации трат — события AI-чата из журнала
+// events (event_type='ai.chat', data={q, proposals, tokens_in, tokens_out, [model]}). Читаем только
+// нужные колонки, старые сверху (asc) — агрегируем в JS (aiUsageCore.aggregateAiUsage), 0 новой схемы
+// / 0 RPC. data.model может ОТСУТСТВОВАТЬ в старых строках (до v23) — ядро трактует это как дефолтную
+// модель (прибл. цена). RLS events (owner-only на чтение AI-строк) ограничивает доступ; error → [].
+export interface AiUsageEvent {
+  event_type: string
+  data: Record<string, unknown> | null
+  created_at: string
+}
+
+export async function getAiUsage(): Promise<AiUsageEvent[]> {
+  const { data, error } = await supabase
+    .from('events')
+    .select('event_type, data, created_at')
+    .eq('event_type', 'ai.chat')
+    .order('created_at', { ascending: true })
+  if (error) {
+    warnReadError('getAiUsage', error)
+    return []
+  }
+  return (data as AiUsageEvent[]) ?? []
+}
+
 // error: 'no_key' — особый sentinel (ANTHROPIC_API_KEY не введён в Supabase secrets): UI покажет
 // плашку, а не тост. Иначе error — человекочитаемый текст ошибки из ответа edge (тост).
 export interface AskAssistantResult {

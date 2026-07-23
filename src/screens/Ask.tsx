@@ -1,7 +1,16 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
 import VoiceMic from '../components/VoiceMic'
 import { isAiInfoProposalAction } from '../lib/aiVoice'
+import { getAiUsage, getToolingProposals, type AiProposal } from '../lib/api/ai'
+import {
+  aggregateAiUsage,
+  searchMessages,
+  dedupeProposalsByTitle,
+  formatUsd,
+  formatTokens,
+  type AiUsageSummary,
+} from '../lib/aiUsageCore'
 import {
   useAiAssistant,
   stripMarkdown,
@@ -47,6 +56,31 @@ export default function Ask() {
     seenProposalSig.add(sig)
     return true
   })
+
+  // ASSISTANT-PAGE-42 (фаза-2): три блока прозрачности ассистента, читаемые напрямую из прода —
+  // 💰 расход (events ai.chat → aiUsageCore.aggregateAiUsage), 🛠 «что мне нужно» (ai_proposals
+  // action_type='tooling', корневой дедуп по title в окне 24ч). 🧠 Память переиспользует a.messages
+  // (тот же getAiMessages, что уже грузит движок) с чистым подстрочным фильтром searchMessages.
+  const [usage, setUsage] = useState<AiUsageSummary | null>(null)
+  const [tooling, setTooling] = useState<AiProposal[]>([])
+  const [memoryQuery, setMemoryQuery] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const [events, toolingRows] = await Promise.all([getAiUsage(), getToolingProposals()])
+      if (!alive) return
+      setUsage(aggregateAiUsage(events, new Date().toISOString(), 30))
+      setTooling(dedupeProposalsByTitle(toolingRows, 24))
+    })()
+    return () => { alive = false }
+  }, [])
+
+  const memoryMatches = searchMessages(a.messages, memoryQuery)
+  // Максимум входных+выходных токенов за день — для инлайн-бара разбивки (без граф-библиотек).
+  const maxDayTokens = usage
+    ? usage.byDay.reduce((m, d) => Math.max(m, d.tokensIn + d.tokensOut), 0)
+    : 0
 
   return (
     <div className="ask-page">
@@ -200,9 +234,113 @@ export default function Ask() {
         </div>
       )}
 
+      {/* ASSISTANT-PAGE-42 (блок 💰): расход на ИИ — агрегат событий ai.chat (токены in/out → $ по
+          прайсу моделей). Итог + разбивка по дням за 30 дн. с инлайн-баром (без граф-библиотек). */}
+      <section className="card ask-usage" aria-label={t('ai_usage_title')}>
+        <h2 className="ask-block-title">{t('ai_usage_title')}</h2>
+        {usage && usage.count > 0 ? (
+          <>
+            <div className="ask-usage-totals">
+              <div className="ask-usage-stat">
+                <span className="ask-usage-stat-value">{formatUsd(usage.totalUsd)}</span>
+                <span className="muted small">{t('ai_usage_total')}</span>
+              </div>
+              <div className="ask-usage-stat">
+                <span className="ask-usage-stat-value">{formatTokens(usage.totalIn)}</span>
+                <span className="muted small">{t('ai_usage_tokens_in')}</span>
+              </div>
+              <div className="ask-usage-stat">
+                <span className="ask-usage-stat-value">{formatTokens(usage.totalOut)}</span>
+                <span className="muted small">{t('ai_usage_tokens_out')}</span>
+              </div>
+            </div>
+            {usage.approx && <p className="muted small ask-usage-approx">{t('ai_usage_approx')}</p>}
+            {usage.byDay.length > 0 && (
+              <div className="ask-usage-days">
+                <p className="muted small ask-usage-days-title">{t('ai_usage_by_day')}</p>
+                <table className="ask-usage-table">
+                  <tbody>
+                    {[...usage.byDay].reverse().map((d) => (
+                      <tr key={d.date}>
+                        <td className="ask-usage-date">{d.date}</td>
+                        <td className="ask-usage-bar-cell">
+                          <span
+                            className="ask-usage-bar"
+                            style={{ width: `${maxDayTokens > 0 ? Math.round(((d.tokensIn + d.tokensOut) / maxDayTokens) * 100) : 0}%` }}
+                            aria-hidden="true"
+                          />
+                        </td>
+                        <td className="ask-usage-num muted small">{formatTokens(d.tokensIn + d.tokensOut)}</td>
+                        <td className="ask-usage-cost">{formatUsd(d.usd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="muted small ask-block-empty">{t('ai_usage_empty')}</p>
+        )}
+      </section>
+
+      {/* ASSISTANT-PAGE-42 (блок 🧠): память — что Marvel знает из ai_messages (переиспользуем
+          a.messages движка). Поле поиска фильтрует по подстроке content (чистый searchMessages). */}
+      <section className="card ask-memory" aria-label={t('ai_memory_title')}>
+        <h2 className="ask-block-title">{t('ai_memory_title')}</h2>
+        <p className="muted small ask-block-desc">{t('ai_memory_desc')}</p>
+        {a.messages.length > 0 ? (
+          <>
+            <input
+              className="ai-input ask-memory-search"
+              type="search"
+              value={memoryQuery}
+              onChange={(e) => setMemoryQuery(e.target.value)}
+              placeholder={t('ai_memory_search')}
+            />
+            {memoryMatches.length > 0 ? (
+              <ul className="ask-memory-list">
+                {memoryMatches.map((m) => (
+                  <li key={m.id} className={`ask-memory-row ask-memory-${m.role}`}>
+                    <span className="ask-memory-role muted small">
+                      {m.role === 'user' ? t('ai_hist_you') : t('ai_hist_ai')}
+                    </span>
+                    <span className="ask-memory-text">
+                      {m.role === 'assistant' ? stripMarkdown(m.content) : m.content}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted small ask-block-empty">{t('ai_memory_none_found')}</p>
+            )}
+          </>
+        ) : (
+          <p className="muted small ask-block-empty">{t('ai_memory_empty')}</p>
+        )}
+      </section>
+
+      {/* ASSISTANT-PAGE-42 (блок 🛠): «что мне нужно» — предложения ai_proposals action_type='tooling'
+          (инструменты, которых ассистенту не хватает). В проде пока НОЛЬ → аккуратное пустое состояние. */}
+      <section className="card ask-tooling" aria-label={t('ai_tooling_title')}>
+        <h2 className="ask-block-title">{t('ai_tooling_title')}</h2>
+        <p className="muted small ask-block-desc">{t('ai_tooling_desc')}</p>
+        {tooling.length > 0 ? (
+          <ul className="ask-tooling-list">
+            {tooling.map((pr) => (
+              <li key={pr.id} className="ask-tooling-row">
+                <span className="ask-tooling-title">{pr.title}</span>
+                <span className="ask-tooling-status muted small">{pr.status}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted small ask-block-empty">{t('ai_tooling_empty')}</p>
+        )}
+      </section>
+
       {/* ASSISTANT-PAGE-3 (п.4): лёгкая диагностика последнего голосового прогона — ТОЛЬКО из памяти
-          сессии (телеметрия voice:*, что уже собирает клиент). Никаких запросов в БД. Полная история /
-          💰расход токенов / 🧠память / 🛠инструменты — отложены (бэкенд Беты-6), здесь их нет. */}
+          сессии (телеметрия voice:*, что уже собирает клиент). Никаких запросов в БД. */}
       <details className="card ask-diag">
         <summary className="ask-diag-summary">{t('ai_diag_title')}</summary>
         {a.voiceHeard || a.voiceDiag.length > 0 ? (
