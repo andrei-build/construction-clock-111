@@ -1620,6 +1620,12 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_elevation_fullscreen_exit: { ru: 'Выйти', en: 'Exit', es: 'Salir' },
   hub_sketch_tool_zone: { ru: 'Зона', en: 'Zone', es: 'Zona' },
   hub_sketch_zone_hint: { ru: 'Растяни прямоугольник по стене', en: 'Drag a box across the wall', es: 'Arrastra un rectángulo por la pared' },
+  // ELEV-BEHAVIOR-56: подсказка входа в зону сразу по «Частично» + инспектор/подсказка движения проёма.
+  hub_sketch_zone_draw_hint: { ru: 'Обведи область на стене', en: 'Draw an area on the wall', es: 'Dibuja un área en la pared' },
+  hub_sketch_opening_position: { ru: 'Позиция проёма', en: 'Opening position', es: 'Posición de la abertura' },
+  hub_sketch_opening_sill: { ru: 'Подоконник', en: 'Sill', es: 'Alféizar' },
+  hub_sketch_nudge_hint: { ru: 'Стрелки — 1/8″, Shift+стрелка — 1″', en: 'Arrows nudge 1/8″, Shift 1″', es: 'Flechas 1/8″, Shift 1″' },
+  hub_sketch_wall_panel_open_elevation: { ru: 'Открыть развёртку', en: 'Open elevation', es: 'Abrir alzado' },
   hub_sketch_measure_hint_start: { ru: 'Кликни начало', en: 'Click the start', es: 'Haz clic en el inicio' },
   hub_sketch_measure_hint_end: { ru: 'Кликни конец', en: 'Click the end', es: 'Haz clic en el final' },
   hub_sketch_measure_clear: { ru: 'Сбросить замеры', en: 'Clear measurements', es: 'Borrar mediciones' },

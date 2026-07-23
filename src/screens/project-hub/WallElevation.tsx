@@ -83,6 +83,15 @@ import {
 } from './wallFinishMetrics'
 import { symmetricTileAxisCells } from './tileLayout'
 import { formatUsd } from './tileCatalog'
+// ELEV-BEHAVIOR-56: миллиметровое движение (стрелки 1/8"/1"), вход в зону по «Частично», живые Ш×В+ft².
+import {
+  arrowNudgeFt,
+  formatLiveAreaSqft,
+  isArrowKey,
+  liveDrawDims,
+  nudgeValue,
+  shouldAutoDrawZone,
+} from './elevationBehavior'
 
 const CELL_FT = 1
 
@@ -184,6 +193,18 @@ type InfraDrag = {
   grabDYFt: number
   centerXFt: number
   centerYFt: number
+  moved: boolean
+}
+// ELEV-BEHAVIOR-56: плавный drag проёма по развёртке — горизонталь (центр вдоль стены) и вертикаль
+// (подоконник, только окно/вырез); фиксируется на pointer-up, живые размеры у курсора при протяжке.
+type OpeningDrag = {
+  pointerId: number
+  index: number // глобальный индекс в model.openings
+  grabDXFt: number
+  grabDYFt: number
+  centerXFt: number
+  sillFt: number
+  door: boolean
   moved: boolean
 }
 type FinishRegionHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
@@ -545,16 +566,26 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const [selectedRegionIndex, setSelectedRegionIndex] = useState<number | null>(null)
   const [regionDrag, setRegionDrag] = useState<FinishRegionDrag | null>(null)
   const [regionDrafts, setRegionDrafts] = useState<Partial<Record<FinishRegionDraftField, string>>>({})
+  // ELEV-BEHAVIOR-56: выделение проёма (окно/дверь) на развёртке + drag + числовые черновики позиции.
+  const [selectedOpeningIndex, setSelectedOpeningIndex] = useState<number | null>(null)
+  const [openingDrag, setOpeningDrag] = useState<OpeningDrag | null>(null)
+  const [openingPosDraft, setOpeningPosDraft] = useState<string | null>(null)
+  const [openingSillDraft, setOpeningSillDraft] = useState<string | null>(null)
   const [wallLengthDraft, setWallLengthDraft] = useState<string | null>(null)
   const [wallLengthConflict, setWallLengthConflict] = useState<SketchSegmentResizeConflict | null>(null)
   const cellFt = modelCellFt(model)
   const lengthFt = Math.max(0.01, dist(wall.a, wall.b) * cellFt)
   const height = Math.max(1, heightFt)
   const wallLengthText = formatLength(lengthFt)
-  const openings = useMemo(
-    () => model.openings.filter((opening) => opening.c === wall.c && opening.s === wall.s),
+  // ELEV-BEHAVIOR-56: проёмы этой стены с их ГЛОБАЛЬНЫМ индексом в model.openings — для выделения/
+  // движения (клик/стрелки/число) конкретного проёма без потери адреса при onModelChange.
+  const wallOpenings = useMemo(
+    () => model.openings
+      .map((opening, index) => ({ opening, index }))
+      .filter(({ opening }) => opening.c === wall.c && opening.s === wall.s),
     [model.openings, wall.c, wall.s],
   )
+  const openings = useMemo(() => wallOpenings.map((entry) => entry.opening), [wallOpenings])
   const pad = Math.max(0.5, Math.min(1.2, Math.max(lengthFt, height) * 0.08))
   const zoomLevel = Math.max(1, Math.min(6, zoom))
   const viewBoxW = (lengthFt + pad * 2) / zoomLevel
@@ -582,6 +613,10 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   // нужен лишь чтобы РИСОВАТЬ новую зону drag-прямоугольником по пустой стене (regionEditingEnabled).
   const regionInteractive = canEdit && !compact && !measureTool && !!onModelChange && finish.coverage?.mode === 'partial'
   const regionEditingEnabled = regionInteractive && zoneTool
+  // ELEV-BEHAVIOR-56: проёмы двигаются в «Выборе» (не при активных инструментах Зона/Замер), как шкафы/инфра.
+  const openingEditEnabled = canEdit && !compact && !measureTool && !zoneTool && !!onModelChange
+  const selectedOpening = selectedOpeningIndex !== null ? model.openings[selectedOpeningIndex] ?? null : null
+  const selectedOpeningOnWall = selectedOpening && selectedOpening.c === wall.c && selectedOpening.s === wall.s ? selectedOpening : null
   const dragPreviewRegions = useMemo(() => {
     if (!regionDrag) return editableFinishRegions
     if (regionDrag.type === 'draw') {
@@ -889,6 +924,87 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     commitInfraPosition(selectedInfraEntry.item.id, leftBound + parsed / 12, selectedInfraEntry.centerYFt)
   }
 
+  // ── ELEV-BEHAVIOR-56 (#4): миллиметровое движение проёмов (окно/дверь/вырез) на развёртке ──
+  // Центр вдоль стены → t (клэмп, чтобы проём не вылез за стену), подоконник → sill (только окно/вырез;
+  // у двери низ фиксирован на полу). Единый commit для drag / стрелок / числового инспектора.
+  const commitOpeningPosition = (index: number, centerXFt: number, sillFt: number) => {
+    if (!onModelChange) return
+    const target = model.openings[index]
+    if (!target || target.c !== wall.c || target.s !== wall.s) return
+    const widthFt = Math.min(openingWidthFt(target), lengthFt)
+    const openingHeight = Math.min(openingHeightFt(target), height)
+    const halfT = lengthFt > 0 ? (widthFt / 2) / lengthFt : 0
+    const tValue = Math.max(halfT, Math.min(1 - halfT, lengthFt > 0 ? centerXFt / lengthFt : 0))
+    const nextOpenings = model.openings.map((opening, i) => {
+      if (i !== index) return opening
+      const updated: Opening = { ...opening, t: tValue }
+      if (opening.kind !== 'door') {
+        updated.sill = Math.max(0, Math.min(Math.max(0, height - openingHeight), sillFt))
+      }
+      return updated
+    })
+    onModelChange({ ...model, openings: nextOpenings })
+  }
+
+  const startOpeningDrag = (index: number, opening: Opening) => (event: ReactPointerEvent<SVGGElement>) => {
+    if (!openingEditEnabled) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    const point = svgPoint(event.clientX, event.clientY)
+    if (!point) return
+    const box = elevationOpeningBox(opening, lengthFt, height)
+    const centerXFt = box.x + box.width / 2
+    svgRef.current?.setPointerCapture?.(event.pointerId)
+    setSelectedOpeningIndex(index)
+    setSelectedCabinetId(null)
+    setSelectedInfraId(null)
+    setSelectedMeasurementIndex(null)
+    setSelectedRegionIndex(null)
+    setOpeningPosDraft(null)
+    setOpeningSillDraft(null)
+    setOpeningDrag({
+      pointerId: event.pointerId,
+      index,
+      grabDXFt: point.x - centerXFt,
+      grabDYFt: point.y - box.floor,
+      centerXFt,
+      sillFt: box.floor,
+      door: opening.kind === 'door',
+      moved: false,
+    })
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+  // Стрелки: сдвинуть выбранный проём на 1/8"/1" (Shift). Клэмп границами стены/высоты в commit.
+  const nudgeSelectedOpening = (key: string, shift: boolean): boolean => {
+    if (selectedOpeningIndex === null || !selectedOpeningOnWall) return false
+    const delta = arrowNudgeFt(key, shift)
+    if (!delta) return false
+    const box = elevationOpeningBox(selectedOpeningOnWall, lengthFt, height)
+    const centerXFt = box.x + box.width / 2
+    commitOpeningPosition(selectedOpeningIndex, centerXFt + delta.dx, box.floor + delta.dy)
+    return true
+  }
+
+  const commitOpeningPosDraft = () => {
+    if (openingPosDraft === null || selectedOpeningIndex === null || !selectedOpeningOnWall) { setOpeningPosDraft(null); return }
+    const parsed = parseInches(openingPosDraft)
+    setOpeningPosDraft(null)
+    if (!Number.isFinite(parsed)) return
+    const box = elevationOpeningBox(selectedOpeningOnWall, lengthFt, height)
+    // Число = расстояние от левого края стены до ЛЕВОГО края проёма (как в размерной цепочке).
+    commitOpeningPosition(selectedOpeningIndex, parsed / 12 + box.width / 2, box.floor)
+  }
+
+  const commitOpeningSillDraft = () => {
+    if (openingSillDraft === null || selectedOpeningIndex === null || !selectedOpeningOnWall) { setOpeningSillDraft(null); return }
+    const parsed = parseInches(openingSillDraft)
+    setOpeningSillDraft(null)
+    if (!Number.isFinite(parsed)) return
+    const box = elevationOpeningBox(selectedOpeningOnWall, lengthFt, height)
+    commitOpeningPosition(selectedOpeningIndex, box.x + box.width / 2, parsed / 12)
+  }
+
   // ELEMENTS-INFRA-26: схематичный символ инженерного маркера на развёртке (простые узнаваемые формы).
   const renderInfraSymbol = (entry: ElevationPlacedItem): ReactNode => {
     const { x, y, width, height } = entry
@@ -1178,6 +1294,10 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     setWallLengthConflict(null)
     setCabinetVDrag(null)
     setGapDraft(null)
+    setSelectedOpeningIndex(null)
+    setOpeningDrag(null)
+    setOpeningPosDraft(null)
+    setOpeningSillDraft(null)
     setZoneTool(false)
     setZoom(1)
   }, [currentWallKey])
@@ -1188,6 +1308,17 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
       setHover(null)
     }
   }, [measureTool])
+
+  // ELEV-BEHAVIOR-56 (#1): «Частично» СРАЗУ включает рисование зоны (курсор-крест + подсказка),
+  // без промежуточных кнопок. Reset-эффект выше гасит zoneTool при смене стены — здесь возвращаем
+  // его для партиал-стены (порядок эффектов гарантирует финальное значение true).
+  useEffect(() => {
+    if (regionInteractive && shouldAutoDrawZone(finish.coverage?.mode)) {
+      setMeasureTool(false)
+      setDraft(null)
+      setZoneTool(true)
+    }
+  }, [regionInteractive, finish.coverage?.mode, currentWallKey])
 
   useEffect(() => {
     if (selectedRegionIndex !== null && !editableFinishRegions[selectedRegionIndex]) {
@@ -1221,10 +1352,38 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           event.preventDefault()
           return
         }
+        if (selectedOpeningOnWall) {
+          setSelectedOpeningIndex(null)
+          event.preventDefault()
+          return
+        }
         if (zoneTool) {
           setZoneTool(false)
           setRegionDrag(null)
           setSelectedRegionIndex(null)
+          event.preventDefault()
+          return
+        }
+      }
+      // ELEV-BEHAVIOR-56 (#4): стрелки = миллиметровое движение выбранного объекта (1/8", Shift = 1").
+      // Единый механизм для проёма → инфра-маркера → зоны → навесного шкафа (первый подходящий).
+      if (isArrowKey(event.key)) {
+        const shift = event.shiftKey
+        if (nudgeSelectedOpening(event.key, shift)) { event.preventDefault(); return }
+        const delta = arrowNudgeFt(event.key, shift)
+        if (delta && selectedInfraEntry) {
+          commitInfraPosition(selectedInfraEntry.item.id, selectedInfraEntry.centerXFt + delta.dx, selectedInfraEntry.centerYFt + delta.dy)
+          event.preventDefault()
+          return
+        }
+        if (delta && selectedRegionIndex !== null && selectedRegion) {
+          const moved = moveFinishRegion(selectedRegion, delta.dx, delta.dy, lengthFt, height)
+          updateFinishRegions(editableFinishRegions.map((region, index) => (index === selectedRegionIndex ? moved : region)), selectedRegionIndex)
+          event.preventDefault()
+          return
+        }
+        if (delta && delta.dy !== 0 && selectedCabinet && selectedCabinet.layer === 'wall') {
+          commitCabinetVertical(selectedCabinet.item.id, cabinetBottomFt(selectedCabinet.item) + delta.dy, event.altKey)
           event.preventDefault()
           return
         }
@@ -1247,7 +1406,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canEdit, measureTool, zoneTool, draft, selectedMeasurementIndex, selectedRegionIndex, selectedCabinet, onCabinetRemove, model, onMeasurementsChange, editableFinishRegions])
+  }, [canEdit, measureTool, zoneTool, draft, selectedMeasurementIndex, selectedRegionIndex, selectedRegion, selectedCabinet, selectedInfraEntry, selectedOpeningIndex, selectedOpeningOnWall, onCabinetRemove, model, onMeasurementsChange, editableFinishRegions, lengthFt, height])
 
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (!regionEditingEnabled || !onModelChange) return
@@ -1263,6 +1422,17 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }
 
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (openingDrag && openingDrag.pointerId === event.pointerId) {
+      const point = svgPoint(event.clientX, event.clientY)
+      if (point) {
+        const nextX = Math.max(0, Math.min(lengthFt, snapLengthFt(point.x - openingDrag.grabDXFt, snapStepFt)))
+        const nextSill = openingDrag.door ? openingDrag.sillFt : Math.max(0, Math.min(height, snapLengthFt(point.y - openingDrag.grabDYFt, snapStepFt)))
+        const moved = openingDrag.moved || Math.abs(nextX - openingDrag.centerXFt) > 0.02 || Math.abs(nextSill - openingDrag.sillFt) > 0.02
+        setOpeningDrag({ ...openingDrag, centerXFt: nextX, sillFt: nextSill, moved })
+      }
+      event.preventDefault()
+      return
+    }
     if (infraDrag && infraDrag.pointerId === event.pointerId) {
       const point = svgPoint(event.clientX, event.clientY)
       if (point) {
@@ -1297,6 +1467,14 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }
 
   const handlePointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (openingDrag && openingDrag.pointerId === event.pointerId) {
+      const drag = openingDrag
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+      setOpeningDrag(null)
+      if (drag.moved) commitOpeningPosition(drag.index, drag.centerXFt, drag.sillFt)
+      event.preventDefault()
+      return
+    }
     if (infraDrag && infraDrag.pointerId === event.pointerId) {
       const drag = infraDrag
       event.currentTarget.releasePointerCapture?.(event.pointerId)
@@ -1479,9 +1657,10 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
               {t(draft ? 'hub_sketch_measure_hint_end' : 'hub_sketch_measure_hint_start')}
             </div>
           )}
-          {!compact && !measureTool && zoneTool && regionEditingEnabled && editableFinishRegions.length === 0 && !regionDrag && (
+          {/* ELEV-BEHAVIOR-56 (#1): в режиме обводки зоны подсказка видна, пока не тянешь прямоугольник. */}
+          {!compact && !measureTool && regionEditingEnabled && !regionDrag && (
             <div className="hub-sketch-elevation-hint" role="status">
-              {t('hub_sketch_zone_hint')}
+              {t('hub_sketch_zone_draw_hint')}
             </div>
           )}
           {!compact && wallLengthConflict && wallLengthDraft !== null && (
@@ -1662,8 +1841,17 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </text>
           )}
         </g>
-        {openings.map((opening, index) => {
+        {wallOpenings.map(({ opening, index: globalIndex }, index) => {
           const box = elevationOpeningBox(opening, lengthFt, height)
+          // ELEV-BEHAVIOR-56: пока тащим этот проём — рисуем его в позиции drag (плавно, без грубого снапа).
+          const dragging = openingDrag?.index === globalIndex
+          if (dragging && openingDrag) {
+            box.x = Math.max(0, Math.min(lengthFt - box.width, openingDrag.centerXFt - box.width / 2))
+            if (!openingDrag.door) {
+              box.floor = Math.max(0, Math.min(Math.max(0, height - box.openingHeight), openingDrag.sillFt))
+              box.y = height - box.floor - box.openingHeight
+            }
+          }
           const label = opening.kind === 'door'
             ? `${formatLength(box.width)} x ${formatLength(box.openingHeight)}`
             : `${formatLength(box.width)} x ${formatLength(box.openingHeight)} / ${formatLength(box.floor)}`
@@ -1673,8 +1861,20 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             : opening.kind === 'opening'
               ? 'hub-sketch-elevation-passthrough'
               : 'hub-sketch-elevation-window'
+          const selectedThisOpening = selectedOpeningIndex === globalIndex
+          const openingGroupClass = [
+            'hub-sketch-elevation-opening-group',
+            openingEditEnabled ? 'hub-sketch-elevation-opening-drag' : '',
+            selectedThisOpening ? 'hub-sketch-elevation-opening-selected' : '',
+            dragging ? 'hub-sketch-elevation-opening-dragging' : '',
+          ].filter(Boolean).join(' ')
           return (
-            <g key={`${opening.kind}-${index}`}>
+            <g
+              key={`${opening.kind}-${index}`}
+              className={openingGroupClass}
+              onPointerDown={openingEditEnabled ? startOpeningDrag(globalIndex, opening) : undefined}
+              onClick={openingEditEnabled ? (event) => { event.stopPropagation(); setSelectedOpeningIndex(globalIndex) } : undefined}
+            >
               <rect
                 className={rectClass}
                 x={box.x}
@@ -2090,7 +2290,9 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </g>
           )
         })()}
-        {showFinishRegionLabels && finishRegions.map((region, index) => {
+        {/* ELEV-BEHAVIOR-56: во время обводки/resize показываем ТОЛЬКО тонкую живую плашку у курсора
+            (ниже), центр-подпись зоны прячем, чтобы не было двойного лейбла; на отпускании она вернётся. */}
+        {showFinishRegionLabels && !regionDrag && finishRegions.map((region, index) => {
           const label = finishRegionLabel(region)
           return (
             <g key={`fr-label-${finishRegionKey(region, index)}`} className="hub-sketch-elevation-region-label" pointerEvents="none">
@@ -2161,6 +2363,64 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </g>
           )
         })}
+        {/* ELEV-BEHAVIOR-56 / уточнение-2: живые размеры обводимого/тянущегося прямоугольника у курсора —
+            Ш×В в дюймах + площадь ft², каждый кадр. Тонкая техническая плашка (мелкий кегль, тёмный фон,
+            лёгкое скругление), не «детские жирные цифры». На отпускании остаётся центр-подпись зоны. */}
+        {regionDrag && (regionDrag.type === 'draw' || regionDrag.type === 'resize') && (() => {
+          let widthIn = 0
+          let heightIn = 0
+          let areaSqft = 0
+          if (regionDrag.type === 'draw') {
+            const d = liveDrawDims(regionDrag.start, regionDrag.current)
+            widthIn = d.widthIn
+            heightIn = d.heightIn
+            areaSqft = d.areaSqft
+          } else {
+            const region = dragPreviewRegions[regionDrag.index]
+            if (!region) return null
+            widthIn = Math.max(0, (region.x1Ft - region.x0Ft) * 12)
+            heightIn = Math.max(0, (region.y1Ft - region.y0Ft) * 12)
+            areaSqft = (widthIn / 12) * (heightIn / 12)
+          }
+          const text = `${formatInches(widthIn)}×${formatInches(heightIn)} · ${formatLiveAreaSqft(areaSqft)} ft²`
+          const fontSize = Math.max(0.14, Math.min(0.22, Math.max(lengthFt, height) * 0.02))
+          const padX = fontSize * 0.5
+          const padY = fontSize * 0.34
+          const rectW = Math.min(lengthFt, text.length * fontSize * 0.56 + padX * 2)
+          const rectH = fontSize + padY * 2
+          const anchorSvgY = height - regionDrag.current.y
+          const rx = Math.max(0, Math.min(Math.max(0, lengthFt - rectW), regionDrag.current.x + 0.14))
+          const ry = Math.max(0, Math.min(Math.max(0, height - rectH), anchorSvgY - rectH - 0.14))
+          return (
+            <g className="hub-sketch-elevation-live-dim" pointerEvents="none">
+              <rect x={rx} y={ry} width={rectW} height={rectH} rx={Math.min(0.06, rectH * 0.3)} />
+              <text x={rx + rectW / 2} y={ry + rectH / 2} textAnchor="middle" dominantBaseline="central" fontSize={fontSize}>{text}</text>
+            </g>
+          )
+        })()}
+        {/* ELEV-BEHAVIOR-56: при drag проёма — живая позиция у курсора (от левого края + подоконник). */}
+        {openingDrag && (() => {
+          const opening = model.openings[openingDrag.index]
+          if (!opening) return null
+          const box = elevationOpeningBox(opening, lengthFt, height)
+          const leftFt = Math.max(0, Math.min(Math.max(0, lengthFt - box.width), openingDrag.centerXFt - box.width / 2))
+          const text = openingDrag.door
+            ? `${t('hub_sketch_dim_left_short')} ${formatInches(leftFt * 12)}`
+            : `${t('hub_sketch_dim_left_short')} ${formatInches(leftFt * 12)} · ${formatInches(Math.max(0, openingDrag.sillFt) * 12)}`
+          const fontSize = Math.max(0.14, Math.min(0.22, Math.max(lengthFt, height) * 0.02))
+          const padX = fontSize * 0.5
+          const padY = fontSize * 0.34
+          const rectW = Math.min(lengthFt, text.length * fontSize * 0.56 + padX * 2)
+          const rectH = fontSize + padY * 2
+          const rx = Math.max(0, Math.min(Math.max(0, lengthFt - rectW), leftFt + box.width / 2 - rectW / 2))
+          const ry = Math.max(0, Math.min(Math.max(0, height - rectH), box.y - rectH - 0.14))
+          return (
+            <g className="hub-sketch-elevation-live-dim" pointerEvents="none">
+              <rect x={rx} y={ry} width={rectW} height={rectH} rx={Math.min(0.06, rectH * 0.3)} />
+              <text x={rx + rectW / 2} y={ry + rectH / 2} textAnchor="middle" dominantBaseline="central" fontSize={fontSize}>{text}</text>
+            </g>
+          )
+        })()}
         {showMeasurements && measurementLines.map(({ index, line }) => {
           const selected = selectedMeasurementIndex === index
           const chipH = 0.42
@@ -2406,6 +2666,53 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
                 </button>
               </div>
             )}
+            {/* ELEV-BEHAVIOR-56 (#4): числовой инспектор выбранного проёма — позиция от левого края и
+                подоконник в дюймах (Enter применяет). Стрелки двигают на 1/8″ / 1″ (Shift). */}
+            {openingEditEnabled && selectedOpeningOnWall && selectedOpeningIndex !== null && (() => {
+              const box = elevationOpeningBox(selectedOpeningOnWall, lengthFt, height)
+              const isDoor = selectedOpeningOnWall.kind === 'door'
+              const title = isDoor
+                ? t('hub_sketch_tool_door')
+                : selectedOpeningOnWall.kind === 'opening'
+                  ? t('hub_sketch_elevation_opening')
+                  : t('hub_sketch_tool_window')
+              return (
+                <div className="hub-sketch-elevation-region-controls" aria-label={t('hub_sketch_opening_position')}>
+                  <span className="hub-sketch-elevation-region-title">{title}</span>
+                  <label className="hub-sketch-field">
+                    <span className="muted">{t('hub_sketch_dim_left_short')}</span>
+                    <input
+                      type="text"
+                      inputMode="text"
+                      value={openingPosDraft ?? formatInches(box.x * 12)}
+                      onChange={(event) => setOpeningPosDraft(event.target.value)}
+                      onBlur={commitOpeningPosDraft}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') { event.preventDefault(); commitOpeningPosDraft() }
+                        else if (event.key === 'Escape') { event.preventDefault(); setOpeningPosDraft(null) }
+                      }}
+                    />
+                  </label>
+                  {!isDoor && (
+                    <label className="hub-sketch-field">
+                      <span className="muted">{t('hub_sketch_opening_sill')}</span>
+                      <input
+                        type="text"
+                        inputMode="text"
+                        value={openingSillDraft ?? formatInches(box.floor * 12)}
+                        onChange={(event) => setOpeningSillDraft(event.target.value)}
+                        onBlur={commitOpeningSillDraft}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') { event.preventDefault(); commitOpeningSillDraft() }
+                          else if (event.key === 'Escape') { event.preventDefault(); setOpeningSillDraft(null) }
+                        }}
+                      />
+                    </label>
+                  )}
+                  <span className="hub-sketch-elevation-nudge-hint muted">{t('hub_sketch_nudge_hint')}</span>
+                </div>
+              )
+            })()}
             {sidePanel}
           </aside>
         )}
