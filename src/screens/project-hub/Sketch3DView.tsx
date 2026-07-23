@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent as ReactChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { CATALOG_CATEGORIES, getCatalogItems, getProjectFileDownloadUrl, getProjectHubFiles, mediaUrl, uploadProjectFileToR2 } from '../../lib/api'
 import type { CatalogCategory, CatalogItem } from '../../lib/api'
@@ -255,6 +256,10 @@ interface Sketch3DViewProps {
   cameraPresetRequest?: CameraPresetRequest | null
   fullscreenRequestKey?: number
   viewModeControl?: ReactNode
+  // SKETCH-POLISH-55: контейнер в основной верхней строке приложения. Когда задан и мы НЕ в
+  // полноэкранном 3D, строка 3D-контекста (Размеры/Потолок/Снимок/Референс/Рендер/На весь экран)
+  // портируется В ЭТУ строку — топбар остаётся ОДНОЙ полосой, без второй под ним.
+  toolbarPortalTarget?: HTMLElement | null
   label: string
   loadingLabel: string
   errorLabel: string
@@ -2388,6 +2393,7 @@ export default function Sketch3DView({
   cameraPresetRequest,
   fullscreenRequestKey = 0,
   viewModeControl,
+  toolbarPortalTarget = null,
   label,
   loadingLabel,
   errorLabel,
@@ -4969,11 +4975,21 @@ export default function Sketch3DView({
   ].filter(Boolean).join(' ')
   const panelToggleLabel = t(panelOverlayOpen ? 'hub_sketch_3d_panel_hide' : 'hub_sketch_3d_panel_show')
 
+  // SKETCH-POLISH-55: в обычном (не полноэкранном) 3D строку контекста портируем в основной топбар,
+  // чтобы сверху была ОДНА полоса. В полноэкранном режиме верхней строки нет — строка живёт в шелле.
+  const dockCameraToolsToTopbar = !fullscreenActive && !!toolbarPortalTarget
+  const cameraToolsClassName = dockCameraToolsToTopbar
+    ? 'hub-sketch-3d-camera-tools hub-sketch-3d-camera-tools-docked'
+    : 'hub-sketch-3d-camera-tools'
+  const dockCameraTools = (node: ReactNode): ReactNode =>
+    dockCameraToolsToTopbar && toolbarPortalTarget ? createPortal(node, toolbarPortalTarget) : node
+
   return (
     <div ref={fullscreenRootRef} className={sketch3DLayoutClassName}>
       <div className={fullscreenActive ? 'hub-sketch-3d-shell hub-sketch-3d-shell-fullscreen' : 'hub-sketch-3d-shell'} role="img" aria-label={label}>
         <div ref={hostRef} className="hub-sketch-3d-canvas" />
-        <div className="hub-sketch-3d-camera-tools" role="toolbar" aria-label={t('hub_sketch_3d_camera')}>
+        {dockCameraTools(
+        <div className={cameraToolsClassName} role="toolbar" aria-label={t('hub_sketch_3d_camera')}>
           {fullscreenActive && viewModeControl}
           {show3DPanel && !fullscreenActive && (
             <button
@@ -5222,7 +5238,8 @@ export default function Sketch3DView({
           <button type="button" className="btn ghost small" aria-pressed={fullscreenActive} onClick={toggleFullscreen}>
             {t(fullscreenActive ? 'hub_sketch_3d_fullscreen_exit' : 'hub_sketch_3d_fullscreen')}
           </button>
-        </div>
+        </div>,
+        )}
         {photoRenderBusy && (
           <div className="hub-sketch-photo-render-overlay" role="status" aria-live="polite">
             <span className="hub-sketch-photo-render-spinner" aria-hidden="true" />

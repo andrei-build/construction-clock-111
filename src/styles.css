@@ -4821,6 +4821,30 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-3d-camera-tools::-webkit-scrollbar { height: 6px; }
 .hub-sketch-3d-camera-tools::-webkit-scrollbar-thumb { background: rgba(120,170,140,.3); border-radius: 6px; }
+/* SKETCH-POLISH-55: строка 3D-контекста, портированная в ОСНОВНУЮ верхнюю строку (обычный 3D), —
+   без своей полосы: убираем собственный фон/рамку/высоту/скролл, тогглы текут как обычные группы
+   топбара → сверху ОДНА полоса, а не две. Слот-группа просто держит их в ряд. */
+.hub-sketch-topbar-3d-slot {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: visible;
+}
+.hub-sketch-topbar .hub-sketch-3d-camera-tools-docked {
+  order: 0;
+  width: auto;
+  min-height: 30px;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+  gap: 6px;
+}
+.hub-sketch-topbar .hub-sketch-3d-camera-tools-docked .hub-sketch-3d-toolbar-toggle {
+  min-height: 30px;
+  height: 30px;
+  border-radius: 7px;
+}
 .hub-sketch-3d-view-presets {
   display: inline-flex;
   align-items: center;

@@ -3,12 +3,13 @@
 // готовые цифры для плашки: площадь стены, площадь зоны, число плиток, предв. стоимость, листы ГКЛ,
 // плюс клэмп зоны при числовом вводе (36×96 / 32×96). version:1 не трогаем — только чтение модели.
 import {
+  DEFAULT_GROUT_IN,
   finishCoverageRegionsFt,
   normalizeTileSurface,
   type SketchFinishRegion,
   type SketchSurfaceFinish,
 } from './sketchFinishes'
-import { estimateTileLayout } from './tileLayout'
+import { tileGridCount } from './tileLayout'
 
 // Стандартный лист ГКЛ 4×8 ft = 32 ft². Для «площадь заплатки в листах».
 export const DRYWALL_SHEET_SQFT = 32
@@ -47,6 +48,9 @@ export function tileZoneEstimateForFinish(finish: SketchSurfaceFinish, lengthFt:
   if (finish.kind !== 'tile') return { areaSqft: 0, tileCount: 0, costUsd: 0, hasPrice: false }
   const tile = normalizeTileSurface(finish)
   const regions = finishCoverageRegionsFt(finish, lengthFt, heightFt)
+  // SKETCH-POLISH-55: число плиток = сетка ячеек реальной раскладки (колонки×ряды, той же, что
+  // рисуется швами на развёртке), а не «площадь×запас+ceil». Тем же grout, что и швы (DEFAULT_GROUT_IN).
+  const grout = Math.max(0, tile.groutIn ?? DEFAULT_GROUT_IN)
   let areaSqft = 0
   let tileCount = 0
   regions.forEach((region) => {
@@ -54,14 +58,7 @@ export function tileZoneEstimateForFinish(finish: SketchSurfaceFinish, lengthFt:
     const h = Math.max(0, region.y1Ft - region.y0Ft)
     if (w <= 0 || h <= 0) return
     areaSqft += w * h
-    const est = estimateTileLayout({
-      surfaceWidthIn: w * 12,
-      surfaceHeightIn: h * 12,
-      tileWIn: tile.tileWIn ?? 12,
-      tileHIn: tile.tileHIn ?? 24,
-      groutIn: tile.groutIn ?? 0,
-    })
-    tileCount += est.tileCount
+    tileCount += tileGridCount(w * 12, h * 12, tile.tileWIn ?? 12, tile.tileHIn ?? 24, grout).count
   })
   const priceUsd = finish.catalogPriceUsd
   const priceUnit = finish.catalogPriceUnit

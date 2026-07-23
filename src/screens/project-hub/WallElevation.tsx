@@ -1584,18 +1584,24 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </text>
           </g>
         )}
-        <g className="hub-sketch-elevation-cabinet-guides">
-          {[
-            { key: 'toe', value: CABINET_TOE_KICK_IN / 12, label: t('hub_sketch_cabinet_toe_guide') },
-            { key: 'counter', value: CABINET_COUNTERTOP_HEIGHT_IN / 12, label: t('hub_sketch_cabinet_counter_guide') },
-            { key: 'wall', value: CABINET_WALL_BOTTOM_IN / 12, label: t('hub_sketch_cabinet_wall_guide') },
-          ].filter((guide) => guide.value < height).map((guide) => (
-            <g key={guide.key}>
-              <line x1={0} y1={height - guide.value} x2={lengthFt} y2={height - guide.value} />
-              <text x={0.08} y={height - guide.value - 0.05} textAnchor="start">{guide.label}</text>
-            </g>
-          ))}
-        </g>
+        {/* SKETCH-POLISH-55: направляющие высот (цоколь/столешница/навесной) тянутся во всю ширину стены
+            и на пустой/плиточной стене читались как «фоновая сетка/клетки». Показываем их ТОЛЬКО когда на
+            стене реально есть шкафы — тогда линии осмысленны как привязка ряда. Иначе стена гладкая:
+            единственная «сетка» на развёртке = настоящие швы плитки ВНУТРИ зоны отделки. */}
+        {wallCabinetCount > 0 && (
+          <g className="hub-sketch-elevation-cabinet-guides">
+            {[
+              { key: 'toe', value: CABINET_TOE_KICK_IN / 12, label: t('hub_sketch_cabinet_toe_guide') },
+              { key: 'counter', value: CABINET_COUNTERTOP_HEIGHT_IN / 12, label: t('hub_sketch_cabinet_counter_guide') },
+              { key: 'wall', value: CABINET_WALL_BOTTOM_IN / 12, label: t('hub_sketch_cabinet_wall_guide') },
+            ].filter((guide) => guide.value < height).map((guide) => (
+              <g key={guide.key}>
+                <line x1={0} y1={height - guide.value} x2={lengthFt} y2={height - guide.value} />
+                <text x={0.08} y={height - guide.value - 0.05} textAnchor="start">{guide.label}</text>
+              </g>
+            ))}
+          </g>
+        )}
         <rect className={wallLengthConflictActive ? 'hub-sketch-elevation-outline hub-sketch-elevation-outline-conflict' : 'hub-sketch-elevation-outline'} x={0} y={0} width={lengthFt} height={height} />
         {/* WALL-ELEV-READOUTS-53: высота стены СЛЕВА — обе подписи (ширина снизу, высота слева) всегда видны. */}
         <g className="hub-sketch-elevation-wall-dim hub-sketch-elevation-wall-dim-v" pointerEvents="none">

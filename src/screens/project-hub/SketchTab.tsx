@@ -1668,6 +1668,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [model, setModel] = useState<SketchModel>(EMPTY_MODEL)
   const [history, setHistory] = useState<SketchHistory<SketchModel>>(() => emptySketchHistory())
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
+  // SKETCH-POLISH-55: слот в основной верхней строке, куда Sketch3DView портирует свою строку
+  // 3D-контекста (обычный, не полноэкранный 3D) → сверху ОДНА полоса вместо двух.
+  const [threeDToolbarSlot, setThreeDToolbarSlot] = useState<HTMLDivElement | null>(null)
   const [tool, setTool] = useState<Tool>('wall')
   // ELEMENTS-INFRA-26: одинарная/двойная розетка/выключатель (общий переключатель варианта электрики).
   const [electricalVariant, setElectricalVariant] = useState<SketchElectricalVariant>('single')
@@ -6699,6 +6702,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           <span>{t('hub_sketch_code_check')}</span>
         </label>
       </div>
+      {/* SKETCH-POLISH-55: слот 3D-контекста в ОСНОВНОЙ строке. В обычном 3D сюда Sketch3DView
+          портирует свои тогглы (Размеры/Потолок/Снимок/Референс/Рендер/На весь экран) — одна полоса. */}
+      {viewMode === '3d' && !fullscreen && (
+        <div className="hub-sketch-topbar-group hub-sketch-topbar-3d-slot" ref={setThreeDToolbarSlot} />
+      )}
       <div className="hub-sketch-topbar-group hub-sketch-topbar-right">
         {canEdit && (
           <button
@@ -8050,6 +8058,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             cameraPresetRequest={threeDCameraPresetRequest}
             fullscreenRequestKey={threeDFullscreenRequest}
             viewModeControl={renderViewModeToggle(true)}
+            toolbarPortalTarget={threeDToolbarSlot}
             label={t('hub_sketch_3d_label')}
             loadingLabel={t('hub_sketch_3d_loading')}
             errorLabel={t('hub_sketch_3d_error')}

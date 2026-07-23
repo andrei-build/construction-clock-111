@@ -10,6 +10,7 @@ import {
 import {
   symmetricTileAxisCells,
   tileAxisCells,
+  tileGridCount,
 } from '../src/screens/project-hub/tileLayout'
 import type { SketchSurfaceFinish } from '../src/screens/project-hub/sketchFinishes'
 
@@ -37,16 +38,26 @@ function tileFinish(overrides: Partial<SketchSurfaceFinish> = {}): SketchSurface
 }
 
 describe('wallFinishMetrics — tile zone estimate', () => {
-  it('zone 36" × 96" (3×8 ft = 24 ft²) with 12×24 tile → tiles with waste', () => {
+  it('zone 36" × 96" (3×8 ft = 24 ft²) with 12×24 tile → 12 tiles (3 cols × 4 rows)', () => {
     const finish = tileFinish({
       coverage: { mode: 'partial', regions: [{ x0Ft: 0, y0Ft: 0, x1Ft: 3, y1Ft: 8 }] },
     })
     const est = tileZoneEstimateForFinish(finish, 9, 8)
     expect(est.areaSqft).toBe(24)
-    // 24 ft² × 1.2 waste = 28.8 ft² → 28.8*144 / (12*24) = 14.4 → ceil 15
-    expect(est.tileCount).toBe(15)
+    // SKETCH-POLISH-55: осмысленное число закупки = сетка ячеек реальной раскладки, а не площадь+запас.
+    // 36″/12″ = 3 колонки, 96″/24″ = 4 ряда → 3×4 = 12 (ровно то, что видно швами на развёртке).
+    expect(est.tileCount).toBe(12)
     expect(est.hasPrice).toBe(false)
     expect(est.costUsd).toBe(0)
+  })
+
+  it('zone 32" × 96" with 12×24 tile → 12 tiles (2 whole + 1 cut col × 4 rows)', () => {
+    // 32″ = 2 целых 12″ + подрезка → 3 колонки (последняя — обрез из целой плитки); 96″/24″ = 4 ряда.
+    const finish = tileFinish({
+      coverage: { mode: 'partial', regions: [{ x0Ft: 0, y0Ft: 0, x1Ft: 32 / 12, y1Ft: 8 }] },
+    })
+    const est = tileZoneEstimateForFinish(finish, 9, 8)
+    expect(est.tileCount).toBe(12)
   })
 
   it('cost per sqft = area × price', () => {
@@ -67,8 +78,8 @@ describe('wallFinishMetrics — tile zone estimate', () => {
       coverage: { mode: 'partial', regions: [{ x0Ft: 0, y0Ft: 0, x1Ft: 3, y1Ft: 8 }] },
     })
     const est = tileZoneEstimateForFinish(finish, 9, 8)
-    expect(est.tileCount).toBe(15)
-    expect(est.costUsd).toBe(30)
+    expect(est.tileCount).toBe(12)
+    expect(est.costUsd).toBe(24)
   })
 
   it('non-tile finish → zero estimate', () => {
@@ -138,5 +149,31 @@ describe('tileLayout — seam cells + symmetry', () => {
     const cells = tileAxisCells(20, 12, 0.5, 0)
     expect(cells[0].startIn).toBeGreaterThanOrEqual(0)
     expect(cells[cells.length - 1].endIn).toBeLessThanOrEqual(20 + 1e-6)
+  })
+})
+
+describe('tileLayout — tileGridCount (число плиток на закупку = сетка ячеек)', () => {
+  it('36×96, плитка 12×24, шов 0 → 3×4 = 12', () => {
+    const g = tileGridCount(36, 96, 12, 24, 0)
+    expect(g.cols).toBe(3)
+    expect(g.rows).toBe(4)
+    expect(g.count).toBe(12)
+  })
+
+  it('36×96, плитка 12×24, реальный шов 1/8" → всё ещё 3×4 = 12', () => {
+    const g = tileGridCount(36, 96, 12, 24, 0.125)
+    expect(g.count).toBe(12)
+  })
+
+  it('32×96 → 3 колонки (2 целых + подрезка) × 4 ряда = 12', () => {
+    const g = tileGridCount(32, 96, 12, 24, 0.125)
+    expect(g.cols).toBe(3)
+    expect(g.rows).toBe(4)
+    expect(g.count).toBe(12)
+  })
+
+  it('вырожденная зона (нулевая сторона) → 0 плиток', () => {
+    expect(tileGridCount(0, 96, 12, 24, 0.125).count).toBe(0)
+    expect(tileGridCount(36, 0, 12, 24, 0.125).count).toBe(0)
   })
 })
