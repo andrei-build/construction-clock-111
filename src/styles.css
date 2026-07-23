@@ -8122,6 +8122,39 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
 }
+/* ELEV-BEHAVIOR-56: выбранный/перетаскиваемый проём + курсор перемещения (миллиметровое движение). */
+.hub-sketch-elevation-opening-drag {
+  cursor: grab;
+}
+.hub-sketch-elevation-opening-dragging {
+  cursor: grabbing;
+}
+.hub-sketch-elevation-opening-selected > rect:first-of-type {
+  stroke: #0f766e;
+  stroke-width: .06;
+  stroke-dasharray: .1 .06;
+  vector-effect: non-scaling-stroke;
+}
+/* ELEV-BEHAVIOR-56 / уточнение-2: живые размеры обводки/движения у курсора — тонкая техническая
+   плашка (мелкий кегль, тёмный фон, лёгкое скругление), без «детских жирных цифр» (типографика — #57). */
+.hub-sketch-elevation-live-dim rect {
+  fill: rgba(15, 23, 42, .82);
+  stroke: rgba(255, 255, 255, .55);
+  stroke-width: .012;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-live-dim text {
+  fill: #f8fafc;
+  font-weight: 500;
+  letter-spacing: .002px;
+}
+/* ELEV-BEHAVIOR-56: подсказка про стрелки в инспекторе проёма. */
+.hub-sketch-elevation-nudge-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.3;
+}
 .hub-sketch-elevation-svg .hub-sketch-elevation-opening-dim line {
   stroke: #0f766e;
   stroke-width: .022;

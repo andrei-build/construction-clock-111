@@ -5698,7 +5698,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const closeSketchSheet = (kind: SketchSheetKind) => {
     if (kind === 'context') {
+      // ELEV-BEHAVIOR-56 (#3): «Закрыть» реально сворачивает панель И на десктопе (левая колонка
+      // управляется contextPanelCollapsed), не только мобильный нижний лист (contextSheetOpen).
       setContextSheetOpen(false)
+      setContextPanelCollapsed(true)
       setClearConfirmOpen(false)
     } else {
       closeSketchPropertiesPanel()
@@ -6746,7 +6749,12 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
         title={use3DContextPanel ? undefined : t(contextPanelCollapsed ? 'hub_sketch_panel_expand' : 'hub_sketch_panel_collapse')}
         onClick={() => {
           if (use3DContextPanel) return
-          setContextPanelCollapsed((value) => !value)
+          // ELEV-BEHAVIOR-56 (#3): повторный клик «‹»/«☰» снова раскрывает панель (и мобильный лист).
+          setContextPanelCollapsed((value) => {
+            const next = !value
+            if (!next) setContextSheetOpen(true)
+            return next
+          })
         }}
       >
         <span className="hub-sketch-mode-icon" aria-hidden="true">{contextPanelCollapsed ? '☰' : '‹'}</span>
@@ -6839,9 +6847,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             )}
             {canEdit && (
               <div className="hub-sketch-wall-panel-actions">
-                {/* SKETCH-EDIT-MODEL-51: «Развернуть в лоб» — тот же поток, что тап по стене в 3D-развёртке. */}
+                {/* ELEV-BEHAVIOR-56 (#2): «Открыть развёртку» — стена доступна из 2D в один клик, тот же
+                    поток, что тап по стене в 3D. Явная, узнаваемая надпись (было «Развернуть в лоб»). */}
                 <button type="button" className="btn small hub-sketch-wall-panel-flip" onClick={() => openWallElevationFullscreen(false)}>
-                  {t('hub_sketch_wall_panel_flip')}
+                  {t('hub_sketch_wall_panel_open_elevation')}
                 </button>
                 <button type="button" className="btn ghost small" onClick={openWallFinish}>
                   {t('hub_sketch_wall_panel_finish_action')}
@@ -7044,6 +7053,20 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setContextSheetOpen(false)
     setClearConfirmOpen(false)
   }, [hasPropertiesPanel])
+  // ELEV-BEHAVIOR-56 (#3): Esc сворачивает раскрытую контекст-панель, если Esc не перехвачен рисованием
+  // или выделением объекта (у них свой Esc). Кнопка «Закрыть»/«‹» сворачивает через closeSketchSheet/тоггл.
+  useEffect(() => {
+    if (contextPanelCollapsed || use3DContextPanel) return
+    if (editMode === 'draw' || selectedWall || selectedContour || selectedOpening) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || isEditableKeyTarget(event.target)) return
+      setContextPanelCollapsed(true)
+      setContextSheetOpen(false)
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [contextPanelCollapsed, use3DContextPanel, editMode, selectedWall, selectedContour, selectedOpening])
   // SKETCH-CANVAS-12: колонка контекст-панели свёрнута (нет 3D-панели и стоит флаг) —
   // сетка переходит в двухколоночный режим (как -no-context), панель прячется на ≥721px.
   const contextColumnCollapsed = !use3DContextPanel && contextPanelCollapsed
