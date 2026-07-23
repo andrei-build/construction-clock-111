@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  decideVoiceFinalOutcome,
+  formatVoiceGateCause,
   isVoiceAffirm,
   isVoiceCancel,
   isVoiceStopCommand,
@@ -10,8 +12,10 @@ import {
   sttFinalLagMs,
   stripMarkdownForSpeech,
   voiceEventMessage,
+  VOICE_FINAL_RESCUE_MS,
   VOICE_FIRST_BYTE_TIMEOUT_MS,
   VOICE_MAX_ATTEMPTS,
+  type VoicePipelineSnapshot,
 } from '../src/lib/aiVoice'
 
 describe('sttFinalLagMs (VOICE-TIMEOUT-RETRY-8)', () => {
@@ -50,6 +54,109 @@ describe('voiceEventMessage', () => {
     expect(voiceEventMessage('autoplay-block', '   ')).toBe('voice:autoplay-block')
     expect(voiceEventMessage('decode-fail', '  no_audio_context  ')).toBe('voice:decode-fail no_audio_context')
     expect(voiceEventMessage('fetch-ok', undefined)).toBe('voice:fetch-ok')
+  })
+})
+
+// VOICE-DROPPED-FINAL-47: чистое ядро конвейера «один непустой финал → РОВНО ОДИН исход». Раньше finalize
+// при закрытом гейте делал тихий `if (!canAccept) return` и терял готовый финал (sttFinal2speechEnd есть,
+// speechEnd2req нет). Ядро гарантирует: send | hold | drop(reason) — без тихих потерь.
+const idle: VoicePipelineSnapshot = { active: true, thinking: false, streaming: false, speechPending: false }
+
+describe('decideVoiceFinalOutcome (VOICE-DROPPED-FINAL-47)', () => {
+  it('sends a non-empty final when the gate is open (idle)', () => {
+    expect(decideVoiceFinalOutcome({ finalText: 'покажи смету', lastSentText: null, snapshot: idle }))
+      .toEqual({ action: 'send' })
+  })
+
+  it('HOLDS (does not drop) a final captured while the assistant is thinking', () => {
+    expect(decideVoiceFinalOutcome({ finalText: 'сколько часов', lastSentText: null, snapshot: { ...idle, thinking: true } }))
+      .toEqual({ action: 'hold' })
+  })
+
+  it('HOLDS a final captured while the answer is streaming', () => {
+    expect(decideVoiceFinalOutcome({ finalText: 'сколько часов', lastSentText: null, snapshot: { ...idle, streaming: true } }))
+      .toEqual({ action: 'hold' })
+  })
+
+  it('HOLDS a final captured while the previous turn is still speaking (speechPending)', () => {
+    expect(decideVoiceFinalOutcome({ finalText: 'а по второму объекту', lastSentText: null, snapshot: { ...idle, speechPending: true } }))
+      .toEqual({ action: 'hold' })
+  })
+
+  it('drops an empty / whitespace-only final with reason "empty"', () => {
+    expect(decideVoiceFinalOutcome({ finalText: '', lastSentText: null, snapshot: idle }))
+      .toEqual({ action: 'drop', reason: 'empty' })
+    expect(decideVoiceFinalOutcome({ finalText: '   ', lastSentText: 'что-то', snapshot: idle }))
+      .toEqual({ action: 'drop', reason: 'empty' })
+  })
+
+  it('drops a duplicate of the last sent text with reason "dup" (normalized, ignores case/punctuation)', () => {
+    expect(decideVoiceFinalOutcome({ finalText: 'Покажи смету!', lastSentText: 'покажи смету', snapshot: idle }))
+      .toEqual({ action: 'drop', reason: 'dup' })
+  })
+
+  it('sends (not dup) when the final differs from the last sent text', () => {
+    expect(decideVoiceFinalOutcome({ finalText: 'покажи табель', lastSentText: 'покажи смету', snapshot: idle }))
+      .toEqual({ action: 'send' })
+  })
+
+  it('sends after a barge-in: gate reopened to idle, non-duplicate phrase', () => {
+    expect(decideVoiceFinalOutcome({ finalText: 'стоп, лучше по бригаде', lastSentText: 'покажи смету', snapshot: idle }))
+      .toEqual({ action: 'send' })
+  })
+})
+
+describe('formatVoiceGateCause (VOICE-DROPPED-FINAL-47)', () => {
+  it('serialises every pipeline flag so client_errors shows which flag held the gate', () => {
+    expect(formatVoiceGateCause({ active: true, thinking: false, streaming: false, speechPending: true, canAccept: false }))
+      .toBe('active=true thinking=false streaming=false speechPending=true canAccept=false')
+  })
+})
+
+describe('VOICE_FINAL_RESCUE_MS (VOICE-DROPPED-FINAL-47)', () => {
+  it('is a 1.5s rescue window — under the "завис" perception threshold', () => {
+    expect(VOICE_FINAL_RESCUE_MS).toBe(1_500)
+  })
+})
+
+// ЛОГ-ГЕЙТ: последовательность из 3 финалов подряд в разных стейтах даёт РОВНО 3 осознанных исхода, 0 тишины.
+// Симулируем конвейер поверх чистого ядра: гейт закрывается озвучкой предыдущего хода и снова открывается.
+describe('voice final pipeline invariant — no silent losses (VOICE-DROPPED-FINAL-47)', () => {
+  it('3 finals across states → exactly 3 conscious outcomes (send, hold→send, drop), zero silence', () => {
+    // Модель конвейера: держим последний отправленный текст и придержанный финал; каждый исход логируется.
+    let lastSent: string | null = null
+    let pending: string | null = null
+    const outcomes: string[] = []
+
+    const feed = (finalText: string, snapshot: VoicePipelineSnapshot): void => {
+      const decision = decideVoiceFinalOutcome({ finalText, lastSentText: lastSent, snapshot })
+      if (decision.action === 'send') { lastSent = finalText.trim(); pending = null; outcomes.push('send'); return }
+      if (decision.action === 'drop') { outcomes.push(`drop:${decision.reason}`); return }
+      // hold: придерживаем финал — он НЕ теряется, а ждёт открытия гейта
+      pending = finalText.trim()
+      outcomes.push('hold')
+    }
+    // гейт открылся (озвучка отзвучала) — досылаем придержанный финал ровно один раз
+    const openGate = (snapshot: VoicePipelineSnapshot): void => {
+      if (!pending) return
+      const decision = decideVoiceFinalOutcome({ finalText: pending, lastSentText: lastSent, snapshot })
+      if (decision.action === 'send') { lastSent = pending; pending = null; outcomes.push('send') }
+    }
+
+    // Финал №1 — в idle: сразу уходит запросом.
+    feed('покажи смету', idle)
+    // Финал №2 — пока звучит ответ по №1 (speechPending): придерживается (НЕ теряется), затем гейт открылся → уходит.
+    feed('а сколько по зарплате', { ...idle, speechPending: true })
+    openGate(idle)
+    // Финал №3 — дубль уже отправленного №2: осознанный drop.
+    feed('А сколько по зарплате?', idle)
+
+    // Ровно 3 финала → 3 осознанных исхода (send, hold→send, drop) + ни одной тишины без следа.
+    expect(outcomes).toEqual(['send', 'hold', 'send', 'drop:dup'])
+    // Придержанный финал №2 РЕАЛЬНО ушёл (2 send), и ни один непустой финал не потерян молча.
+    expect(outcomes.filter((o) => o === 'send')).toHaveLength(2)
+    expect(pending).toBeNull()
+    expect(lastSent).toBe('а сколько по зарплате')
   })
 })
 

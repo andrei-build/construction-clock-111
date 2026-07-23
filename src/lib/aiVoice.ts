@@ -124,6 +124,62 @@ export function sttFinalLagMs(speechEndAt: number | null, sttFinalAt: number | n
   return Math.max(0, sttFinalAt - speechEndAt)
 }
 
+// VOICE-DROPPED-FINAL-47: страховочный порог. Через столько мс после ПЕРВОГО финала STT, если по нему так
+// и не ушёл запрос и не записан осознанный drop, конвейер обязан досослать его принудительно (final-rescue).
+// 1.5с < порога восприятия «завис», но заметно больше типичного окна отзвучки предыдущего сегмента.
+export const VOICE_FINAL_RESCUE_MS = 1_500
+
+// VOICE-DROPPED-FINAL-47: снимок конвейера для чистого решения по финалу STT. active — жив ли разговорный
+// цикл; thinking/streaming — идёт загрузка ответа; speechPending — озвучка предыдущего хода ещё звучит/в очереди.
+export type VoicePipelineSnapshot = {
+  active: boolean
+  thinking: boolean
+  streaming: boolean
+  speechPending: boolean
+}
+
+// VOICE-DROPPED-FINAL-47: единственный исход финала STT. send — сразу в ai-assistant; hold — придержать и
+// дослать, когда гейт откроется (озвучка/ход предыдущего отзвучали); drop — осознанно отбросить с причиной.
+export type VoiceFinalDecision =
+  | { action: 'send' }
+  | { action: 'hold' }
+  | { action: 'drop'; reason: 'empty' | 'dup' }
+
+// VOICE-DROPPED-FINAL-47 (корень бага): раньше finalize при закрытом гейте делал `if (!canAccept) return` и
+// ТИХО выбрасывал готовый непустой финал — sttFinal2speechEnd залогирован, а speechEnd2req/запроса нет
+// («проглоченный первый финал»). Инвариант: КАЖДЫЙ непустой финал даёт РОВНО ОДИН исход. Чистое ядро (без
+// DOM/сети) — покрыто юнит-тестами: пусто → drop('empty'); дубль последнего отправленного → drop('dup');
+// гейт закрыт (thinking/streaming/speechPending) → hold (НЕ теряем); гейт открыт (idle/после barge-in) → send.
+export function decideVoiceFinalOutcome(input: {
+  finalText: string
+  lastSentText: string | null
+  snapshot: VoicePipelineSnapshot
+}): VoiceFinalDecision {
+  const text = input.finalText.trim()
+  if (!text) return { action: 'drop', reason: 'empty' }
+  const lastSent = input.lastSentText?.trim()
+  if (lastSent && normalizeVoiceText(text) === normalizeVoiceText(lastSent)) {
+    return { action: 'drop', reason: 'dup' }
+  }
+  const { snapshot } = input
+  if (snapshot.thinking || snapshot.streaming || snapshot.speechPending) return { action: 'hold' }
+  return { action: 'send' }
+}
+
+// VOICE-DROPPED-FINAL-47: причина-стейт для логов hold/final-rescue — все булевы флаги конвейера склеены в
+// одну строку, чтобы в client_errors было видно, КАКОЙ флаг держал гейт закрытым (active/thinking/streaming/
+// speechPending/canAccept). Логи-маркеры НЕ переводим (внутренняя телеметрия).
+export function formatVoiceGateCause(state: {
+  active: boolean
+  thinking: boolean
+  streaming: boolean
+  speechPending: boolean
+  canAccept: boolean
+}): string {
+  return `active=${state.active} thinking=${state.thinking} streaming=${state.streaming} ` +
+    `speechPending=${state.speechPending} canAccept=${state.canAccept}`
+}
+
 export function isTtsPlaybackBlockedError(err: unknown): boolean {
   const name = (err as { name?: string } | null)?.name
   const message = (err as { message?: string } | null)?.message?.toLowerCase() ?? ''

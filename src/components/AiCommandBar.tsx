@@ -24,6 +24,8 @@ import {
   type AiProposal,
 } from '../lib/api/ai'
 import {
+  decideVoiceFinalOutcome,
+  formatVoiceGateCause,
   getAiOrbToggleIntent,
   getNextAiOrbToggleState,
   hasPendingAssistantSpeech,
@@ -37,6 +39,7 @@ import {
   splitCompletedSpeechSegments,
   sttFinalLagMs,
   stripMarkdownForSpeech,
+  VOICE_FINAL_RESCUE_MS,
   VOICE_FIRST_BYTE_TIMEOUT_MS,
   VOICE_MAX_ATTEMPTS,
 } from '../lib/aiVoice'
@@ -415,6 +418,13 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
   // sttFinalAt — момент, когда onresult ПЕРВЫЙ раз отдал isFinal (финал распознавания). Разница = лаг движка.
   const micLastVoiceAtRef = useRef<number | null>(null)
   const sttFinalAtRef = useRef<number | null>(null)
+  // VOICE-DROPPED-FINAL-47: конвейер «один финал → один исход». pendingFinal — непустой финал, придержанный
+  // на время закрытого гейта (озвучка/thinking/streaming предыдущего хода); дошлётся, когда гейт откроется
+  // (ttsOnIdle) или по rescue-таймеру. lastSentVoice — текст последнего РЕАЛЬНО отправленного финала
+  // (анти-дубль). finalRescueTimer — страховочный таймер VOICE_FINAL_RESCUE_MS против тихой потери финала.
+  const pendingFinalRef = useRef<string | null>(null)
+  const lastSentVoiceRef = useRef<string | null>(null)
+  const finalRescueTimerRef = useRef<number | null>(null)
 
   useEffect(() => { try { localStorage.setItem('ai_speak', speakOn ? '1' : '0') } catch { /* ignore */ } }, [speakOn])
   useEffect(() => { try { localStorage.setItem('ai_wake', wakeOn ? '1' : '0') } catch { /* ignore */ } }, [wakeOn])
@@ -1657,6 +1667,11 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
     let active = true
     convoActiveRef.current = true
     let rec: SpeechRecInstance | null = null
+    // VOICE-DROPPED-FINAL-47: свежий сеанс — чистим придержанный финал/анти-дубль/страховку (дубль ловим
+    // только внутри одного сеанса; между сеансами повтор фразы законен).
+    pendingFinalRef.current = null
+    lastSentVoiceRef.current = null
+    if (finalRescueTimerRef.current !== null) { window.clearTimeout(finalRescueTimerRef.current); finalRescueTimerRef.current = null }
 
     const clearSilence = () => {
       if (silenceTimerRef.current !== null) { window.clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
@@ -1719,6 +1734,11 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       }
       r.onresult = (e) => {
         if (!shouldAcceptAssistantVoiceResult(assistantSpeechGateSnapshot())) {
+          // VOICE-DROPPED-FINAL-47: гейт закрылся ПОСРЕДИ захвата. Раньше здесь безусловно стоял
+          // `finalText=''` — уже накопленный непустой финал ТИХО пропадал. Теперь: если финал есть —
+          // финализируем его (finalize → resolveVoiceFinal придержит hold и дошлёт, когда гейт откроется),
+          // а не выбрасываем. Пустой буфер во время речи ассистента — эхо/чужой звук, просто игнорируем.
+          if (finalText.trim()) { finalize(finalText); return }
           finalText = ''
           clearSilence()
           return
@@ -1750,19 +1770,109 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       try { r.start(); startMeter() } catch { /* leave visible listening state; browser may recover on next toggle */ }
     }
 
+    // VOICE-DROPPED-FINAL-47: снимок конвейера для чистого решения send/hold/drop по финалу STT.
+    const voicePipelineSnapshot = () => {
+      const snap = assistantSpeechGateSnapshot()
+      return {
+        active,
+        thinking: Boolean(snap.thinking),
+        streaming: Boolean(snap.streaming),
+        speechPending: hasPendingAssistantSpeech(snap),
+      }
+    }
+
+    const clearFinalRescue = () => {
+      if (finalRescueTimerRef.current !== null) {
+        window.clearTimeout(finalRescueTimerRef.current)
+        finalRescueTimerRef.current = null
+      }
+    }
+
+    // VOICE-DROPPED-FINAL-47: ЕДИНСТВЕННЫЙ путь финала STT в runTurn. Чистит придержанный финал и rescue-
+    // таймер (без утечек/двойных отправок), запоминает отправленный текст (анти-дубль последнего финала).
+    const dispatchVoiceFinal = (q: string) => {
+      clearFinalRescue()
+      pendingFinalRef.current = null
+      lastSentVoiceRef.current = q
+      void runTurn(q)
+    }
+
+    // VOICE-DROPPED-FINAL-47: гейт открылся (озвучка/ход предыдущего отзвучали) — досылаем придержанный финал.
+    // Ставится в ttsOnIdleRef при hold; дёргается из cancelTtsQueue/finishTtsQueue, когда очередь TTS пуста.
+    const flushPendingFinalOnIdle = () => {
+      if (!active) return
+      const q = pendingFinalRef.current
+      if (!q) return
+      dispatchVoiceFinal(q)
+    }
+
+    // VOICE-DROPPED-FINAL-47: страховка от тихой потери. Если через VOICE_FINAL_RESCUE_MS придержанный финал
+    // так и не ушёл (гейт залип, ttsOnIdle не дёрнулся, thinking/streaming затянулись) — шлём принудительно и
+    // логируем final-rescue с причиной-стейтом (какой флаг держал). На каждый sttFinal остаётся след.
+    const armFinalRescue = () => {
+      clearFinalRescue()
+      finalRescueTimerRef.current = window.setTimeout(() => {
+        finalRescueTimerRef.current = null
+        if (!active) return
+        const q = pendingFinalRef.current
+        if (!q) return // финал уже ушёл или осознанно отброшен — страховка не нужна
+        const snap = assistantSpeechGateSnapshot()
+        logVoice('final-rescue', formatVoiceGateCause({
+          active,
+          thinking: Boolean(snap.thinking),
+          streaming: Boolean(snap.streaming),
+          speechPending: hasPendingAssistantSpeech(snap),
+          canAccept: shouldAcceptAssistantVoiceResult(snap),
+        }))
+        dispatchVoiceFinal(q)
+      }, VOICE_FINAL_RESCUE_MS)
+    }
+
+    // VOICE-DROPPED-FINAL-47: инвариант «один непустой финал → один осознанный исход». Решение — в чистом
+    // ядре decideVoiceFinalOutcome (aiVoice.ts). Гейт открыт → send; закрыт → HOLD (придержим + оба триггера
+    // досылки: ttsOnIdle и rescue), а не тихий дроп; пусто/дубль → drop (дубль логируем, пустой — просто
+    // слушаем дальше без шума в телеметрии).
+    const resolveVoiceFinal = (text: string) => {
+      const decision = decideVoiceFinalOutcome({
+        finalText: text,
+        lastSentText: lastSentVoiceRef.current,
+        snapshot: voicePipelineSnapshot(),
+      })
+      if (decision.action === 'drop') {
+        clearFinalRescue()
+        pendingFinalRef.current = null
+        if (decision.reason !== 'empty') logVoice('drop', `reason=${decision.reason}`)
+        listen() // цикл не рвём — продолжаем слушать
+        return
+      }
+      const q = text.trim()
+      voiceSpeechEndAtRef.current = Date.now() // VOICE-CLIENT-DEBUG-1: конец захвата речи (для speechEnd2req)
+      if (decision.action === 'send') {
+        dispatchVoiceFinal(q)
+        return
+      }
+      // hold: гейт закрыт — придерживаем финал и вооружаем ОБА триггера досылки (ttsOnIdle + rescue).
+      pendingFinalRef.current = q
+      const snap = assistantSpeechGateSnapshot()
+      logVoice('hold', formatVoiceGateCause({
+        active,
+        thinking: Boolean(snap.thinking),
+        streaming: Boolean(snap.streaming),
+        speechPending: hasPendingAssistantSpeech(snap),
+        canAccept: false,
+      }))
+      ttsOnIdleRef.current = flushPendingFinalOnIdle
+      armFinalRescue()
+    }
+
     const finalize = (text: string) => {
       if (!active) return
-      const canAccept = shouldAcceptAssistantVoiceResult(assistantSpeechGateSnapshot())
       stopRec()
       // VOICE-TIMEOUT-RETRY-8: лаг Web Speech при КАЖДОМ финале — от акустического конца речи (мик-уровень)
       // до финала распознавания. Докажет/опровергнет, что Web Speech тянет секунды (обоснование Deepgram).
       const sttLag = sttFinalLagMs(micLastVoiceAtRef.current, sttFinalAtRef.current)
       if (sttLag !== null) logVoice('timing', `sttFinal2speechEnd=${sttLag}ms`)
-      if (!canAccept) return
-      const q = text.trim()
-      if (!q) { listen(); return } // ничего не сказали — продолжаем слушать
-      voiceSpeechEndAtRef.current = Date.now() // VOICE-CLIENT-DEBUG-1: конец захвата речи (для таймингов)
-      void runTurn(q)
+      resolveVoiceFinal(text)
     }
 
     const runTurn = async (q: string) => {
@@ -1794,6 +1904,9 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       active = false
       convoActiveRef.current = false
       bargeInListenRef.current = null
+      // VOICE-DROPPED-FINAL-47: снимаем страховочный таймер и придержанный финал (нет утечек/зомби-отправок).
+      pendingFinalRef.current = null
+      if (finalRescueTimerRef.current !== null) { window.clearTimeout(finalRescueTimerRef.current); finalRescueTimerRef.current = null }
       stopRec()
     }
   }, [
