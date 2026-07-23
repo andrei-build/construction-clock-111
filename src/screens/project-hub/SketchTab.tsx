@@ -2,6 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { useI18n } from '../../lib/i18n'
 import { railIconId, dimPlateWidthEm, dimPlateRadius, DIM_PLATE_HEIGHT_EM } from '../../lib/sketchToolbar'
 import {
+  wallSpans,
+  wallThicknessPreset,
+  ptsToSvg,
+  WALL_THICKNESS_2X4_FT,
+  WALL_THICKNESS_2X6_FT,
+  WALL_THICKNESS_PRESETS,
+  DEFAULT_WALL_THICKNESS_FT,
+  type WallGap,
+  type WallThicknessPreset,
+} from '../../lib/sketchWalls'
+import {
   createProjectNote,
   getProjectFileDownloadUrl,
   getProjectHubFiles,
@@ -296,7 +307,10 @@ const COARSE_POINTER =
 const NODE_HIT_MIN_SCREEN_PX = COARSE_POINTER ? 28 : 24
 
 type Pt = { x: number; y: number }
-type Contour = { points: Pt[]; closed: boolean; label?: string }
+// BLUEPRINT-WALLS-58: wallThickness (футы) — ОПЦИОНАЛЬНОЕ свойство ОТРИСОВКИ стен контура.
+// Модель остаётся centerline (points/closed не меняются). Старые эскизы без поля рисуются с
+// дефолтной толщиной (DEFAULT_WALL_THICKNESS_FT). Проходит sanitize (см. sanitizeWallThickness).
+type Contour = { points: Pt[]; closed: boolean; label?: string; wallThickness?: number }
 // Габариты (w/h/sill) опциональны и аддитивны — старый JSON без них открывается с дефолтами.
 type Opening = {
   // OPENINGS-DRAG-TYPES-27: 'opening' — сквозной вырез без полотна (проём между зонами).
@@ -628,7 +642,12 @@ function sanitizeRoomTemplate(value: unknown): SketchRoomTemplate | null {
           return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null
         })
         .filter((point): point is Pt => !!point)
-      return points.length >= 2 ? { points, closed: rawContour.closed === true } : null
+      if (points.length < 2) return null
+      // BLUEPRINT-WALLS-58: сохранённые шаблоны тоже несут толщину стен (иначе срежется).
+      const contourOut: Contour = { points, closed: rawContour.closed === true }
+      const templateThickness = sanitizeWallThickness(rawContour.wallThickness)
+      if (templateThickness !== undefined) contourOut.wallThickness = templateThickness
+      return contourOut
     })
     .filter((contour): contour is Contour => !!contour)
   if (contours.length === 0) return null
@@ -800,6 +819,15 @@ function sanitizeContourLabel(value: unknown): string | undefined {
   return label || undefined
 }
 
+// BLUEPRINT-WALLS-58: толщина стен контура (футы) как render-свойство. Валидируем диапазон
+// (2"..24"), иначе поле опускается и рисуется дефолт. Держит version:1 совместимым: старый
+// эскиз без поля → undefined → рендер берёт DEFAULT_WALL_THICKNESS_FT.
+function sanitizeWallThickness(value: unknown): number | undefined {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 2 / 12 || n > 24 / 12) return undefined
+  return n
+}
+
 function sanitizeSketchContours(value: unknown): Contour[] {
   if (!Array.isArray(value)) return []
   return value
@@ -820,6 +848,9 @@ function sanitizeSketchContours(value: unknown): Contour[] {
       const next: Contour = { points, closed: rawContour.closed === true && points.length >= 3 }
       const label = sanitizeContourLabel(rawContour.label)
       if (label) next.label = label
+      // BLUEPRINT-WALLS-58: allowlist толщины — иначе поле срежется при load/save (version:1 цел).
+      const wallThickness = sanitizeWallThickness(rawContour.wallThickness)
+      if (wallThickness !== undefined) next.wallThickness = wallThickness
       return next
     })
     .filter((contour): contour is Contour => !!contour)
@@ -1845,6 +1876,32 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
   const openingDefaults = useMemo(() => ({ doorW, doorH, winW, winH, winSill }), [doorW, doorH, winW, winH, winSill])
   const cabinetWallOptions = useMemo(() => eachSegment(model), [model])
+  // BLUEPRINT-WALLS-58: чертёжная отрисовка стен закрытых комнат — центральная линия каждого
+  // контура превращается в две параллельные линии (offset ±толщина/2, miter-углы), проёмы рвут
+  // ОБЕ линии. Модель centerline не трогается — это чистый render (см. src/lib/sketchWalls.ts).
+  const wallBlueprints = useMemo(() => {
+    const cellFt = model.cellFt || CELL_FT
+    return model.contours
+      .map((contour, ci) => {
+        if (!contour.closed || contour.points.length < 3) return null
+        const thicknessFt = contour.wallThickness ?? DEFAULT_WALL_THICKNESS_FT
+        const thicknessCells = thicknessFt / cellFt
+        const gaps: WallGap[] = []
+        model.openings.forEach((o) => {
+          if (o.c !== ci) return
+          const ends = openingEnds(model, o)
+          if (!ends) return
+          const segLen = dist(ends.a, ends.b)
+          if (segLen <= 0.0001) return
+          const widthCells = Math.min(openingWidthFt(o) / cellFt, segLen)
+          const padT = widthCells / 2 / segLen
+          gaps.push({ s: o.s, t0: o.t - padT, t1: o.t + padT })
+        })
+        const spans = wallSpans(contour.points, contour.closed, thicknessCells, gaps)
+        return spans.length > 0 ? { ci, spans } : null
+      })
+      .filter((entry): entry is { ci: number; spans: ReturnType<typeof wallSpans> } => !!entry)
+  }, [model.contours, model.openings, model.cellFt])
   const effectiveCabinetWallKey = selectedCabinetWallKey && cabinetWallOptions.some((seg) => sketchWallKey(seg.c, seg.s) === selectedCabinetWallKey)
     ? selectedCabinetWallKey
     : cabinetWallOptions[0]
@@ -2230,6 +2287,20 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     })
     canvasAutoFitRef.current = false
     commit(nextModel)
+    setSelectedWallKey(sketchWallKey(selectedWall.seg.c, selectedWall.seg.s))
+  }
+
+  // BLUEPRINT-WALLS-58: толщина = render-свойство на КОНТУР (комнату) выбранной стены.
+  // Пресет 2x4=4.5"/2x6=6.5" пишем в contour.wallThickness; проходит sanitize (см. sanitizeWallThickness),
+  // модель остаётся centerline version:1. Меняет визуальную толщину всех стен комнаты.
+  const setSelectedWallThickness = (preset: WallThicknessPreset) => {
+    if (!canEdit || !selectedWall) return
+    const ci = selectedWall.seg.c
+    const contour = model.contours[ci]
+    if (!contour) return
+    const thicknessFt = preset === '2x6' ? WALL_THICKNESS_2X6_FT : WALL_THICKNESS_2X4_FT
+    const nextContours = model.contours.map((item, index) => (index === ci ? { ...item, wallThickness: thicknessFt } : item))
+    commit(normalizeSketchModelForStorage({ ...model, contours: nextContours }))
     setSelectedWallKey(sketchWallKey(selectedWall.seg.c, selectedWall.seg.s))
   }
 
@@ -6871,6 +6942,29 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 </div>
               </label>
             )}
+            {canEdit && (() => {
+              // BLUEPRINT-WALLS-58: пресет толщины стен комнаты (2x4=4.5"/2x6=6.5"). Активный —
+              // по текущей толщине контура выбранной стены (дефолт 4.5" для старых эскизов).
+              const activePreset = wallThicknessPreset(model.contours[selectedWall.seg.c]?.wallThickness ?? DEFAULT_WALL_THICKNESS_FT)
+              return (
+                <div className="hub-sketch-field hub-sketch-wall-panel-thickness">
+                  <span className="muted">{t('hub_sketch_wall_panel_thickness')}</span>
+                  <div className="hub-sketch-wall-thickness-row" role="group" aria-label={t('hub_sketch_wall_panel_thickness')}>
+                    {WALL_THICKNESS_PRESETS.map(({ preset }) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        className={`btn small hub-sketch-wall-thickness-btn${activePreset === preset ? ' active' : ''}`}
+                        aria-pressed={activePreset === preset}
+                        onClick={() => setSelectedWallThickness(preset)}
+                      >
+                        {t(preset === '2x6' ? 'hub_sketch_wall_thickness_2x6' : 'hub_sketch_wall_thickness_2x4')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
             {canEdit && (
               <div className="hub-sketch-wall-panel-actions">
                 {/* ELEV-BEHAVIOR-56 (#2): «Открыть развёртку» — стена доступна из 2D в один клик, тот же
@@ -7202,11 +7296,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             const pts = c.points.map((p) => `${p.x * CELL_PX},${p.y * CELL_PX}`).join(' ')
             const selected = selectedContourIndex === ci
             const justClosed = recentlyClosedContourIndex === ci
+            // BLUEPRINT-WALLS-58: у закрытой комнаты центральную линию прячем — стену рисуют
+            // двойные линии (hub-sketch-walls-blueprint ниже). Подсветку выбора/закрытия/тяги
+            // оставляем (её обводка важна как отклик #51..#57).
+            const highlighted = selected || dragContour === ci || justClosed
             return c.closed && c.points.length >= 3 ? (
               <polygon
                 key={`c${ci}`}
                 className={[
                   'hub-sketch-wall',
+                  highlighted ? '' : 'hub-sketch-wall-flat',
                   selected ? 'hub-sketch-room-selected' : '',
                   selected && canEdit && wallSelectEnabled ? 'hub-sketch-room-draggable' : '',
                   dragContour === ci ? 'hub-sketch-room-dragging' : '',
@@ -7232,6 +7331,51 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               <polyline key={`c${ci}`} className="hub-sketch-wall" points={pts} fill="none" />
             )
           })}
+
+          {/* BLUEPRINT-WALLS-58: стены с толщиной — тело (заливка между линиями) + две линии
+              (внешняя/внутренняя) + торцы проёмов (jamb). Только декор, pointer-events:none —
+              клики по комнате/стене ловят заливка контура и невидимые хит-линии. */}
+          <g className="hub-sketch-walls-blueprint" aria-hidden="true">
+            {wallBlueprints.map(({ ci, spans }) =>
+              spans.map((span, si) => (
+                <g key={`bp-${ci}-${span.s}-${si}`}>
+                  <polygon className="hub-sketch-wall-body" points={ptsToSvg(span.body, CELL_PX)} />
+                  <line
+                    className="hub-sketch-wall-edge"
+                    x1={span.outer[0].x * CELL_PX}
+                    y1={span.outer[0].y * CELL_PX}
+                    x2={span.outer[1].x * CELL_PX}
+                    y2={span.outer[1].y * CELL_PX}
+                  />
+                  <line
+                    className="hub-sketch-wall-edge"
+                    x1={span.inner[0].x * CELL_PX}
+                    y1={span.inner[0].y * CELL_PX}
+                    x2={span.inner[1].x * CELL_PX}
+                    y2={span.inner[1].y * CELL_PX}
+                  />
+                  {span.capStart && (
+                    <line
+                      className="hub-sketch-wall-jamb"
+                      x1={span.capStart[0].x * CELL_PX}
+                      y1={span.capStart[0].y * CELL_PX}
+                      x2={span.capStart[1].x * CELL_PX}
+                      y2={span.capStart[1].y * CELL_PX}
+                    />
+                  )}
+                  {span.capEnd && (
+                    <line
+                      className="hub-sketch-wall-jamb"
+                      x1={span.capEnd[0].x * CELL_PX}
+                      y1={span.capEnd[0].y * CELL_PX}
+                      x2={span.capEnd[1].x * CELL_PX}
+                      y2={span.capEnd[1].y * CELL_PX}
+                    />
+                  )}
+                </g>
+              )),
+            )}
+          </g>
 
           {roomLabels.length > 0 && (
             <g className="hub-sketch-room-labels">

@@ -4778,6 +4778,16 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-wall-panel-length-row { display: flex; align-items: center; gap: 6px; }
 .hub-sketch-wall-panel-length-row input { flex: 1 1 auto; min-width: 0; }
 .hub-sketch-wall-panel-length-unit { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+/* BLUEPRINT-WALLS-58: пресеты толщины стен комнаты (2x4/2x6) в панели свойств стены. */
+.hub-sketch-wall-panel-thickness { display: flex; flex-direction: column; gap: 4px; }
+.hub-sketch-wall-thickness-row { display: flex; gap: 6px; }
+.hub-sketch-wall-thickness-btn { flex: 1 1 0; min-width: 0; }
+.hub-sketch-wall-thickness-btn.active {
+  background: var(--accent);
+  color: #06231d;
+  border-color: var(--accent);
+  font-weight: 600;
+}
 .hub-sketch-svg-shell-fullscreen .hub-sketch-svg-stage {
   flex: 1 1 auto;
   min-height: 0;
@@ -5413,6 +5423,21 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-subgrid line { stroke: rgba(120, 170, 140, .08); stroke-width: 1; }
 .hub-sketch-grid line { stroke: rgba(120, 170, 140, .18); stroke-width: 1; }
 .hub-sketch-wall { stroke: var(--text); stroke-width: 3; fill: rgba(237, 246, 251, .05); stroke-linejoin: round; stroke-linecap: round; }
+/* BLUEPRINT-WALLS-58: у закрытой комнаты центральную линию прячем — стену рисуют двойные линии
+   ниже. Заливку комнаты (fill) оставляем как есть. */
+.hub-sketch-wall-flat { stroke: transparent; }
+/* BLUEPRINT-WALLS-58: чертёжные стены с толщиной — только декор, кликов не ловят. */
+.hub-sketch-walls-blueprint { pointer-events: none; }
+.hub-sketch-wall-body { fill: rgba(120, 141, 168, .22); stroke: none; }
+.hub-sketch-wall-edge,
+.hub-sketch-wall-jamb {
+  stroke: var(--text);
+  stroke-width: 1.6;
+  fill: none;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+  vector-effect: non-scaling-stroke;
+}
 .hub-sketch-room-selected {
   stroke: #2563eb;
   stroke-width: 4;
