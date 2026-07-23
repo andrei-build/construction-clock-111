@@ -47,3 +47,23 @@ export function show3DViewPresetsInStrip(ctx: Sketch3DStripContext): boolean {
 export function isFullscreenControlAlwaysVisible(): boolean {
   return true
 }
+
+// SKETCH-STYLE-PASS-57: размеры тёмной плашки-подложки под чертёжную (моноширинную) подпись размера.
+// Моноширинный шрифт даёт детерминированную ширину: N глифов * advance + горизонтальные поля,
+// поэтому подложку можно нарисовать без измерения DOM (одинаково на плане/развёртке/3D).
+export const DIM_PLATE_GLYPH_EM = 0.6 // средний advance моноширинного глифа в долях кегля
+export const DIM_PLATE_PAD_EM = 0.72 // суммарные горизонтальные поля (лево+право)
+export const DIM_PLATE_HEIGHT_EM = 1.62 // высота плашки в долях кегля
+
+// Ширина плашки в долях кегля (em) под техническую подпись размера. Пустая строка → только поля.
+export function dimPlateWidthEm(text: string): number {
+  const glyphs = Math.max(0, [...String(text ?? '')].length)
+  return glyphs * DIM_PLATE_GLYPH_EM + DIM_PLATE_PAD_EM
+}
+
+// Радиус скругления плашки (в тех же единицах, что кегль): лёгкое скругление, но всегда ≤ ceiling.
+// Гарантирует правило #57 «radius ≤ 8» независимо от масштаба (ceiling передаётся в единицах кегля).
+export function dimPlateRadius(fontSize: number, ceiling: number): number {
+  const soft = Math.max(0, fontSize) * 0.34
+  return Math.min(soft, Math.max(0, ceiling))
+}

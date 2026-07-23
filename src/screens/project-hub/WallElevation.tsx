@@ -95,6 +95,58 @@ import {
 
 const CELL_FT = 1
 
+// SKETCH-STYLE-PASS-57: единый SVG-набор тонкой линией (в стиле левого рейла) вместо эмодзи.
+// stroke=currentColor → значок наследует цвет активной/обычной кнопки.
+function ToolLineIcon({ id }: { id: 'measure' | 'zone' | 'door' | 'window' }) {
+  const p = {
+    className: 'hub-sketch-btn-icon',
+    width: 16,
+    height: 16,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.7,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true,
+  }
+  switch (id) {
+    case 'measure': // рулетка
+      return (
+        <svg {...p}>
+          <path d="M4 8h13a3 3 0 0 1 3 3v5a1 1 0 0 1-1 1H7a3 3 0 0 1-3-3V8Z" />
+          <circle cx="9" cy="14" r="2.5" />
+          <line x1="9" y1="4" x2="9" y2="8" />
+          <line x1="13" y1="4" x2="13" y2="8" />
+          <line x1="17" y1="4" x2="17" y2="8" />
+        </svg>
+      )
+    case 'zone': // прямоугольная зона отделки (пунктир)
+      return (
+        <svg {...p}>
+          <rect x="3.5" y="5.5" width="17" height="13" rx="1" strokeDasharray="3 2.4" />
+        </svg>
+      )
+    case 'door': // дверь с петлёй и дугой открывания
+      return (
+        <svg {...p}>
+          <rect x="5" y="3" width="10" height="18" rx="1" />
+          <path d="M15 21a12 12 0 0 0 4-8" />
+          <circle cx="12" cy="12" r="0.9" fill="currentColor" stroke="none" />
+        </svg>
+      )
+    case 'window': // оконная рама с переплётом
+    default:
+      return (
+        <svg {...p}>
+          <rect x="4" y="4" width="16" height="16" rx="1" />
+          <line x1="12" y1="4" x2="12" y2="20" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+        </svg>
+      )
+  }
+}
+
 type WallElevationWall = {
   c: number
   s: number
@@ -1609,7 +1661,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
               aria-pressed={measureTool}
               onClick={toggleMeasureTool}
             >
-              <span aria-hidden="true">📏</span>
+              <ToolLineIcon id="measure" />
               <span>{t('hub_sketch_tool_measure')}</span>
             </button>
           )}
@@ -1620,7 +1672,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
               aria-pressed={zoneTool}
               onClick={toggleZoneTool}
             >
-              <span aria-hidden="true">▭</span>
+              <ToolLineIcon id="zone" />
               <span>{t('hub_sketch_tool_zone')}</span>
             </button>
           )}
@@ -1933,7 +1985,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
                 })}
               </g>
               )}
-              <text x={box.x + box.width / 2} y={Math.max(0.28, box.y - 0.14)} textAnchor="middle">
+              <text className="hub-sketch-elevation-opening-size" x={box.x + box.width / 2} y={Math.max(0.28, box.y - 0.14)} textAnchor="middle">
                 {label}
               </text>
               {dims.map((dim, dimIndex) => {
@@ -2607,10 +2659,10 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
               <div className="hub-sketch-elevation-add-opening" role="group" aria-label={t('hub_sketch_elevation_add_opening')}>
                 <span className="muted">{t('hub_sketch_elevation_add_opening')}</span>
                 <button type="button" className="btn ghost small" onClick={() => addOpeningToWall('door')}>
-                  <span aria-hidden="true">🚪</span> {t('hub_sketch_tool_door')}
+                  <ToolLineIcon id="door" /> {t('hub_sketch_tool_door')}
                 </button>
                 <button type="button" className="btn ghost small" onClick={() => addOpeningToWall('window')}>
-                  <span aria-hidden="true">🪟</span> {t('hub_sketch_tool_window')}
+                  <ToolLineIcon id="window" /> {t('hub_sketch_tool_window')}
                 </button>
               </div>
             )}
