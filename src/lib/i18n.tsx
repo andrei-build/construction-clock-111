@@ -1099,6 +1099,9 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_no_data: { ru: 'Нет данных', en: 'No data', es: 'Sin datos' },
   hub_back_to_projects: { ru: '← Проекты', en: '← Projects', es: '← Proyectos' },
   hub_tabs_label: { ru: 'Разделы проекта', en: 'Project sections', es: 'Secciones del proyecto' },
+  // PROJECT-HEADER-COMPACT-55: меню имени проекта в компактной шапке.
+  hub_menu_rename: { ru: 'Переименовать', en: 'Rename', es: 'Renombrar' },
+  hub_menu_details: { ru: 'Детали', en: 'Details', es: 'Detalles' },
   directions: { ru: 'Маршрут', en: 'Directions', es: 'Cómo llegar' },
   hub_tab_overview: { ru: 'Обзор', en: 'Overview', es: 'Resumen' },
   hub_tab_tasks: { ru: 'Задачи', en: 'Tasks', es: 'Tareas' },

@@ -2857,6 +2857,128 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .project-hub-head .badge {
   flex: 0 0 auto;
 }
+
+/* PROJECT-HEADER-COMPACT-55: шапка проекта в ОДНУ строку (≤44px) — back + имя·адрес + табы + бейдж.
+   Три прежних этажа (строка «← Проекты», крупный <h1>, адрес-абзац) свёрнуты сюда, чтобы отдать
+   высоту канвасу эскиза и всем вкладкам. Прямоугольные компактные цели «как рейл эскиза». */
+.project-hub-head.ph-compact {
+  position: relative;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-height: 40px;
+  margin-bottom: 12px;
+}
+.ph-compact .ph-back {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  text-decoration: none;
+}
+.ph-compact .ph-back:hover { color: var(--accent); }
+.ph-compact .ph-ident {
+  position: relative;
+  flex: 0 1 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.ph-compact .ph-name {
+  flex: 0 1 auto;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 4px 6px;
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-weight: 800;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.ph-compact .ph-name:hover:not(:disabled) { background: var(--panel2); }
+.ph-compact .ph-name:disabled { cursor: default; }
+.ph-compact .ph-name-input {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 120px;
+  padding: 4px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-weight: 800;
+  font-size: 15px;
+}
+.ph-compact .ph-address {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ph-compact .ph-name-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.ph-compact .ph-name-menu button {
+  text-align: left;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.ph-compact .ph-name-menu button:hover { background: var(--panel2); }
+/* Табы внутри компактной шапки: тянутся в оставшееся место, скролл по горизонтали, компактные. */
+.ph-compact .hub-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+.ph-compact .hub-tabs button {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+}
+.ph-compact > .badge {
+  flex: 0 0 auto;
+}
+/* Узкий экран (планшет/телефон ~768 и уже): имя+адрес схлопываются в одно имя, адрес прячется;
+   табы остаются в одну строку с горизонтальным скроллом (не переносятся на вторую строку). */
+@media (max-width: 768px) {
+  .ph-compact .ph-address { display: none; }
+}
 .hub-tabs {
   display: flex;
   flex-wrap: nowrap;
