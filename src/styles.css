@@ -4590,10 +4590,39 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   touch-action: none;
   user-select: none;
 }
+/* SKETCH-EDIT-MODEL-51: курсор-подсказка режима. Выбор = стрелка, Рисование = крест. */
+.hub-sketch-svg-select { cursor: default; }
+.hub-sketch-svg-draw { cursor: crosshair; }
 .hub-sketch-svg-stage {
   position: relative;
   min-height: 0;
 }
+/* SKETCH-EDIT-MODEL-51: ненавязчивая подсказка режима рисования + всегда видимая кнопка выхода. */
+.hub-sketch-draw-hint {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 12px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, .82);
+  color: #e5e7eb;
+  font-size: 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+  pointer-events: auto;
+  max-width: calc(100% - 24px);
+}
+.hub-sketch-draw-hint-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-sketch-draw-hint-exit { flex: 0 0 auto; }
+/* SKETCH-EDIT-MODEL-51: правка длины выбранной стены числом в панели «Стена». */
+.hub-sketch-wall-panel-length { display: flex; flex-direction: column; gap: 4px; }
+.hub-sketch-wall-panel-length-row { display: flex; align-items: center; gap: 6px; }
+.hub-sketch-wall-panel-length-row input { flex: 1 1 auto; min-width: 0; }
+.hub-sketch-wall-panel-length-unit { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
 .hub-sketch-svg-shell-fullscreen .hub-sketch-svg-stage {
   flex: 1 1 auto;
   min-height: 0;

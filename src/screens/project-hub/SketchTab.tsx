@@ -206,6 +206,14 @@ import {
   type SketchRoomTemplate,
 } from './sketchTemplates'
 import {
+  DEFAULT_EDIT_MODE,
+  clickCreatesNode,
+  clickSelects,
+  enterDraw,
+  escapeDraw,
+  type SketchEditMode,
+} from '../../lib/sketchEditMode'
+import {
   finishLastOpenContour,
   hasClearableSketchContent,
   resolveWallDraftAfterContourFinish,
@@ -1593,6 +1601,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   // ELEMENTS-INFRA-26: одинарная/двойная розетка/выключатель (общий переключатель варианта электрики).
   const [electricalVariant, setElectricalVariant] = useState<SketchElectricalVariant>('single')
   const [activeMode, setActiveMode] = useState<SketchMode>('wall')
+  // SKETCH-EDIT-MODEL-51: режим редактирования 2D-эскиза. Дефолт = «Выбор/Перемещение» (стрелка):
+  // клик выделяет комнату/стену/узел, drag двигает, клик по пустому НЕ рисует. «Рисование» —
+  // отдельный явный инструмент (кнопка), только в нём клик ставит узлы. Ядро — ../../lib/sketchEditMode.
+  const [editMode, setEditMode] = useState<SketchEditMode>(DEFAULT_EDIT_MODE)
+  const editModeRef = useRef<SketchEditMode>(DEFAULT_EDIT_MODE)
   const [contextSheetOpen, setContextSheetOpen] = useState(false)
   // SKETCH-CANVAS-12: контекст-панель по умолчанию свёрнута — канвасу сразу максимум ширины.
   const [contextPanelCollapsed, setContextPanelCollapsed] = useState(true)
@@ -1728,6 +1741,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const setNewRoomPending = (pending: boolean) => {
     newRoomDraftPendingRef.current = pending
     setNewRoomDraftPending(pending)
+  }
+  // SKETCH-EDIT-MODEL-51: держим ref в синхроне со state — pointer/keyboard-хендлеры читают режим из ref.
+  const setEditModeState = (next: SketchEditMode) => {
+    editModeRef.current = next
+    setEditMode(next)
   }
   const openingDefaults = useMemo(() => ({ doorW, doorH, winW, winH, winSill }), [doorW, doorH, winW, winH, winSill])
   const cabinetWallOptions = useMemo(() => eachSegment(model), [model])
@@ -2119,25 +2137,27 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedWallKey(sketchWallKey(selectedWall.seg.c, selectedWall.seg.s))
   }
 
-  const removeSelectedCorner = () => {
-    if (!canEdit || !selectedNode) return
-    const contour = model.contours[selectedNode.c]
-    if (!contour || contour.points.length <= (contour.closed ? 3 : 2)) return
-    const removedIndex = selectedNode.p
+  // SKETCH-EDIT-MODEL-51: удаление узла контура (переиспользуется «Удалить угол» и «Удалить стену»).
+  // Пересчёт индексов openings/placedItems — единая логика, как раньше жила в removeSelectedCorner.
+  const removeCornerAt = (contourIndex: number, removedIndex: number): boolean => {
+    if (!canEdit) return false
+    const contour = model.contours[contourIndex]
+    if (!contour || contour.points[removedIndex] === undefined) return false
+    if (contour.points.length <= (contour.closed ? 3 : 2)) return false
     const nextPoints = contour.points.filter((_, index) => index !== removedIndex)
-    const nextContours = model.contours.map((item, index) => (index === selectedNode.c ? { ...item, points: nextPoints } : item))
+    const nextContours = model.contours.map((item, index) => (index === contourIndex ? { ...item, points: nextPoints } : item))
     const maxSegment = nextPoints.length - (contour.closed ? 1 : 2)
     const nextOpenings = model.openings
-      .filter((opening) => !(opening.c === selectedNode.c && (opening.s === removedIndex || opening.s === removedIndex - 1)))
+      .filter((opening) => !(opening.c === contourIndex && (opening.s === removedIndex || opening.s === removedIndex - 1)))
       .map((opening) => (
-        opening.c === selectedNode.c && opening.s > removedIndex
+        opening.c === contourIndex && opening.s > removedIndex
           ? { ...opening, s: Math.max(0, Math.min(maxSegment, opening.s - 1)) }
           : opening
       ))
     const nextPlacedItems = (model.placedItems ?? [])
-      .filter((item) => !(item.c === selectedNode.c && (item.s === removedIndex || item.s === removedIndex - 1)))
+      .filter((item) => !(item.c === contourIndex && (item.s === removedIndex || item.s === removedIndex - 1)))
       .map((item) => (
-        item.c === selectedNode.c && Number.isInteger(item.s) && (item.s ?? 0) > removedIndex
+        item.c === contourIndex && Number.isInteger(item.s) && (item.s ?? 0) > removedIndex
           ? { ...item, s: Math.max(0, Math.min(maxSegment, (item.s ?? 0) - 1)), wallId: sketchWallKey(item.c ?? 0, Math.max(0, Math.min(maxSegment, (item.s ?? 0) - 1))) }
           : item
       ))
@@ -2150,7 +2170,43 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }))
     setDragNode(null)
     setSelectedNode(null)
-    setSelectedContourIndex(selectedNode.c)
+    return true
+  }
+
+  const removeSelectedCorner = () => {
+    if (!canEdit || !selectedNode) return
+    if (removeCornerAt(selectedNode.c, selectedNode.p)) setSelectedContourIndex(selectedNode.c)
+  }
+
+  // SKETCH-EDIT-MODEL-51: «Удалить стену» — убираем сегмент, сливая его в соседний (удаляем конечный
+  // узел стены). Контур остаётся замкнутым; двери/шкафы на удалённых сегментах отбрасываются.
+  const removeSelectedWall = () => {
+    if (!canEdit || !selectedWall) return
+    const contour = model.contours[selectedWall.seg.c]
+    if (!contour) return
+    const endIndex = selectedWall.seg.s < contour.points.length - 1 ? selectedWall.seg.s + 1 : 0
+    if (removeCornerAt(selectedWall.seg.c, endIndex)) {
+      setSelectedWallKey(null)
+      setSelectedContourIndex(selectedWall.seg.c)
+    }
+  }
+
+  // SKETCH-EDIT-MODEL-51: правка длины выбранной стены числом из панели «Стена» (двигает узел через
+  // тот же resizeSketchSegmentToLength, что и инлайн-редактор размерной линии).
+  const applyWallPanelLength = (raw: string) => {
+    if (!canEdit || !selectedWall) return
+    const parsed = parseLengthFt(raw)
+    if (!Number.isFinite(parsed)) {
+      setError('hub_sketch_dimension_invalid')
+      return
+    }
+    const result = resizeSketchSegmentToLength(model, { c: selectedWall.seg.c, s: selectedWall.seg.s }, snapFeetToPrecision(parsed), { anchor: 'start' })
+    if (!result.ok) {
+      setError('hub_sketch_dimension_conflict')
+      return
+    }
+    canvasAutoFitRef.current = false
+    commit(result.model)
   }
 
   const beginSegmentLengthEdit = (dim: SegmentDimLine) => {
@@ -2420,6 +2476,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const selectSketchMode = (mode: SketchMode) => {
     setActiveMode(mode)
+    // SKETCH-EDIT-MODEL-51: смена режима-раздела всегда садится в «Выбор» — рисование стартует
+    // только явной кнопкой «Рисовать стены»/«+Комната», а не самим входом в раздел «Стены».
+    setEditModeState('select')
     setContextSheetOpen(true)
     setWallElevationFullscreen(false)
     setOpeningOffsetEdit(null)
@@ -3422,6 +3481,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     commit(result.model as SketchModel)
     lastWallClickAppendRef.current = null
     resetWallDraftAfterFinish(result)
+    // SKETCH-EDIT-MODEL-51: замкнул контур ИЛИ отменил незавершённый → АВТО-возврат в «Выбор».
+    if (result.action === 'closed' || result.action === 'discarded') {
+      editModeRef.current = 'select'
+      setEditMode('select')
+    }
     if (result.action === 'closed') markContourJustClosed(finishedContourIndex)
     if (result.action === 'discarded') {
       setSelectedNode(null)
@@ -3446,6 +3510,13 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           setTool('wall')
           setMeasurementDraft(null)
           setSelectedMeasurementIndex(null)
+          event.preventDefault()
+          return
+        }
+        // SKETCH-EDIT-MODEL-51: Esc в рисовании — выход в «Выбор» (сброс незавершённого контура),
+        // подсказка «Esc — выход» всегда честна: устраняем «застрял, не выйти».
+        if (tool === 'wall' && editModeRef.current === 'draw') {
+          exitDrawMode()
           event.preventDefault()
           return
         }
@@ -4035,6 +4106,21 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     }
     // CABINETS-PLACE-13: клик по пустому месту закрывает поповер шкафа.
     if (planCabinetEditor) setPlanCabinetEditor(null)
+    // SKETCH-EDIT-MODEL-51: в режиме «Выбор» клик по холсту = ВЫБРАТЬ объект под точкой единым hit-test
+    // (приоритет узел>стена>комната; см. selectCanvasObjectAt). Клики по заливке/стене раньше «терялись»
+    // из-за pointer-capture на SVG (click ретаргетится на канвас) — теперь выбор работает и мышью, и тачем.
+    // Клик по пустому месту снимает выделение и НЕ создаёт геометрию (корень жалобы «любой клик рисует»).
+    if (clickSelects(editMode) && tool === 'wall' && activeMode !== 'finish') {
+      if (selectCanvasObjectAt(clientX, clientY)) return true
+      setSelectedWallKey(null)
+      setSelectedContourIndex(null)
+      setSelectedNode(null)
+      setSelectedOpeningIndex(null)
+      selectedOpeningIndexRef.current = null
+      setSelectedMeasurementIndex(null)
+      setMeasurementDraft(null)
+      return false
+    }
     // NAV-FIX-2: клик по пустому месту снимает выделение стены (клик по самой стене обрабатывает хит-таргет со stopPropagation).
     if (wallSelectEnabled && selectedWallKey !== null) setSelectedWallKey(null)
     if (wallSelectEnabled && selectedContourIndex !== null) setSelectedContourIndex(null)
@@ -4133,7 +4219,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     // SWEEP-FIX-35: в «Отделке» (activeMode==='finish') tool='wall' держим только ради выбора стены —
     // рисовать/дополнять/замыкать контуры тут нельзя, иначе клик по пустому создал бы стену. Гейт узкий:
     // режимы «Стены» (wall) и «Разметка» (markup) с tool='wall' рисуют как раньше.
-    if (tool === 'wall' && activeMode !== 'finish') {
+    // SKETCH-EDIT-MODEL-51: узлы ставит ТОЛЬКО режим рисования (clickCreatesNode). В «Выбор» клик по
+    // пустому месту сюда доходит лишь когда ничего не выделено под курсором → просто снимает выделение
+    // (сделано выше), НО НЕ создаёт стену/точку — корневая жалоба «любой клик рисует» устранена.
+    if (tool === 'wall' && activeMode !== 'finish' && clickCreatesNode(editMode)) {
       const p = wallPoint(raw).p
       const contours = model.contours
       const last = contours[contours.length - 1]
@@ -4340,6 +4429,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const startNewRoom = () => {
     if (!canEdit) return
+    // SKETCH-EDIT-MODEL-51: «+Комната»/«Рисовать стены» — явный вход в режим рисования.
+    setEditModeState(enterDraw())
     setActiveMode('wall')
     setContextSheetOpen(true)
     setViewMode('2d')
@@ -4356,6 +4447,18 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setOpeningSnapGuide(null)
     setHoverSnapGuide(null)
     setNewRoomPending(true)
+  }
+
+  // SKETCH-EDIT-MODEL-51: выход из рисования в «Выбор» — сбрасываем незавершённый контур (Esc/кнопка
+  // «Выйти»). Замыкание готового контура делает finishOpenContourFromModel, оно тоже вернёт в «Выбор».
+  const exitDrawMode = () => {
+    finishActiveOpenContour({ closeComplete: false })
+    setNewRoomPending(false)
+    setHover(null)
+    setHoverSnapped(false)
+    setHoverSnapGuide(null)
+    setSmartGuides([])
+    setEditModeState(escapeDraw(editModeRef.current))
   }
 
   const renameContour = (index: number, rawLabel: string) => {
@@ -5079,7 +5182,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const activeContourOpen = !!activeContour && !activeContour.closed && activeContour.points.length > 0
   const wallDraftPointerActive = shouldTrackWallDraftPointer(activeContour, newRoomDraftPending)
   const canClearSketch = hasClearableSketchContent(model)
-  const wallSelectEnabled = canEdit && tool !== 'door' && tool !== 'window' && tool !== 'opening' && tool !== 'measure' && tool !== 'outlet' && tool !== 'switch' && !activeContourOpen
+  // SKETCH-EDIT-MODEL-51: выбор/перетаскивание комнат/стен/узлов активны в режиме «Выбор». В режиме
+  // «Рисование» они выключены — клик там ставит узлы, а не выделяет (иначе клик по комнате «залипал»).
+  const wallSelectEnabled = canEdit && editMode === 'select' && tool !== 'door' && tool !== 'window' && tool !== 'opening' && tool !== 'measure' && tool !== 'outlet' && tool !== 'switch' && !activeContourOpen
   const selectedOpening = selectedOpeningIndex !== null ? model.openings[selectedOpeningIndex] ?? null : null
   const canCenterOpening = canEdit && !!selectedOpening && !!openingEnds(model, selectedOpening)
   const heightFt = wallHeightFt(model)
@@ -5636,14 +5741,27 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
         {activeMode === 'wall' && (
           <div className="hub-sketch-context-section">
+            {/* SKETCH-EDIT-MODEL-51: явный переключатель режима. «Выбор» (дефолт) — стрелка, двигаешь
+                комнаты/стены/узлы. «Рисовать стены» — отдельный инструмент; выход по Готово/Выйти/Esc. */}
             <div className="hub-sketch-context-primary">
-              <button type="button" className="btn hub-sketch-context-primary-btn" disabled={!canClose} onClick={finishShape}>
-                {t('hub_sketch_finish')}
-              </button>
+              {editMode === 'draw' ? (
+                <>
+                  <button type="button" className="btn hub-sketch-context-primary-btn" disabled={!canClose} onClick={finishShape}>
+                    {t('hub_sketch_finish')}
+                  </button>
+                  <button type="button" className="btn ghost small" onClick={exitDrawMode}>
+                    {t('hub_sketch_draw_exit')}
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn hub-sketch-context-primary-btn" onClick={startNewRoom}>
+                  {`✎ ${t('hub_sketch_draw_walls')}`}
+                </button>
+              )}
               <button
                 type="button"
-                className={newRoomDraftPending ? 'btn small' : 'btn ghost small'}
-                aria-pressed={newRoomDraftPending}
+                className={editMode === 'draw' && newRoomDraftPending ? 'btn small' : 'btn ghost small'}
+                aria-pressed={editMode === 'draw' && newRoomDraftPending}
                 onClick={startNewRoom}
               >
                 {`+ ${t('hub_sketch_room_add')}`}
@@ -6623,8 +6741,37 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               </span>
             </div>
             {canEdit && (
+              <label className="hub-sketch-field hub-sketch-wall-panel-length">
+                <span className="muted">{t('hub_sketch_wall_panel_length')}</span>
+                <div className="hub-sketch-wall-panel-length-row">
+                  <input
+                    key={`wall-length-${selectedWall.key}-${selectedWall.lengthFt.toFixed(3)}`}
+                    defaultValue={formatLengthFt(selectedWall.lengthFt)}
+                    inputMode="text"
+                    aria-label={t('hub_sketch_wall_panel_length')}
+                    onBlur={(event) => applyWallPanelLength(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        event.currentTarget.blur()
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault()
+                        event.currentTarget.value = formatLengthFt(selectedWall.lengthFt)
+                        event.currentTarget.blur()
+                      }
+                    }}
+                  />
+                  <span className="hub-sketch-wall-panel-length-unit" aria-hidden="true">{t('hub_sketch_unit_ft')}</span>
+                </div>
+              </label>
+            )}
+            {canEdit && (
               <div className="hub-sketch-wall-panel-actions">
-                <button type="button" className="btn small" onClick={openWallFinish}>
+                {/* SKETCH-EDIT-MODEL-51: «Развернуть в лоб» — тот же поток, что тап по стене в 3D-развёртке. */}
+                <button type="button" className="btn small hub-sketch-wall-panel-flip" onClick={() => openWallElevationFullscreen(false)}>
+                  {t('hub_sketch_wall_panel_flip')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={openWallFinish}>
                   {t('hub_sketch_wall_panel_finish_action')}
                 </button>
                 <button type="button" className="btn ghost small" onClick={openWallOpenings}>
@@ -6633,14 +6780,17 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 <button type="button" className="btn ghost small" onClick={openWallCabinets}>
                   {t('hub_sketch_wall_panel_cabinets')}
                 </button>
+                <button type="button" className="btn ghost small" onClick={addCornerToSelectedWall}>
+                  {t('hub_sketch_wall_panel_split')}
+                </button>
                 <button type="button" className="btn ghost small" onClick={duplicateSelectedSketch}>
                   {t('hub_sketch_duplicate')}
                 </button>
                 <button type="button" className="btn ghost small" onClick={mirrorSelectedSketch}>
                   {t('hub_sketch_mirror')}
                 </button>
-                <button type="button" className="btn ghost small" onClick={addCornerToSelectedWall}>
-                  {t('hub_sketch_corner_add')}
+                <button type="button" className="btn ghost small hub-sketch-context-danger" onClick={removeSelectedWall}>
+                  {t('hub_sketch_wall_panel_delete')}
                 </button>
                 <button type="button" className="btn ghost small" onClick={saveCurrentAsTemplate}>
                   {t('hub_sketch_template_save')}
@@ -6867,9 +7017,28 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 </div>
               )}
               <div className="hub-sketch-svg-stage">
+                {/* SKETCH-EDIT-MODEL-51: пока рисуешь — ненавязчивая подсказка + кнопка выхода ВСЕГДА видима. */}
+                {canEdit && editMode === 'draw' && tool === 'wall' && activeMode !== 'finish' && (
+                  <div className="hub-sketch-draw-hint" role="status">
+                    <span className="hub-sketch-draw-hint-text">{t('hub_sketch_draw_hint')}</span>
+                    <button
+                      type="button"
+                      className="btn small hub-sketch-draw-hint-exit"
+                      onClick={canClose ? finishShape : exitDrawMode}
+                    >
+                      {canClose ? t('hub_sketch_finish') : t('hub_sketch_draw_exit')}
+                    </button>
+                  </div>
+                )}
                 <svg
                   ref={svgRef}
-                  className="hub-sketch-svg"
+                  className={[
+                    'hub-sketch-svg',
+                    // SKETCH-EDIT-MODEL-51: курсор-подсказка режима — крест в рисовании, стрелка в выборе.
+                    canEdit && editMode === 'draw' && tool === 'wall' && activeMode !== 'finish'
+                      ? 'hub-sketch-svg-draw'
+                      : 'hub-sketch-svg-select',
+                  ].join(' ')}
                   viewBox={`${canvasView.x} ${canvasView.y} ${canvasView.width} ${canvasView.height}`}
                   preserveAspectRatio="xMidYMid meet"
                   role="img"
