@@ -4844,7 +4844,7 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   right: 0;
   z-index: 12;
   width: min(340px, calc(100vw - 28px));
-  max-height: min(420px, calc(100vh - 122px));
+  max-height: min(420px, calc(100dvh - 122px));
   overflow: auto;
   display: grid;
   gap: 10px;
@@ -11241,5 +11241,112 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     padding-top: 4px;
     padding-bottom: 8px;
     background: rgba(13, 21, 34, .98);
+  }
+}
+
+/* ===================================================================
+   ADAPT-PHONE-44 — телефон = эталон (полевой сценарий бригады «в кармане»).
+   Дошивка §телефон (<720px) поверх уже готового в main: нижняя навигация
+   (.nav/.bottom-nav, safe-bottom), нижняя лента + bottom-sheet эскиза со
+   свайпом, пинч/пан канвы, dvh/safe-area — УЖЕ есть. Здесь только пробелы:
+   тулбар-табы в одну строку и тач-цели ≥44px на телефоне.
+   Десктоп (≥1181, fine) и планшет (721–1180, coarse) НЕ затронуты:
+   layout-правила гейтятся max-width:720, тач-правила — pointer:coarse.
+   =================================================================== */
+@media (max-width: 720px) {
+  /* §3 Тулбар-табы: одна строка с горизонтальным скроллом вместо переноса
+     в 2 ряда на 390px (иначе шапка «прыгает» по высоте). .hub-tabs уже
+     nowrap-scroll, .drawer-tabs — намеренная 2-колоночная сетка, их не трогаем. */
+  .projects-filter-tabs,
+  .gallery-tabs,
+  .mail-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+  .projects-filter-tabs button,
+  .gallery-tabs button,
+  .mail-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  /* §3 Кнопка «Назад» — лейбл в одну строку, длинный текст усекаем эллипсисом. */
+  .app-back-btn {
+    max-width: 100%;
+  }
+  .app-back-btn span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* §4 Тач-цели ≥44px на телефоне (грубый указатель, <720px). Приём тот же,
+   что в ADAPT-TABLET-43, но диапазон телефона; fine-указатель (мышь узкого
+   окна десктопа) НЕ затронут, а .hub-sketch .btn.small (48px, блок
+   pointer:coarse) остаётся крупнее по своей специфичности. */
+@media (pointer: coarse) and (max-width: 720px) {
+  .btn.small {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+  .app-back-btn {
+    min-height: 44px;
+  }
+  .check-row {
+    min-height: 46px;
+  }
+  .drawer-tabs button,
+  .hub-tabs button {
+    min-height: 46px;
+  }
+  .gallery-tabs button,
+  .mail-tab,
+  .projects-filter-tabs button {
+    min-height: 44px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .timeline-chip {
+    min-height: 44px;
+  }
+  .ai-icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .ai-icon-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+  .drawer-icon-action {
+    width: 44px;
+    height: 44px;
+    font-size: 19px;
+  }
+  .ask-voice-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  .pricebook-price-btn {
+    min-height: 44px;
+  }
+  /* Нативные чекбоксы/тумблеры — крупнее под палец (только известные
+     toggle-строки, чтобы не воевать с глобальным input{width:100%}). */
+  .check-row input,
+  .ai-toggle input {
+    width: 22px;
+    height: 22px;
+  }
+  /* Инлайн-ссылки-строки: вертикальный паддинг растит невидимую тач-зону,
+     display:inline сохранён — поток не сдвигается. */
+  .inline-link {
+    padding-top: 10px;
+    padding-bottom: 10px;
   }
 }
