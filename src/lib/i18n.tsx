@@ -1604,6 +1604,13 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_elevation_zoom_out: { ru: 'Отдалить', en: 'Zoom out', es: 'Alejar' },
   hub_sketch_elevation_zoom_fit: { ru: 'Вписать', en: 'Fit', es: 'Ajustar' },
   hub_sketch_elevation_opening: { ru: 'Проём', en: 'Opening', es: 'Abertura' },
+  // WALL-ELEV-READOUTS-53: осмысленные показатели развёртки + добавление проёма прямо на стене.
+  hub_sketch_elevation_wall_area: { ru: 'Площадь стены', en: 'Wall area', es: 'Área del muro' },
+  hub_sketch_elevation_finish: { ru: 'Отделка', en: 'Finish', es: 'Acabado' },
+  hub_sketch_elevation_tile_count: { ru: 'Плиток', en: 'Tiles', es: 'Azulejos' },
+  hub_sketch_elevation_tile_cost: { ru: 'Стоимость', en: 'Est. cost', es: 'Costo est.' },
+  hub_sketch_elevation_patch_sheets: { ru: 'Листов ГКЛ', en: 'Drywall sheets', es: 'Placas de yeso' },
+  hub_sketch_elevation_add_opening: { ru: 'Добавить проём', en: 'Add opening', es: 'Añadir abertura' },
   hub_sketch_elevation_toolbar: { ru: 'Инструменты развёртки', en: 'Elevation tools', es: 'Herramientas de alzado' },
   hub_sketch_elevation_properties: { ru: 'Свойства', en: 'Properties', es: 'Propiedades' },
   hub_sketch_wall_panel_title: { ru: 'Стена', en: 'Wall', es: 'Pared' },

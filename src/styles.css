@@ -7633,6 +7633,23 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   color: #b91c1c;
   font-weight: 900;
 }
+/* WALL-ELEV-READOUTS-53: ключевые цифры плашки (площадь стены, стоимость) — контрастнее. */
+.hub-sketch-elevation-meta-strong {
+  color: var(--text);
+  font-weight: 900;
+}
+.hub-sketch-elevation-add-opening {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 4px;
+}
+.hub-sketch-elevation-add-opening > .muted {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 750;
+}
 .hub-sketch-elevation-length-edit {
   display: inline-flex;
   align-items: center;
@@ -7787,13 +7804,26 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke-width: .045;
   stroke-dasharray: .12 .08;
 }
-.hub-sketch-elevation-grid line {
-  stroke: rgba(51, 65, 85, .18);
-  stroke-width: .018;
+/* WALL-ELEV-READOUTS-53: миллиметровка убрана. «Сетка» = настоящие швы плитки внутри зоны:
+   фон зоны = цвет шва, ячейки плитки поверх, крайняя подрезка чуть темнее для наглядности. */
+.hub-sketch-elevation-tile-cell {
+  /* тонкая обводка каждой плитки — швы читаемы даже когда тон плитки близок к тону стены */
+  stroke: rgba(15, 23, 42, .3);
+  stroke-width: .014;
+  vector-effect: non-scaling-stroke;
 }
-.hub-sketch-elevation-grid line.major {
-  stroke: rgba(51, 65, 85, .34);
-  stroke-width: .026;
+.hub-sketch-elevation-tile-cell-cut {
+  /* подрезка на краях — приглушаем, чтобы было видно «как ляжет» обрез */
+  opacity: .82;
+  stroke: rgba(15, 23, 42, .22);
+  stroke-width: .012;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch-elevation-tile-zone-border {
+  fill: none;
+  stroke: rgba(15, 23, 42, .34);
+  stroke-width: .03;
+  vector-effect: non-scaling-stroke;
 }
 .hub-sketch-elevation-cabinet-guides line {
   stroke: rgba(15, 23, 42, .34);
