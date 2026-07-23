@@ -767,7 +767,7 @@ const dict: Record<string, Record<Lang, string>> = {
   install_ios_step3: { ru: 'Нажмите «Добавить» — иконка Marvel на экране', en: 'Tap “Add” — the Marvel icon lands on your screen', es: 'Toca «Añadir» — el icono de Marvel en tu pantalla' },
   install_ios_open_safari: { ru: 'Установка на iPhone/iPad работает только в Safari. Откройте эту страницу в Safari.', en: 'Installing on iPhone/iPad works only in Safari. Open this page in Safari.', es: 'La instalación en iPhone/iPad solo funciona en Safari. Abre esta página en Safari.' },
   install_other_scan: { ru: 'Откройте эту страницу на телефоне или отсканируйте QR ниже камерой телефона.', en: 'Open this page on your phone, or scan the QR below with your phone camera.', es: 'Abre esta página en tu teléfono o escanea el QR de abajo con la cámara.' },
-  install_qr_hint: { ru: 'Наведите камеру телефона на QR', en: 'Point your phone camera at the QR', es: 'Apunta la cámara del teléfono al QR' },
+  install_qr_hint: { ru: 'Покажите этот код работнику — пусть наведёт камеру телефона', en: 'Show this code to your worker — have them point their phone camera at it', es: 'Muestra este código a tu trabajador — que apunte la cámara de su teléfono' },
   install_copy_link: { ru: 'Скопировать ссылку', en: 'Copy link', es: 'Copiar enlace' },
   install_link_copied: { ru: 'Скопировано ✓', en: 'Copied ✓', es: 'Copiado ✓' },
   install_done_title: { ru: 'Готово!', en: 'All set!', es: '¡Listo!' },

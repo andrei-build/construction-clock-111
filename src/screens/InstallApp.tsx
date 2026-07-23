@@ -43,11 +43,23 @@ function isStandalone(): boolean {
   )
 }
 
+// Десктопный вьюпорт = широкий экран И «точный» указатель (мышь). На телефоне (узкий
+// вьюпорт ИЛИ тач) QR-код и «Скопировать ссылку» бессмысленны — работник уже открыл
+// страницу на своём телефоне, сканировать сам себя незачем. QR оставляем ТОЛЬКО на
+// десктопе: владелец показывает код работнику, тот наводит камеру. SSR-дефолт = десктоп.
+function isDesktopViewport(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return true
+  const narrow = window.matchMedia('(max-width: 700px)').matches
+  const coarse = window.matchMedia('(pointer: coarse)').matches
+  return !narrow && !coarse
+}
+
 export default function InstallApp() {
   const { t } = useI18n()
   const [platform] = useState<Platform>(detectPlatform)
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [installed, setInstalled] = useState<boolean>(isStandalone)
+  const [isDesktop, setIsDesktop] = useState<boolean>(isDesktopViewport)
   const [copied, setCopied] = useState(false)
 
   const url = typeof window !== 'undefined' ? `${window.location.origin}/install` : '/install'
@@ -78,6 +90,16 @@ export default function InstallApp() {
       window.removeEventListener('beforeinstallprompt', onBeforeInstall)
       window.removeEventListener('appinstalled', onInstalled)
     }
+  }, [])
+
+  // Пересчитываем «десктоп/мобайл» при смене ширины окна (ротация/ресайз): QR должен
+  // прятаться/появляться отзывчиво, а не только на первый рендер.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(max-width: 700px)')
+    const update = () => setIsDesktop(isDesktopViewport())
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
   }, [])
 
   const doInstall = async () => {
@@ -155,20 +177,23 @@ export default function InstallApp() {
           </>
         )}
 
-        {/* QR ссылки на эту же страницу — навести камеру телефона. Показываем всегда (кроме installed). */}
-        {!installed && qrSvg && (
+        {/* QR + «Скопировать ссылку» — ТОЛЬКО на десктопе: владелец показывает код работнику.
+            На телефоне (узкий вьюпорт/тач) прячем — там нужны лишь шаги установки + кнопка. */}
+        {!installed && isDesktop && qrSvg && (
           <div className="install-qr">
             <div className="install-qr-img" dangerouslySetInnerHTML={{ __html: qrSvg }} />
             <p className="install-muted">{t('install_qr_hint')}</p>
           </div>
         )}
 
-        <div className="install-link-row">
-          <code className="install-url">{url}</code>
-          <button className="install-copy" onClick={copyLink}>
-            {copied ? t('install_link_copied') : t('install_copy_link')}
-          </button>
-        </div>
+        {isDesktop && (
+          <div className="install-link-row">
+            <code className="install-url">{url}</code>
+            <button className="install-copy" onClick={copyLink}>
+              {copied ? t('install_link_copied') : t('install_copy_link')}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
