@@ -23,6 +23,10 @@
   --radius-panel: 22px;
   --radius-pill: 50px;
   --font-numeric: 'DM Mono', ui-monospace, 'DM Sans', monospace;
+  /* SKETCH-STYLE-PASS-57: чертёжная палитра размерных подписей. Бирюзовый = обычный размер
+     (эталон — цепочка двери «Л/П»), красный (--red) = активное/редактируемое (Ш×В). */
+  --sketch-dim: #2dd4bf;
+  --sketch-dim-active: #ef6674;
   --app-content-max: none;
   --shadow-card: 0 18px 48px rgba(0,0,0,.28);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -5502,14 +5506,24 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   opacity: .7;
 }
 .hub-sketch-dim-label {
-  /* SKETCH-TOPBAR-CONSOLIDATE-52: чёткая подпись на контрастной тёмной плашке-ореоле,
-     нормальный кегль/жирность — «8 ft»/«6 ft» не теряются на стене (п.6). */
-  fill: #ffffff;
-  stroke: rgba(6, 10, 16, .96);
-  stroke-width: 4.5;
-  paint-order: stroke;
-  font-weight: 900;
-  letter-spacing: .2px;
+  /* SKETCH-STYLE-PASS-57: чертёжная типографика — тонкий технический моношрифт, бирюзовый цвет
+     (эталон — цепочка двери «Л/П»), мелкий кегль, БЕЗ жирной белой обводки. Контраст даёт
+     отдельная тёмная плашка .hub-sketch-dim-plate (radius ≤ 8), а не «мультяшный» ореол. */
+  fill: var(--sketch-dim);
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: .1px;
+}
+/* SKETCH-STYLE-PASS-57: тёмная плашка-подложка под подпись размера. rx задаётся в JSX (≤8). */
+.hub-sketch-dim-plate {
+  fill: rgba(4, 8, 6, .62);
+  stroke: rgba(120, 170, 140, .28);
+  stroke-width: .6;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 .hub-sketch-dim-label-editable {
   cursor: text;
@@ -6394,8 +6408,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-wintype-glyph .wt-mullion { stroke: #1d4ed8; stroke-width: 1.6; }
 .hub-sketch-wintype-glyph .wt-swing { stroke: rgba(29, 78, 216, .75); stroke-width: 1.2; }
 .hub-sketch-preview { stroke: #2563eb; stroke-width: 2; stroke-dasharray: 4 4; pointer-events: none; }
-.hub-sketch-live-dim { fill: #2563eb; font-size: 13px; font-weight: 800; pointer-events: none; }
-.hub-sketch-drag-dim { fill: #b45309; font-size: 12px; font-weight: 800; pointer-events: none; }
+/* SKETCH-STYLE-PASS-57: живые размеры рисования/перетаскивания — тонкий технический моношрифт. */
+.hub-sketch-live-dim { fill: var(--sketch-dim); font-family: var(--font-numeric); font-size: 12px; font-weight: 500; pointer-events: none; }
+.hub-sketch-drag-dim { fill: var(--sketch-dim-active); font-family: var(--font-numeric); font-size: 11px; font-weight: 500; pointer-events: none; }
 .hub-sketch-hover-snap { fill: rgba(22, 163, 74, .4); stroke: #16a34a; }
 .hub-sketch-opening { cursor: grab; }
 /* SWEEP-FIX-33: явная подсказка захвата — «grabbing» пока тащим существующий проём вдоль стены. */
@@ -6585,11 +6600,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   pointer-events: none;
 }
 .hub-sketch-code-clearance-label {
-  fill: #047857;
-  stroke: rgba(255, 255, 255, .96);
-  stroke-width: 3.8;
-  paint-order: stroke;
-  font-weight: 900;
+  /* SKETCH-STYLE-PASS-57: тонкий технический моношрифт, без «детской» белой обводки. */
+  fill: #34d399;
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
+  font-weight: 500;
   letter-spacing: 0;
   pointer-events: none;
 }
@@ -6604,14 +6620,16 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-code-clearance-warn .hub-sketch-code-clearance-label {
   fill: #b91c1c;
 }
+/* SKETCH-STYLE-PASS-57: подпись размера проёма «Ш×В» = активное/редактируемое → красный (уточнение-1);
+   размерные линии проёма — нейтральные тонкие (как обычная цепочка), без «детских» цветов. */
 .hub-sketch-opening-dim-door .hub-sketch-dim-main,
 .hub-sketch-opening-dim-door .hub-sketch-dim-extension,
-.hub-sketch-opening-dim-door .hub-sketch-dim-tick { stroke: #7c2d12; }
+.hub-sketch-opening-dim-door .hub-sketch-dim-tick,
 .hub-sketch-opening-dim-window .hub-sketch-dim-main,
 .hub-sketch-opening-dim-window .hub-sketch-dim-extension,
-.hub-sketch-opening-dim-window .hub-sketch-dim-tick { stroke: #1d4ed8; }
-.hub-sketch-opening-dim-door .hub-sketch-dim-label { fill: #7c2d12; }
-.hub-sketch-opening-dim-window .hub-sketch-dim-label { fill: #1d4ed8; }
+.hub-sketch-opening-dim-window .hub-sketch-dim-tick { stroke: rgba(239, 102, 116, .7); }
+.hub-sketch-opening-dim-door .hub-sketch-dim-label,
+.hub-sketch-opening-dim-window .hub-sketch-dim-label { fill: var(--sketch-dim-active); }
 .hub-sketch-opening-preview {
   opacity: .62;
   pointer-events: none;
@@ -6629,13 +6647,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-opening-clearance-dim .hub-sketch-dim-main,
 .hub-sketch-opening-clearance-dim .hub-sketch-dim-extension,
 .hub-sketch-opening-clearance-dim .hub-sketch-dim-tick {
-  stroke: #0f766e;
+  stroke: var(--sketch-dim);
   stroke-width: 1.1;
   vector-effect: non-scaling-stroke;
 }
+/* SKETCH-STYLE-PASS-57: эталонная цепочка «Л/П» — тонкая бирюзовая техническая, БЕЗ жирности. */
 .hub-sketch-opening-clearance-dim .hub-sketch-dim-label {
-  fill: #0f766e;
-  font-weight: 900;
+  fill: var(--sketch-dim);
+  font-weight: 500;
 }
 .hub-sketch-opening-dim-active .hub-sketch-dim-main,
 .hub-sketch-opening-dim-active .hub-sketch-dim-extension,
@@ -6664,11 +6683,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   cursor: pointer;
 }
 .hub-sketch-measurement-label {
-  fill: #047857;
-  stroke: rgba(255, 255, 255, .96);
-  stroke-width: 3.5;
-  paint-order: stroke;
-  font-weight: 900;
+  /* SKETCH-STYLE-PASS-57: подпись рулетки — тонкий технический моношрифт, без белой обводки. */
+  fill: #34d399;
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
+  font-weight: 500;
   letter-spacing: 0;
   pointer-events: none;
 }
@@ -7999,14 +8019,14 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   vector-effect: non-scaling-stroke;
 }
 .hub-sketch-elevation-wall-dim text {
-  /* SKETCH-TOPBAR-CONSOLIDATE-52: подпись длины стены на развёртке — контрастная плашка-ореол. */
+  /* SKETCH-STYLE-PASS-57: длина/высота стены — тонкий технический моношрифт, бирюзовый, без обводки. */
   cursor: text;
   pointer-events: auto;
-  fill: #ffffff;
-  stroke: rgba(6, 10, 16, .92);
-  stroke-width: .1;
-  paint-order: stroke;
-  font-weight: 800;
+  fill: var(--sketch-dim);
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
+  font-weight: 500;
 }
 .hub-sketch-elevation-wall-dim-conflict line,
 .hub-sketch-elevation-wall-dim-conflict text {
@@ -8064,10 +8084,11 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke-width: .03;
 }
 .hub-sketch-elevation-region-hint text {
-  fill: #ffffff;
+  fill: #dceaf0;
   stroke: none;
+  font-family: var(--font-numeric);
   font-size: .3px;
-  font-weight: 900;
+  font-weight: 500;
 }
 .hub-sketch-elevation-region-label rect {
   fill: rgba(15, 23, 42, .78);
@@ -8076,11 +8097,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   vector-effect: non-scaling-stroke;
 }
 .hub-sketch-elevation-region-label text {
-  fill: #ffffff;
-  stroke: rgba(15, 23, 42, .42);
-  stroke-width: .035;
-  paint-order: stroke;
-  font-weight: 900;
+  /* SKETCH-STYLE-PASS-57: площадь зоны ft² — тонкий моношрифт на тёмной плашке, без обводки. */
+  fill: var(--sketch-dim);
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
+  font-weight: 500;
 }
 .hub-sketch-elevation-door {
   fill: rgba(180, 83, 9, .75);
@@ -8161,12 +8183,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   vector-effect: non-scaling-stroke;
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-opening-dim text {
-  fill: #0f766e;
-  stroke: rgba(255,255,255,.96);
-  stroke-width: .1;
-  paint-order: stroke;
-  font-size: .25px;
-  font-weight: 900;
+  /* SKETCH-STYLE-PASS-57: эталонная цепочка «Л/П» проёма — тонкая бирюзовая, без обводки. */
+  fill: var(--sketch-dim);
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
+  font-size: .24px;
+  font-weight: 500;
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-opening-dim-gap line {
   stroke-dasharray: .08 .06;
@@ -8178,25 +8201,27 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   vector-effect: non-scaling-stroke;
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim text {
-  fill: #1e3a8a;
-  stroke: rgba(255, 255, 255, .94);
-  stroke-width: .08;
-  paint-order: stroke;
+  /* SKETCH-STYLE-PASS-57: размерная цепочка ряда кабинетов — тонкий моношрифт, без обводки. */
+  fill: #9db8ff;
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
   font-size: .2px;
-  font-weight: 900;
+  font-weight: 500;
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim-total line {
   stroke: #0f172a;
   stroke-width: .026;
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim-total text {
-  fill: #0f172a;
+  /* SKETCH-STYLE-PASS-57: итог ряда — светлый на тёмном фоне (обводка снята). */
+  fill: #e6edf6;
   font-size: .22px;
 }
 /* CABINETS-CORNER-FILLERS-24: филлер = отдельная секция цепочки размеров — янтарная планка,
    тики и подпись отличаются от шкафа. */
 .hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim-filler text {
-  fill: #92400e;
+  fill: #fbbf24;
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-dim-filler line {
   stroke: #b45309;
@@ -8332,12 +8357,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   vector-effect: non-scaling-stroke;
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-gap-dim text {
-  fill: #3730a3;
-  stroke: rgba(255, 255, 255, .94);
-  stroke-width: .08;
-  paint-order: stroke;
+  /* SKETCH-STYLE-PASS-57: зазор между кабинетами — тонкий моношрифт, без обводки. */
+  fill: #b7b1f5;
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
   font-size: .21px;
-  font-weight: 900;
+  font-weight: 500;
   cursor: pointer;
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-vdrag-guide {
@@ -8358,8 +8384,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-cabinet-vdrag-label text {
   fill: #ffffff;
+  font-family: var(--font-numeric);
   font-size: .2px;
-  font-weight: 800;
+  font-weight: 500;
 }
 /* ELEMENTS-INFRA-26: инженерные маркеры на развёртке (электрика/подводки) + их живые размеры */
 .hub-sketch-elevation-svg .hub-sketch-elevation-infra-drag {
@@ -8453,22 +8480,23 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   vector-effect: non-scaling-stroke;
 }
 .hub-sketch-elevation-svg .hub-sketch-elevation-infra-dim-label {
-  fill: #0f766e;
-  stroke: rgba(255, 255, 255, .94);
-  stroke-width: .08;
-  paint-order: stroke;
+  /* SKETCH-STYLE-PASS-57: инженерные размеры — тонкий бирюзовый моношрифт, без обводки. */
+  fill: var(--sketch-dim);
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
   font-size: .2px;
-  font-weight: 900;
+  font-weight: 500;
   cursor: pointer;
 }
 /* SWEEP-FIX-34: компактная статичная подпись высоты от пола для невыделенных инфра-маркеров. */
 .hub-sketch-elevation-svg .hub-sketch-elevation-infra-dim-static {
-  fill: #0f766e;
-  stroke: rgba(255, 255, 255, .94);
-  stroke-width: .07;
-  paint-order: stroke;
+  fill: var(--sketch-dim);
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
   font-size: .17px;
-  font-weight: 800;
+  font-weight: 500;
   opacity: .85;
 }
 .hub-sketch-elevation-cabinet-editor {
@@ -8585,12 +8613,18 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   cursor: nwse-resize;
 }
 .hub-sketch-elevation-svg text {
-  fill: #0f172a;
-  stroke: rgba(255,255,255,.92);
-  stroke-width: .08;
-  paint-order: stroke;
-  font-size: .28px;
-  font-weight: 850;
+  /* SKETCH-STYLE-PASS-57: базовый текст развёртки — тонкий технический моношрифт, без «детской»
+     белой обводки. Конкретные подписи (Ш×В проёма → красный) уточняются классом-модификатором. */
+  fill: var(--sketch-dim);
+  stroke: none;
+  paint-order: normal;
+  font-family: var(--font-numeric);
+  font-size: .26px;
+  font-weight: 500;
+}
+/* SKETCH-STYLE-PASS-57: подпись Ш×В проёма на развёртке = активное/редактируемое → красный. */
+.hub-sketch-elevation-svg text.hub-sketch-elevation-opening-size {
+  fill: var(--sketch-dim-active);
 }
 .hub-sketch-elevation-measurement-line,
 .hub-sketch-elevation-measurement-hit {
@@ -8622,8 +8656,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-elevation-measurement text {
   fill: #ffffff;
   stroke: none;
+  font-family: var(--font-numeric);
   font-size: .26px;
-  font-weight: 900;
+  font-weight: 500;
   letter-spacing: 0;
   pointer-events: none;
 }
@@ -11929,3 +11964,65 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   .sketch-print-table tr { page-break-inside: avoid; }
   .sketch-print-empty { padding: 12px 0; }
 }
+
+/* ============================================================================
+   SKETCH-STYLE-PASS-57 — модерн-тематика эскиза (п.2 + уточнение-2):
+   ни одной «пилюли»/полукруглой кнопки. Все контролы/чипы/панели/карточки в
+   поддереве .hub-sketch и 3D-шелле — прямоугольные, скругление ≤ 8px. Активное
+   состояние (амбер/зелёный) НЕ трогаем — только форма. Значки — тонкой линией.
+   Правило приоритета: блок в самом конце файла → перекрывает базовые и @media
+   определения при равной специфичности.
+   ============================================================================ */
+.hub-sketch .hub-sketch-btn-icon,
+.hub-sketch-3d-shell .hub-sketch-btn-icon { flex: 0 0 auto; display: inline-block; vertical-align: middle; }
+
+/* Поля ввода/списки/цвет-пикеры эскиза (были 14px от глобального input-правила) */
+.hub-sketch input,
+.hub-sketch select,
+.hub-sketch textarea,
+.hub-sketch-3d-shell input,
+.hub-sketch-3d-shell select,
+.hub-sketch-3d-shell textarea,
+.hub-sketch-color-input { border-radius: 8px; }
+
+/* Базовые компоненты (кнопки/бейджи/карточки) в границах эскиза */
+.hub-sketch .btn,
+.hub-sketch-3d-shell .btn { border-radius: 8px; }
+.hub-sketch .badge,
+.hub-sketch-3d-shell .badge { border-radius: 7px; }
+.hub-sketch .card,
+.hub-sketch-3d-shell .card { border-radius: 8px; }
+
+/* Панели / тулбары / полотна эскиза */
+.hub-sketch-elevation-toolbar,
+.hub-sketch-elevation-side,
+.hub-sketch-3d-panel,
+.hub-sketch-properties-panel,
+.hub-sketch-mode-rail,
+.hub-sketch-ai-layout,
+.hub-sketch-snapshot-toast,
+.hub-sketch-elevation-cabinet-editor,
+.hub-sketch-svg-shell-fullscreen .hub-sketch-svg,
+.hub-sketch-svg-shell-fullscreen .hub-sketch-context-panel-fullscreen { border-radius: 8px; }
+
+/* Специализированные «пилюли» (999px) и круглые контролы (50%) → прямоугольные ≤8px */
+.hub-sketch-context-primary-btn,
+.hub-sketch-draw-hint,
+.hub-sketch-round-btn,
+.hub-sketch-photo-reference-remove,
+.hub-sketch-photo-render-spinner,
+.hub-sketch-cabinet-remainder-chip,
+.hub-sketch-cabinet-gallery-count,
+.hub-sketch-cabinet-gallery-card-add,
+.hub-sketch-cabinet-run-chip,
+.hub-sketch-cabinet-run-remove,
+.hub-sketch-cabinet-run-insert,
+.hub-sketch-elevation-finish-toggle,
+.hub-sketch-elevation-hint,
+.hub-sketch-elevation-toolbar-back,
+.hub-sketch-elevation-zoom-btn,
+.hub-sketch-elevation-cabinet-editor-close,
+.hub-sketch-wintype-btn,
+.hub-sketch-inside-joystick,
+.hub-sketch-inside-joy-knob,
+.hub-sketch-sw-dot { border-radius: 8px; }

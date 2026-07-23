@@ -119,6 +119,20 @@ import {
 } from './sketch3dGeometry'
 
 const CELL_FT = 1
+
+// SKETCH-STYLE-PASS-57: рулетка тонкой линией (стиль левого рейла) вместо эмодзи 📏.
+function MeasureLineIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg className="hub-sketch-btn-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 8h13a3 3 0 0 1 3 3v5a1 1 0 0 1-1 1H7a3 3 0 0 1-3-3V8Z" />
+      <circle cx="9" cy="14" r="2.5" />
+      <line x1="9" y1="4" x2="9" y2="8" />
+      <line x1="13" y1="4" x2="13" y2="8" />
+      <line x1="17" y1="4" x2="17" y2="8" />
+    </svg>
+  )
+}
+
 const DEFAULT_WALL_HEIGHT_FT = 8
 const WALL_THICKNESS_FT = 0.5
 const EIGHTH_IN_FT = 1 / 96
@@ -2082,23 +2096,43 @@ function createLabelSprite(THREE: any, text: string) {
   return sprite
 }
 
+// SKETCH-STYLE-PASS-57: чертёжная подпись размера в 3D — тонкий технический моношрифт, бирюзовый,
+// на тёмной плашке с лёгким скруглением (radius ≤ 8), без «детской» белой обводки. Единый стиль с 2D.
 function createDimensionSprite(THREE: any, text: string) {
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')
   canvas.width = 320
   canvas.height = 82
+  const FONT = '500 22px ui-monospace, "DM Mono", Menlo, Consolas, monospace'
   if (ctx) {
-    ctx.font = '800 24px sans-serif'
-    const widest = Math.max(ctx.measureText(text).width, 90)
-    canvas.width = Math.min(420, Math.max(180, Math.ceil(widest + 30)))
+    ctx.font = FONT
+    const widest = Math.max(ctx.measureText(text).width, 70)
+    canvas.width = Math.min(440, Math.max(140, Math.ceil(widest + 34)))
     ctx.clearRect(0, 0, canvas.width, canvas.height)
+    // тёмная плашка-подложка (radius 8)
+    const padX = 16
+    const plateW = Math.min(canvas.width - 4, widest + padX * 2)
+    const plateH = 38
+    const px = (canvas.width - plateW) / 2
+    const py = (canvas.height - plateH) / 2
+    const r = 8
+    ctx.beginPath()
+    ctx.moveTo(px + r, py)
+    ctx.arcTo(px + plateW, py, px + plateW, py + plateH, r)
+    ctx.arcTo(px + plateW, py + plateH, px, py + plateH, r)
+    ctx.arcTo(px, py + plateH, px, py, r)
+    ctx.arcTo(px, py, px + plateW, py, r)
+    ctx.closePath()
+    ctx.fillStyle = 'rgba(4, 8, 6, .66)'
+    ctx.fill()
+    ctx.lineWidth = 1
+    ctx.strokeStyle = 'rgba(120, 170, 140, .30)'
+    ctx.stroke()
+    // тонкая бирюзовая техническая подпись
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.lineWidth = 6
-    ctx.strokeStyle = 'rgba(255, 255, 255, .94)'
-    ctx.fillStyle = '#0f172a'
-    ctx.font = '800 22px sans-serif'
-    ctx.strokeText(text, canvas.width / 2, canvas.height / 2)
+    ctx.font = FONT
+    ctx.fillStyle = '#2dd4bf'
     ctx.fillText(text, canvas.width / 2, canvas.height / 2)
   }
   const texture = new THREE.CanvasTexture(canvas)
@@ -5102,7 +5136,7 @@ export default function Sketch3DView({
                 setSelectedId(null)
               }}
             >
-              <span aria-hidden="true">📏</span>
+              <MeasureLineIcon />
               <span>{t('hub_sketch_tool_measure')}</span>
             </button>
           )}
@@ -5415,7 +5449,7 @@ export default function Sketch3DView({
         )}
         {selectedMeasurement && selectedMeasurementLength !== null && (
           <div className="hub-sketch-3d-item-popover hub-sketch-3d-measurement-popover">
-            <div className="hub-sketch-3d-measurement-thumb" aria-hidden="true">📏</div>
+            <div className="hub-sketch-3d-measurement-thumb" aria-hidden="true"><MeasureLineIcon size={20} /></div>
             <div className="hub-sketch-3d-item-popover-body">
               <div className="item-title">{t('hub_sketch_tool_measure')}</div>
               <div className="muted">{formatFeet(selectedMeasurementLength)}</div>
@@ -5993,7 +6027,7 @@ export default function Sketch3DView({
                 setSelectedId(null)
               }}
             >
-              <span aria-hidden="true">📏</span>
+              <MeasureLineIcon />
               <span>{t('hub_sketch_tool_measure')}</span>
             </button>
             <label className="hub-sketch-3d-toolbar-toggle">

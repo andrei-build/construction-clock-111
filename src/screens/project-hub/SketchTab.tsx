@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useI18n } from '../../lib/i18n'
-import { railIconId } from '../../lib/sketchToolbar'
+import { railIconId, dimPlateWidthEm, dimPlateRadius, DIM_PLATE_HEIGHT_EM } from '../../lib/sketchToolbar'
 import {
   createProjectNote,
   getProjectFileDownloadUrl,
@@ -443,6 +443,28 @@ function renderRailIcon(mode: string) {
         </svg>
       )
   }
+}
+
+// SKETCH-STYLE-PASS-57: тёмная плашка-подложка под чертёжную подпись размера (radius ≤ 8px).
+// Ширина считается по моноширинному кеглю (чистое ядро dimPlateWidthEm), поэтому подложка
+// точна без измерения DOM. rx ограничен 8 экранными px через dimPlateRadius (правило #57).
+function renderDimPlate(text: string, cx: number, cy: number, angle: number, fontSize: number, screenWorldPx: number, key?: string) {
+  const w = dimPlateWidthEm(text) * fontSize
+  const h = DIM_PLATE_HEIGHT_EM * fontSize
+  const rx = dimPlateRadius(fontSize, 8 * screenWorldPx)
+  return (
+    <rect
+      key={key}
+      className="hub-sketch-dim-plate"
+      x={cx - w / 2}
+      y={cy - h / 2}
+      width={w}
+      height={h}
+      rx={rx}
+      ry={rx}
+      transform={`rotate(${angle} ${cx} ${cy})`}
+    />
+  )
 }
 
 const MODES_WITH_3D_CONTEXT = new Set<SketchMode>(['opening', 'finish', 'light', 'measure'])
@@ -5355,6 +5377,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       <line className="hub-sketch-dim-main" x1={dim.x1} y1={dim.y1} x2={dim.x2} y2={dim.y2} />
       <line className="hub-sketch-dim-tick" x1={dim.tick1x1} y1={dim.tick1y1} x2={dim.tick1x2} y2={dim.tick1y2} />
       <line className="hub-sketch-dim-tick" x1={dim.tick2x1} y1={dim.tick2y1} x2={dim.tick2x2} y2={dim.tick2y2} />
+      {renderDimPlate(dim.text, dim.labelX, dim.labelY, dim.angle, fontScale * screenWorldPx, screenWorldPx)}
       <text
         className="hub-sketch-dim-label"
         x={dim.labelX}
@@ -5422,6 +5445,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             />
           </foreignObject>
         ) : (
+          <>
+          {renderDimPlate(dim.text, dim.labelX, dim.labelY, dim.angle, fontScale * screenWorldPx, screenWorldPx)}
           <text
             className={canEditOffset ? 'hub-sketch-dim-label hub-sketch-dim-label-editable' : 'hub-sketch-dim-label'}
             x={dim.labelX}
@@ -5448,6 +5473,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           >
             {dim.text}
           </text>
+          </>
         )}
       </g>
     )
@@ -7333,6 +7359,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     </div>
                   </foreignObject>
                 ) : (
+                  <>
+                  {renderDimPlate(dim.text, dim.labelX, dim.labelY, dim.angle, dimFontSize, screenWorldPx)}
                   <text
                     className="hub-sketch-dim-label hub-sketch-dim-label-editable"
                     x={dim.labelX}
@@ -7357,6 +7385,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                   >
                     {dim.text}
                   </text>
+                  </>
                 )}
               </g>
             )
@@ -7421,6 +7450,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     <line className="hub-sketch-dim-main" x1={dimLabel.x1} y1={dimLabel.y1} x2={dimLabel.x2} y2={dimLabel.y2} />
                     <line className="hub-sketch-dim-tick" x1={dimLabel.tick1x1} y1={dimLabel.tick1y1} x2={dimLabel.tick1x2} y2={dimLabel.tick1y2} />
                     <line className="hub-sketch-dim-tick" x1={dimLabel.tick2x1} y1={dimLabel.tick2y1} x2={dimLabel.tick2x2} y2={dimLabel.tick2y2} />
+                    {renderDimPlate(dimLabel.text, dimLabel.labelX, dimLabel.labelY, dimLabel.angle, 10.5 * screenWorldPx, screenWorldPx)}
                     <text
                       className="hub-sketch-dim-label"
                       x={dimLabel.labelX}
@@ -7768,6 +7798,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     markerEnd="url(#hub-sketch-measure-arrow)"
                   />
                   <line className="hub-sketch-measurement-hit" x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} />
+                  {renderDimPlate(line.text, line.labelX, line.labelY, line.angle, dimFontSize, screenWorldPx)}
                   <text
                     className="hub-sketch-measurement-label"
                     x={line.labelX}
@@ -7817,6 +7848,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 markerStart="url(#hub-sketch-measure-arrow)"
                 markerEnd="url(#hub-sketch-measure-arrow)"
               />
+              {renderDimPlate(measurePreview.text, measurePreview.labelX, measurePreview.labelY, measurePreview.angle, dimFontSize, screenWorldPx)}
               <text
                 className="hub-sketch-measurement-label"
                 x={measurePreview.labelX}
@@ -8123,7 +8155,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                       setTool('door')
                     }}
                   >
-                    <span aria-hidden="true">🚪</span>
+                    <svg className="hub-sketch-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <rect x="5" y="3" width="10" height="18" rx="1" />
+                      <path d="M15 21a12 12 0 0 0 4-8" />
+                      <circle cx="12" cy="12" r="0.9" fill="currentColor" stroke="none" />
+                    </svg>
                     <span>{t('hub_sketch_elevation_opening')}</span>
                   </button>
                 )}
