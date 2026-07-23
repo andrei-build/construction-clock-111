@@ -189,3 +189,22 @@ export function symmetricTileAxisCells(lengthIn: number, tileIn: number, groutIn
   const best = bestOffset(lengthIn, tileIn, groutIn)
   return { offsetIn: best.offsetIn, cells: tileAxisCells(lengthIn, tileIn, groutIn, best.offsetIn) }
 }
+
+// SKETCH-POLISH-55: осмысленное число плиток на закупку = сетка ячеек реальной (симметричной)
+// раскладки: колонки × ряды, где каждая ячейка — целая плитка ИЛИ крайняя подрезка (её всё равно
+// режут из целой). Это ровно те же ячейки, что рисуются швами на развёртке — «что видишь, то и
+// покупаешь». Зона 36″×96″ плиткой 12″×24″ → 3 колонки × 4 ряда = 12 (а не 15 «по площади+запас»).
+export function tileGridCount(
+  widthIn: number,
+  heightIn: number,
+  tileWIn: number,
+  tileHIn: number,
+  groutIn: number,
+): { cols: number; rows: number; count: number } {
+  const w = positive(widthIn, 0, 100000)
+  const h = positive(heightIn, 0, 100000)
+  if (w <= 0.01 || h <= 0.01) return { cols: 0, rows: 0, count: 0 }
+  const cols = symmetricTileAxisCells(w, tileWIn, groutIn).cells.length
+  const rows = symmetricTileAxisCells(h, tileHIn, groutIn).cells.length
+  return { cols, rows, count: cols * rows }
+}
