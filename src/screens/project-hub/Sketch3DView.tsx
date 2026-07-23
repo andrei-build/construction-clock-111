@@ -1420,9 +1420,13 @@ function createWallMaterial(
   maxAnisotropy = 4,
   onTextureReady?: () => void,
 ) {
+  // WALL-ELEV-READOUTS-53: «Частично» определяем по режиму покрытия (регионы), а НЕ по вертикальной
+  // полосе — зона на всю высоту, но не на всю ширину, раньше считалась full и плитка ложилась на всю
+  // стену. Партиал → базовый слой (краска/фон), плитка регионов кладётся оверлеем addWallFinishOverlay.
+  const partial = surface.kind !== 'drywall-patch' && surface.coverage?.mode === 'partial'
   const coverage = finishCoverageBoundsFt(surface, heightFt)
-  if (surface.kind !== 'tile' || !coverage.full) {
-    const color = surface.kind === 'paint' && !coverage.full ? fallbackPaint : wallBaseColor(surface, fallbackPaint)
+  if (surface.kind !== 'tile' || partial || !coverage.full) {
+    const color = surface.kind === 'paint' && (partial || !coverage.full) ? fallbackPaint : wallBaseColor(surface, fallbackPaint)
     return new THREE.MeshStandardMaterial({ color, roughness: 0.72 })
   }
   const texture = createTileTexture(THREE, surface, textureLoader, maxAnisotropy, onTextureReady)
@@ -1490,13 +1494,18 @@ function addWallFinishOverlay(
     return
   }
 
-  const coverage = finishCoverageBoundsFt(surface, wallHeightFt)
-  if (coverage.full) return
-  const height = Math.max(0.02, coverage.topFt - coverage.bottomFt)
-  const panel = new THREE.Mesh(new THREE.BoxGeometry(wallWidthFt, height, 0.018), createWallOverlayMaterial(THREE, surface, wallWidthFt, height, fallbackPaint, textureLoader, maxAnisotropy, onTextureReady))
-  panel.position.set(0, coverage.bottomFt + height / 2 - wallHeightFt / 2, WALL_THICKNESS_FT / 2 + 0.014)
-  panel.renderOrder = 4
-  wall.add(panel)
+  // WALL-ELEV-READOUTS-53: «Частично» = строго нарисованные регионы (Ш×В зоны), а не полоса на всю
+  // ширину стены. Кладём по панели на каждый регион, ограниченный габаритом стены.
+  if (surface.coverage?.mode !== 'partial') return
+  finishCoverageRegionsFt(surface, wallWidthFt, wallHeightFt).forEach((region) => {
+    const width = Math.min(wallWidthFt, Math.max(0, region.x1Ft - region.x0Ft))
+    const height = Math.min(wallHeightFt, Math.max(0, region.y1Ft - region.y0Ft))
+    if (width <= 0.02 || height <= 0.02) return
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(width, height, 0.018), createWallOverlayMaterial(THREE, surface, width, height, fallbackPaint, textureLoader, maxAnisotropy, onTextureReady))
+    panel.position.set(-wallWidthFt / 2 + region.x0Ft + width / 2, region.y0Ft + height / 2 - wallHeightFt / 2, WALL_THICKNESS_FT / 2 + 0.014)
+    panel.renderOrder = 4
+    wall.add(panel)
+  })
 }
 
 function addWallPieceFinishOverlay(

@@ -158,3 +158,34 @@ export function estimateTileLayout(input: TileLayoutInput): TileLayoutEstimate {
     hasSmallCuts: columns.smallCut || rows.smallCut,
   }
 }
+
+// WALL-ELEV-READOUTS-53: одна видимая ячейка плитки вдоль оси. cut=true — крайняя подрезка
+// (обрезана до размера меньше целой плитки). Чистые числа для развёртки «как будет».
+export type TileCell = { startIn: number; endIn: number; sizeIn: number; cut: boolean }
+
+// Видимые ячейки плитки вдоль оси в пределах [0, lengthIn] при заданном офсете (шов = tile+grout).
+export function tileAxisCells(lengthIn: number, tileIn: number, groutIn: number, offsetIn: number): TileCell[] {
+  const length = positive(lengthIn, 1)
+  const tile = positive(tileIn, 1)
+  const pitch = tile + Math.max(0, finite(groutIn, 0))
+  const offset = finite(offsetIn, 0)
+  const cells: TileCell[] = []
+  const first = Math.floor((0 - offset) / pitch) - 1
+  const last = Math.ceil((length - offset) / pitch) + 1
+  for (let k = first; k <= last; k++) {
+    const rawStart = offset + k * pitch
+    const start = Math.max(0, rawStart)
+    const end = Math.min(length, rawStart + tile)
+    const size = end - start
+    if (size <= 0.001) continue
+    cells.push({ startIn: round(start), endIn: round(end), sizeIn: round(size), cut: size < tile - 0.02 })
+  }
+  return cells
+}
+
+// Симметричная раскладка вдоль оси: офсет подбираем по эталону (bestOffset) — крайние
+// подрезки сбалансированы и без мелких кусков. Возвращаем офсет + видимые ячейки.
+export function symmetricTileAxisCells(lengthIn: number, tileIn: number, groutIn: number): { offsetIn: number; cells: TileCell[] } {
+  const best = bestOffset(lengthIn, tileIn, groutIn)
+  return { offsetIn: best.offsetIn, cells: tileAxisCells(lengthIn, tileIn, groutIn, best.offsetIn) }
+}

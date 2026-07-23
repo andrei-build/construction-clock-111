@@ -73,6 +73,16 @@ import {
 } from './cabinetCatalog'
 import { CabinetFront } from './cabinetFront'
 import { resolveOpeningTrim, trimProfileById } from './trimCatalog'
+// WALL-ELEV-READOUTS-53: осмысленные показатели + реальные швы/подрезка зоны (чистые модули).
+import {
+  applyRegionField,
+  drywallSheetCount,
+  finishAreaSqft,
+  tileZoneEstimateForFinish,
+  wallAreaSqft,
+} from './wallFinishMetrics'
+import { symmetricTileAxisCells } from './tileLayout'
+import { formatUsd } from './tileCatalog'
 
 const CELL_FT = 1
 
@@ -221,11 +231,6 @@ function formatLength(valueFt: number): string {
 function snapLengthFt(valueFt: number, stepFt: number): number {
   const step = Number.isFinite(stepFt) && stepFt > 0 ? stepFt : 1 / 96
   return Math.round(valueFt / step) * step
-}
-
-function ticks(max: number, step: number): number[] {
-  const count = Math.min(240, Math.floor(max / step) + 1)
-  return Array.from({ length: count }, (_, index) => index * step).filter((value) => value <= max + 0.0001)
 }
 
 function readableSvgAngle(dx: number, dy: number): number {
@@ -572,7 +577,11 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     ? normalizeFinishRegions(finish.coverage.regions, lengthFt, height)
     : null
   const editableFinishRegions = explicitFinishRegions ?? []
-  const regionEditingEnabled = canEdit && !compact && !measureTool && zoneTool && finish.coverage?.mode === 'partial'
+  // WALL-ELEV-READOUTS-53: существующую зону можно двигать/тянуть/удалять ВСЕГДА (партиал+canEdit),
+  // не только при активном инструменте «Зона» — это чинило «ни сдвинуть, ни фига». Инструмент «Зона»
+  // нужен лишь чтобы РИСОВАТЬ новую зону drag-прямоугольником по пустой стене (regionEditingEnabled).
+  const regionInteractive = canEdit && !compact && !measureTool && !!onModelChange && finish.coverage?.mode === 'partial'
+  const regionEditingEnabled = regionInteractive && zoneTool
   const dragPreviewRegions = useMemo(() => {
     if (!regionDrag) return editableFinishRegions
     if (regionDrag.type === 'draw') {
@@ -588,12 +597,17 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     if (!normalized) return editableFinishRegions
     return editableFinishRegions.map((region, index) => (index === regionDrag.index ? normalized : region))
   }, [editableFinishRegions, height, lengthFt, regionDrag])
-  const finishRegions = regionEditingEnabled && (explicitFinishRegions !== null || regionDrag)
+  const finishRegions = regionInteractive && (explicitFinishRegions !== null || regionDrag)
     ? dragPreviewRegions
     : finishCoverageRegionsFt(finish, lengthFt, height)
   const selectedRegion = selectedRegionIndex !== null ? editableFinishRegions[selectedRegionIndex] ?? null : null
   const finishRegionSqft = finishRegions.reduce((sum, region) => sum + finishRegionArea(region), 0)
   const finishLabel = t(finish.kind === 'tile' ? 'hub_sketch_3d_tile' : finish.kind === 'drywall-patch' ? 'hub_sketch_3d_drywall_patch' : 'hub_sketch_3d_paint')
+  // WALL-ELEV-READOUTS-53: осмысленные показатели плашки — площадь стены, площадь отделки, для плитки
+  // штуки+стоимость, для ГКЛ листы. Чистая логика в wallFinishMetrics (под тестом).
+  const wallSqft = wallAreaSqft(lengthFt, height)
+  const tileEstimate = isTile ? tileZoneEstimateForFinish(finish, lengthFt, height) : null
+  const patchSheets = patch ? drywallSheetCount(finishAreaSqft(finish, lengthFt, height)) : 0
   const showRegionHint = regionEditingEnabled && explicitFinishRegions !== null && editableFinishRegions.length === 0 && !regionDrag
   const showFinishRegionLabels = finish.coverage?.mode === 'partial' && finishRegions.length > 0
   const codeClearanceChecks = useMemo(
@@ -667,6 +681,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const previewLine = draft && hover ? elevationMeasurementLine({ scope: 'wall', wallKey: currentWallKey, a: draft, b: hover }, height) : null
   const wallLengthConflictActive = wallLengthConflict?.segments.some((segment) => segment.c === wall.c && segment.s === wall.s) ?? false
   const wallDimY = height + Math.min(0.32, pad * 0.55)
+  const wallDimX = -Math.min(0.34, pad * 0.55)
   const wallDimLabelY = Math.min(height + pad - 0.12, wallDimY + 0.18)
   const wallDimInputW = Math.min(Math.max(1.55, lengthFt * 0.24), Math.max(1.2, lengthFt))
   const wallDimInputH = 0.42
@@ -1059,7 +1074,12 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   const zoomOut = () => setZoom((current) => Math.max(1, Math.round((current / 1.25) * 100) / 100))
   const zoomFit = () => setZoom(1)
 
-  const regionDraftValue = (field: FinishRegionDraftField, fallbackFt: number): string => regionDrafts[field] ?? formatLength(fallbackFt)
+  const regionDraftValue = (field: FinishRegionDraftField, fallbackFt: number): string => {
+    if (regionDrafts[field] !== undefined) return regionDrafts[field] as string
+    // WALL-ELEV-READOUTS-53: ноль-значение не должно давать голое « in» (как было в «Покрытие: in»).
+    const text = formatLength(fallbackFt).trim()
+    return text === 'in' || text === '' ? '0 in' : text
+  }
 
   const commitRegionDraft = (field: FinishRegionDraftField) => {
     if (!selectedRegion || selectedRegionIndex === null) return
@@ -1078,23 +1098,8 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
       return next
     })
     if (!Number.isFinite(parsedIn)) return
-    const parsed = parsedIn / 12
-    const width = Math.max(FINISH_REGION_MIN_FT, selectedRegion.x1Ft - selectedRegion.x0Ft)
-    const regionHeight = Math.max(FINISH_REGION_MIN_FT, selectedRegion.y1Ft - selectedRegion.y0Ft)
-    let nextRegion: SketchFinishRegion = { ...selectedRegion }
-    if (field === 'left') {
-      const x0 = Math.max(0, Math.min(Math.max(0, lengthFt - width), parsed))
-      nextRegion = { ...nextRegion, x0Ft: x0, x1Ft: x0 + width }
-    } else if (field === 'bottom') {
-      const y0 = Math.max(0, Math.min(Math.max(0, height - regionHeight), parsed))
-      nextRegion = { ...nextRegion, y0Ft: y0, y1Ft: y0 + regionHeight }
-    } else if (field === 'width') {
-      const nextWidth = Math.max(FINISH_REGION_MIN_FT, Math.min(Math.max(FINISH_REGION_MIN_FT, lengthFt - selectedRegion.x0Ft), parsed))
-      nextRegion = { ...nextRegion, x1Ft: selectedRegion.x0Ft + nextWidth }
-    } else {
-      const nextHeight = Math.max(FINISH_REGION_MIN_FT, Math.min(Math.max(FINISH_REGION_MIN_FT, height - selectedRegion.y0Ft), parsed))
-      nextRegion = { ...nextRegion, y1Ft: selectedRegion.y0Ft + nextHeight }
-    }
+    // WALL-ELEV-READOUTS-53: клэмп зоны при числовом вводе — чистая логика applyRegionField (под тестом).
+    const nextRegion = applyRegionField(selectedRegion, field, parsedIn / 12, lengthFt, height)
     updateFinishRegions(editableFinishRegions.map((region, index) => (index === selectedRegionIndex ? nextRegion : region)), selectedRegionIndex)
   }
 
@@ -1110,6 +1115,16 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
         return next
       })
     }
+  }
+
+  // WALL-ELEV-READOUTS-53: добавить проём (окно/дверь) прямо на этой стене, не выходя из развёртки.
+  // Переиспользуем существующую геометрию Opening + дефолты; version:1 цел (аддитивно в openings).
+  const addOpeningToWall = (kind: 'door' | 'window') => {
+    if (!onModelChange) return
+    const opening: Opening = kind === 'door'
+      ? { kind, c: wall.c, s: wall.s, t: 0.5, w: DEFAULT_DOOR_WIDTH_FT, h: DEFAULT_DOOR_HEIGHT_FT }
+      : { kind, c: wall.c, s: wall.s, t: 0.5, w: DEFAULT_WINDOW_WIDTH_FT, h: DEFAULT_WINDOW_HEIGHT_FT, sill: DEFAULT_WINDOW_SILL_FT }
+    onModelChange({ ...model, openings: [...model.openings, opening] })
   }
 
   const beginWallLengthEdit = () => {
@@ -1312,7 +1327,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }
 
   const startRegionMove = (index: number, region: SketchFinishRegion) => (event: ReactPointerEvent<SVGRectElement>) => {
-    if (!regionEditingEnabled || !onModelChange) return
+    if (!regionInteractive || !onModelChange) return
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const point = svgPoint(event.clientX, event.clientY)
     if (!point) return
@@ -1326,7 +1341,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
   }
 
   const startRegionResize = (index: number, region: SketchFinishRegion, handle: FinishRegionHandle) => (event: ReactPointerEvent<SVGRectElement>) => {
-    if (!regionEditingEnabled || !onModelChange) return
+    if (!regionInteractive || !onModelChange) return
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const point = svgPoint(event.clientX, event.clientY)
     if (!point) return
@@ -1368,6 +1383,35 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
     event.preventDefault()
     event.stopPropagation()
     removeMeasurement(index)
+  }
+
+  // WALL-ELEV-READOUTS-53: реальная раскладка плитки внутри зоны — симметричные швы + видимая подрезка
+  // на краях (крайняя ячейка помечена cut). Стена гладкая; «сетка» = только эти настоящие швы зоны.
+  const tileSeamCells = (region: SketchFinishRegion): ReactNode => {
+    if (!isTile || !tile) return null
+    const wIn = Math.max(0, (region.x1Ft - region.x0Ft) * 12)
+    const hIn = Math.max(0, (region.y1Ft - region.y0Ft) * 12)
+    if (wIn <= 0.01 || hIn <= 0.01) return null
+    const cols = symmetricTileAxisCells(wIn, Math.max(1, tile.tileWIn ?? 12), Math.max(0, tile.groutIn ?? 0.125)).cells
+    const rows = symmetricTileAxisCells(hIn, Math.max(1, tile.tileHIn ?? 24), Math.max(0, tile.groutIn ?? 0.125)).cells
+    if (cols.length * rows.length > 1600) return null // защита от взрыва числа <rect>
+    const out: ReactNode[] = []
+    cols.forEach((col, ci) => {
+      rows.forEach((row, ri) => {
+        out.push(
+          <rect
+            key={`tc-${ci}-${ri}`}
+            className={(col.cut || row.cut) ? 'hub-sketch-elevation-tile-cell hub-sketch-elevation-tile-cell-cut' : 'hub-sketch-elevation-tile-cell'}
+            x={region.x0Ft + col.startIn / 12}
+            y={height - (region.y0Ft + row.endIn / 12)}
+            width={Math.max(0.001, col.sizeIn / 12)}
+            height={Math.max(0.001, row.sizeIn / 12)}
+            fill={tileColor}
+          />,
+        )
+      })
+    })
+    return out
   }
 
   return (
@@ -1499,28 +1543,39 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           )}
         </defs>
         <rect className="hub-sketch-elevation-wall" x={0} y={0} width={lengthFt} height={height} fill={baseFill} />
-        {finishRegions.map((region, index) => (
-          <rect
-            key={`finish-${finishRegionKey(region, index)}`}
-            className={[
-              patch ? 'hub-sketch-elevation-drywall-patch' : 'hub-sketch-elevation-finish',
-              finishCoverage.full && finishRegions.length === 1 ? '' : 'hub-sketch-elevation-finish-partial',
-            ].filter(Boolean).join(' ')}
-            x={region.x0Ft}
-            y={height - region.y1Ft}
-            width={Math.max(0.001, region.x1Ft - region.x0Ft)}
-            height={Math.max(0.001, region.y1Ft - region.y0Ft)}
-            fill={surfaceFill}
-          />
-        ))}
-        <g className="hub-sketch-elevation-grid">
-          {ticks(lengthFt, 0.5).map((x) => (
-            <line key={`x${x}`} x1={x} y1={0} x2={x} y2={height} className={Math.abs(x - Math.round(x)) < 0.001 ? 'major' : undefined} />
-          ))}
-          {ticks(height, 0.5).map((y) => (
-            <line key={`y${y}`} x1={0} y1={height - y} x2={lengthFt} y2={height - y} className={Math.abs(y - Math.round(y)) < 0.001 ? 'major' : undefined} />
-          ))}
-        </g>
+        {finishRegions.map((region, index) => {
+          const rx = region.x0Ft
+          const ry = height - region.y1Ft
+          const rw = Math.max(0.001, region.x1Ft - region.x0Ft)
+          const rh = Math.max(0.001, region.y1Ft - region.y0Ft)
+          const partialClass = finishCoverage.full && finishRegions.length === 1 ? '' : 'hub-sketch-elevation-finish-partial'
+          if (isTile && tile) {
+            // Плитка: фон = цвет шва, поверх — реальные ячейки плитки (швы + подрезка сразу видны).
+            return (
+              <g key={`finish-${finishRegionKey(region, index)}`} className="hub-sketch-elevation-tile-zone">
+                <rect className={['hub-sketch-elevation-tile-grout', partialClass].filter(Boolean).join(' ')} x={rx} y={ry} width={rw} height={rh} fill={groutColor} />
+                {tileSeamCells(region)}
+                <rect className="hub-sketch-elevation-tile-zone-border" x={rx} y={ry} width={rw} height={rh} fill="none" />
+              </g>
+            )
+          }
+          return (
+            <rect
+              key={`finish-${finishRegionKey(region, index)}`}
+              className={[
+                patch ? 'hub-sketch-elevation-drywall-patch' : 'hub-sketch-elevation-finish',
+                partialClass,
+              ].filter(Boolean).join(' ')}
+              x={rx}
+              y={ry}
+              width={rw}
+              height={rh}
+              fill={surfaceFill}
+            />
+          )
+        })}
+        {/* WALL-ELEV-READOUTS-53: миллиметровка-сетка убрана — стена гладкая. Единственная сетка =
+            реальные швы плитки внутри выделенной зоны (renderTileSeams). */}
         {showRegionHint && (
           <g className="hub-sketch-elevation-region-hint" pointerEvents="none">
             <rect x={Math.max(0.2, lengthFt * 0.08)} y={Math.max(0.2, height * 0.38)} width={Math.max(1.4, lengthFt * 0.84)} height={Math.max(0.55, height * 0.16)} rx={0.08} />
@@ -1542,6 +1597,15 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
           ))}
         </g>
         <rect className={wallLengthConflictActive ? 'hub-sketch-elevation-outline hub-sketch-elevation-outline-conflict' : 'hub-sketch-elevation-outline'} x={0} y={0} width={lengthFt} height={height} />
+        {/* WALL-ELEV-READOUTS-53: высота стены СЛЕВА — обе подписи (ширина снизу, высота слева) всегда видны. */}
+        <g className="hub-sketch-elevation-wall-dim hub-sketch-elevation-wall-dim-v" pointerEvents="none">
+          <line x1={wallDimX} y1={0} x2={wallDimX} y2={height} />
+          <line x1={wallDimX - 0.1} y1={0} x2={wallDimX + 0.1} y2={0} />
+          <line x1={wallDimX - 0.1} y1={height} x2={wallDimX + 0.1} y2={height} />
+          <text x={wallDimX - 0.14} y={height / 2} textAnchor="middle" dominantBaseline="central" transform={`rotate(-90 ${wallDimX - 0.14} ${height / 2})`}>
+            {formatLength(height)}
+          </text>
+        </g>
         <g className={wallLengthConflictActive ? 'hub-sketch-elevation-wall-dim hub-sketch-elevation-wall-dim-conflict' : 'hub-sketch-elevation-wall-dim'}>
           <line x1={0} y1={wallDimY} x2={lengthFt} y2={wallDimY} />
           <line x1={0} y1={wallDimY - 0.1} x2={0} y2={wallDimY + 0.1} />
@@ -2045,7 +2109,7 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
             </g>
           )
         })}
-        {regionEditingEnabled && dragPreviewRegions.map((region, index) => {
+        {regionInteractive && dragPreviewRegions.map((region, index) => {
           const selected = selectedRegionIndex === index
           const handleSize = Math.max(0.12, Math.min(0.22, Math.min(lengthFt, height) * 0.03))
           return (
@@ -2256,11 +2320,34 @@ export default function WallElevation({ model, wall, heightFt, finish, canEdit =
                 {`${t('hub_sketch_dim_length_short')}: ${wallLengthText}`}
               </button>
               <span>{`${t('hub_sketch_dim_height_short')}: ${formatLength(height)}`}</span>
-              <span>{`${t('hub_sketch_3d_openings')}: ${openings.length}`}</span>
-              {!finishCoverage.full && <span>{`${t('hub_sketch_finish_coverage')}: ${formatLength(finishCoverage.topFt - finishCoverage.bottomFt)}`}</span>}
+              {/* WALL-ELEV-READOUTS-53: площадь стены Ш×В (было бессмысленное «длина/высота»). */}
+              <span className="hub-sketch-elevation-meta-strong">{`${t('hub_sketch_elevation_wall_area')}: ${wallSqft.toFixed(0)} ft²`}</span>
+              <span>{`${t('hub_sketch_elevation_finish')}: ${finishLabel}`}</span>
+              {/* WALL-ELEV-READOUTS-53: осмысленные данные вместо мусорной строки «Покрытие: in». */}
               {finishRegions.length > 0 && <span>{`${t('hub_sketch_finish_region_area')}: ${finishRegionSqft.toFixed(1)} ft²`}</span>}
+              {isTile && tileEstimate && tileEstimate.tileCount > 0 && (
+                <span>{`${t('hub_sketch_elevation_tile_count')}: ${tileEstimate.tileCount}`}</span>
+              )}
+              {isTile && tileEstimate && tileEstimate.hasPrice && (
+                <span className="hub-sketch-elevation-meta-strong">{`${t('hub_sketch_elevation_tile_cost')}: ${formatUsd(tileEstimate.costUsd)}`}</span>
+              )}
+              {patch && patchSheets > 0 && (
+                <span>{`${t('hub_sketch_elevation_patch_sheets')}: ${patchSheets}`}</span>
+              )}
+              <span>{`${t('hub_sketch_3d_openings')}: ${openings.length}`}</span>
               {wallCabinetCount > 0 && <span>{`${t('hub_sketch_tool_cabinet')}: ${wallCabinetCount}`}</span>}
             </div>
+            {canEdit && onModelChange && (
+              <div className="hub-sketch-elevation-add-opening" role="group" aria-label={t('hub_sketch_elevation_add_opening')}>
+                <span className="muted">{t('hub_sketch_elevation_add_opening')}</span>
+                <button type="button" className="btn ghost small" onClick={() => addOpeningToWall('door')}>
+                  <span aria-hidden="true">🚪</span> {t('hub_sketch_tool_door')}
+                </button>
+                <button type="button" className="btn ghost small" onClick={() => addOpeningToWall('window')}>
+                  <span aria-hidden="true">🪟</span> {t('hub_sketch_tool_window')}
+                </button>
+              </div>
+            )}
             {selectedRegion && (
               <div className="hub-sketch-elevation-region-controls" aria-label={t('hub_sketch_finish_region_controls')}>
                 <span className="hub-sketch-elevation-region-title">{t('hub_sketch_finish_region_controls')}</span>
