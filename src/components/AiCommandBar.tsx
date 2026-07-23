@@ -44,6 +44,14 @@ import {
   VOICE_MAX_ATTEMPTS,
 } from '../lib/aiVoice'
 import { concatBytes, framesForSeconds, pcm16ToFloat32, splitEvenPcmBytes } from '../lib/aiTtsStream'
+import {
+  createDeepgramRunner,
+  decideSttSource,
+  deepgramLangFor,
+  isDeepgramSttSupported,
+  sttFallbackAfterFailure,
+  type DeepgramRunner,
+} from '../lib/deepgramStt'
 import { logVoiceClientEvent as emitVoiceTelemetry } from '../lib/clientErrors'
 import { loadBargeInVad, type BargeInVad } from '../lib/vadBargeIn'
 import type { Profile, Project } from '../lib/types'
@@ -246,6 +254,13 @@ const SpeechRecognitionImpl: SpeechRecCtor | undefined =
     ? ((window as unknown as { SpeechRecognition?: SpeechRecCtor; webkitSpeechRecognition?: SpeechRecCtor }).SpeechRecognition
       || (window as unknown as { webkitSpeechRecognition?: SpeechRecCtor }).webkitSpeechRecognition)
     : undefined
+
+// VOICE-DEEPGRAM-EARS-48: поддержан ли Deepgram-источник (WebSocket+MediaRecorder+opus+getUserMedia).
+// VOICE_INPUT_SUPPORTED — есть ХОТЬ КАКОЙ-ТО источник голосового ввода (Deepgram ИЛИ Web Speech): им гейтим
+// микрофон/разговорный цикл/barge-in, чтобы Deepgram-only браузеры (без Web Speech) тоже говорили. Wake-фраза
+// остаётся на Web Speech (нужен непрерывный локальный распознаватель) — её гейт по-прежнему SpeechRecognitionImpl.
+const DEEPGRAM_STT_SUPPORTED = isDeepgramSttSupported()
+const VOICE_INPUT_SUPPORTED = !!SpeechRecognitionImpl || DEEPGRAM_STT_SUPPORTED
 
 const AUDIO_TTS_SUPPORTED =
   typeof window !== 'undefined' &&
@@ -1578,7 +1593,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
   // ORB-SIMPLE-2: микрофон нужен либо для фоновой голосовой активации (wakeOn), либо для активного
   // сеанса рации (open, открыт кликом орба). Иначе освобождаем поток и гасим статус.
   useEffect(() => {
-    const wantMic = (wakeOn || open) && !!SpeechRecognitionImpl
+    const wantMic = (wakeOn || open) && VOICE_INPUT_SUPPORTED
     if (!wantMic) {
       releaseMic()
       if (!open) setVoiceStatusLive('off')
@@ -1663,10 +1678,14 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
   useEffect(() => {
     // ORB-SIMPLE-2: разговорный цикл питается активным СЕАНСОМ рации (open), а не тумблером wakeOn —
     // клик орба открывает сеанс и мы сразу слушаем вопрос, даже если голосовая активация выключена.
-    if (!SpeechRecognitionImpl || !open) { convoActiveRef.current = false; return }
+    if (!VOICE_INPUT_SUPPORTED || !open) { convoActiveRef.current = false; return }
     let active = true
     convoActiveRef.current = true
     let rec: SpeechRecInstance | null = null
+    // VOICE-DEEPGRAM-EARS-48: активный источник STT в этом сеансе. Deepgram-раннер (WS/MediaRecorder) ЛИБО
+    // Web Speech (rec). usingDeepgram гейтит перезапуск слушания (startDeepgram vs listen) в общем конвейере.
+    let dgRunner: DeepgramRunner | null = null
+    let usingDeepgram = false
     // VOICE-DROPPED-FINAL-47: свежий сеанс — чистим придержанный финал/анти-дубль/страховку (дубль ловим
     // только внутри одного сеанса; между сеансами повтор фразы законен).
     pendingFinalRef.current = null
@@ -1676,9 +1695,14 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
     const clearSilence = () => {
       if (silenceTimerRef.current !== null) { window.clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
     }
+    // VOICE-DEEPGRAM-EARS-48: остановка Deepgram-раннера (шлёт 'CloseStream', закрывает mic-треки + WS без утечек).
+    const stopDeepgram = () => {
+      if (dgRunner) { try { dgRunner.stop() } catch { /* ignore */ } dgRunner = null }
+    }
     const stopRec = () => {
       clearSilence()
       stopMeter()
+      stopDeepgram()
       if (rec) {
         rec.onresult = null; rec.onend = null; rec.onerror = null
         try { rec.stop() } catch { /* ignore */ }
@@ -1706,8 +1730,13 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       }
     }
 
+    // VOICE-DEEPGRAM-EARS-48: Web Speech-путь (ФОЛБЭК). Оставлен рабочим — если нет Deepgram (нет
+    // MediaRecorder/WS/getUserMedia) или он упал, слушаем через браузерный распознаватель. Нет и его —
+    // источника голосового ввода нет, тихо выходим (гейт VOICE_INPUT_SUPPORTED сюда обычно не пускает).
     const listen = () => {
       if (!active) return
+      if (!SpeechRecognitionImpl) return
+      usingDeepgram = false
       stopRec()
       const snapshot = assistantSpeechGateSnapshot()
       const speechPending = hasPendingAssistantSpeech(snapshot)
@@ -1768,6 +1797,69 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       }
       rec = r
       try { r.start(); startMeter() } catch { /* leave visible listening state; browser may recover on next toggle */ }
+    }
+
+    // VOICE-DEEPGRAM-EARS-48: фолбэк на Web Speech при сбое Deepgram (WS не открылся / ошибка / mic отклонён /
+    // MediaRecorder не поддержан). Один и тот же resolveVoiceFinal обслуживает оба источника (#47 бесплатно).
+    // Нет Web Speech → источника нет: закрываем сеанс, не крутим впустую (Андрей всё равно может печатать).
+    const handleSttFallback = (reason: string) => {
+      if (!active || !usingDeepgram) return
+      logVoice('stt-fallback', `source=webspeech reason=${reason}`)
+      const next = sttFallbackAfterFailure({ webSpeechSupported: !!SpeechRecognitionImpl })
+      usingDeepgram = false
+      if (next === 'webspeech') { listen(); return }
+      stopRec()
+      setVoiceStatusLive(SpeechRecognitionImpl ? 'off' : 'denied')
+    }
+
+    // VOICE-DEEPGRAM-EARS-48: Deepgram-путь (ОСНОВНОЙ источник — «уши» с финалом ~200-300мс). Встаёт в ТУ ЖЕ
+    // точку, что Web Speech: interim → живой ввод; speech_final → finalizeDeepgram → resolveVoiceFinal (#47).
+    // Гейт закрыт (thinking/streaming/озвучка) — как listen(): не поднимаем mic/WS, ждём открытия гейта.
+    const startDeepgram = () => {
+      if (!active) return
+      usingDeepgram = true
+      stopRec()
+      const snapshot = assistantSpeechGateSnapshot()
+      const speechPending = hasPendingAssistantSpeech(snapshot)
+      if (snapshot.thinking || snapshot.streaming || speechPending) {
+        setVoiceStatusLive(speechPending ? 'speaking' : 'thinking')
+        if (speechPending) ttsOnIdleRef.current = finishVoiceCapture
+        return
+      }
+      setVoiceStatusLive('listening')
+      // Deepthink отдаёт speech_final серверным endpointing — акустический штамп конца речи с мик-метра
+      // сохраняем для sttFinal2speechEnd, финал ставим на момент speech_final (см. finalizeDeepgram).
+      micLastVoiceAtRef.current = null
+      sttFinalAtRef.current = null
+      dgRunner = createDeepgramRunner({
+        baseUrl: SUPABASE_URL,
+        lang: deepgramLangFor(lang),
+        getToken: async () => {
+          const { data: { session } } = await supabase.auth.getSession()
+          return session?.access_token ?? null
+        },
+        onOpen: () => { if (active && usingDeepgram) logVoice('stt-source', 'deepgram') },
+        onInterim: (transcript) => {
+          if (!active || !usingDeepgram) return
+          if (!shouldAcceptAssistantVoiceResult(assistantSpeechGateSnapshot())) return
+          setInput(transcript)
+        },
+        onSpeechFinal: (transcript) => {
+          if (!active || !usingDeepgram) return
+          if (sttFinalAtRef.current === null) sttFinalAtRef.current = Date.now()
+          finalizeDeepgram(transcript)
+        },
+        onFallback: (reason) => handleSttFallback(reason),
+      })
+      startMeter()
+    }
+
+    // VOICE-DEEPGRAM-EARS-48: перезапуск слушания единым для обоих источников — Deepgram поднимает свежий WS,
+    // Web Speech — новый распознаватель. Зовётся из resolveVoiceFinal(drop) и barge-in (та же механика #47).
+    const restartListen = () => {
+      if (!active) return
+      if (usingDeepgram) { startDeepgram(); return }
+      listen()
     }
 
     // VOICE-DROPPED-FINAL-47: снимок конвейера для чистого решения send/hold/drop по финалу STT.
@@ -1842,7 +1934,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
         clearFinalRescue()
         pendingFinalRef.current = null
         if (decision.reason !== 'empty') logVoice('drop', `reason=${decision.reason}`)
-        listen() // цикл не рвём — продолжаем слушать
+        restartListen() // цикл не рвём — продолжаем слушать (Deepgram: свежий WS; Web Speech: новый распознаватель)
         return
       }
       const q = text.trim()
@@ -1875,6 +1967,17 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
       resolveVoiceFinal(text)
     }
 
+    // VOICE-DEEPGRAM-EARS-48: финал Deepgram (speech_final) — ТА ЖЕ точка входа, что finalize() у Web Speech:
+    // останавливаем захват (stopRec шлёт 'CloseStream' + закрывает mic/WS), логируем лаг (у Deepgram ≈0 —
+    // финал по серверному endpointing) и прогоняем через resolveVoiceFinal (#47: один финал → один исход).
+    const finalizeDeepgram = (text: string) => {
+      if (!active) return
+      stopRec()
+      const sttLag = sttFinalLagMs(micLastVoiceAtRef.current, sttFinalAtRef.current)
+      if (sttLag !== null) logVoice('timing', `sttFinal2speechEnd=${sttLag}ms`)
+      resolveVoiceFinal(text)
+    }
+
     const runTurn = async (q: string) => {
       if (!active) return
       setVoiceStatusLive('thinking')
@@ -1891,13 +1994,20 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
 
     // VOICE-FRONT-STREAM: точка входа barge-in — VAD услышал речь во время загрузки/озвучки ответа,
     // ответ уже оборван (cancelActiveAssistant), сразу возвращаемся к прослушиванию НОВОГО вопроса.
-    bargeInListenRef.current = () => { if (active) listen() }
+    // VOICE-DEEPGRAM-EARS-48: restartListen поднимает ТОТ ЖЕ источник (Deepgram/Web Speech) — barge-in
+    // остаётся рабочим при Deepgram (VAD-детект перебивания источник-независим, ловит речь и при озвучке).
+    bargeInListenRef.current = () => { if (active) restartListen() }
 
+    // VOICE-DEEPGRAM-EARS-48: выбор источника «ушей». Deepgram приоритетен (финал ~200-300мс); нет его —
+    // Web Speech (фолбэк, сохранён рабочим); нет и его — none (голосового ввода нет, гейт сюда не пустит).
     void (async () => {
       const ok = await ensureMic()
       if (!active) return
       if (!ok) { setVoiceStatusLive('denied'); return }
-      listen()
+      const source = decideSttSource({ deepgramSupported: DEEPGRAM_STT_SUPPORTED, webSpeechSupported: !!SpeechRecognitionImpl })
+      if (source === 'deepgram') { startDeepgram(); return }
+      if (source === 'webspeech') { listen(); return }
+      setVoiceStatusLive('denied')
     })()
 
     return () => {
@@ -1937,7 +2047,7 @@ export default function AiAssistantProvider({ profile, children }: { profile: Pr
   // VOICE-FRONT-STREAM: вооружаем VAD-barge-in ТОЛЬКО в окне загрузки/озвучки ответа. Silero тянется
   // лениво при первом вооружении; вне окна — pause() (микрофон VAD не держим). Нет VAD (сбой/старый
   // браузер) → просто без barge-in.
-  const bargeArmed = !!SpeechRecognitionImpl && speakOn && shouldArmBargeIn({ wakeOn, open, thinking, streaming, ttsBusy })
+  const bargeArmed = VOICE_INPUT_SUPPORTED && speakOn && shouldArmBargeIn({ wakeOn, open, thinking, streaming, ttsBusy })
   useEffect(() => {
     if (!bargeArmed) { vadRef.current?.pause(); return }
     let cancelled = false
