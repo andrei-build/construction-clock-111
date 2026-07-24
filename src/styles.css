@@ -4399,6 +4399,24 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   padding: 3px 6px;
   font-size: 13px;
 }
+.hub-sketch-object-tool-fields,
+.hub-sketch-object-properties {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(100, 116, 139, .28);
+  border-radius: 8px;
+}
+.hub-sketch-object-tool-fields .hub-sketch-segmented,
+.hub-sketch-object-properties .hub-sketch-segmented {
+  justify-content: flex-start;
+}
+.hub-sketch-object-properties textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  border-radius: 8px;
+}
 .hub-sketch-context-stats {
   display: grid;
   gap: 7px;
@@ -5440,6 +5458,16 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-measurement-hit,
 .hub-sketch-plan-item *,
 .hub-sketch-plan-item-hit,
+.hub-sketch-plan-symbol-outline,
+.hub-sketch-plan-symbol-detail,
+.hub-sketch-stair-outline,
+.hub-sketch-stair-tread,
+.hub-sketch-stair-arrow,
+.hub-sketch-stair-arrow-head,
+.hub-sketch-callout-leader,
+.hub-sketch-callout-arrow-head,
+.hub-sketch-callout-box,
+.hub-sketch-callout-target,
 .hub-sketch-code-clearance-line,
 .hub-sketch-code-arc,
 .hub-sketch-dim-main,
@@ -6628,6 +6656,23 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke: rgba(37, 111, 159, .82);
   stroke-width: 1.2;
 }
+.hub-sketch-plan-symbol-outline {
+  fill: rgba(255, 255, 255, .92) !important;
+  stroke: #111827 !important;
+  stroke-width: 1.35 !important;
+}
+.hub-sketch-plan-symbol-detail {
+  fill: none !important;
+  stroke: #111827 !important;
+  stroke-width: 1.1 !important;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.hub-sketch-plan-symbol-item-range .hub-sketch-plan-symbol-detail,
+.hub-sketch-plan-symbol-item-kitchen-sink .hub-sketch-plan-symbol-detail,
+.hub-sketch-plan-symbol-item-lavatory .hub-sketch-plan-symbol-detail {
+  stroke-width: 1.2 !important;
+}
 .hub-sketch-plan-electrical rect {
   stroke-width: 1.7;
 }
@@ -6706,6 +6751,72 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-plan-item-selected ellipse {
   stroke: #2563eb;
   stroke-width: 2.4;
+}
+.hub-sketch-stair,
+.hub-sketch-callout {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.hub-sketch-stair-outline {
+  fill: rgba(255, 255, 255, .9);
+  stroke: #111827;
+  stroke-width: 1.35;
+  stroke-linejoin: miter;
+}
+.hub-sketch-stair-tread,
+.hub-sketch-stair-arrow {
+  fill: none;
+  stroke: #111827;
+  stroke-width: 1.05;
+  stroke-linecap: butt;
+}
+.hub-sketch-stair-arrow {
+  stroke-width: 1.45;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.hub-sketch-stair-arrow-head {
+  fill: #111827;
+  stroke: #111827;
+  stroke-width: 1;
+}
+.hub-sketch-stair-label,
+.hub-sketch-stair-width-label,
+.hub-sketch-callout-text {
+  fill: #111827;
+  stroke: none;
+  font-family: var(--font-numeric);
+  font-weight: 500;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+.hub-sketch-stair-label {
+  font-weight: 650;
+}
+.hub-sketch-stair-selected .hub-sketch-stair-outline,
+.hub-sketch-callout-selected .hub-sketch-callout-box {
+  stroke: #2563eb;
+  stroke-width: 2.1;
+}
+.hub-sketch-callout-leader {
+  stroke: #111827;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+.hub-sketch-callout-arrow-head {
+  fill: #111827;
+  stroke: #111827;
+  stroke-width: 1;
+}
+.hub-sketch-callout-target {
+  fill: #ffffff;
+  stroke: #111827;
+  stroke-width: 1.1;
+}
+.hub-sketch-callout-box {
+  fill: rgba(255, 255, 255, .94);
+  stroke: #111827;
+  stroke-width: 1.15;
 }
 .hub-sketch-code-arc,
 .hub-sketch-code-clearance-line {

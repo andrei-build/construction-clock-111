@@ -31,6 +31,29 @@ import {
   type BlueprintDimensionLine,
 } from '../../lib/sketchDims'
 import {
+  DEFAULT_SKETCH_STAIR_STEPS,
+  DEFAULT_SKETCH_STAIR_WIDTH_IN,
+  SKETCH_STAIR_ARROWS,
+  SKETCH_STAIR_DIRECTIONS,
+  buildPlanSymbolGeometry,
+  buildSketchCalloutGeometry,
+  buildSketchStairGeometry,
+  createDefaultSketchCallout,
+  createDefaultSketchStair,
+  formatSketchObjectLengthIn,
+  inferSketchPlanSymbolKind,
+  sanitizeSketchCallouts,
+  sanitizeSketchObjectCollections,
+  sanitizeSketchStairs,
+  type PlanPrimitive,
+  type PlanSymbolGeometry,
+  type SketchCallout,
+  type SketchPlanSymbolKind,
+  type SketchStair,
+  type SketchStairArrow,
+  type SketchStairDirection,
+} from '../../lib/sketchObjects'
+import {
   createProjectNote,
   getProjectFileDownloadUrl,
   getProjectHubFiles,
@@ -356,6 +379,8 @@ type SketchModel = {
   lights?: SketchLight[]
   switches?: SketchSwitch[]
   placedItems?: SketchPlacedCatalogItem[]
+  stairs?: SketchStair[]
+  callouts?: SketchCallout[]
 }
 type ViewMode = '2d' | '3d'
 type SketchCameraPreset = 'fit' | 'top' | 'angle' | 'inside'
@@ -729,11 +754,14 @@ type Tool =
   | 'furniture-table-rect'
   | 'furniture-table-round'
   | 'furniture-chair'
+  | 'stair'
+  | 'callout'
 type OpeningTool = Extract<Tool, 'door' | 'window' | 'opening'>
 type PipeTool = Extract<Tool, 'pipe-water-h' | 'pipe-water-v' | 'pipe-gas'>
 type ObstacleTool = Extract<Tool, 'column-round' | 'column-square' | 'box'>
 type ApplianceMarkerTool = Extract<Tool, 'appliance-oven' | 'appliance-microwave'>
 type FurnitureTool = Extract<Tool, 'furniture-table-rect' | 'furniture-table-round' | 'furniture-chair'>
+type SketchObjectTool = Extract<Tool, 'stair' | 'callout'>
 type CabinetBuilderKind = 'base' | 'sink' | 'drawers' | 'wall' | 'vanity' | 'filler' | 'appliance'
 type CabinetAppliancePrefix = 'DW' | 'RANGE' | 'REF' | 'HOOD'
 
@@ -913,6 +941,7 @@ function normalizeOpeningForModel(model: SketchModel, opening: Opening): Opening
 function normalizeSketchModelForStorage(model: SketchModel): SketchModel {
   const measurements = sanitizeSketchMeasurements(model.measurements)
   const placedItems = sanitizePlacedCatalogItems(model.placedItems)
+  const objectCollections = sanitizeSketchObjectCollections(model)
   const next: SketchModel = {
     ...model,
     version: 1,
@@ -927,12 +956,17 @@ function normalizeSketchModelForStorage(model: SketchModel): SketchModel {
   else delete next.measurements
   if (placedItems.length > 0) next.placedItems = placedItems
   else delete next.placedItems
+  if (objectCollections.stairs) next.stairs = objectCollections.stairs
+  else delete next.stairs
+  if (objectCollections.callouts) next.callouts = objectCollections.callouts
+  else delete next.callouts
   return next
 }
 
 function initialSketchModel(): SketchModel {
   if (typeof window === 'undefined' || !import.meta.env.DEV) return EMPTY_MODEL
-  const seed = (window as Window & { __SKETCH_BLUEPRINT_DIMS_60_SEED__?: unknown }).__SKETCH_BLUEPRINT_DIMS_60_SEED__
+  const seedWindow = window as Window & { __SKETCH_BLUEPRINT_DIMS_60_SEED__?: unknown; __SKETCH_BLUEPRINT_OBJECTS_61_SEED__?: unknown }
+  const seed = seedWindow.__SKETCH_BLUEPRINT_OBJECTS_61_SEED__ ?? seedWindow.__SKETCH_BLUEPRINT_DIMS_60_SEED__
   if (!seed || typeof seed !== 'object') return EMPTY_MODEL
   const raw = seed as Partial<SketchModel>
   const cellFt = Number(raw.cellFt)
@@ -944,6 +978,13 @@ function initialSketchModel(): SketchModel {
   }
   const height = importWallHeight(raw.height)
   if (height !== undefined) next.height = height
+  const measurements = sanitizeSketchMeasurements(raw.measurements)
+  const placedItems = sanitizePlacedCatalogItems(raw.placedItems)
+  const objectCollections = sanitizeSketchObjectCollections(raw)
+  if (measurements.length > 0) next.measurements = measurements
+  if (placedItems.length > 0) next.placedItems = placedItems
+  if (objectCollections.stairs) next.stairs = objectCollections.stairs
+  if (objectCollections.callouts) next.callouts = objectCollections.callouts
   return normalizeSketchModelForStorage(next)
 }
 
@@ -1045,6 +1086,7 @@ type PlanPlacedItem = {
   // APPLIANCES-28: мебель (стол/стул) и встроенная техника (духовка/СВЧ) на плане.
   furniture?: SketchFurnitureType
   builtInAppliance?: SketchApplianceType
+  planSymbol?: SketchPlanSymbolKind
   selected?: boolean
 }
 
@@ -1417,6 +1459,7 @@ function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlace
       // APPLIANCES-28: мебель и встроенная техника получают собственные плановые символы.
       const furniture = isFurniturePlacedCatalogItem(item) ? item.furnitureType : undefined
       const builtInAppliance = isBuiltInAppliancePlacedCatalogItem(item) ? item.applianceType : undefined
+      const planSymbol = inferSketchPlanSymbolKind(item)
       return {
         item,
         x: (item.xFt / cellFt) * CELL_PX,
@@ -1436,6 +1479,7 @@ function planPlacedItems(model: SketchModel, warningIds: Set<string>): PlanPlace
         columnShape,
         furniture,
         builtInAppliance,
+        planSymbol,
       }
     })
     .filter((item): item is PlanPlacedItem => !!item)
@@ -1566,6 +1610,115 @@ function drawCanvasMeasurementLine(ctx: CanvasRenderingContext2D, line: Measurem
   ctx.restore()
 }
 
+function drawCanvasPrimitive(ctx: CanvasRenderingContext2D, primitive: PlanPrimitive, fill: boolean) {
+  ctx.beginPath()
+  if (primitive.type === 'rect') {
+    ctx.roundRect(primitive.x, primitive.y, primitive.width, primitive.height, primitive.rx ?? 0)
+  } else if (primitive.type === 'ellipse') {
+    ctx.ellipse(primitive.cx, primitive.cy, primitive.rx, primitive.ry, 0, 0, Math.PI * 2)
+  } else if (primitive.type === 'circle') {
+    ctx.arc(primitive.cx, primitive.cy, primitive.r, 0, Math.PI * 2)
+  } else if (primitive.type === 'line') {
+    ctx.moveTo(primitive.x1, primitive.y1)
+    ctx.lineTo(primitive.x2, primitive.y2)
+  } else {
+    ctx.stroke(new Path2D(primitive.d))
+    return
+  }
+  if (fill) ctx.fill()
+  ctx.stroke()
+}
+
+function drawCanvasPlanSymbol(ctx: CanvasRenderingContext2D, geometry: PlanSymbolGeometry, viewScale: number) {
+  ctx.save()
+  ctx.strokeStyle = '#111827'
+  ctx.fillStyle = '#ffffff'
+  ctx.lineWidth = 1.25 / viewScale
+  geometry.outline.forEach((primitive) => drawCanvasPrimitive(ctx, primitive, true))
+  ctx.fillStyle = '#ffffff'
+  ctx.lineWidth = 1.05 / viewScale
+  geometry.details.forEach((primitive) => drawCanvasPrimitive(ctx, primitive, primitive.type !== 'line' && primitive.type !== 'path'))
+  ctx.restore()
+}
+
+function drawCanvasStair(ctx: CanvasRenderingContext2D, stair: SketchStair, viewScale: number, cellFt: number) {
+  const geom = buildSketchStairGeometry(stair, { cellFt, cellPx: CELL_PX })
+  ctx.save()
+  ctx.strokeStyle = '#111827'
+  ctx.fillStyle = '#ffffff'
+  ctx.lineWidth = 1.25 / viewScale
+  ctx.beginPath()
+  geom.outline.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y)
+    else ctx.lineTo(point.x, point.y)
+  })
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+  ctx.lineWidth = 1 / viewScale
+  geom.treads.forEach((tread) => {
+    ctx.beginPath()
+    ctx.moveTo(tread.a.x, tread.a.y)
+    ctx.lineTo(tread.b.x, tread.b.y)
+    ctx.stroke()
+  })
+  ctx.lineWidth = 1.45 / viewScale
+  ctx.beginPath()
+  geom.arrowPath.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y)
+    else ctx.lineTo(point.x, point.y)
+  })
+  ctx.stroke()
+  ctx.beginPath()
+  geom.arrowHead.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y)
+    else ctx.lineTo(point.x, point.y)
+  })
+  ctx.closePath()
+  ctx.fillStyle = '#111827'
+  ctx.fill()
+  ctx.font = `600 ${Math.max(8 / viewScale, 10 / viewScale)}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(geom.label.text, geom.label.x, geom.label.y)
+  ctx.font = `500 ${Math.max(7 / viewScale, 9 / viewScale)}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`
+  ctx.fillText(geom.widthTag.text, geom.widthTag.x, geom.widthTag.y)
+  ctx.restore()
+}
+
+function drawCanvasCallout(ctx: CanvasRenderingContext2D, callout: SketchCallout, viewScale: number) {
+  const geom = buildSketchCalloutGeometry(callout, { cellPx: CELL_PX, screenWorldPx: 1 / viewScale })
+  ctx.save()
+  ctx.strokeStyle = '#111827'
+  ctx.fillStyle = '#ffffff'
+  ctx.lineWidth = 1.15 / viewScale
+  ctx.beginPath()
+  ctx.roundRect(geom.box.x, geom.box.y, geom.box.width, geom.box.height, geom.box.rx)
+  ctx.fill()
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(geom.leader.x1, geom.leader.y1)
+  ctx.lineTo(geom.leader.x2, geom.leader.y2)
+  ctx.stroke()
+  ctx.beginPath()
+  geom.arrowHead.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y)
+    else ctx.lineTo(point.x, point.y)
+  })
+  ctx.closePath()
+  ctx.fillStyle = '#111827'
+  ctx.fill()
+  ctx.font = `500 ${11 / viewScale}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  const lineHeight = 14 / viewScale
+  const startY = geom.box.y + geom.box.height / 2 - ((geom.textLines.length - 1) * lineHeight) / 2
+  geom.textLines.forEach((line, index) => {
+    ctx.fillText(line, geom.box.x + 11 / viewScale, startY + index * lineHeight)
+  })
+  ctx.restore()
+}
+
 function drawCanvasPlanItem(ctx: CanvasRenderingContext2D, entry: PlanPlacedItem, viewScale: number) {
   ctx.save()
   ctx.translate(entry.x, entry.y)
@@ -1573,6 +1726,12 @@ function drawCanvasPlanItem(ctx: CanvasRenderingContext2D, entry: PlanPlacedItem
   ctx.lineWidth = (entry.warning ? 2 : 1.2) / viewScale
   ctx.strokeStyle = entry.warning ? '#dc2626' : entry.cabinet ? '#395144' : '#475569'
   ctx.fillStyle = entry.warning ? 'rgba(220, 38, 38, .14)' : entry.cabinet ? (entry.layer === 'wall' ? 'rgba(129, 140, 248, .2)' : 'rgba(127, 159, 104, .28)') : 'rgba(148, 163, 184, .22)'
+
+  if (entry.planSymbol) {
+    drawCanvasPlanSymbol(ctx, buildPlanSymbolGeometry(entry.planSymbol, entry.width, entry.depth), viewScale)
+    ctx.restore()
+    return
+  }
 
   if (entry.toilet) {
     ctx.fillStyle = '#f8fafc'
@@ -1830,6 +1989,8 @@ function renderPng(model: SketchModel, t: (k: string) => string, blueprintDimens
     drawCanvasDimLine(ctx, label, viewScale, blueprintDimensions ? '#111827' : label.kind === 'door' ? '#7c2d12' : '#1d4ed8', 10.5)
   })
   planPlacedItems(model, new Set()).forEach((entry) => drawCanvasPlanItem(ctx, entry, viewScale))
+  sanitizeSketchStairs(model.stairs).forEach((stair) => drawCanvasStair(ctx, stair, viewScale, modelCellFt(model)))
+  sanitizeSketchCallouts(model.callouts).forEach((callout) => drawCanvasCallout(ctx, callout, viewScale))
   for (const measurement of model.measurements ?? []) {
     if (!isPlanMeasurement(measurement)) continue
     const line = planMeasurementLine(model, measurement, 1 / viewScale)
@@ -1928,6 +2089,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [cabinetGallerySearch, setCabinetGallerySearch] = useState('')
   const [selectedCabinetGalleryEntryId, setSelectedCabinetGalleryEntryId] = useState<string | null>(null)
   const [cabinetGalleryWallHeight, setCabinetGalleryWallHeight] = useState(30)
+  const [stairWidthIn, setStairWidthIn] = useState(DEFAULT_SKETCH_STAIR_WIDTH_IN)
+  const [stairSteps, setStairSteps] = useState(DEFAULT_SKETCH_STAIR_STEPS)
+  const [stairDirection, setStairDirection] = useState<SketchStairDirection>('horizontal')
+  const [stairArrow, setStairArrow] = useState<SketchStairArrow>('UP')
   // TILE-CATALOG-29: фильтр бренда галереи плитки + заглушка «добавить по ссылке» (импорт делает бэкенд).
   const [tileGalleryBrand, setTileGalleryBrand] = useState<TileBrand | 'all'>('all')
   const [tileLinkDraft, setTileLinkDraft] = useState('')
@@ -1952,6 +2117,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [dragPlacedId, setDragPlacedId] = useState<string | null>(null)
   // ELEMENTS-INFRA-26: выбранный напольный объект (колонна/короб) для ввода размеров числом.
   const [selectedPlacedId, setSelectedPlacedId] = useState<string | null>(null)
+  const [selectedStairId, setSelectedStairId] = useState<string | null>(null)
+  const [selectedCalloutId, setSelectedCalloutId] = useState<string | null>(null)
   const [selectedOpeningIndex, setSelectedOpeningIndex] = useState<number | null>(null)
   const [openingOffsetEdit, setOpeningOffsetEdit] = useState<OpeningOffsetEdit | null>(null)
   const [openingSnapGuide, setOpeningSnapGuide] = useState<OpeningPlacementMagnet | null>(null)
@@ -2258,6 +2425,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }, [model.contours, selectedContourIndex, selectedNode])
 
   useEffect(() => {
+    if (selectedStairId && !sanitizeSketchStairs(model.stairs).some((item) => item.id === selectedStairId)) {
+      setSelectedStairId(null)
+    }
+    if (selectedCalloutId && !sanitizeSketchCallouts(model.callouts).some((item) => item.id === selectedCalloutId)) {
+      setSelectedCalloutId(null)
+    }
+  }, [model.stairs, model.callouts, selectedStairId, selectedCalloutId])
+
+  useEffect(() => {
     activeSnapFtRef.current = activeSnapFt
   }, [activeSnapFt])
 
@@ -2307,6 +2483,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setDragNode(null)
     setSelectedNode(null)
     setDragPlacedId(null)
+    setSelectedStairId(null)
+    setSelectedCalloutId(null)
     if (selection.kind === 'contour') {
       setSelectedContourIndex(selection.c)
       setSelectedWallKey(null)
@@ -3266,6 +3444,42 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       depthIn: dims.depthIn,
       heightIn: dims.heightIn,
     }
+  }
+
+  const selectSketchObjectTool = useCallback((next: SketchObjectTool) => {
+    setViewMode('2d')
+    setActiveMode('markup')
+    setTool(next)
+    setMeasurementDraft(null)
+    setSelectedMeasurementIndex(null)
+    setSelectedOpeningIndex(null)
+    selectedOpeningIndexRef.current = null
+    setSelectedContourIndex(null)
+    setSelectedNode(null)
+    setSelectedWallKey(null)
+    setSelectedPlacedId(null)
+    setPlanCabinetEditor(null)
+    setContextPanelCollapsed(false)
+  }, [])
+
+  const addSketchObjectAt = (kind: SketchObjectTool, point: Pt) => {
+    const snapped = snapForModel(model, point, activeSnapFt)
+    if (kind === 'stair') {
+      const stair = createDefaultSketchStair(makeId('stair'), snapped, {
+        widthIn: stairWidthIn,
+        steps: stairSteps,
+        direction: stairDirection,
+        arrow: stairArrow,
+      })
+      commit(normalizeSketchModelForStorage({ ...model, stairs: [...sanitizeSketchStairs(model.stairs), stair] }))
+      setSelectedStairId(stair.id)
+      setSelectedCalloutId(null)
+      return
+    }
+    const callout = createDefaultSketchCallout(makeId('callout'), snapped, { text: t('hub_sketch_callout_default_text') })
+    commit(normalizeSketchModelForStorage({ ...model, callouts: [...sanitizeSketchCallouts(model.callouts), callout] }))
+    setSelectedCalloutId(callout.id)
+    setSelectedStairId(null)
   }
 
   const canvasPoint = (clientX: number, clientY: number, view = canvasViewRef.current): { x: number; y: number } | null => {
@@ -4350,6 +4564,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedOpeningIndex(null)
     setSelectedMeasurementIndex(null)
     setMeasurementDraft(null)
+    setSelectedStairId(null)
+    setSelectedCalloutId(null)
     // ELEMENTS-INFRA-26: выбор колонны/короба открывает панель размеров в режиме «Электрика».
     // APPLIANCES-28: мебель и встроенная техника — тоже параметрические объекты с панелью размеров.
     setSelectedPlacedId(isObstaclePlacedCatalogItem(item) || isFurniturePlacedCatalogItem(item) || isBuiltInAppliancePlacedCatalogItem(item) ? item.id : null)
@@ -4460,6 +4676,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       selectedOpeningIndexRef.current = null
       setSelectedMeasurementIndex(null)
       setMeasurementDraft(null)
+      setSelectedStairId(null)
+      setSelectedCalloutId(null)
       return false
     }
     // NAV-FIX-2: клик по пустому месту снимает выделение стены (клик по самой стене обрабатывает хит-таргет со stopPropagation).
@@ -4468,6 +4686,11 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     if (wallSelectEnabled && selectedNode !== null) setSelectedNode(null)
     const raw = pointerCellAt(clientX, clientY)
     if (!raw) return false
+
+    if (tool === 'stair' || tool === 'callout') {
+      addSketchObjectAt(tool, raw)
+      return true
+    }
 
     if (tool === 'measure') {
       const p = measurementPoint(raw).p
@@ -4675,6 +4898,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     if (!raw || !point) return false
     const hitCells = Math.max(SEG_HIT, (30 * screenWorldPxForView()) / CELL_PX)
     const hitWorldPx = 30 * screenWorldPxForView()
+    setSelectedStairId(null)
+    setSelectedCalloutId(null)
 
     let nodeHit: { node: DragNode; d: number } | null = null
     const currentModel = modelRef.current
@@ -4836,6 +5061,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedOpeningIndex(null)
     setSelectedContourIndex(null)
     setSelectedNode(null)
+    setSelectedStairId(null)
+    setSelectedCalloutId(null)
     setNewRoomPending(false)
     setOpeningOffsetEdit(null)
     setOpeningSnapGuide(null)
@@ -4859,6 +5086,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setSelectedOpeningIndex(null)
     setSelectedContourIndex(null)
     setSelectedNode(null)
+    setSelectedStairId(null)
+    setSelectedCalloutId(null)
     setNewRoomPending(false)
     setOpeningOffsetEdit(null)
     setOpeningSnapGuide(null)
@@ -4867,7 +5096,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const clearAll = () => {
     setClearConfirmOpen(false)
-    if (!hasClearableSketchContent(model)) return
+    if (!hasClearableSketchContent(model) && (model.stairs ?? []).length === 0 && (model.callouts ?? []).length === 0) return
     canvasAutoFitRef.current = true
     commit(EMPTY_MODEL)
     setMeasurementDraft(null)
@@ -4879,6 +5108,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setDragPlacedId(null)
     setSelectedNode(null)
     setSelectedContourIndex(null)
+    setSelectedStairId(null)
+    setSelectedCalloutId(null)
     setNewRoomPending(false)
     lastWallClickAppendRef.current = null
     setHover(null)
@@ -4888,7 +5119,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   }
 
   const requestClearAll = () => {
-    if (!hasClearableSketchContent(model)) return
+    if (!hasClearableSketchContent(model) && (model.stairs ?? []).length === 0 && (model.callouts ?? []).length === 0) return
     setClearConfirmOpen(true)
   }
 
@@ -4997,6 +5228,61 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const item = sanitizePlacedCatalogItems(model.placedItems).find((candidate) => candidate.id === selectedPlacedId)
     return item && (isObstaclePlacedCatalogItem(item) || isFurniturePlacedCatalogItem(item) || isBuiltInAppliancePlacedCatalogItem(item)) ? item : null
   }, [model, selectedPlacedId])
+
+  const selectedStair = useMemo(() => {
+    if (!selectedStairId) return null
+    return sanitizeSketchStairs(model.stairs).find((item) => item.id === selectedStairId) ?? null
+  }, [model.stairs, selectedStairId])
+
+  const selectedCallout = useMemo(() => {
+    if (!selectedCalloutId) return null
+    return sanitizeSketchCallouts(model.callouts).find((item) => item.id === selectedCalloutId) ?? null
+  }, [model.callouts, selectedCalloutId])
+
+  const updateSelectedStair = useCallback((patch: Partial<SketchStair>) => {
+    if (!selectedStair) return
+    const stairs = sanitizeSketchStairs(model.stairs).map((item) => {
+      if (item.id !== selectedStair.id) return item
+      return sanitizeSketchStairs([{ ...item, ...patch }])[0] ?? item
+    })
+    commit(normalizeSketchModelForStorage({ ...model, stairs }))
+  }, [commit, model, selectedStair])
+
+  const applySelectedStairWidth = useCallback((raw: string) => {
+    if (!selectedStair) return
+    const parsedFt = parseLengthFt(raw, 'inches')
+    if (!Number.isFinite(parsedFt)) {
+      setError('hub_sketch_dimension_invalid')
+      return
+    }
+    const widthIn = Math.max(18, Math.min(96, Math.round(parsedFt * 12 * 16) / 16))
+    setStairWidthIn(widthIn)
+    updateSelectedStair({ widthIn })
+  }, [selectedStair, updateSelectedStair])
+
+  const removeSelectedStair = useCallback(() => {
+    if (!selectedStair) return
+    const stairs = sanitizeSketchStairs(model.stairs).filter((item) => item.id !== selectedStair.id)
+    setSelectedStairId(null)
+    commit(normalizeSketchModelForStorage({ ...model, stairs }))
+  }, [commit, model, selectedStair])
+
+  const updateSelectedCalloutText = useCallback((text: string) => {
+    if (!selectedCallout) return
+    const clean = text.trim().slice(0, 180)
+    if (!clean) return
+    const callouts = sanitizeSketchCallouts(model.callouts).map((item) => (
+      item.id === selectedCallout.id ? { ...item, text: clean } : item
+    ))
+    commit(normalizeSketchModelForStorage({ ...model, callouts }))
+  }, [commit, model, selectedCallout])
+
+  const removeSelectedCallout = useCallback(() => {
+    if (!selectedCallout) return
+    const callouts = sanitizeSketchCallouts(model.callouts).filter((item) => item.id !== selectedCallout.id)
+    setSelectedCalloutId(null)
+    commit(normalizeSketchModelForStorage({ ...model, callouts }))
+  }, [commit, model, selectedCallout])
 
   const updateSelectedObstacleDims = useCallback((patch: { widthIn?: number; depthIn?: number; heightIn?: number }) => {
     if (!selectedObstacle) return
@@ -5491,15 +5777,20 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       const switches = sanitizeSketchSwitches(data.switches)
       const measurements = sanitizeSketchMeasurements(data.measurements)
       const placedItems = sanitizePlacedCatalogItems(data.placedItems)
+      const objectCollections = sanitizeSketchObjectCollections(data)
       if (height !== undefined) nextModel.height = height
       if (finishes) nextModel.finishes = finishes
       if (lights.length > 0) nextModel.lights = lights
       if (switches.length > 0) nextModel.switches = switches
       if (measurements.length > 0) nextModel.measurements = measurements
       if (placedItems.length > 0) nextModel.placedItems = placedItems
+      if (objectCollections.stairs) nextModel.stairs = objectCollections.stairs
+      if (objectCollections.callouts) nextModel.callouts = objectCollections.callouts
       canvasAutoFitRef.current = true
       setMeasurementDraft(null)
       setSelectedMeasurementIndex(null)
+      setSelectedStairId(null)
+      setSelectedCalloutId(null)
       setSelectedOpeningIndex(null)
       setSelectedContourIndex(null)
       setSelectedNode(null)
@@ -5522,10 +5813,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   // NAV-FIX-2: выбор стены на 2D активен, когда клики не заняты установкой проёмов/замеров и не идёт рисование контура.
   const activeContourOpen = !!activeContour && !activeContour.closed && activeContour.points.length > 0
   const wallDraftPointerActive = shouldTrackWallDraftPointer(activeContour, newRoomDraftPending)
-  const canClearSketch = hasClearableSketchContent(model)
+  const canClearSketch = hasClearableSketchContent(model) || (model.stairs ?? []).length > 0 || (model.callouts ?? []).length > 0
   // SKETCH-EDIT-MODEL-51: выбор/перетаскивание комнат/стен/узлов активны в режиме «Выбор». В режиме
   // «Рисование» они выключены — клик там ставит узлы, а не выделяет (иначе клик по комнате «залипал»).
-  const wallSelectEnabled = canEdit && editMode === 'select' && tool !== 'door' && tool !== 'window' && tool !== 'opening' && tool !== 'measure' && tool !== 'outlet' && tool !== 'switch' && !activeContourOpen
+  const wallSelectEnabled = canEdit && editMode === 'select' && tool !== 'door' && tool !== 'window' && tool !== 'opening' && tool !== 'measure' && tool !== 'outlet' && tool !== 'switch' && tool !== 'stair' && tool !== 'callout' && !activeContourOpen
   const selectedOpening = selectedOpeningIndex !== null ? model.openings[selectedOpeningIndex] ?? null : null
   const canCenterOpening = canEdit && !!selectedOpening && !!openingEnds(model, selectedOpening)
   const heightFt = wallHeightFt(model)
@@ -5572,6 +5863,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   )
   const codeWarningItemIds = useMemo(() => codeClearanceItemIds(codeClearanceViolations), [codeClearanceViolations])
   const planItems = useMemo(() => planPlacedItems(model, codeWarningItemIds), [model, codeWarningItemIds])
+  const planStairs = useMemo(() => sanitizeSketchStairs(model.stairs), [model.stairs])
+  const planCallouts = useMemo(() => sanitizeSketchCallouts(model.callouts), [model.callouts])
   const planCodeClearanceLines = useMemo(
     () => codeClearanceChecks
       .map((check) => planCodeClearanceLine(model, check, t, screenWorldPx))
@@ -5646,6 +5939,117 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       </text>
     </g>
   )
+
+  const renderPlanPrimitiveSvg = (primitive: PlanPrimitive, key: string, className: string) => {
+    if (primitive.type === 'rect') {
+      return <rect key={key} className={className} x={primitive.x} y={primitive.y} width={primitive.width} height={primitive.height} rx={primitive.rx ?? 0} />
+    }
+    if (primitive.type === 'ellipse') {
+      return <ellipse key={key} className={className} cx={primitive.cx} cy={primitive.cy} rx={primitive.rx} ry={primitive.ry} />
+    }
+    if (primitive.type === 'circle') {
+      return <circle key={key} className={className} cx={primitive.cx} cy={primitive.cy} r={primitive.r} />
+    }
+    if (primitive.type === 'line') {
+      return <line key={key} className={className} x1={primitive.x1} y1={primitive.y1} x2={primitive.x2} y2={primitive.y2} />
+    }
+    return <path key={key} className={className} d={primitive.d} />
+  }
+
+  const renderPlanSymbolSvg = (entry: PlanPlacedItem) => {
+    if (!entry.planSymbol) return null
+    const geometry = buildPlanSymbolGeometry(entry.planSymbol, entry.width, entry.depth)
+    return (
+      <g className={`hub-sketch-plan-symbol hub-sketch-plan-symbol-${entry.planSymbol}`}>
+        {geometry.outline.map((primitive, index) => renderPlanPrimitiveSvg(primitive, `symbol-outline-${index}`, 'hub-sketch-plan-symbol-outline'))}
+        {geometry.details.map((primitive, index) => renderPlanPrimitiveSvg(primitive, `symbol-detail-${index}`, 'hub-sketch-plan-symbol-detail'))}
+      </g>
+    )
+  }
+
+  const renderStair2D = (stair: SketchStair) => {
+    const geom = buildSketchStairGeometry(stair, { cellFt: modelCellFt(model), cellPx: CELL_PX })
+    const selected = selectedStairId === stair.id
+    const outlinePoints = geom.outline.map((point) => `${point.x},${point.y}`).join(' ')
+    const arrowPoints = geom.arrowPath.map((point) => `${point.x},${point.y}`).join(' ')
+    const arrowHeadPoints = geom.arrowHead.map((point) => `${point.x},${point.y}`).join(' ')
+    return (
+      <g
+        key={`stair-${stair.id}`}
+        className={selected ? 'hub-sketch-stair hub-sketch-stair-selected' : 'hub-sketch-stair'}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation()
+          if (!canEdit) return
+          setSelectedStairId(stair.id)
+          setSelectedCalloutId(null)
+          setSelectedWallKey(null)
+          setSelectedContourIndex(null)
+          setSelectedOpeningIndex(null)
+          setSelectedMeasurementIndex(null)
+          setActiveMode('markup')
+        }}
+      >
+        <title>{t('hub_sketch_tool_stair')}</title>
+        <polygon className="hub-sketch-stair-outline" points={outlinePoints} />
+        {geom.treads.map((tread, index) => (
+          <line key={`stair-tread-${stair.id}-${index}`} className="hub-sketch-stair-tread" x1={tread.a.x} y1={tread.a.y} x2={tread.b.x} y2={tread.b.y} />
+        ))}
+        <polyline className="hub-sketch-stair-arrow" points={arrowPoints} />
+        <polygon className="hub-sketch-stair-arrow-head" points={arrowHeadPoints} />
+        <text className="hub-sketch-stair-label" x={geom.label.x} y={geom.label.y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 10.5 * screenWorldPx }}>
+          {geom.label.text}
+        </text>
+        <text className="hub-sketch-stair-width-label" x={geom.widthTag.x} y={geom.widthTag.y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 9.5 * screenWorldPx }}>
+          {geom.widthTag.text}
+        </text>
+      </g>
+    )
+  }
+
+  const renderCallout2D = (callout: SketchCallout) => {
+    const geom = buildSketchCalloutGeometry(callout, { cellPx: CELL_PX, screenWorldPx })
+    const selected = selectedCalloutId === callout.id
+    const arrowHeadPoints = geom.arrowHead.map((point) => `${point.x},${point.y}`).join(' ')
+    const lineHeight = 14 * screenWorldPx
+    const startY = geom.box.y + geom.box.height / 2 - ((geom.textLines.length - 1) * lineHeight) / 2
+    return (
+      <g
+        key={`callout-${callout.id}`}
+        className={selected ? 'hub-sketch-callout hub-sketch-callout-selected' : 'hub-sketch-callout'}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation()
+          if (!canEdit) return
+          setSelectedCalloutId(callout.id)
+          setSelectedStairId(null)
+          setSelectedWallKey(null)
+          setSelectedContourIndex(null)
+          setSelectedOpeningIndex(null)
+          setSelectedMeasurementIndex(null)
+          setActiveMode('markup')
+        }}
+      >
+        <title>{t('hub_sketch_tool_callout')}</title>
+        <line className="hub-sketch-callout-leader" x1={geom.leader.x1} y1={geom.leader.y1} x2={geom.leader.x2} y2={geom.leader.y2} />
+        <polygon className="hub-sketch-callout-arrow-head" points={arrowHeadPoints} />
+        <circle className="hub-sketch-callout-target" cx={geom.leader.x2} cy={geom.leader.y2} r={Math.max(2.2 * screenWorldPx, 2.4)} />
+        <rect className="hub-sketch-callout-box" x={geom.box.x} y={geom.box.y} width={geom.box.width} height={geom.box.height} rx={geom.box.rx} />
+        {geom.textLines.map((line, index) => (
+          <text
+            key={`callout-line-${callout.id}-${index}`}
+            className="hub-sketch-callout-text"
+            x={geom.box.x + 11 * screenWorldPx}
+            y={startY + index * lineHeight}
+            dominantBaseline="central"
+            style={{ fontSize: 11 * screenWorldPx }}
+          >
+            {line}
+          </text>
+        ))}
+      </g>
+    )
+  }
 
   const renderBlueprintDimensions = () => {
     if (!blueprintDimensionLayout) return null
@@ -6853,6 +7257,84 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
         {activeMode === 'markup' && (
           <div className="hub-sketch-context-section">
+            <div className="hub-sketch-context-subhead">{t('hub_sketch_blueprint_objects')}</div>
+            <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_blueprint_objects')}>
+              {([
+                ['stair', 'hub_sketch_tool_stair'],
+                ['callout', 'hub_sketch_tool_callout'],
+              ] as const).map(([toolKind, key]) => (
+                <button
+                  key={toolKind}
+                  type="button"
+                  className={tool === toolKind ? 'btn small' : 'btn ghost small'}
+                  aria-pressed={tool === toolKind}
+                  onClick={() => selectSketchObjectTool(toolKind)}
+                >
+                  {t(key)}
+                </button>
+              ))}
+            </div>
+            {tool === 'stair' && (
+              <div className="hub-sketch-object-tool-fields">
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_stair_width')}</span>
+                  <input
+                    key={`stair-default-width-${stairWidthIn}`}
+                    defaultValue={formatSketchObjectLengthIn(stairWidthIn)}
+                    inputMode="text"
+                    onBlur={(event) => {
+                      const parsed = parseLengthFt(event.currentTarget.value, 'inches')
+                      if (!Number.isFinite(parsed)) {
+                        setError('hub_sketch_dimension_invalid')
+                        event.currentTarget.value = formatSketchObjectLengthIn(stairWidthIn)
+                        return
+                      }
+                      setStairWidthIn(Math.max(18, Math.min(96, Math.round(parsed * 12 * 16) / 16)))
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') event.currentTarget.blur()
+                    }}
+                  />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_stair_steps')}</span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={40}
+                    step={1}
+                    value={stairSteps}
+                    onChange={(event) => setStairSteps(Math.max(2, Math.min(40, Math.round(Number(event.target.value) || DEFAULT_SKETCH_STAIR_STEPS))))}
+                  />
+                </label>
+                <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_stair_direction')}>
+                  {SKETCH_STAIR_DIRECTIONS.map((direction) => (
+                    <button
+                      key={direction}
+                      type="button"
+                      className={stairDirection === direction ? 'btn small' : 'btn ghost small'}
+                      aria-pressed={stairDirection === direction}
+                      onClick={() => setStairDirection(direction)}
+                    >
+                      {t(direction === 'horizontal' ? 'hub_sketch_stair_direction_horizontal' : direction === 'vertical' ? 'hub_sketch_stair_direction_vertical' : 'hub_sketch_stair_direction_turn')}
+                    </button>
+                  ))}
+                </div>
+                <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_stair_arrow')}>
+                  {SKETCH_STAIR_ARROWS.map((arrow) => (
+                    <button
+                      key={arrow}
+                      type="button"
+                      className={stairArrow === arrow ? 'btn small' : 'btn ghost small'}
+                      aria-pressed={stairArrow === arrow}
+                      onClick={() => setStairArrow(arrow)}
+                    >
+                      {arrow}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <label className="muted hub-sketch-name-label">{t('hub_sketch_name')}</label>
             <input
               className="hub-sketch-name"
@@ -7165,7 +7647,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
   const renderSketchPropertiesPanel = () => {
     const selectedMeasurement = selectedMeasurementIndex !== null ? model.measurements?.[selectedMeasurementIndex] ?? null : null
-    if (!selectedWall && !selectedContour && !selectedOpening && !selectedMeasurement) return null
+    if (!selectedWall && !selectedContour && !selectedOpening && !selectedMeasurement && !selectedStair && !selectedCallout) return null
     return (
       <aside className="hub-sketch-properties-panel hub-sketch-sheet-open" aria-label={t('hub_sketch_properties_panel')}>
         <div
@@ -7453,12 +7935,115 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             )}
           </section>
         )}
+
+        {selectedStair && (
+          <section className="hub-sketch-properties-section">
+            <div className="hub-sketch-properties-head">
+              <h3>{t('hub_sketch_tool_stair')}</h3>
+              <button type="button" className="btn ghost small" aria-label={t('hub_sketch_wall_panel_close')} onClick={() => setSelectedStairId(null)}>
+                ×
+              </button>
+            </div>
+            <div className="hub-sketch-wall-panel-facts">
+              <span className="muted">{t('hub_sketch_stair_width')}</span>
+              <span className="hub-sketch-stat-value">{formatSketchObjectLengthIn(selectedStair.widthIn)}</span>
+              <span className="muted">{t('hub_sketch_stair_steps')}</span>
+              <span className="hub-sketch-stat-value">{selectedStair.steps}</span>
+              <span className="muted">{t('hub_sketch_stair_arrow')}</span>
+              <span className="hub-sketch-stat-value">{selectedStair.arrow}</span>
+            </div>
+            {canEdit && (
+              <div className="hub-sketch-object-properties">
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_stair_width')}</span>
+                  <input
+                    key={`selected-stair-width-${selectedStair.id}-${selectedStair.widthIn}`}
+                    defaultValue={formatSketchObjectLengthIn(selectedStair.widthIn)}
+                    inputMode="text"
+                    onBlur={(event) => applySelectedStairWidth(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') event.currentTarget.blur()
+                    }}
+                  />
+                </label>
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_stair_steps')}</span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={40}
+                    step={1}
+                    value={selectedStair.steps}
+                    onChange={(event) => updateSelectedStair({ steps: Math.max(2, Math.min(40, Math.round(Number(event.target.value) || selectedStair.steps))) })}
+                  />
+                </label>
+                <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_stair_direction')}>
+                  {SKETCH_STAIR_DIRECTIONS.map((direction) => (
+                    <button
+                      key={direction}
+                      type="button"
+                      className={selectedStair.direction === direction ? 'btn small' : 'btn ghost small'}
+                      aria-pressed={selectedStair.direction === direction}
+                      onClick={() => updateSelectedStair({ direction })}
+                    >
+                      {t(direction === 'horizontal' ? 'hub_sketch_stair_direction_horizontal' : direction === 'vertical' ? 'hub_sketch_stair_direction_vertical' : 'hub_sketch_stair_direction_turn')}
+                    </button>
+                  ))}
+                </div>
+                <div className="hub-sketch-segmented" role="group" aria-label={t('hub_sketch_stair_arrow')}>
+                  {SKETCH_STAIR_ARROWS.map((arrow) => (
+                    <button
+                      key={arrow}
+                      type="button"
+                      className={selectedStair.arrow === arrow ? 'btn small' : 'btn ghost small'}
+                      aria-pressed={selectedStair.arrow === arrow}
+                      onClick={() => updateSelectedStair({ arrow })}
+                    >
+                      {arrow}
+                    </button>
+                  ))}
+                </div>
+                <button type="button" className="btn ghost small hub-sketch-context-danger" onClick={removeSelectedStair}>
+                  {t('hub_sketch_stair_delete')}
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {selectedCallout && (
+          <section className="hub-sketch-properties-section">
+            <div className="hub-sketch-properties-head">
+              <h3>{t('hub_sketch_tool_callout')}</h3>
+              <button type="button" className="btn ghost small" aria-label={t('hub_sketch_wall_panel_close')} onClick={() => setSelectedCalloutId(null)}>
+                ×
+              </button>
+            </div>
+            {canEdit && (
+              <div className="hub-sketch-object-properties">
+                <label className="hub-sketch-field">
+                  <span className="muted">{t('hub_sketch_callout_text')}</span>
+                  <textarea
+                    key={`selected-callout-text-${selectedCallout.id}`}
+                    defaultValue={selectedCallout.text}
+                    rows={3}
+                    maxLength={180}
+                    onBlur={(event) => updateSelectedCalloutText(event.currentTarget.value)}
+                  />
+                </label>
+                <button type="button" className="btn ghost small hub-sketch-context-danger" onClick={removeSelectedCallout}>
+                  {t('hub_sketch_callout_delete')}
+                </button>
+              </div>
+            )}
+          </section>
+        )}
       </aside>
     )
   }
 
   const use3DContextPanel = canEdit && viewMode === '3d' && MODES_WITH_3D_CONTEXT.has(activeMode)
-  const hasPropertiesPanel = Boolean(selectedWall || selectedContour || selectedOpening || (selectedMeasurementIndex !== null && model.measurements?.[selectedMeasurementIndex]))
+  const hasPropertiesPanel = Boolean(selectedWall || selectedContour || selectedOpening || selectedStair || selectedCallout || (selectedMeasurementIndex !== null && model.measurements?.[selectedMeasurementIndex]))
   useEffect(() => {
     if (!hasPropertiesPanel) return
     setContextSheetOpen(false)
@@ -8077,7 +8662,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
 
           {planItems.map((entry) => {
             const infraSelected = selectedPlacedId === entry.item.id
-            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.electrical ? ` hub-sketch-plan-electrical hub-sketch-plan-${entry.electrical}` : ''}${entry.pipe ? ` hub-sketch-plan-pipe hub-sketch-plan-pipe-${entry.pipe}` : ''}${entry.columnShape ? ` hub-sketch-plan-obstacle hub-sketch-plan-obstacle-${entry.columnShape}` : ''}${entry.furniture ? ` hub-sketch-plan-furniture hub-sketch-plan-furniture-${entry.furniture}` : ''}${entry.builtInAppliance ? ` hub-sketch-plan-appliance hub-sketch-plan-appliance-${entry.builtInAppliance}` : ''}${infraSelected ? ' hub-sketch-plan-item-selected' : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}${dragPlacedId === entry.item.id ? ' hub-sketch-plan-item-dragging' : ''}`
+            const className = `hub-sketch-plan-item${entry.warning ? ' hub-sketch-plan-item-warn' : ''}${entry.planSymbol ? ` hub-sketch-plan-symbol-item hub-sketch-plan-symbol-item-${entry.planSymbol}` : ''}${entry.toilet ? ' hub-sketch-plan-toilet' : ''}${entry.showerPan ? ' hub-sketch-plan-shower' : ''}${entry.cabinet ? ' hub-sketch-plan-cabinet' : ''}${entry.electrical ? ` hub-sketch-plan-electrical hub-sketch-plan-${entry.electrical}` : ''}${entry.pipe ? ` hub-sketch-plan-pipe hub-sketch-plan-pipe-${entry.pipe}` : ''}${entry.columnShape ? ` hub-sketch-plan-obstacle hub-sketch-plan-obstacle-${entry.columnShape}` : ''}${entry.furniture ? ` hub-sketch-plan-furniture hub-sketch-plan-furniture-${entry.furniture}` : ''}${entry.builtInAppliance ? ` hub-sketch-plan-appliance hub-sketch-plan-appliance-${entry.builtInAppliance}` : ''}${infraSelected ? ' hub-sketch-plan-item-selected' : ''}${entry.layer === 'wall' ? ' hub-sketch-plan-cabinet-wall' : ''}${entry.filler ? ' hub-sketch-plan-cabinet-filler' : ''}${dragPlacedId === entry.item.id ? ' hub-sketch-plan-item-dragging' : ''}`
             const labelFontSize = Math.max(5 * screenWorldPx, Math.min(11 * screenWorldPx, entry.width / Math.max(4, entry.cabinetCode.length * 0.6)))
             return (
               <g
@@ -8096,7 +8681,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                   height={Math.max(entry.depth, 44 * screenWorldPx)}
                   rx={6 * screenWorldPx}
                 />
-                {entry.electrical ? (
+                {entry.planSymbol ? (
+                  renderPlanSymbolSvg(entry)
+                ) : entry.electrical ? (
                   <>
                     <rect x={-entry.width / 2} y={-entry.depth / 2} width={entry.width} height={entry.depth} rx={Math.min(4 * screenWorldPx, entry.width * 0.18)} />
                     {entry.electrical === 'outlet' ? (
@@ -8209,6 +8796,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               </g>
             )
           })}
+
+          {planStairs.map((stair) => renderStair2D(stair))}
+          {planCallouts.map((callout) => renderCallout2D(callout))}
 
           {codeCheckEnabled && planCodeClearanceArcs.map((arc) => (
             <path
