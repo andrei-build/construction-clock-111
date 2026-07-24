@@ -4788,6 +4788,26 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   border-color: var(--accent);
   font-weight: 600;
 }
+/* BLUEPRINT-LAYERS-59: сегмент-контрол слоя (стиль #57 — прямоугольные 28-32px, radius 6-8,
+   тонкая типографика). Активный слой — акцентом, как пресет толщины. */
+.hub-sketch-layer-field { margin-top: 4px; }
+.hub-sketch-layer-seg { display: flex; gap: 6px; }
+.hub-sketch-layer-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 30px;
+  border-radius: 7px;
+  font-family: var(--font-numeric);
+  font-weight: 500;
+  letter-spacing: .01em;
+  padding: 0 6px;
+}
+.hub-sketch-layer-seg-btn.active {
+  background: var(--accent);
+  color: #06231d;
+  border-color: var(--accent);
+  font-weight: 600;
+}
 .hub-sketch-svg-shell-fullscreen .hub-sketch-svg-stage {
   flex: 1 1 auto;
   min-height: 0;
@@ -5437,6 +5457,49 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   stroke-linecap: butt;
   stroke-linejoin: miter;
   vector-effect: non-scaling-stroke;
+}
+/* BLUEPRINT-LAYERS-59: демонтаж — пунктирные стены; скрытое существующее приглушаем. */
+.hub-sketch-walls-layer-demolition .hub-sketch-wall-edge { stroke-dasharray: 7 5; }
+.hub-sketch-room-layer-hidden { opacity: .14; }
+/* BLUEPRINT-LAYERS-59: легенда слоёв в углу плана — тёмная плашка, radius≤8, тонкий шрифт. */
+.hub-sketch-layer-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(15, 23, 33, .82);
+  border: 1px solid rgba(148, 163, 184, .22);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+  font-family: var(--font-numeric);
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(226, 232, 240, .92);
+}
+.hub-sketch-layer-legend-row { display: flex; align-items: center; gap: 7px; }
+.hub-sketch-layer-swatch {
+  width: 20px;
+  height: 13px;
+  border-radius: 3px;
+  border: 1px solid rgba(148, 163, 184, .55);
+  flex: 0 0 auto;
+}
+.hub-sketch-layer-swatch-existing {
+  background:
+    repeating-linear-gradient(45deg, rgba(150, 190, 162, .8) 0 1.4px, rgba(120, 152, 132, .18) 1.4px 5px);
+}
+.hub-sketch-layer-swatch-new { background: rgba(237, 246, 251, .06); }
+.hub-sketch-layer-swatch-demolition {
+  border-style: dashed;
+  border-color: rgba(214, 152, 152, .8);
+  background:
+    repeating-linear-gradient(45deg, rgba(214, 152, 152, .5) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(-45deg, rgba(214, 152, 152, .5) 0 1px, transparent 1px 6px);
 }
 .hub-sketch-room-selected {
   stroke: #2563eb;
@@ -11941,6 +12004,34 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
     font-weight: 700;
   }
   .sketch-print-plan-stats { margin-top: 4px; }
+  /* BLUEPRINT-LAYERS-59: легенда слоёв на печатном листе — чёрным по белому, штриховка/пунктир
+     линиями (print-color-adjust: exact, чтобы паттерны печатались, а не полагались на цвет). */
+  .sketch-print-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 8px;
+    font-size: 10pt;
+  }
+  .sketch-print-legend-row { display: flex; align-items: center; gap: 6px; }
+  .sketch-print-legend-swatch {
+    width: 26px;
+    height: 14px;
+    border: 1px solid #000;
+    flex: 0 0 auto;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .sketch-print-legend-swatch-existing {
+    background: repeating-linear-gradient(45deg, #000 0 1px, #fff 1px 4px);
+  }
+  .sketch-print-legend-swatch-new { background: #fff; }
+  .sketch-print-legend-swatch-demolition {
+    border-style: dashed;
+    background:
+      repeating-linear-gradient(45deg, #000 0 .8px, #fff .8px 5px),
+      repeating-linear-gradient(-45deg, #000 0 .8px, #fff .8px 5px);
+  }
   .sketch-print-elevation-len { font-weight: 600; }
   .sketch-print-elevation-frame {
     height: 150mm;
