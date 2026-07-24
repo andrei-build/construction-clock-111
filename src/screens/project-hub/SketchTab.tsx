@@ -25,6 +25,12 @@ import {
   type SketchLayer,
 } from '../../lib/sketchLayers'
 import {
+  buildBlueprintDimensionLayout,
+  formatBlueprintLengthFt,
+  type BlueprintDimensionLayout,
+  type BlueprintDimensionLine,
+} from '../../lib/sketchDims'
+import {
   createProjectNote,
   getProjectFileDownloadUrl,
   getProjectHubFiles,
@@ -924,6 +930,23 @@ function normalizeSketchModelForStorage(model: SketchModel): SketchModel {
   return next
 }
 
+function initialSketchModel(): SketchModel {
+  if (typeof window === 'undefined' || !import.meta.env.DEV) return EMPTY_MODEL
+  const seed = (window as Window & { __SKETCH_BLUEPRINT_DIMS_60_SEED__?: unknown }).__SKETCH_BLUEPRINT_DIMS_60_SEED__
+  if (!seed || typeof seed !== 'object') return EMPTY_MODEL
+  const raw = seed as Partial<SketchModel>
+  const cellFt = Number(raw.cellFt)
+  const next: SketchModel = {
+    version: 1,
+    cellFt: Number.isFinite(cellFt) && cellFt > 0 ? cellFt : CELL_FT,
+    contours: sanitizeSketchContours(raw.contours),
+    openings: sanitizeSketchOpenings(raw.openings),
+  }
+  const height = importWallHeight(raw.height)
+  if (height !== undefined) next.height = height
+  return normalizeSketchModelForStorage(next)
+}
+
 function fmtFt(valueFt: number): string {
   if (!Number.isFinite(valueFt) || Math.abs(valueFt) < 1 / 192) return '0 in'
   return formatLengthFt(valueFt)
@@ -1445,7 +1468,7 @@ function sanitizeName(name: string): string {
   return clean || 'room'
 }
 
-function drawCanvasDimLine(ctx: CanvasRenderingContext2D, dim: DimLine2D, viewScale: number, color: string, fontScale = 12) {
+function drawCanvasDimLine(ctx: CanvasRenderingContext2D, dim: DimLine2D | BlueprintDimensionLine, viewScale: number, color: string, fontScale = 12) {
   ctx.save()
   ctx.strokeStyle = color
   ctx.fillStyle = color
@@ -1466,6 +1489,40 @@ function drawCanvasDimLine(ctx: CanvasRenderingContext2D, dim: DimLine2D, viewSc
   ctx.lineWidth = 3 / viewScale
   ctx.strokeText(dim.text, 0, 0)
   ctx.fillText(dim.text, 0, 0)
+  ctx.restore()
+}
+
+function drawCanvasBlueprintDimensions(ctx: CanvasRenderingContext2D, layout: BlueprintDimensionLayout, viewScale: number) {
+  const color = '#111827'
+  ctx.save()
+  ctx.strokeStyle = color
+  ctx.fillStyle = color
+  ctx.lineWidth = 1.1 / viewScale
+  ctx.setLineDash([8 / viewScale, 6 / viewScale])
+  layout.axes.forEach((axis) => {
+    ctx.beginPath()
+    ctx.moveTo(axis.x1, axis.y1)
+    ctx.lineTo(axis.x2, axis.y2)
+    ctx.stroke()
+  })
+  ctx.setLineDash([])
+  layout.dimensions.forEach((dim) => drawCanvasDimLine(ctx, dim, viewScale, color, dim.row === 'overall' ? 11.5 : 10.5))
+  layout.axes.forEach((axis) => {
+    axis.bubbles.forEach((bubble) => {
+      ctx.beginPath()
+      ctx.fillStyle = '#ffffff'
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1.2 / viewScale
+      ctx.arc(bubble.cx, bubble.cy, bubble.r, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+      ctx.fillStyle = color
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.font = `800 ${Math.max(8 / viewScale, 11 / viewScale)}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`
+      ctx.fillText(bubble.label, bubble.cx, bubble.cy)
+    })
+  })
   ctx.restore()
 }
 
@@ -1610,8 +1667,30 @@ function drawCanvasPlanItem(ctx: CanvasRenderingContext2D, entry: PlanPlacedItem
   ctx.restore()
 }
 
+function fitCanvasViewWithScreenMargin(model: SketchModel, size: CanvasSize, marginScreenPx: number): CanvasView {
+  const bounds = sketchBounds(model)
+  if (!bounds.hasPoints) return fitCanvasView(model, size)
+  const widthPx = Math.max(CELL_PX, bounds.width * CELL_PX)
+  const heightPx = Math.max(CELL_PX, bounds.height * CELL_PX)
+  const safeMargin = Math.max(0, Math.min(marginScreenPx, Math.min(size.width, size.height) * 0.35))
+  const innerWidth = Math.max(1, size.width - safeMargin * 2)
+  const innerHeight = Math.max(1, size.height - safeMargin * 2)
+  const scale = Math.min(innerWidth / widthPx, innerHeight / heightPx)
+  if (!Number.isFinite(scale) || scale <= 0) return fitCanvasView(model, size)
+  const viewWidth = size.width / scale
+  const viewHeight = size.height / scale
+  const cx = ((bounds.minX + bounds.maxX) / 2) * CELL_PX
+  const cy = ((bounds.minY + bounds.maxY) / 2) * CELL_PX
+  return normalizeCanvasView(size, {
+    x: cx - viewWidth / 2,
+    y: cy - viewHeight / 2,
+    width: viewWidth,
+    height: viewHeight,
+  })
+}
+
 // Отрисовка модели в canvas для PNG-превью (без внешних ресурсов — плоский canvas).
-function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob | null> {
+function renderPng(model: SketchModel, t: (k: string) => string, blueprintDimensions = false): Promise<Blob | null> {
   const scale = 2
   const canvas = document.createElement('canvas')
   canvas.width = VIEW_W * scale
@@ -1621,7 +1700,9 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
   ctx.scale(scale, scale)
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, VIEW_W, VIEW_H)
-  const view = fitCanvasView(model, { width: VIEW_W, height: VIEW_H })
+  const view = blueprintDimensions
+    ? fitCanvasViewWithScreenMargin(model, { width: VIEW_W, height: VIEW_H }, 158)
+    : fitCanvasView(model, { width: VIEW_W, height: VIEW_H })
   const viewScale = VIEW_W / view.width
   const grid = canvasGridLines(view, 0.5, viewScale * CELL_PX)
   ctx.save()
@@ -1710,10 +1791,22 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
     ctx.strokeText(label, center.x * CELL_PX, center.y * CELL_PX)
     ctx.fillText(label, center.x * CELL_PX, center.y * CELL_PX)
   })
-  // размерные линии стен
-  for (const seg of eachSegment(model)) {
-    const dim = segmentDimLine(model, seg, 1 / viewScale)
-    if (dim) drawCanvasDimLine(ctx, dim, viewScale, '#334155')
+  // размерные линии стен / полный чертёжный обвес.
+  if (blueprintDimensions) {
+    drawCanvasBlueprintDimensions(
+      ctx,
+      buildBlueprintDimensionLayout(model, {
+        cellPx: CELL_PX,
+        screenWorldPx: 1 / viewScale,
+        formatLengthFt: formatBlueprintLengthFt,
+      }),
+      viewScale,
+    )
+  } else {
+    for (const seg of eachSegment(model)) {
+      const dim = segmentDimLine(model, seg, 1 / viewScale)
+      if (dim) drawCanvasDimLine(ctx, dim, viewScale, '#334155')
+    }
   }
   // проёмы — отрезок вдоль стены заданной ширины
   ctx.lineCap = 'butt'
@@ -1723,7 +1816,7 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
     const wCells = Math.min(openingWidthFt(o) / (model.cellFt || CELL_FT), dist(g.a, g.b))
     const hx = (g.ux * wCells) / 2
     const hy = (g.uy * wCells) / 2
-    ctx.strokeStyle = o.kind === 'door' ? '#b45309' : o.kind === 'window' ? '#2563eb' : '#0f766e'
+    ctx.strokeStyle = blueprintDimensions ? '#111827' : o.kind === 'door' ? '#b45309' : o.kind === 'window' ? '#2563eb' : '#0f766e'
     ctx.lineWidth = 6 / viewScale
     ctx.beginPath()
     ctx.moveTo((g.p.x - hx) * CELL_PX, (g.p.y - hy) * CELL_PX)
@@ -1734,7 +1827,7 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
   model.openings.forEach((opening, index) => {
     const label = openingDimLabel(model, opening, index, t, 1 / viewScale)
     if (!label) return
-    drawCanvasDimLine(ctx, label, viewScale, label.kind === 'door' ? '#7c2d12' : '#1d4ed8', 10.5)
+    drawCanvasDimLine(ctx, label, viewScale, blueprintDimensions ? '#111827' : label.kind === 'door' ? '#7c2d12' : '#1d4ed8', 10.5)
   })
   planPlacedItems(model, new Set()).forEach((entry) => drawCanvasPlanItem(ctx, entry, viewScale))
   for (const measurement of model.measurements ?? []) {
@@ -1779,7 +1872,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const { t, lang } = useI18n()
   const canEdit = profile ? isManagerWrite(profile.role) : false
 
-  const [model, setModel] = useState<SketchModel>(EMPTY_MODEL)
+  const [model, setModel] = useState<SketchModel>(() => initialSketchModel())
   const [history, setHistory] = useState<SketchHistory<SketchModel>>(() => emptySketchHistory())
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
   // SKETCH-POLISH-55: слот в основной верхней строке, куда Sketch3DView портирует свою строку
@@ -1800,6 +1893,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [snapMode, setSnapMode] = useState<SnapMode>('1ft')
   const [showMeasurements, setShowMeasurements] = useState(true)
   const [codeCheckEnabled, setCodeCheckEnabled] = useState(true)
+  const [blueprintDimensionsEnabled, setBlueprintDimensionsEnabled] = useState(false)
   // BLUEPRINT-LAYERS-59: тоггл «скрыть существующее» — существующие комнаты гасятся (видно «что
   // строим»). Только вид рабочего плана; экспорт-пакет всегда рисует все слои.
   const [hideExistingLayer, setHideExistingLayer] = useState(false)
@@ -5245,7 +5339,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     setError(null)
     setStatus(null)
     try {
-      const png = await renderPng(model, t)
+      const png = await renderPng(model, t, blueprintDimensionsEnabled)
       setPrintPlanUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev)
         return png ? URL.createObjectURL(png) : null
@@ -5256,7 +5350,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     } finally {
       setBusy(false)
     }
-  }, [busy, printing, model, t])
+  }, [busy, printing, model, t, blueprintDimensionsEnabled])
 
   // Когда печатный контейнер смонтирован — дать SVG-развёрткам прорисоваться (два кадра) и печатать.
   // По afterprint снимаем контейнер и освобождаем object-URL плана (без утечек).
@@ -5446,6 +5540,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     () => eachSegment(model).map((seg) => segmentDimLine(model, seg, screenWorldPx)).filter((dim): dim is SegmentDimLine => !!dim),
     [model, screenWorldPx],
   )
+  const blueprintDimensionLayout = useMemo(
+    () => blueprintDimensionsEnabled
+      ? buildBlueprintDimensionLayout(model, {
+          cellPx: CELL_PX,
+          screenWorldPx,
+          formatLengthFt: formatBlueprintLengthFt,
+        })
+      : null,
+    [blueprintDimensionsEnabled, model, screenWorldPx],
+  )
   const planMeasurements = useMemo<PlanMeasurementEntry[]>(
     () => (model.measurements ?? [])
       .map((measurement, index) => ({ measurement, index }))
@@ -5521,7 +5625,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     if (!contour || !contour.closed) setRecentlyClosedContourIndex(null)
   }, [model.contours, recentlyClosedContourIndex])
 
-  const renderDimLine2D = (dim: DimLine2D, key: string, className: string, fontScale = 10.5) => (
+  const renderDimLine2D = (dim: DimLine2D | BlueprintDimensionLine, key: string, className: string, fontScale = 10.5) => (
     <g key={key} className={className}>
       <line className="hub-sketch-dim-extension" x1={dim.ext1x1} y1={dim.ext1y1} x2={dim.ext1x2} y2={dim.ext1y2} />
       <line className="hub-sketch-dim-extension" x1={dim.ext2x1} y1={dim.ext2y1} x2={dim.ext2x2} y2={dim.ext2y2} />
@@ -5542,6 +5646,50 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       </text>
     </g>
   )
+
+  const renderBlueprintDimensions = () => {
+    if (!blueprintDimensionLayout) return null
+    return (
+      <g className="hub-sketch-blueprint-dims" aria-label={t('hub_sketch_blueprint_dimensions')}>
+        <g className="hub-sketch-blueprint-axis-lines" aria-hidden="true">
+          {blueprintDimensionLayout.axes.map((axis) => (
+            <line
+              key={`${axis.id}-line`}
+              className={`hub-sketch-blueprint-axis-line hub-sketch-blueprint-axis-line-${axis.orientation}`}
+              x1={axis.x1}
+              y1={axis.y1}
+              x2={axis.x2}
+              y2={axis.y2}
+            />
+          ))}
+        </g>
+        <g className="hub-sketch-blueprint-dim-chains">
+          {blueprintDimensionLayout.dimensions.map((dim) => renderDimLine2D(
+            dim,
+            dim.id,
+            `hub-sketch-blueprint-dim-line hub-sketch-blueprint-dim-line-${dim.row} hub-sketch-blueprint-dim-side-${dim.side}`,
+            dim.row === 'overall' ? 11.5 : 10.5,
+          ))}
+        </g>
+        <g className="hub-sketch-blueprint-axis-bubbles">
+          {blueprintDimensionLayout.axes.flatMap((axis) => axis.bubbles.map((bubble) => (
+            <g key={`${axis.id}-${bubble.side}`} className={`hub-sketch-blueprint-axis-bubble hub-sketch-blueprint-axis-bubble-${bubble.side}`}>
+              <circle cx={bubble.cx} cy={bubble.cy} r={bubble.r} />
+              <text
+                x={bubble.cx}
+                y={bubble.cy}
+                textAnchor="middle"
+                dominantBaseline="central"
+                style={{ fontSize: 11 * screenWorldPx }}
+              >
+                {bubble.label}
+              </text>
+            </g>
+          )))}
+        </g>
+      </g>
+    )
+  }
 
   const renderOpeningClearanceDimLine2D = (
     dim: OpeningClearanceDimLine,
@@ -6881,6 +7029,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           />
           <span>{t('hub_sketch_code_check')}</span>
         </label>
+        {viewMode === '2d' && (
+          <label className="hub-sketch-layer-toggle hub-sketch-blueprint-dims-toggle">
+            <input
+              type="checkbox"
+              checked={blueprintDimensionsEnabled}
+              onChange={(event) => setBlueprintDimensionsEnabled(event.target.checked)}
+            />
+            <span>{t('hub_sketch_blueprint_dimensions')}</span>
+          </label>
+        )}
         {/* BLUEPRINT-LAYERS-59: тоггл «скрыть существующее» — гасит слой existing, видно «что строим». */}
         <label className="hub-sketch-layer-toggle hub-sketch-hide-existing-toggle">
           <input
@@ -7340,6 +7498,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           sketchName={name}
           dateText={new Date().toLocaleDateString(lang === 'ru' ? 'ru-RU' : lang === 'es' ? 'es-ES' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
           planImageUrl={printPlanUrl}
+          blueprintDimensionsEnabled={blueprintDimensionsEnabled}
           t={t}
         />
       )}
@@ -7622,8 +7781,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             )
           })}
 
-          {/* размерные линии стен */}
-          {wallDimLines.map((dim, i) => {
+          {/* размерные линии стен / полный чертёжный обвес */}
+          {blueprintDimensionsEnabled && renderBlueprintDimensions()}
+          {!blueprintDimensionsEnabled && wallDimLines.map((dim, i) => {
             const key = sketchWallKey(dim.c, dim.s)
             const editing = segmentLengthEdit?.ref.c === dim.c && segmentLengthEdit.ref.s === dim.s
             const conflict = segmentResizeConflictKeys.has(key)

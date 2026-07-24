@@ -1658,6 +1658,8 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_wall_panel_thickness: { ru: 'Толщина стен', en: 'Wall thickness', es: 'Grosor de pared' },
   hub_sketch_wall_thickness_2x4: { ru: '2×4 · 4½"', en: '2×4 · 4½"', es: '2×4 · 4½"' },
   hub_sketch_wall_thickness_2x6: { ru: '2×6 · 6½"', en: '2×6 · 6½"', es: '2×6 · 6½"' },
+  // BLUEPRINT-DIMS-60: полный чертёжный обвес 2D-плана — три ряда размеров + оси-пузыри.
+  hub_sketch_blueprint_dimensions: { ru: 'Чертёжные размеры', en: 'Blueprint dimensions', es: 'Cotas de plano' },
   // BLUEPRINT-LAYERS-59: слой «существующее / новое / демонтаж»
   hub_sketch_layer_label: { ru: 'Слой', en: 'Layer', es: 'Capa' },
   hub_sketch_layer_legend: { ru: 'Слои', en: 'Layers', es: 'Capas' },
