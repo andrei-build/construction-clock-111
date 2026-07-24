@@ -101,6 +101,7 @@ export type SketchPrintPackageProps = {
   sketchName: string
   dateText: string
   planImageUrl: string | null
+  blueprintDimensionsEnabled?: boolean
   t: (key: string) => string
 }
 
@@ -111,6 +112,7 @@ export default function SketchPrintPackage({
   sketchName,
   dateText,
   planImageUrl,
+  blueprintDimensionsEnabled = false,
   t,
 }: SketchPrintPackageProps) {
   if (typeof document === 'undefined') return null
@@ -158,7 +160,7 @@ export default function SketchPrintPackage({
         </section>
 
         {/* 2) План с размерами */}
-        <section className="sketch-print-section sketch-print-plan">
+        <section className="sketch-print-section sketch-print-plan" data-blueprint-dims={blueprintDimensionsEnabled ? 'on' : 'off'}>
           <h2>{t('hub_sketch_print_plan')}</h2>
           {planImageUrl ? (
             <img className="sketch-print-plan-image" src={planImageUrl} alt={t('hub_sketch_print_plan')} />

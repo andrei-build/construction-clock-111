@@ -4710,7 +4710,18 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
   background: var(--panel2);
   color: var(--text);
 }
+.hub-sketch-blueprint-dims-toggle {
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--text);
+}
 .hub-sketch-topbar-fullscreen .hub-sketch-code-toggle {
+  background: rgba(255, 255, 255, .05);
+}
+.hub-sketch-topbar-fullscreen .hub-sketch-blueprint-dims-toggle {
   background: rgba(255, 255, 255, .05);
 }
 .hub-sketch-canvas-card {
@@ -5433,7 +5444,9 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 .hub-sketch-code-arc,
 .hub-sketch-dim-main,
 .hub-sketch-dim-extension,
-.hub-sketch-dim-tick {
+.hub-sketch-dim-tick,
+.hub-sketch-blueprint-axis-line,
+.hub-sketch-blueprint-axis-bubble circle {
   vector-effect: non-scaling-stroke;
 }
 .hub-sketch-subgrid,
@@ -5580,6 +5593,30 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px
 }
 .hub-sketch-dim-line-editable {
   pointer-events: auto;
+}
+.hub-sketch-blueprint-dims {
+  pointer-events: none;
+}
+.hub-sketch-blueprint-axis-line {
+  stroke: rgba(203, 216, 231, .86);
+  stroke-width: 1;
+  stroke-dasharray: 8 6;
+  fill: none;
+}
+.hub-sketch-blueprint-axis-bubble circle {
+  fill: rgba(4, 8, 6, .72);
+  stroke: rgba(120, 170, 140, .9);
+  stroke-width: 1.3;
+}
+.hub-sketch-blueprint-axis-bubble text {
+  fill: var(--sketch-dim);
+  font-family: var(--font-numeric);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.hub-sketch-blueprint-dim-line-overall .hub-sketch-dim-main,
+.hub-sketch-blueprint-dim-line-overall .hub-sketch-dim-tick {
+  stroke-width: 1.7;
 }
 .hub-sketch-dim-main,
 .hub-sketch-dim-extension,
