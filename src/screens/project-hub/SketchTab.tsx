@@ -13,6 +13,18 @@ import {
   type WallThicknessPreset,
 } from '../../lib/sketchWalls'
 import {
+  SKETCH_LAYERS,
+  sanitizeLayer,
+  resolveLayer,
+  isLayerVisible,
+  layerIsDashed,
+  layerFillPatternId,
+  LAYER_HATCH_PATTERN_ID,
+  LAYER_DEMO_PATTERN_ID,
+  LAYER_LABEL_KEYS,
+  type SketchLayer,
+} from '../../lib/sketchLayers'
+import {
   createProjectNote,
   getProjectFileDownloadUrl,
   getProjectHubFiles,
@@ -310,7 +322,10 @@ type Pt = { x: number; y: number }
 // BLUEPRINT-WALLS-58: wallThickness (футы) — ОПЦИОНАЛЬНОЕ свойство ОТРИСОВКИ стен контура.
 // Модель остаётся centerline (points/closed не меняются). Старые эскизы без поля рисуются с
 // дефолтной толщиной (DEFAULT_WALL_THICKNESS_FT). Проходит sanitize (см. sanitizeWallThickness).
-type Contour = { points: Pt[]; closed: boolean; label?: string; wallThickness?: number }
+// BLUEPRINT-LAYERS-59: layer — ОПЦИОНАЛЬНОЕ свойство классификации контура (существующее/новое/
+// демонтаж). Как и wallThickness, это render-свойство: модель остаётся centerline (version:1),
+// старый эскиз без поля рисуется как 'new' (обычная чистая заливка). Проходит sanitizeLayer.
+type Contour = { points: Pt[]; closed: boolean; label?: string; wallThickness?: number; layer?: SketchLayer }
 // Габариты (w/h/sill) опциональны и аддитивны — старый JSON без них открывается с дефолтами.
 type Opening = {
   // OPENINGS-DRAG-TYPES-27: 'opening' — сквозной вырез без полотна (проём между зонами).
@@ -647,6 +662,9 @@ function sanitizeRoomTemplate(value: unknown): SketchRoomTemplate | null {
       const contourOut: Contour = { points, closed: rawContour.closed === true }
       const templateThickness = sanitizeWallThickness(rawContour.wallThickness)
       if (templateThickness !== undefined) contourOut.wallThickness = templateThickness
+      // BLUEPRINT-LAYERS-59: шаблоны тоже несут слой (иначе срежется при сохранении шаблона).
+      const templateLayer = sanitizeLayer(rawContour.layer)
+      if (templateLayer !== undefined) contourOut.layer = templateLayer
       return contourOut
     })
     .filter((contour): contour is Contour => !!contour)
@@ -851,6 +869,9 @@ function sanitizeSketchContours(value: unknown): Contour[] {
       // BLUEPRINT-WALLS-58: allowlist толщины — иначе поле срежется при load/save (version:1 цел).
       const wallThickness = sanitizeWallThickness(rawContour.wallThickness)
       if (wallThickness !== undefined) next.wallThickness = wallThickness
+      // BLUEPRINT-LAYERS-59: allowlist слоя — иначе поле срежется при load/save (version:1 цел).
+      const layer = sanitizeLayer(rawContour.layer)
+      if (layer !== undefined) next.layer = layer
       return next
     })
     .filter((contour): contour is Contour => !!contour)
@@ -1622,6 +1643,43 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
   for (const y of grid.majorY) {
     ctx.beginPath(); ctx.moveTo(view.x, y); ctx.lineTo(view.x + view.width, y); ctx.stroke()
   }
+  // BLUEPRINT-LAYERS-59: заливка «существующего» диагональной штриховкой + приглушённая
+  // крест-накрест штриховка «демонтажа» — чёрным по белому (печать не полагается на цвет).
+  // Рисуем ПОД контуром: клипуем полигон и штрихуем его bbox параллельными линиями.
+  const hatchContour = (c: Contour, spacing: number, angles: number[], width: number) => {
+    if (!c.closed || c.points.length < 3) return
+    const xs = c.points.map((p) => p.x * CELL_PX)
+    const ys = c.points.map((p) => p.y * CELL_PX)
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2
+    const cy = (Math.min(...ys) + Math.max(...ys)) / 2
+    const diag = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || CELL_PX
+    ctx.save()
+    ctx.beginPath()
+    ctx.moveTo(xs[0], ys[0])
+    for (let i = 1; i < c.points.length; i++) ctx.lineTo(xs[i], ys[i])
+    ctx.closePath()
+    ctx.clip()
+    ctx.strokeStyle = '#1f2933'
+    ctx.lineWidth = width / viewScale
+    for (const angle of angles) {
+      ctx.save()
+      ctx.translate(cx, cy)
+      ctx.rotate(angle)
+      ctx.beginPath()
+      for (let x = -diag; x <= diag; x += spacing) {
+        ctx.moveTo(x, -diag)
+        ctx.lineTo(x, diag)
+      }
+      ctx.stroke()
+      ctx.restore()
+    }
+    ctx.restore()
+  }
+  for (const c of model.contours) {
+    const layer = resolveLayer(c.layer)
+    if (layer === 'existing') hatchContour(c, 9, [Math.PI / 4], 0.9)
+    else if (layer === 'demolition') hatchContour(c, 13, [Math.PI / 4, -Math.PI / 4], 0.6)
+  }
   // стены
   ctx.strokeStyle = '#1f2933'
   ctx.lineWidth = 3 / viewScale
@@ -1629,11 +1687,14 @@ function renderPng(model: SketchModel, t: (k: string) => string): Promise<Blob |
   ctx.lineCap = 'round'
   for (const c of model.contours) {
     if (c.points.length < 2) continue
+    // BLUEPRINT-LAYERS-59: демонтаж — пунктирный контур (печать без цвета).
+    if (layerIsDashed(c.layer)) ctx.setLineDash([10 / viewScale, 7 / viewScale])
     ctx.beginPath()
     ctx.moveTo(c.points[0].x * CELL_PX, c.points[0].y * CELL_PX)
     for (let i = 1; i < c.points.length; i++) ctx.lineTo(c.points[i].x * CELL_PX, c.points[i].y * CELL_PX)
     if (c.closed) ctx.closePath()
     ctx.stroke()
+    ctx.setLineDash([])
   }
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -1739,6 +1800,9 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
   const [snapMode, setSnapMode] = useState<SnapMode>('1ft')
   const [showMeasurements, setShowMeasurements] = useState(true)
   const [codeCheckEnabled, setCodeCheckEnabled] = useState(true)
+  // BLUEPRINT-LAYERS-59: тоггл «скрыть существующее» — существующие комнаты гасятся (видно «что
+  // строим»). Только вид рабочего плана; экспорт-пакет всегда рисует все слои.
+  const [hideExistingLayer, setHideExistingLayer] = useState(false)
   // AI-LAYOUT-30: предложенные детерминированным солвером варианты раскладки (карточки-превью).
   const [layoutSuggestions, setLayoutSuggestions] = useState<KitchenLayoutVariant[]>([])
   const [measurementDraft, setMeasurementDraft] = useState<Pt | null>(null)
@@ -2302,6 +2366,22 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
     const nextContours = model.contours.map((item, index) => (index === ci ? { ...item, wallThickness: thicknessFt } : item))
     commit(normalizeSketchModelForStorage({ ...model, contours: nextContours }))
     setSelectedWallKey(sketchWallKey(selectedWall.seg.c, selectedWall.seg.s))
+  }
+
+  // BLUEPRINT-LAYERS-59: слой = render-свойство на КОНТУР (комнату). 'new' = дефолт → поле
+  // опускаем (version:1 совместимость, старый эскиз без слоя не «толстеет»). Проходит sanitizeLayer.
+  const setContourLayer = (contourIndex: number, layer: SketchLayer) => {
+    if (!canEdit) return
+    const contour = model.contours[contourIndex]
+    if (!contour) return
+    const nextContours = model.contours.map((item, index) => {
+      if (index !== contourIndex) return item
+      const nextItem = { ...item }
+      if (layer === 'new') delete nextItem.layer
+      else nextItem.layer = layer
+      return nextItem
+    })
+    commit(normalizeSketchModelForStorage({ ...model, contours: nextContours }))
   }
 
   // SKETCH-EDIT-MODEL-51: удаление узла контура (переиспользуется «Удалить угол» и «Удалить стену»).
@@ -6801,6 +6881,15 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
           />
           <span>{t('hub_sketch_code_check')}</span>
         </label>
+        {/* BLUEPRINT-LAYERS-59: тоггл «скрыть существующее» — гасит слой existing, видно «что строим». */}
+        <label className="hub-sketch-layer-toggle hub-sketch-hide-existing-toggle">
+          <input
+            type="checkbox"
+            checked={hideExistingLayer}
+            onChange={(event) => setHideExistingLayer(event.target.checked)}
+          />
+          <span>{t('hub_sketch_layer_hide_existing')}</span>
+        </label>
       </div>
       {/* SKETCH-POLISH-55: слот 3D-контекста в ОСНОВНОЙ строке. В обычном 3D сюда Sketch3DView
           портирует свои тогглы (Размеры/Потолок/Снимок/Референс/Рендер/На весь экран) — одна полоса. */}
@@ -6873,6 +6962,48 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
       ))}
     </nav>
   )
+
+  // BLUEPRINT-LAYERS-59: легенда слоёв — маленькая карточка в углу плана с образцами паттернов
+  // (штриховка / чистая / пунктир). Показываем, когда на плане есть хотя бы одна закрытая комната.
+  const renderLayerLegend = () => {
+    const hasRooms = model.contours.some((c) => c.closed && c.points.length >= 3)
+    if (!hasRooms) return null
+    return (
+      <div className="hub-sketch-layer-legend" aria-label={t('hub_sketch_layer_legend')}>
+        {SKETCH_LAYERS.map((layer) => (
+          <span className="hub-sketch-layer-legend-row" key={layer}>
+            <span className={`hub-sketch-layer-swatch hub-sketch-layer-swatch-${layer}`} aria-hidden="true" />
+            <span className="hub-sketch-layer-legend-label">{t(LAYER_LABEL_KEYS[layer])}</span>
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  // BLUEPRINT-LAYERS-59: сегмент-контрол слоя выбранной комнаты/стены (стиль #57 — прямоугольные
+  // кнопки, тонкая типографика). Пишет слой в КОНТУР через setContourLayer (проходит sanitize).
+  const renderLayerControl = (contourIndex: number) => {
+    if (!canEdit) return null
+    const activeLayer = resolveLayer(model.contours[contourIndex]?.layer)
+    return (
+      <div className="hub-sketch-field hub-sketch-layer-field">
+        <span className="muted">{t('hub_sketch_layer_label')}</span>
+        <div className="hub-sketch-layer-seg" role="group" aria-label={t('hub_sketch_layer_label')}>
+          {SKETCH_LAYERS.map((layer) => (
+            <button
+              key={layer}
+              type="button"
+              className={`btn small hub-sketch-layer-seg-btn hub-sketch-layer-seg-btn-${layer}${activeLayer === layer ? ' active' : ''}`}
+              aria-pressed={activeLayer === layer}
+              onClick={() => setContourLayer(contourIndex, layer)}
+            >
+              {t(LAYER_LABEL_KEYS[layer])}
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   const renderSketchPropertiesPanel = () => {
     const selectedMeasurement = selectedMeasurementIndex !== null ? model.measurements?.[selectedMeasurementIndex] ?? null : null
@@ -6965,6 +7096,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                 </div>
               )
             })()}
+            {renderLayerControl(selectedWall.seg.c)}
             {canEdit && (
               <div className="hub-sketch-wall-panel-actions">
                 {/* ELEV-BEHAVIOR-56 (#2): «Открыть развёртку» — стена доступна из 2D в один клик, тот же
@@ -7046,6 +7178,7 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               <span className="muted">{t('hub_sketch_contours')}</span>
               <span className="hub-sketch-stat-value">{selectedContour.contour.points.length}</span>
             </div>
+            {renderLayerControl(selectedContour.index)}
             {canEdit && (
               <div className="hub-sketch-wall-panel-actions">
                 <button type="button" className="btn ghost small" onClick={duplicateSelectedSketch}>
@@ -7245,6 +7378,8 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                     </button>
                   </div>
                 )}
+                {/* BLUEPRINT-LAYERS-59: легенда слоёв в углу плана (тёмная плашка, тонкий шрифт). */}
+                {renderLayerLegend()}
                 <svg
                   ref={svgRef}
                   className={[
@@ -7271,6 +7406,16 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             <marker id="hub-sketch-measure-arrow" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M 0 0 L 8 4 L 0 8 z" fill="#047857" />
             </marker>
+            {/* BLUEPRINT-LAYERS-59: диагональная штриховка «существующего» (приглушённый серо-зелёный
+                по теме) и крест-накрест «демонтажа». userSpaceOnUse → тайл в мировых координатах. */}
+            <pattern id={LAYER_HATCH_PATTERN_ID} patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+              <rect width="8" height="8" fill="rgba(120, 152, 132, .12)" />
+              <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(150, 190, 162, .6)" strokeWidth="1.4" />
+            </pattern>
+            <pattern id={LAYER_DEMO_PATTERN_ID} patternUnits="userSpaceOnUse" width="9" height="9" patternTransform="rotate(45)">
+              <line x1="0" y1="0" x2="0" y2="9" stroke="rgba(214, 152, 152, .5)" strokeWidth="1" />
+              <line x1="0" y1="0" x2="9" y2="0" stroke="rgba(214, 152, 152, .5)" strokeWidth="1" />
+            </pattern>
           </defs>
           {/* сетка */}
           <g className="hub-sketch-subgrid">
@@ -7300,6 +7445,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
             // двойные линии (hub-sketch-walls-blueprint ниже). Подсветку выбора/закрытия/тяги
             // оставляем (её обводка важна как отклик #51..#57).
             const highlighted = selected || dragContour === ci || justClosed
+            // BLUEPRINT-LAYERS-59: слой комнаты → заливка (штриховка/чистая/демонтаж) + видимость
+            // под тогглом «скрыть существующее». Паттерн навешиваем инлайн-fill, не мешая подсветке.
+            const patternFill = layerFillPatternId(c.layer)
+            const layerHidden = !isLayerVisible(c.layer, hideExistingLayer)
             return c.closed && c.points.length >= 3 ? (
               <polygon
                 key={`c${ci}`}
@@ -7310,7 +7459,10 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
                   selected && canEdit && wallSelectEnabled ? 'hub-sketch-room-draggable' : '',
                   dragContour === ci ? 'hub-sketch-room-dragging' : '',
                   justClosed ? 'hub-sketch-room-just-closed' : '',
+                  layerHidden ? 'hub-sketch-room-layer-hidden' : '',
                 ].filter(Boolean).join(' ')}
+                data-layer={resolveLayer(c.layer)}
+                style={!selected && !highlighted && patternFill ? { fill: `url(#${patternFill})` } : undefined}
                 points={pts}
                 onPointerDown={canEdit && wallSelectEnabled ? startDragContour(ci) : undefined}
                 onClick={wallSelectEnabled ? (event) => {
@@ -7336,45 +7488,59 @@ export default function SketchTab({ project, profile }: SketchTabProps) {
               (внешняя/внутренняя) + торцы проёмов (jamb). Только декор, pointer-events:none —
               клики по комнате/стене ловят заливка контура и невидимые хит-линии. */}
           <g className="hub-sketch-walls-blueprint" aria-hidden="true">
-            {wallBlueprints.map(({ ci, spans }) =>
-              spans.map((span, si) => (
-                <g key={`bp-${ci}-${span.s}-${si}`}>
-                  <polygon className="hub-sketch-wall-body" points={ptsToSvg(span.body, CELL_PX)} />
-                  <line
-                    className="hub-sketch-wall-edge"
-                    x1={span.outer[0].x * CELL_PX}
-                    y1={span.outer[0].y * CELL_PX}
-                    x2={span.outer[1].x * CELL_PX}
-                    y2={span.outer[1].y * CELL_PX}
-                  />
-                  <line
-                    className="hub-sketch-wall-edge"
-                    x1={span.inner[0].x * CELL_PX}
-                    y1={span.inner[0].y * CELL_PX}
-                    x2={span.inner[1].x * CELL_PX}
-                    y2={span.inner[1].y * CELL_PX}
-                  />
-                  {span.capStart && (
-                    <line
-                      className="hub-sketch-wall-jamb"
-                      x1={span.capStart[0].x * CELL_PX}
-                      y1={span.capStart[0].y * CELL_PX}
-                      x2={span.capStart[1].x * CELL_PX}
-                      y2={span.capStart[1].y * CELL_PX}
-                    />
-                  )}
-                  {span.capEnd && (
-                    <line
-                      className="hub-sketch-wall-jamb"
-                      x1={span.capEnd[0].x * CELL_PX}
-                      y1={span.capEnd[0].y * CELL_PX}
-                      x2={span.capEnd[1].x * CELL_PX}
-                      y2={span.capEnd[1].y * CELL_PX}
-                    />
-                  )}
+            {wallBlueprints.map(({ ci, spans }) => {
+              // BLUEPRINT-LAYERS-59: слой контура красит его стены — демонтаж пунктиром,
+              // скрытое существующее гасим целиком (класс на группе стен контура).
+              const layer = resolveLayer(model.contours[ci]?.layer)
+              const layerHidden = !isLayerVisible(model.contours[ci]?.layer, hideExistingLayer)
+              return (
+                <g
+                  key={`bp-ci-${ci}`}
+                  className={[
+                    `hub-sketch-walls-layer-${layer}`,
+                    layerHidden ? 'hub-sketch-room-layer-hidden' : '',
+                  ].filter(Boolean).join(' ')}
+                >
+                  {spans.map((span, si) => (
+                    <g key={`bp-${ci}-${span.s}-${si}`}>
+                      <polygon className="hub-sketch-wall-body" points={ptsToSvg(span.body, CELL_PX)} />
+                      <line
+                        className="hub-sketch-wall-edge"
+                        x1={span.outer[0].x * CELL_PX}
+                        y1={span.outer[0].y * CELL_PX}
+                        x2={span.outer[1].x * CELL_PX}
+                        y2={span.outer[1].y * CELL_PX}
+                      />
+                      <line
+                        className="hub-sketch-wall-edge"
+                        x1={span.inner[0].x * CELL_PX}
+                        y1={span.inner[0].y * CELL_PX}
+                        x2={span.inner[1].x * CELL_PX}
+                        y2={span.inner[1].y * CELL_PX}
+                      />
+                      {span.capStart && (
+                        <line
+                          className="hub-sketch-wall-jamb"
+                          x1={span.capStart[0].x * CELL_PX}
+                          y1={span.capStart[0].y * CELL_PX}
+                          x2={span.capStart[1].x * CELL_PX}
+                          y2={span.capStart[1].y * CELL_PX}
+                        />
+                      )}
+                      {span.capEnd && (
+                        <line
+                          className="hub-sketch-wall-jamb"
+                          x1={span.capEnd[0].x * CELL_PX}
+                          y1={span.capEnd[0].y * CELL_PX}
+                          x2={span.capEnd[1].x * CELL_PX}
+                          y2={span.capEnd[1].y * CELL_PX}
+                        />
+                      )}
+                    </g>
+                  ))}
                 </g>
-              )),
-            )}
+              )
+            })}
           </g>
 
           {roomLabels.length > 0 && (

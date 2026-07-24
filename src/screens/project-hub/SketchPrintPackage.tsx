@@ -20,6 +20,7 @@ import {
 } from './sketchMaterials'
 import type { SketchMaterialModel, SketchMaterialRow } from './sketchMaterials'
 import { TILE_MATERIAL_SECTION } from './tileCalc'
+import { SKETCH_LAYERS, LAYER_LABEL_KEYS } from '../../lib/sketchLayers'
 
 // EXPORT-PACKAGE-46: печатный «пакет проекта» из эскиза — титул + план + развёртки стен + спецификация.
 // Только ЧИТАЕТ модель эскиза (version:1 не трогаем), собирается из уже существующих кусков:
@@ -167,6 +168,16 @@ export default function SketchPrintPackage({
           <div className="sketch-print-plan-scale">{scaleText}</div>
           <div className="sketch-print-plan-stats">
             {`${t('hub_sketch_area')}: ${stats.totalArea.toFixed(1)} ft²  ·  ${t('hub_sketch_perimeter')}: ${formatFeetInches(stats.totalPerimeter * 12)}`}
+          </div>
+          {/* BLUEPRINT-LAYERS-59: легенда слоёв на листе — чёрным по белому (штриховка/пунктир,
+              печать не полагается на цвет). Образцы совпадают со штриховкой плана. */}
+          <div className="sketch-print-legend" aria-label={t('hub_sketch_layer_legend')}>
+            {SKETCH_LAYERS.map((layer) => (
+              <span className="sketch-print-legend-row" key={layer}>
+                <span className={`sketch-print-legend-swatch sketch-print-legend-swatch-${layer}`} aria-hidden="true" />
+                <span>{t(LAYER_LABEL_KEYS[layer])}</span>
+              </span>
+            ))}
           </div>
         </section>
 

@@ -1658,6 +1658,13 @@ const dict: Record<string, Record<Lang, string>> = {
   hub_sketch_wall_panel_thickness: { ru: 'Толщина стен', en: 'Wall thickness', es: 'Grosor de pared' },
   hub_sketch_wall_thickness_2x4: { ru: '2×4 · 4½"', en: '2×4 · 4½"', es: '2×4 · 4½"' },
   hub_sketch_wall_thickness_2x6: { ru: '2×6 · 6½"', en: '2×6 · 6½"', es: '2×6 · 6½"' },
+  // BLUEPRINT-LAYERS-59: слой «существующее / новое / демонтаж»
+  hub_sketch_layer_label: { ru: 'Слой', en: 'Layer', es: 'Capa' },
+  hub_sketch_layer_legend: { ru: 'Слои', en: 'Layers', es: 'Capas' },
+  hub_sketch_layer_existing: { ru: 'Существующее', en: 'Existing', es: 'Existente' },
+  hub_sketch_layer_new: { ru: 'Новое', en: 'New', es: 'Nuevo' },
+  hub_sketch_layer_demolition: { ru: 'Демонтаж', en: 'Demolition', es: 'Demolición' },
+  hub_sketch_layer_hide_existing: { ru: 'Скрыть существующее', en: 'Hide existing', es: 'Ocultar existente' },
   hub_sketch_wall_panel_flip: { ru: 'Развернуть в лоб', en: 'Face-on elevation', es: 'Ver de frente' },
   hub_sketch_wall_panel_split: { ru: 'Разбить стену', en: 'Split wall', es: 'Dividir pared' },
   hub_sketch_wall_panel_delete: { ru: 'Удалить стену', en: 'Delete wall', es: 'Eliminar pared' },
